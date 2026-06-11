@@ -45,6 +45,9 @@ const messages = {
     topRight: "右上角",
     bottomLeft: "左下角",
     bottomRight: "右下角",
+    gridPreference: "网格显示偏好",
+    landscapePriority: "横图优先",
+    portraitPriority: "竖图优先",
   },
   en: {
     openFolder: "Open folder",
@@ -90,6 +93,9 @@ const messages = {
     topRight: "Top right",
     bottomLeft: "Bottom left",
     bottomRight: "Bottom right",
+    gridPreference: "Grid display preference",
+    landscapePriority: "Landscape priority",
+    portraitPriority: "Portrait priority",
   },
 } as const;
 

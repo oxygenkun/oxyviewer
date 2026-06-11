@@ -68,12 +68,15 @@ function VirtualGrid({
   const selectedIds = useWorkspaceStore((state) => state.selectedIds);
   const select = useWorkspaceStore((state) => state.select);
   const setView = useWorkspaceStore((state) => state.setView);
-  const columns = Math.max(2, Math.floor(width / 190));
+  const gridPreference = useWorkspaceStore((state) => state.gridPreference);
+  const portraitPriority = gridPreference === "portrait";
+  const rowHeight = portraitPriority ? 274 : 194;
+  const columns = Math.max(2, Math.floor(width / (portraitPriority ? 150 : 190)));
   const rowCount = Math.ceil(assets.length / columns);
   const virtualizer = useVirtualizer({
     count: rowCount,
     getScrollElement: () => parentRef.current,
-    estimateSize: () => 194,
+    estimateSize: () => rowHeight,
     overscan: 3,
   });
   const rows = virtualizer.getVirtualItems();
@@ -86,12 +89,19 @@ function VirtualGrid({
   }, []);
 
   useEffect(() => {
+    virtualizer.measure();
+  }, [columns, rowHeight, virtualizer]);
+
+  useEffect(() => {
     const last = rows.at(-1);
     if (last && last.index >= rowCount - 2 && hasNextPage && !isFetchingNextPage) fetchNextPage();
   }, [fetchNextPage, hasNextPage, isFetchingNextPage, rowCount, rows]);
 
   return (
-    <div className="asset-scroll" ref={parentRef}>
+    <div
+      className={`asset-scroll virtual-grid--${gridPreference}`}
+      ref={parentRef}
+    >
       <div className="virtual-grid" style={{ height: virtualizer.getTotalSize() }}>
         {rows.map((row) => (
           <div
@@ -99,6 +109,7 @@ function VirtualGrid({
             key={row.key}
             style={{
               gridTemplateColumns: `repeat(${columns}, minmax(0, 1fr))`,
+              height: rowHeight,
               transform: `translateY(${row.start}px)`,
             }}
           >

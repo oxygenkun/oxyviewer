@@ -1,5 +1,5 @@
 import { useInfiniteQuery, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Aperture, CircleAlert, FolderOpen } from "lucide-react";
+import { Aperture, CircleAlert, FolderOpen, RectangleHorizontal, RectangleVertical } from "lucide-react";
 import { useCallback, useMemo, useState } from "react";
 import { AssetBrowser } from "./components/AssetBrowser";
 import { EmptyState } from "./components/EmptyState";
@@ -17,8 +17,8 @@ export function App() {
   const [error, setError] = useState<string>();
   const queryClient = useQueryClient();
   const {
-    view, activeId, selectedIds, inspectorOpen, leftPanelOpen, locale,
-    search, kind, sort, direction, clearSelection,
+    view, gridPreference, activeId, selectedIds, inspectorOpen, leftPanelOpen, locale,
+    search, kind, sort, direction, clearSelection, setGridPreference,
   } = useWorkspaceStore();
   const t = useCallback((key: Parameters<typeof translate>[1]) => translate(locale, key), [locale]);
 
@@ -125,6 +125,26 @@ export function App() {
             currentPath?.split(/[\\/]/).filter(Boolean).at(-1) ?? session.displayName
           }</span>
           <span>{assets.length.toLocaleString()} / {total.toLocaleString()} {t("photos")}</span>
+          {view === "grid" ? (
+            <span className="statusbar__grid-preference" role="group" aria-label={t("gridPreference")}>
+              <button
+                className={gridPreference === "landscape" ? "is-active" : ""}
+                onClick={() => setGridPreference("landscape")}
+                title={t("landscapePriority")}
+                aria-label={t("landscapePriority")}
+              >
+                <RectangleHorizontal size={11} />
+              </button>
+              <button
+                className={gridPreference === "portrait" ? "is-active" : ""}
+                onClick={() => setGridPreference("portrait")}
+                title={t("portraitPriority")}
+                aria-label={t("portraitPriority")}
+              >
+                <RectangleVertical size={11} />
+              </button>
+            </span>
+          ) : null}
           <span>{selectedIds.length} {t("selected")}</span>
         </footer>
       </section>

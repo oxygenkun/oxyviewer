@@ -1,9 +1,17 @@
 import { create } from "zustand";
 import type { Locale } from "./lib/i18n";
-import type { AssetKind, AssetSort, NavigatorPosition, SortDirection, ViewMode } from "./types";
+import type {
+  AssetKind,
+  AssetSort,
+  GridPreference,
+  NavigatorPosition,
+  SortDirection,
+  ViewMode,
+} from "./types";
 
 interface WorkspaceState {
   view: ViewMode;
+  gridPreference: GridPreference;
   selectedIds: string[];
   activeId?: string;
   inspectorOpen: boolean;
@@ -16,6 +24,7 @@ interface WorkspaceState {
   sort: AssetSort;
   direction: SortDirection;
   setView: (view: ViewMode) => void;
+  setGridPreference: (preference: GridPreference) => void;
   select: (id: string, additive?: boolean) => void;
   clearSelection: () => void;
   toggleInspector: () => void;
@@ -31,6 +40,7 @@ interface WorkspaceState {
 
 export const useWorkspaceStore = create<WorkspaceState>((set) => ({
   view: "grid",
+  gridPreference: "landscape",
   selectedIds: [],
   inspectorOpen: true,
   leftPanelOpen: true,
@@ -41,6 +51,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set) => ({
   sort: "name",
   direction: "ascending",
   setView: (view) => set({ view }),
+  setGridPreference: (gridPreference) => set({ gridPreference }),
   select: (id, additive = false) =>
     set((state) => {
       if (!additive) return { selectedIds: [id], activeId: id };

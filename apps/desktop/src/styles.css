@@ -337,7 +337,16 @@ body {
   background: #171a1d;
   box-shadow: inset 0 0 0 1px rgb(255 255 255 / 3%);
 }
-.thumbnail img { width: 100%; height: 100%; object-fit: cover; }
+.thumbnail > img {
+  position: absolute;
+  inset: 0;
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  object-position: center;
+}
+.virtual-grid--portrait .thumbnail { height: 214px; }
 .thumbnail__fallback {
   position: absolute;
   inset: 0;
@@ -698,6 +707,25 @@ body {
   font: 8px ui-monospace, monospace;
 }
 .statusbar span:first-child { margin-right: auto; }
+.statusbar__grid-preference {
+  display: flex;
+  gap: 1px;
+  padding: 1px;
+  border: 1px solid #282e32;
+  border-radius: 4px;
+  background: #0c0e10;
+}
+.statusbar__grid-preference button {
+  display: grid;
+  place-items: center;
+  width: 19px;
+  height: 16px;
+  border-radius: 3px;
+  color: #626a70;
+  background: transparent;
+}
+.statusbar__grid-preference button:hover { color: var(--text); background: #1c2125; }
+.statusbar__grid-preference button.is-active { color: var(--accent); background: #252b2e; }
 .status-dot { display: inline-block; width: 5px; height: 5px; margin-right: 5px; border-radius: 50%; background: var(--accent); box-shadow: 0 0 8px var(--accent); }
 .no-results, .workspace-loading, .workspace-error {
   display: grid;
