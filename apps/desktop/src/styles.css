@@ -553,6 +553,32 @@ body {
   color: #c8cbc5;
   font: 8px ui-monospace, monospace;
 }
+.loupe__zoom-input {
+  display: flex;
+  align-items: center;
+  width: 43px;
+  height: 24px;
+  padding: 0 4px;
+  border: 1px solid var(--accent);
+  border-radius: 4px;
+  color: #c8cbc5;
+  background: #111613;
+  font: 8px ui-monospace, monospace;
+}
+.loupe__zoom-input input {
+  width: 100%;
+  min-width: 0;
+  padding: 0;
+  border: 0;
+  outline: 0;
+  color: inherit;
+  background: transparent;
+  font: inherit;
+  text-align: right;
+  appearance: textfield;
+}
+.loupe__zoom-input input::-webkit-inner-spin-button,
+.loupe__zoom-input input::-webkit-outer-spin-button { margin: 0; appearance: none; }
 .loupe__controls > i { width: 1px; height: 15px; margin: 0 2px; background: #32383c; }
 .loupe__navigator {
   position: absolute;

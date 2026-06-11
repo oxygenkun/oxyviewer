@@ -21,9 +21,11 @@ import {
   clampZoom,
   fitSize,
   getNavigatorViewport,
+  MAX_PIXEL_ZOOM_PERCENT,
   panFromNavigatorPoint,
   pixelZoomPercent,
   zoomAtPoint,
+  zoomForPixelPercent,
   type Point,
   type Size,
 } from "../lib/loupe";
@@ -85,6 +87,8 @@ export function Loupe({
   const [offset, setOffset] = useState<Point>({ x: 0, y: 0 });
   const [dragging, setDragging] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [editingZoom, setEditingZoom] = useState(false);
+  const [zoomInput, setZoomInput] = useState("");
   const [layoutVersion, setLayoutVersion] = useState(0);
   const [stageContentSize, setStageContentSize] = useState<Size>({ width: 0, height: 0 });
   const [naturalSize, setNaturalSize] = useState<{ assetId: string; size: Size } | undefined>(undefined);
@@ -108,11 +112,12 @@ export function Loupe({
   }), []);
 
   const setZoomAroundPoint = useCallback((next: number, pointFromStageCenter: Point) => {
-    const nextZoom = clampZoom(next);
+    const maxZoom = zoomForPixelPercent(fittedImageSize, sourceSize, MAX_PIXEL_ZOOM_PERCENT);
+    const nextZoom = clampZoom(next, maxZoom);
     const { stage, image } = getSizes();
     setOffset((current) => zoomAtPoint(zoom, nextZoom, current, pointFromStageCenter, stage, image));
     setZoom(nextZoom);
-  }, [getSizes, zoom]);
+  }, [fittedImageSize, getSizes, sourceSize, zoom]);
 
   const resetZoom = useCallback(() => {
     setZoom(1);
@@ -202,6 +207,20 @@ export function Loupe({
   }, [getSizes, layoutVersion, offset, zoom]);
 
   const zoomLabel = `${pixelZoomPercent(fittedImageSize, sourceSize, zoom)}%`;
+  const beginZoomEdit = () => {
+    setZoomInput(String(pixelZoomPercent(fittedImageSize, sourceSize, zoom)));
+    setEditingZoom(true);
+  };
+  const commitZoomEdit = () => {
+    const percent = Number(zoomInput);
+    if (zoomInput.trim() && Number.isFinite(percent)) {
+      setZoomAroundPoint(
+        zoomForPixelPercent(fittedImageSize, sourceSize, percent),
+        { x: 0, y: 0 },
+      );
+    }
+    setEditingZoom(false);
+  };
   const positionLabels: Record<NavigatorPosition, MessageKey> = {
     "top-left": "topLeft",
     "top-right": "topRight",
@@ -302,9 +321,31 @@ export function Loupe({
           <button onClick={() => setZoomAroundPoint(zoom / 1.25, { x: 0, y: 0 })} title={t("zoomOut")}>
             <Minus size={14} />
           </button>
-          <button className="loupe__zoom-label" onClick={resetZoom} title={t("resetZoom")}>
-            {zoomLabel}
-          </button>
+          {editingZoom ? (
+            <label className="loupe__zoom-input">
+              <input
+                autoFocus
+                inputMode="numeric"
+                min={pixelZoomPercent(fittedImageSize, sourceSize, 1)}
+                max={MAX_PIXEL_ZOOM_PERCENT}
+                step="1"
+                type="number"
+                value={zoomInput}
+                onBlur={commitZoomEdit}
+                onChange={(event) => setZoomInput(event.target.value)}
+                onFocus={(event) => event.currentTarget.select()}
+                onKeyDown={(event) => {
+                  if (event.key === "Enter") event.currentTarget.blur();
+                  if (event.key === "Escape") setEditingZoom(false);
+                }}
+              />
+              <span>%</span>
+            </label>
+          ) : (
+            <button className="loupe__zoom-label" onClick={beginZoomEdit} title={t("setZoom")}>
+              {zoomLabel}
+            </button>
+          )}
           <button onClick={() => setZoomAroundPoint(zoom * 1.25, { x: 0, y: 0 })} title={t("zoomIn")}>
             <Plus size={14} />
           </button>

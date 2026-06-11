@@ -1,11 +1,14 @@
 import { describe, expect, it } from "vitest";
 import {
   clampPan,
+  clampZoom,
   fitSize,
   getNavigatorViewport,
+  MAX_PIXEL_ZOOM_PERCENT,
   panFromNavigatorPoint,
   pixelZoomPercent,
   zoomAtPoint,
+  zoomForPixelPercent,
 } from "./loupe";
 
 const stage = { width: 800, height: 600 };
@@ -22,6 +25,16 @@ describe("loupe geometry", () => {
   it("reports zoom as displayed pixels relative to source pixels", () => {
     expect(pixelZoomPercent({ width: 1_000, height: 667 }, { width: 6_000, height: 4_000 }, 3))
       .toBe(50);
+  });
+
+  it("converts an exact displayed-pixel percentage to zoom and clamps it", () => {
+    const fitted = { width: 1_000, height: 667 };
+    const source = { width: 6_000, height: 4_000 };
+    const maxZoom = zoomForPixelPercent(fitted, source, MAX_PIXEL_ZOOM_PERCENT);
+
+    expect(zoomForPixelPercent(fitted, source, 125)).toBe(7.5);
+    expect(clampZoom(zoomForPixelPercent(fitted, source, 500), maxZoom)).toBe(24);
+    expect(clampZoom(2, 0.5)).toBe(1);
   });
 
   it("clamps panning to the visible image bounds", () => {

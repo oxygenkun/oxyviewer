@@ -16,10 +16,10 @@ export interface NavigatorViewport {
 }
 
 export const MIN_ZOOM = 1;
-export const MAX_ZOOM = 8;
+export const MAX_PIXEL_ZOOM_PERCENT = 400;
 
-export function clampZoom(zoom: number) {
-  return Math.min(MAX_ZOOM, Math.max(MIN_ZOOM, zoom));
+export function clampZoom(zoom: number, maxZoom = MAX_PIXEL_ZOOM_PERCENT) {
+  return Math.min(Math.max(MIN_ZOOM, maxZoom), Math.max(MIN_ZOOM, zoom));
 }
 
 export function fitSize(container: Size, source: Size): Size {
@@ -36,6 +36,11 @@ export function fitSize(container: Size, source: Size): Size {
 export function pixelZoomPercent(fitted: Size, source: Size, zoom: number) {
   if (fitted.width <= 0 || source.width <= 0) return 0;
   return Math.round((fitted.width * zoom / source.width) * 100);
+}
+
+export function zoomForPixelPercent(fitted: Size, source: Size, percent: number) {
+  if (fitted.width <= 0 || source.width <= 0) return MIN_ZOOM;
+  return (percent / 100) * (source.width / fitted.width);
 }
 
 export function clampPan(offset: Point, zoom: number, stage: Size, image: Size): Point {
