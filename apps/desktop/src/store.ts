@@ -1,0 +1,65 @@
+import { create } from "zustand";
+import type { Locale } from "./lib/i18n";
+import type { AssetKind, AssetSort, NavigatorPosition, SortDirection, ViewMode } from "./types";
+
+interface WorkspaceState {
+  view: ViewMode;
+  selectedIds: string[];
+  activeId?: string;
+  inspectorOpen: boolean;
+  leftPanelOpen: boolean;
+  locale: Locale;
+  navigatorVisible: boolean;
+  navigatorPosition: NavigatorPosition;
+  search: string;
+  kind?: AssetKind;
+  sort: AssetSort;
+  direction: SortDirection;
+  setView: (view: ViewMode) => void;
+  select: (id: string, additive?: boolean) => void;
+  clearSelection: () => void;
+  toggleInspector: () => void;
+  toggleLeftPanel: () => void;
+  setLocale: (locale: Locale) => void;
+  setNavigatorVisible: (visible: boolean) => void;
+  setNavigatorPosition: (position: NavigatorPosition) => void;
+  setSearch: (search: string) => void;
+  setKind: (kind?: AssetKind) => void;
+  setSort: (sort: AssetSort) => void;
+  toggleDirection: () => void;
+}
+
+export const useWorkspaceStore = create<WorkspaceState>((set) => ({
+  view: "grid",
+  selectedIds: [],
+  inspectorOpen: true,
+  leftPanelOpen: true,
+  locale: "zh-CN",
+  navigatorVisible: true,
+  navigatorPosition: "bottom-right",
+  search: "",
+  sort: "name",
+  direction: "ascending",
+  setView: (view) => set({ view }),
+  select: (id, additive = false) =>
+    set((state) => {
+      if (!additive) return { selectedIds: [id], activeId: id };
+      const selectedIds = state.selectedIds.includes(id)
+        ? state.selectedIds.filter((selected) => selected !== id)
+        : [...state.selectedIds, id];
+      return { selectedIds, activeId: id };
+    }),
+  clearSelection: () => set({ selectedIds: [], activeId: undefined }),
+  toggleInspector: () => set((state) => ({ inspectorOpen: !state.inspectorOpen })),
+  toggleLeftPanel: () => set((state) => ({ leftPanelOpen: !state.leftPanelOpen })),
+  setLocale: (locale) => set({ locale }),
+  setNavigatorVisible: (navigatorVisible) => set({ navigatorVisible }),
+  setNavigatorPosition: (navigatorPosition) => set({ navigatorPosition }),
+  setSearch: (search) => set({ search }),
+  setKind: (kind) => set({ kind }),
+  setSort: (sort) => set({ sort }),
+  toggleDirection: () =>
+    set((state) => ({
+      direction: state.direction === "ascending" ? "descending" : "ascending",
+    })),
+}));

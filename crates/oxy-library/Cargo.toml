@@ -1,0 +1,15 @@
+[package]
+name = "oxy-library"
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+version.workspace = true
+
+[dependencies]
+oxy-domain = { path = "../oxy-domain" }
+parking_lot.workspace = true
+rusqlite.workspace = true
+thiserror.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true

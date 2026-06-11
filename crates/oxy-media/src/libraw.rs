@@ -1,0 +1,230 @@
+use image::{
+    DynamicImage, ImageDecoder, ImageFormat, ImageReader, RgbImage, RgbaImage, imageops::FilterType,
+};
+use std::{
+    ffi::{CStr, CString, c_char, c_int, c_uint},
+    io::Cursor,
+    path::Path,
+    slice,
+};
+
+const LIBRAW_OPTIONS_NO_DATAERR_CALLBACK: c_uint = 1 << 1;
+const LIBRAW_SUCCESS: c_int = 0;
+const LIBRAW_IMAGE_JPEG: c_int = 1;
+const LIBRAW_IMAGE_BITMAP: c_int = 2;
+
+#[repr(C)]
+struct LibRawData {
+    _private: [u8; 0],
+}
+
+#[repr(C)]
+struct LibRawProcessedImage {
+    image_type: c_int,
+    height: u16,
+    width: u16,
+    colors: u16,
+    bits: u16,
+    data_size: u32,
+    data: [u8; 1],
+}
+
+unsafe extern "C" {
+    fn libraw_init(flags: c_uint) -> *mut LibRawData;
+    fn libraw_close(raw: *mut LibRawData);
+    fn libraw_open_file(raw: *mut LibRawData, path: *const c_char) -> c_int;
+    #[cfg(windows)]
+    fn libraw_open_wfile(raw: *mut LibRawData, path: *const u16) -> c_int;
+    fn libraw_unpack(raw: *mut LibRawData) -> c_int;
+    fn libraw_adjust_sizes_info_only(raw: *mut LibRawData) -> c_int;
+    fn libraw_dcraw_process(raw: *mut LibRawData) -> c_int;
+    fn libraw_dcraw_make_mem_image(
+        raw: *mut LibRawData,
+        error: *mut c_int,
+    ) -> *mut LibRawProcessedImage;
+    fn libraw_dcraw_make_mem_thumb(
+        raw: *mut LibRawData,
+        error: *mut c_int,
+    ) -> *mut LibRawProcessedImage;
+    fn libraw_dcraw_clear_mem(image: *mut LibRawProcessedImage);
+    fn libraw_get_iheight(raw: *mut LibRawData) -> c_int;
+    fn libraw_get_iwidth(raw: *mut LibRawData) -> c_int;
+    fn libraw_strerror(error: c_int) -> *const c_char;
+    fn oxy_libraw_configure_preview(raw: *mut LibRawData);
+    fn oxy_libraw_unpack_sized_thumb(raw: *mut LibRawData, target_size: c_uint) -> c_int;
+}
+
+pub fn dimensions(path: &Path) -> Result<super::ImageDimensions, String> {
+    let raw = Processor::open(path)?;
+    check(unsafe { libraw_adjust_sizes_info_only(raw.inner) })?;
+    let width = unsafe { libraw_get_iwidth(raw.inner) };
+    let height = unsafe { libraw_get_iheight(raw.inner) };
+    if width <= 0 || height <= 0 {
+        return Err(format!("invalid dimensions {width}x{height}"));
+    }
+    Ok(super::ImageDimensions {
+        width: width as u32,
+        height: height as u32,
+    })
+}
+
+pub fn preview(path: &Path, max_size: u32) -> Result<DynamicImage, String> {
+    match embedded_preview(path, max_size) {
+        Ok(image) => Ok(fit(image, max_size)),
+        Err(embedded_error) => developed_preview(path)
+            .map(|image| fit(image, max_size))
+            .map_err(|developed_error| {
+                format!(
+                    "embedded preview failed ({embedded_error}); RAW development failed ({developed_error})"
+                )
+            }),
+    }
+}
+
+fn embedded_preview(path: &Path, max_size: u32) -> Result<DynamicImage, String> {
+    let raw = Processor::open(path)?;
+    check(unsafe { oxy_libraw_unpack_sized_thumb(raw.inner, max_size) })?;
+    let image = ProcessedImage::thumbnail(&raw)?;
+    image.decode()
+}
+
+fn developed_preview(path: &Path) -> Result<DynamicImage, String> {
+    let raw = Processor::open(path)?;
+    unsafe { oxy_libraw_configure_preview(raw.inner) };
+    check(unsafe { libraw_unpack(raw.inner) })?;
+    check(unsafe { libraw_dcraw_process(raw.inner) })?;
+    let image = ProcessedImage::developed(&raw)?;
+    image.decode()
+}
+
+fn fit(image: DynamicImage, max_size: u32) -> DynamicImage {
+    if image.width() <= max_size && image.height() <= max_size {
+        image
+    } else {
+        image.resize(max_size, max_size, FilterType::Triangle)
+    }
+}
+
+struct Processor {
+    inner: *mut LibRawData,
+}
+
+impl Processor {
+    fn open(path: &Path) -> Result<Self, String> {
+        let inner = unsafe { libraw_init(LIBRAW_OPTIONS_NO_DATAERR_CALLBACK) };
+        if inner.is_null() {
+            return Err("initialization failed".into());
+        }
+        let processor = Self { inner };
+        processor.open_path(path)?;
+        Ok(processor)
+    }
+
+    #[cfg(unix)]
+    fn open_path(&self, path: &Path) -> Result<(), String> {
+        use std::os::unix::ffi::OsStrExt;
+
+        let path = CString::new(path.as_os_str().as_bytes())
+            .map_err(|_| "path contains a null byte".to_owned())?;
+        check(unsafe { libraw_open_file(self.inner, path.as_ptr()) })
+    }
+
+    #[cfg(windows)]
+    fn open_path(&self, path: &Path) -> Result<(), String> {
+        use std::os::windows::ffi::OsStrExt;
+
+        let path = path
+            .as_os_str()
+            .encode_wide()
+            .chain(std::iter::once(0))
+            .collect::<Vec<_>>();
+        check(unsafe { libraw_open_wfile(self.inner, path.as_ptr()) })
+    }
+
+    #[cfg(not(any(unix, windows)))]
+    fn open_path(&self, _path: &Path) -> Result<(), String> {
+        Err("platform path handling is not implemented".into())
+    }
+}
+
+impl Drop for Processor {
+    fn drop(&mut self) {
+        unsafe { libraw_close(self.inner) };
+    }
+}
+
+struct ProcessedImage {
+    inner: *mut LibRawProcessedImage,
+}
+
+impl ProcessedImage {
+    fn thumbnail(raw: &Processor) -> Result<Self, String> {
+        Self::make(|error| unsafe { libraw_dcraw_make_mem_thumb(raw.inner, error) })
+    }
+
+    fn developed(raw: &Processor) -> Result<Self, String> {
+        Self::make(|error| unsafe { libraw_dcraw_make_mem_image(raw.inner, error) })
+    }
+
+    fn make(make: impl FnOnce(*mut c_int) -> *mut LibRawProcessedImage) -> Result<Self, String> {
+        let mut error = LIBRAW_SUCCESS;
+        let inner = make(&mut error);
+        check(error)?;
+        if inner.is_null() {
+            return Err("LibRaw returned an empty image".into());
+        }
+        Ok(Self { inner })
+    }
+
+    fn decode(&self) -> Result<DynamicImage, String> {
+        let image = unsafe { &*self.inner };
+        let data = unsafe { slice::from_raw_parts(image.data.as_ptr(), image.data_size as usize) };
+        match image.image_type {
+            LIBRAW_IMAGE_JPEG => decode_jpeg(data),
+            LIBRAW_IMAGE_BITMAP => decode_bitmap(image, data),
+            image_type => Err(format!("unsupported LibRaw image type {image_type}")),
+        }
+    }
+}
+
+impl Drop for ProcessedImage {
+    fn drop(&mut self) {
+        unsafe { libraw_dcraw_clear_mem(self.inner) };
+    }
+}
+
+fn decode_jpeg(data: &[u8]) -> Result<DynamicImage, String> {
+    let reader = ImageReader::with_format(Cursor::new(data), ImageFormat::Jpeg);
+    let mut decoder = reader.into_decoder().map_err(|error| error.to_string())?;
+    let orientation = decoder.orientation().map_err(|error| error.to_string())?;
+    let mut image = DynamicImage::from_decoder(decoder).map_err(|error| error.to_string())?;
+    image.apply_orientation(orientation);
+    Ok(image)
+}
+
+fn decode_bitmap(image: &LibRawProcessedImage, data: &[u8]) -> Result<DynamicImage, String> {
+    if image.bits != 8 {
+        return Err(format!("unsupported bitmap bit depth {}", image.bits));
+    }
+    match image.colors {
+        3 => RgbImage::from_raw(image.width.into(), image.height.into(), data.to_vec())
+            .map(DynamicImage::ImageRgb8)
+            .ok_or_else(|| "invalid RGB bitmap length".into()),
+        4 => RgbaImage::from_raw(image.width.into(), image.height.into(), data.to_vec())
+            .map(DynamicImage::ImageRgba8)
+            .ok_or_else(|| "invalid RGBA bitmap length".into()),
+        colors => Err(format!("unsupported bitmap channel count {colors}")),
+    }
+}
+
+fn check(code: c_int) -> Result<(), String> {
+    if code == LIBRAW_SUCCESS {
+        return Ok(());
+    }
+    let message = unsafe {
+        let pointer = libraw_strerror(code);
+        (!pointer.is_null()).then(|| CStr::from_ptr(pointer).to_string_lossy().into_owned())
+    }
+    .unwrap_or_else(|| "unknown error".into());
+    Err(format!("{message} ({code})"))
+}

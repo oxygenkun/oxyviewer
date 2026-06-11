@@ -1,0 +1,15 @@
+[package]
+name = "oxy-metadata"
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+version.workspace = true
+
+[dependencies]
+oxy-domain = { path = "../oxy-domain" }
+oxy-fs = { path = "../oxy-fs" }
+thiserror.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true
+
