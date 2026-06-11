@@ -1,14 +1,14 @@
 use image::{
     DynamicImage, ImageDecoder, ImageFormat, ImageReader, RgbImage, RgbaImage, imageops::FilterType,
 };
+#[cfg(unix)]
+use std::ffi::CString;
 use std::{
     ffi::{CStr, c_char, c_int, c_uint},
     io::Cursor,
     path::Path,
     slice,
 };
-#[cfg(unix)]
-use std::ffi::CString;
 
 const LIBRAW_OPTIONS_NO_DATAERR_CALLBACK: c_uint = 1 << 1;
 const LIBRAW_SUCCESS: c_int = 0;

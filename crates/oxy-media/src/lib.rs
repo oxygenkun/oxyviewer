@@ -1,6 +1,8 @@
 mod libraw;
 
 use image::{DynamicImage, ImageReader, codecs::jpeg::JpegEncoder};
+#[cfg(target_os = "macos")]
+use std::process::{Command, Stdio};
 use std::{
     collections::hash_map::DefaultHasher,
     fs::{self, File},
@@ -9,8 +11,6 @@ use std::{
     path::{Path, PathBuf},
     sync::Mutex,
 };
-#[cfg(target_os = "macos")]
-use std::process::{Command, Stdio};
 use tempfile::NamedTempFile;
 use thiserror::Error;
 
