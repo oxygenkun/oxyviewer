@@ -1,6 +1,6 @@
 import { useInfiniteQuery, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Aperture, CircleAlert, FolderOpen, RectangleHorizontal, RectangleVertical } from "lucide-react";
-import { useCallback, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { AssetBrowser } from "./components/AssetBrowser";
 import { EmptyState } from "./components/EmptyState";
 import { Inspector } from "./components/Inspector";
@@ -15,6 +15,7 @@ import {
   openFolder,
   refreshDirectory,
 } from "./lib/api";
+import type { Locale } from "./lib/i18n";
 import { translate } from "./lib/i18n";
 import { useWorkspaceStore } from "./store";
 import type { AssetQuery, FolderSession } from "./types";
@@ -27,9 +28,20 @@ export function App() {
   const queryClient = useQueryClient();
   const {
     view, gridPreference, activeId, selectedIds, inspectorOpen, leftPanelOpen, locale,
-    search, kind, sort, direction, clearSelection, setGridPreference,
+    search, kind, sort, direction, clearSelection, setGridPreference, setLocale,
   } = useWorkspaceStore();
   const t = useCallback((key: Parameters<typeof translate>[1]) => translate(locale, key), [locale]);
+
+  useEffect(() => {
+    if (!isTauri()) return;
+    let unlisten: (() => void) | undefined;
+    import("@tauri-apps/api/event").then(({ listen }) =>
+      listen<string>("locale-changed", (event) => setLocale(event.payload as Locale)).then(
+        (fn) => { unlisten = fn; },
+      ),
+    );
+    return () => { unlisten?.(); };
+  }, [setLocale]);
 
   const query = useMemo<AssetQuery>(() => ({
     search: search || undefined,
@@ -123,19 +135,17 @@ export function App() {
     <div
       className={`app-shell ${leftPanelOpen ? "" : "sidebar-collapsed"} ${inspectorOpen ? "" : "inspector-collapsed"}`}
     >
-      {leftPanelOpen ? (
-        <Sidebar
-          session={session}
-          currentPath={currentPath ?? session.rootPath}
-          libraryRoots={libraryQuery.data ?? []}
-          onOpen={handleOpen}
-          onNavigate={handleNavigate}
-          onRefresh={handleRefresh}
-          isRefreshing={isRefreshing}
-          onAddLibrary={handleAddLibrary}
-          t={t}
-        />
-      ) : null}
+      <Sidebar
+        session={session}
+        currentPath={currentPath ?? session.rootPath}
+        libraryRoots={libraryQuery.data ?? []}
+        onOpen={handleOpen}
+        onNavigate={handleNavigate}
+        onRefresh={handleRefresh}
+        isRefreshing={isRefreshing}
+        onAddLibrary={handleAddLibrary}
+        t={t}
+      />
       <section className="workspace">
         <Toolbar total={total} t={t} />
         {assetsQuery.isLoading ? (
@@ -181,7 +191,7 @@ export function App() {
           <span>{selectedIds.length} {t("selected")}</span>
         </footer>
       </section>
-      {inspectorOpen ? <Inspector asset={activeAsset} selectedCount={selectedIds.length} t={t} /> : null}
+      <Inspector asset={activeAsset} selectedCount={selectedIds.length} t={t} />
       {error ? <button className="error-toast" onClick={() => setError(undefined)}><CircleAlert size={16} />{error}<span>×</span></button> : null}
     </div>
   );

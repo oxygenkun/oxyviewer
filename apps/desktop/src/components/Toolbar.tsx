@@ -3,11 +3,11 @@ import {
   ArrowDownUp,
   Columns3,
   Grid3X3,
-  Info,
-  Languages,
   List,
   PanelLeftClose,
   PanelLeftOpen,
+  PanelRightClose,
+  PanelRightOpen,
   Search,
   SlidersHorizontal,
   X,
@@ -32,7 +32,6 @@ export function Toolbar({ total, t }: ToolbarProps) {
   const {
     view, setView, search, setSearch, kind, setKind, sort, setSort, direction,
     toggleDirection, inspectorOpen, toggleInspector, leftPanelOpen, toggleLeftPanel,
-    locale, setLocale,
   } = useWorkspaceStore();
 
   return (
@@ -68,14 +67,7 @@ export function Toolbar({ total, t }: ToolbarProps) {
           ))}
         </div>
         <button className="icon-button" onClick={toggleInspector} title={t("inspector")}>
-          <Info size={16} className={inspectorOpen ? "accent-icon" : ""} />
-        </button>
-        <button
-          className="icon-button"
-          onClick={() => setLocale(locale === "zh-CN" ? "en" : "zh-CN")}
-          title="中文 / English"
-        >
-          <Languages size={16} />
+          {inspectorOpen ? <PanelRightClose size={16} /> : <PanelRightOpen size={16} />}
         </button>
       </header>
       <div className="filterbar">

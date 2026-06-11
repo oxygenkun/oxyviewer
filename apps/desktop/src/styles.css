@@ -39,9 +39,13 @@ body {
   height: 100%;
   background: var(--bg);
 }
-.app-shell.sidebar-collapsed { grid-template-columns: minmax(0, 1fr) 266px; }
-.app-shell.inspector-collapsed { grid-template-columns: 224px minmax(0, 1fr); }
-.app-shell.sidebar-collapsed.inspector-collapsed { grid-template-columns: minmax(0, 1fr); }
+.app-shell.sidebar-collapsed { grid-template-columns: 0px minmax(0, 1fr) 266px; }
+.app-shell.sidebar-collapsed .sidebar { padding: 0; border-right-width: 0; }
+.app-shell.inspector-collapsed { grid-template-columns: 224px minmax(0, 1fr) 0px; }
+.app-shell.inspector-collapsed .inspector { border-left-width: 0; }
+.app-shell.sidebar-collapsed.inspector-collapsed { grid-template-columns: 0px minmax(0, 1fr) 0px; }
+.app-shell.sidebar-collapsed.inspector-collapsed .sidebar { padding: 0; border-right-width: 0; }
+.app-shell.sidebar-collapsed.inspector-collapsed .inspector { border-left-width: 0; }
 .app-shell--empty { display: block; position: relative; }
 
 .sidebar {
@@ -888,7 +892,11 @@ body {
 
 @media (max-width: 1180px) {
   .app-shell { grid-template-columns: 200px minmax(0, 1fr) 240px; }
-  .app-shell.inspector-collapsed { grid-template-columns: 200px minmax(0, 1fr); }
+  .app-shell.sidebar-collapsed { grid-template-columns: 0px minmax(0, 1fr) 240px; }
+  .app-shell.sidebar-collapsed .sidebar { padding: 0; border-right-width: 0; }
+  .app-shell.inspector-collapsed { grid-template-columns: 200px minmax(0, 1fr) 0px; }
+  .app-shell.inspector-collapsed .inspector { border-left-width: 0; }
+  .app-shell.sidebar-collapsed.inspector-collapsed { grid-template-columns: 0px minmax(0, 1fr) 0px; }
   .search-field { width: min(310px, 34vw); }
 }
 
