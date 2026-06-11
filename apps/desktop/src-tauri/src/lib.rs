@@ -206,18 +206,24 @@ pub fn run() {
             });
 
             let locale_zh = tauri::menu::CheckMenuItem::with_id(
-                app, "locale-zh-cn", "中文", true, true, None::<&str>,
+                app,
+                "locale-zh-cn",
+                "中文",
+                true,
+                true,
+                None::<&str>,
             )?;
             let locale_en = tauri::menu::CheckMenuItem::with_id(
-                app, "locale-en", "English", true, false, None::<&str>,
+                app,
+                "locale-en",
+                "English",
+                true,
+                false,
+                None::<&str>,
             )?;
-            let appearance = tauri::menu::Submenu::new(
-                app, "外观 Appearance", true,
-            )?;
+            let appearance = tauri::menu::Submenu::new(app, "外观 Appearance", true)?;
             appearance.append_items(&[&locale_zh, &locale_en])?;
-            let settings = tauri::menu::Submenu::new(
-                app, "设置 Settings", true,
-            )?;
+            let settings = tauri::menu::Submenu::new(app, "设置 Settings", true)?;
             settings.append_items(&[&appearance])?;
             let menu = tauri::menu::Menu::with_items(app, &[&settings])?;
             app.set_menu(menu)?;
