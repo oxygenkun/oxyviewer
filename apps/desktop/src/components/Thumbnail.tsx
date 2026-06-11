@@ -1,6 +1,7 @@
 import { useQuery } from "@tanstack/react-query";
 import { useEffect, useMemo, useState } from "react";
 import { generatedPreviewUrl, isTauri, previewUrl } from "../lib/api";
+import { previewStages } from "../lib/preview";
 import type { AssetSummary } from "../types";
 
 interface ThumbnailProps {
@@ -20,15 +21,24 @@ function hashSeed(value: string) {
 export function Thumbnail({ asset, large = false, onImageLoad }: ThumbnailProps) {
   const [failed, setFailed] = useState(false);
   const directSource = useMemo(() => previewUrl(asset), [asset]);
-  const maxSize = large ? 4_096 : 512;
-  const generatedSource = useQuery({
-    queryKey: ["asset-preview", asset.id, asset.modifiedAtMs, maxSize],
-    queryFn: () => generatedPreviewUrl(asset, maxSize),
+  const stages = previewStages(large);
+  const thumbnailSize = stages[0];
+  const loupeSize = stages.length > 1 ? stages[1] : undefined;
+  const thumbnailSource = useQuery({
+    queryKey: ["asset-preview", asset.id, asset.modifiedAtMs, thumbnailSize],
+    queryFn: () => generatedPreviewUrl(asset, thumbnailSize),
     enabled: isTauri() && !directSource,
     staleTime: Infinity,
     retry: 0,
   });
-  const source = directSource ?? generatedSource.data;
+  const loupeSource = useQuery({
+    queryKey: ["asset-preview", asset.id, asset.modifiedAtMs, loupeSize],
+    queryFn: () => generatedPreviewUrl(asset, loupeSize ?? thumbnailSize),
+    enabled: isTauri() && !directSource && Boolean(loupeSize && thumbnailSource.data),
+    staleTime: Infinity,
+    retry: 0,
+  });
+  const source = directSource ?? loupeSource.data ?? thumbnailSource.data;
   const seed = hashSeed(asset.name);
   const style = {
     "--thumb-hue": `${seed}`,

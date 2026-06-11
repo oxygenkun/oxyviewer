@@ -15,6 +15,11 @@ const LIBRAW_SUCCESS: c_int = 0;
 const LIBRAW_IMAGE_JPEG: c_int = 1;
 const LIBRAW_IMAGE_BITMAP: c_int = 2;
 
+pub enum Preview {
+    EmbeddedJpeg(Vec<u8>),
+    Image(DynamicImage),
+}
+
 #[repr(C)]
 struct LibRawData {
     _private: [u8; 0],
@@ -71,11 +76,18 @@ pub fn dimensions(path: &Path) -> Result<super::ImageDimensions, String> {
     })
 }
 
-pub fn preview(path: &Path, max_size: u32) -> Result<DynamicImage, String> {
+pub fn preview(
+    path: &Path,
+    max_size: u32,
+    preserve_embedded_jpeg: bool,
+) -> Result<Preview, String> {
     match embedded_preview(path, max_size) {
-        Ok(image) => Ok(fit(image, max_size)),
+        Ok(image) if preserve_embedded_jpeg && image.image_type() == LIBRAW_IMAGE_JPEG => {
+            Ok(Preview::EmbeddedJpeg(image.data().to_vec()))
+        }
+        Ok(image) => image.decode().map(|image| Preview::Image(fit(image, max_size))),
         Err(embedded_error) => developed_preview(path)
-            .map(|image| fit(image, max_size))
+            .map(|image| Preview::Image(fit(image, max_size)))
             .map_err(|developed_error| {
                 format!(
                     "embedded preview failed ({embedded_error}); RAW development failed ({developed_error})"
@@ -84,11 +96,10 @@ pub fn preview(path: &Path, max_size: u32) -> Result<DynamicImage, String> {
     }
 }
 
-fn embedded_preview(path: &Path, max_size: u32) -> Result<DynamicImage, String> {
+fn embedded_preview(path: &Path, max_size: u32) -> Result<ProcessedImage, String> {
     let raw = Processor::open(path)?;
     check(unsafe { oxy_libraw_unpack_sized_thumb(raw.inner, max_size) })?;
-    let image = ProcessedImage::thumbnail(&raw)?;
-    image.decode()
+    ProcessedImage::thumbnail(&raw)
 }
 
 fn developed_preview(path: &Path) -> Result<DynamicImage, String> {
@@ -181,12 +192,21 @@ impl ProcessedImage {
 
     fn decode(&self) -> Result<DynamicImage, String> {
         let image = unsafe { &*self.inner };
-        let data = unsafe { slice::from_raw_parts(image.data.as_ptr(), image.data_size as usize) };
-        match image.image_type {
+        let data = self.data();
+        match self.image_type() {
             LIBRAW_IMAGE_JPEG => decode_jpeg(data),
             LIBRAW_IMAGE_BITMAP => decode_bitmap(image, data),
             image_type => Err(format!("unsupported LibRaw image type {image_type}")),
         }
+    }
+
+    fn image_type(&self) -> c_int {
+        unsafe { (*self.inner).image_type }
+    }
+
+    fn data(&self) -> &[u8] {
+        let image = unsafe { &*self.inner };
+        unsafe { slice::from_raw_parts(image.data.as_ptr(), image.data_size as usize) }
     }
 }
 

@@ -7,14 +7,14 @@ use std::{
     collections::hash_map::DefaultHasher,
     fs::{self, File},
     hash::{Hash, Hasher},
-    io::BufReader,
+    io::{BufReader, Write},
     path::{Path, PathBuf},
     sync::Mutex,
 };
 use tempfile::NamedTempFile;
 use thiserror::Error;
 
-const LIBRAW_CACHE_VERSION: &str = "libraw-0.22.1-v3";
+const LIBRAW_CACHE_VERSION: &str = "libraw-0.22.1-v4";
 const SYSTEM_CACHE_VERSION: &str = "system-preview-v2";
 const LOUPE_PREVIEW_THRESHOLD: u32 = 2_048;
 static RAW_THUMBNAIL_DECODE_LOCK: Mutex<()> = Mutex::new(());
@@ -80,11 +80,17 @@ pub fn raw_preview(path: &Path, cache_dir: &Path, max_size: u32) -> Result<PathB
         return Ok(destination);
     }
 
-    let preview = libraw::preview(path, max_size).map_err(|message| MediaError::LibRaw {
-        path: path.to_owned(),
-        message,
+    let preserve_embedded_jpeg = max_size >= LOUPE_PREVIEW_THRESHOLD;
+    let preview = libraw::preview(path, max_size, preserve_embedded_jpeg).map_err(|message| {
+        MediaError::LibRaw {
+            path: path.to_owned(),
+            message,
+        }
     })?;
-    write_jpeg_atomically(&preview, &destination)?;
+    match preview {
+        libraw::Preview::EmbeddedJpeg(data) => write_bytes_atomically(&data, &destination)?,
+        libraw::Preview::Image(image) => write_jpeg_atomically(&image, &destination)?,
+    }
     Ok(destination)
 }
 
@@ -116,6 +122,17 @@ fn write_jpeg_atomically(image: &DynamicImage, destination: &Path) -> Result<(),
     let mut temporary =
         NamedTempFile::new_in(destination.parent().unwrap_or_else(|| Path::new(".")))?;
     JpegEncoder::new_with_quality(&mut temporary, 90).encode_image(image)?;
+    persist_atomically(temporary, destination)
+}
+
+fn write_bytes_atomically(data: &[u8], destination: &Path) -> Result<(), MediaError> {
+    let mut temporary =
+        NamedTempFile::new_in(destination.parent().unwrap_or_else(|| Path::new(".")))?;
+    temporary.write_all(data)?;
+    persist_atomically(temporary, destination)
+}
+
+fn persist_atomically(temporary: NamedTempFile, destination: &Path) -> Result<(), MediaError> {
     temporary.as_file().sync_all()?;
 
     match temporary.persist_noclobber(destination) {
@@ -178,6 +195,18 @@ fn generate_system_preview(
 mod tests {
     use super::*;
     use image::{Rgb, RgbImage};
+    use std::time::{Duration, Instant};
+
+    fn workspace_path(path: impl AsRef<Path>) -> PathBuf {
+        let path = path.as_ref();
+        if path.is_absolute() {
+            path.to_owned()
+        } else {
+            Path::new(env!("CARGO_MANIFEST_DIR"))
+                .join("../..")
+                .join(path)
+        }
+    }
 
     #[test]
     fn cache_key_changes_with_backend_and_size() {
@@ -213,9 +242,21 @@ mod tests {
     }
 
     #[test]
+    fn raw_preview_reports_embedded_and_development_failures() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("broken.arw");
+        fs::write(&path, b"not a raw image").unwrap();
+
+        let error = libraw::preview(&path, 4_096, true).err().unwrap();
+        assert!(error.contains("embedded preview failed"));
+        assert!(error.contains("RAW development failed"));
+    }
+
+    #[test]
     #[ignore = "requires OXY_RAW_FIXTURE to point to a camera RAW file"]
     fn extracts_preview_from_raw_fixture() {
-        let raw_path = PathBuf::from(std::env::var_os("OXY_RAW_FIXTURE").unwrap());
+        let raw_path =
+            fs::canonicalize(workspace_path(std::env::var_os("OXY_RAW_FIXTURE").unwrap())).unwrap();
         let directory = tempfile::tempdir().unwrap();
 
         let raw_size = raw_dimensions(&raw_path).unwrap();
@@ -230,5 +271,108 @@ mod tests {
             "preview orientation must match RAW output dimensions"
         );
         assert!(preview_path.is_file());
+    }
+
+    #[test]
+    #[ignore = "requires OXY_RAW_FIXTURE to point to a camera RAW file with an embedded JPEG"]
+    fn preserves_embedded_jpeg_for_loupe_fixture() {
+        let raw_path =
+            fs::canonicalize(workspace_path(std::env::var_os("OXY_RAW_FIXTURE").unwrap())).unwrap();
+        let directory = tempfile::tempdir().unwrap();
+        let embedded = match libraw::preview(&raw_path, 4_096, true).unwrap() {
+            libraw::Preview::EmbeddedJpeg(data) => data,
+            libraw::Preview::Image(_) => panic!("fixture did not expose an embedded JPEG"),
+        };
+
+        let preview_path = raw_preview(&raw_path, directory.path(), 4_096).unwrap();
+        assert_eq!(fs::read(&preview_path).unwrap(), embedded);
+
+        let raw_size = raw_dimensions(&raw_path).unwrap();
+        let preview_size = dimensions(&preview_path).unwrap();
+        assert_eq!(
+            raw_size.width >= raw_size.height,
+            preview_size.width >= preview_size.height,
+            "direct embedded preview orientation must match RAW output dimensions"
+        );
+
+        assert!(
+            matches!(
+                libraw::preview(&raw_path, 512, false).unwrap(),
+                libraw::Preview::Image(_)
+            ),
+            "thumbnail requests must keep the resize and re-encode path"
+        );
+    }
+
+    #[test]
+    #[ignore = "requires local ARW/HIF fixtures; run explicitly in release mode"]
+    fn fixture_preview_performance_budgets() {
+        let fixture_dir = std::env::var_os("OXY_MEDIA_FIXTURE_DIR")
+            .map(workspace_path)
+            .unwrap_or_else(|| {
+                Path::new(env!("CARGO_MANIFEST_DIR")).join("../../test/fixtures/media")
+            });
+        let mut fixtures = fs::read_dir(&fixture_dir)
+            .unwrap_or_else(|error| panic!("failed to read {}: {error}", fixture_dir.display()))
+            .filter_map(Result::ok)
+            .map(|entry| entry.path())
+            .filter(|path| {
+                matches!(
+                    path.extension()
+                        .and_then(|extension| extension.to_str())
+                        .map(str::to_ascii_lowercase)
+                        .as_deref(),
+                    Some("arw") | Some("hif")
+                )
+            })
+            .collect::<Vec<_>>();
+        fixtures.sort();
+        assert!(!fixtures.is_empty(), "no ARW/HIF fixtures found");
+
+        for fixture in fixtures {
+            let cache = tempfile::tempdir().unwrap();
+            let preview = |size| {
+                if fixture
+                    .extension()
+                    .is_some_and(|extension| extension.eq_ignore_ascii_case("arw"))
+                {
+                    raw_preview(&fixture, cache.path(), size)
+                } else {
+                    system_preview(&fixture, cache.path(), size)
+                }
+            };
+
+            let thumbnail_started = Instant::now();
+            preview(512).unwrap();
+            let thumbnail_elapsed = thumbnail_started.elapsed();
+
+            let loupe_started = Instant::now();
+            let loupe_path = preview(4_096).unwrap();
+            let loupe_elapsed = loupe_started.elapsed();
+
+            let warm_started = Instant::now();
+            assert_eq!(preview(4_096).unwrap(), loupe_path);
+            let warm_elapsed = warm_started.elapsed();
+
+            eprintln!(
+                "{}: thumbnail={thumbnail_elapsed:?} loupe={loupe_elapsed:?} warm={warm_elapsed:?}",
+                fixture.display()
+            );
+            assert!(
+                thumbnail_elapsed < Duration::from_millis(800),
+                "{} thumbnail took {thumbnail_elapsed:?}",
+                fixture.display()
+            );
+            assert!(
+                loupe_elapsed < Duration::from_millis(800),
+                "{} loupe took {loupe_elapsed:?}",
+                fixture.display()
+            );
+            assert!(
+                warm_elapsed < Duration::from_millis(150),
+                "{} warm cache took {warm_elapsed:?}",
+                fixture.display()
+            );
+        }
     }
 }
