@@ -52,7 +52,17 @@ export function AssetBrowser(props: AssetBrowserProps) {
       </div>
     );
   }
-  if (props.view === "loupe") return <Loupe assets={props.assets} t={props.t} />;
+  if (props.view === "loupe") {
+    return (
+      <Loupe
+        assets={props.assets}
+        fetchNextPage={props.fetchNextPage}
+        hasNextPage={props.hasNextPage}
+        isFetchingNextPage={props.isFetchingNextPage}
+        t={props.t}
+      />
+    );
+  }
   if (props.view === "list") return <VirtualList {...props} />;
   return <VirtualGrid {...props} />;
 }

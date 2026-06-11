@@ -36,6 +36,9 @@ import { Thumbnail } from "./Thumbnail";
 
 interface LoupeProps {
   assets: AssetSummary[];
+  fetchNextPage: () => void;
+  hasNextPage: boolean;
+  isFetchingNextPage: boolean;
   t: (key: MessageKey) => string;
 }
 
@@ -58,7 +61,13 @@ function elementContentSize(element: HTMLElement): Size {
   };
 }
 
-export function Loupe({ assets, t }: LoupeProps) {
+export function Loupe({
+  assets,
+  fetchNextPage,
+  hasNextPage,
+  isFetchingNextPage,
+  t,
+}: LoupeProps) {
   const activeId = useWorkspaceStore((state) => state.activeId);
   const select = useWorkspaceStore((state) => state.select);
   const navigatorVisible = useWorkspaceStore((state) => state.navigatorVisible);
@@ -69,6 +78,7 @@ export function Loupe({ assets, t }: LoupeProps) {
   const stageRef = useRef<HTMLDivElement>(null);
   const imageRef = useRef<HTMLDivElement>(null);
   const navigatorRef = useRef<HTMLDivElement>(null);
+  const filmstripRef = useRef<HTMLDivElement>(null);
   const dragRef = useRef<{ pointerId: number; start: Point; offset: Point } | undefined>(undefined);
   const navigatorDragRef = useRef<number | undefined>(undefined);
   const [zoom, setZoom] = useState(1);
@@ -343,24 +353,79 @@ export function Loupe({ assets, t }: LoupeProps) {
       </div>
       <div
         className="filmstrip"
+        ref={filmstripRef}
+        onScroll={(event) => {
+          const strip = event.currentTarget;
+          if (
+            hasNextPage
+            && !isFetchingNextPage
+            && strip.scrollLeft + strip.clientWidth >= strip.scrollWidth - 400
+          ) {
+            fetchNextPage();
+          }
+        }}
         onWheel={(event) => {
           if (event.deltaY === 0) return;
           event.preventDefault();
           event.currentTarget.scrollLeft += event.deltaX + event.deltaY;
         }}
       >
-        {assets.slice(0, 40).map((asset) => (
-          <button
+        {assets.map((asset) => (
+          <FilmstripItem
             key={asset.id}
-            className={active.id === asset.id ? "is-active" : ""}
+            active={active.id === asset.id}
+            asset={asset}
             onClick={() => select(asset.id)}
-            title={asset.name}
-          >
-            <Thumbnail asset={asset} />
-          </button>
+            root={filmstripRef}
+          />
         ))}
+        {isFetchingNextPage ? <span className="filmstrip__loading">Loading...</span> : null}
       </div>
     </div>
+  );
+}
+
+interface FilmstripItemProps {
+  active: boolean;
+  asset: AssetSummary;
+  onClick: () => void;
+  root: React.RefObject<HTMLDivElement | null>;
+}
+
+function FilmstripItem({ active, asset, onClick, root }: FilmstripItemProps) {
+  const itemRef = useRef<HTMLButtonElement>(null);
+  const [visible, setVisible] = useState(active);
+
+  useEffect(() => {
+    const item = itemRef.current;
+    if (!item || !root.current || typeof IntersectionObserver === "undefined") {
+      setVisible(true);
+      return;
+    }
+    const observer = new IntersectionObserver(
+      ([entry]) => setVisible(entry.isIntersecting),
+      { root: root.current, rootMargin: "0px 320px" },
+    );
+    observer.observe(item);
+    return () => observer.disconnect();
+  }, [root]);
+
+  useEffect(() => {
+    if (active) {
+      setVisible(true);
+      itemRef.current?.scrollIntoView({ block: "nearest", inline: "nearest" });
+    }
+  }, [active]);
+
+  return (
+    <button
+      ref={itemRef}
+      className={active ? "is-active" : ""}
+      onClick={onClick}
+      title={asset.name}
+    >
+      <Thumbnail asset={asset} enabled={visible || active} />
+    </button>
   );
 }
 

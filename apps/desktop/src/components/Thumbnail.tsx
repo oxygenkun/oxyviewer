@@ -7,6 +7,7 @@ import type { AssetSummary, PreviewResult } from "../types";
 
 interface ThumbnailProps {
   asset: AssetSummary;
+  enabled?: boolean;
   large?: boolean;
   onImageLoad?: (size: { width: number; height: number }) => void;
   onRawPreviewStatus?: (status: RawPreviewStatus) => void;
@@ -22,6 +23,7 @@ function hashSeed(value: string) {
 
 export function Thumbnail({
   asset,
+  enabled = true,
   large = false,
   onImageLoad,
   onRawPreviewStatus,
@@ -36,21 +38,22 @@ export function Thumbnail({
   const thumbnailSource = useQuery({
     queryKey: ["asset-preview", asset.id, asset.modifiedAtMs, thumbnailSize],
     queryFn: () => generatedPreview(asset, "thumbnail", thumbnailSize),
-    enabled: isTauri() && !directSource,
+    enabled: enabled && isTauri() && !directSource,
     staleTime: Infinity,
     retry: 0,
   });
   const loupeSource = useQuery({
     queryKey: ["asset-preview", asset.id, asset.modifiedAtMs, loupeSize],
     queryFn: () => generatedPreview(asset, "loupePreview", loupeSize ?? thumbnailSize),
-    enabled: isTauri() && !directSource && Boolean(loupeSize && thumbnailSource.data),
+    enabled: enabled && isTauri() && !directSource && Boolean(loupeSize && thumbnailSource.data),
     staleTime: Infinity,
     retry: 0,
   });
   const fullSource = useQuery({
     queryKey: ["asset-preview", asset.id, asset.modifiedAtMs, "fullRaw"],
     queryFn: () => generatedPreview(asset, "fullRaw"),
-    enabled: isTauri()
+    enabled: enabled
+      && isTauri()
       && asset.kind === "raw"
       && large
       && Boolean(loupeSource.data || loupeSource.isError),
