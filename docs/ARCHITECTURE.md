@@ -49,3 +49,7 @@ paged IPC contract and the frontend virtualizes loaded pages. It deliberately
 does not recurse or index a folder during open. Filesystem watcher events,
 background thumbnail scheduling, and measured 100k-directory tuning are the
 next Phase 1/2 steps.
+
+Visited directories have a rebuildable, in-memory snapshot cache in `oxy-fs`.
+Asset pagination, sorting, and filtering reuse that non-recursive snapshot
+until the user explicitly refreshes the current folder.

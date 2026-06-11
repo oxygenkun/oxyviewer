@@ -120,6 +120,11 @@ export async function listDirectories(
   return invoke<DirectorySummary[]>("list_directories", { sessionId, directory });
 }
 
+export async function refreshDirectory(sessionId: string, directory: string): Promise<void> {
+  if (!isTauri()) return;
+  await invoke("refresh_directory", { sessionId, directory });
+}
+
 export async function getAssetDetails(asset: AssetSummary): Promise<AssetDetails> {
   if (!isTauri()) {
     return {

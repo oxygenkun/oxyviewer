@@ -10,7 +10,7 @@ use std::{path::PathBuf, sync::Arc};
 use tauri::{Manager, State};
 
 struct AppState {
-    files: FsCatalog,
+    files: Arc<FsCatalog>,
     jobs: JobRegistry,
     library: Arc<Library>,
     preview_dir: PathBuf,
@@ -25,28 +25,48 @@ fn open_folder(path: PathBuf, state: State<'_, AppState>) -> Result<FolderSessio
 }
 
 #[tauri::command]
-fn list_assets(
+async fn list_assets(
     session_id: String,
     directory: Option<PathBuf>,
     query: AssetQuery,
     cursor: Option<usize>,
     state: State<'_, AppState>,
 ) -> Result<Page<AssetSummary>, String> {
-    state
-        .files
-        .list_assets(&session_id, directory.as_deref(), &query, cursor)
-        .map_err(|error| error.to_string())
+    let files = state.files.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        files
+            .list_assets(&session_id, directory.as_deref(), &query, cursor)
+            .map_err(|error| error.to_string())
+    })
+    .await
+    .map_err(|error| error.to_string())?
 }
 
 #[tauri::command]
-fn list_directories(
+async fn list_directories(
     session_id: String,
     directory: Option<PathBuf>,
     state: State<'_, AppState>,
 ) -> Result<Vec<DirectorySummary>, String> {
+    let files = state.files.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        files
+            .list_directories(&session_id, directory.as_deref())
+            .map_err(|error| error.to_string())
+    })
+    .await
+    .map_err(|error| error.to_string())?
+}
+
+#[tauri::command]
+fn refresh_directory(
+    session_id: String,
+    directory: Option<PathBuf>,
+    state: State<'_, AppState>,
+) -> Result<(), String> {
     state
         .files
-        .list_directories(&session_id, directory.as_deref())
+        .refresh_directory(&session_id, directory.as_deref())
         .map_err(|error| error.to_string())
 }
 
@@ -163,7 +183,7 @@ pub fn run() {
             let preview_dir = app.path().app_cache_dir()?.join("previews");
             let library = Library::open(&data_dir.join("oxyviewer.sqlite"))?;
             app.manage(AppState {
-                files: FsCatalog::default(),
+                files: Arc::new(FsCatalog::default()),
                 jobs: JobRegistry::default(),
                 library: Arc::new(library),
                 preview_dir,
@@ -174,6 +194,7 @@ pub fn run() {
             open_folder,
             list_assets,
             list_directories,
+            refresh_directory,
             get_asset_details,
             get_preview,
             patch_metadata,

@@ -6,7 +6,15 @@ import { EmptyState } from "./components/EmptyState";
 import { Inspector } from "./components/Inspector";
 import { Sidebar } from "./components/Sidebar";
 import { Toolbar } from "./components/Toolbar";
-import { addLibraryRoot, chooseFolder, isTauri, listAssets, listLibraryRoots, openFolder } from "./lib/api";
+import {
+  addLibraryRoot,
+  chooseFolder,
+  isTauri,
+  listAssets,
+  listLibraryRoots,
+  openFolder,
+  refreshDirectory,
+} from "./lib/api";
 import { translate } from "./lib/i18n";
 import { useWorkspaceStore } from "./store";
 import type { AssetQuery, FolderSession } from "./types";
@@ -15,6 +23,7 @@ export function App() {
   const [session, setSession] = useState<FolderSession>();
   const [currentPath, setCurrentPath] = useState<string>();
   const [error, setError] = useState<string>();
+  const [isRefreshing, setIsRefreshing] = useState(false);
   const queryClient = useQueryClient();
   const {
     view, gridPreference, activeId, selectedIds, inspectorOpen, leftPanelOpen, locale,
@@ -36,6 +45,7 @@ export function App() {
     initialPageParam: 0,
     getNextPageParam: (page) => page.nextCursor,
     enabled: Boolean(session && currentPath),
+    staleTime: Infinity,
   });
   const assets = useMemo(
     () => assetsQuery.data?.pages.flatMap((page) => page.items) ?? [],
@@ -68,6 +78,27 @@ export function App() {
     setCurrentPath(path);
   }, [clearSelection]);
 
+  const handleRefresh = useCallback(async () => {
+    if (!session || !currentPath || isRefreshing) return;
+    setError(undefined);
+    setIsRefreshing(true);
+    try {
+      await Promise.all([
+        queryClient.cancelQueries({ queryKey: ["assets", session.id, currentPath] }),
+        queryClient.cancelQueries({ queryKey: ["directories", session.id, currentPath] }),
+      ]);
+      await refreshDirectory(session.id, currentPath);
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: ["assets", session.id, currentPath] }),
+        queryClient.invalidateQueries({ queryKey: ["directories", session.id, currentPath] }),
+      ]);
+    } catch (cause) {
+      setError(String(cause));
+    } finally {
+      setIsRefreshing(false);
+    }
+  }, [currentPath, isRefreshing, queryClient, session]);
+
   const handleAddLibrary = useCallback(async () => {
     if (!session) return;
     try {
@@ -99,6 +130,8 @@ export function App() {
           libraryRoots={libraryQuery.data ?? []}
           onOpen={handleOpen}
           onNavigate={handleNavigate}
+          onRefresh={handleRefresh}
+          isRefreshing={isRefreshing}
           onAddLibrary={handleAddLibrary}
           t={t}
         />

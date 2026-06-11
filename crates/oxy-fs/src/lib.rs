@@ -9,6 +9,7 @@ use std::{
     fs,
     hash::{Hash, Hasher},
     path::{Path, PathBuf},
+    sync::Arc,
     time::{SystemTime, UNIX_EPOCH},
 };
 use thiserror::Error;
@@ -37,6 +38,8 @@ pub enum FsError {
 #[derive(Default)]
 pub struct FsCatalog {
     sessions: RwLock<HashMap<String, PathBuf>>,
+    asset_cache: RwLock<HashMap<PathBuf, Arc<Vec<AssetSummary>>>>,
+    directory_cache: RwLock<HashMap<PathBuf, Arc<Vec<DirectorySummary>>>>,
 }
 
 impl FsCatalog {
@@ -72,7 +75,8 @@ impl FsCatalog {
         cursor: Option<usize>,
     ) -> Result<Page<AssetSummary>, FsError> {
         let directory = self.resolve_session_directory(session_id, directory)?;
-        scan_directory(&directory, query, cursor.unwrap_or(0))
+        let assets = self.cached_assets(&directory)?;
+        Ok(page_assets(&assets, query, cursor.unwrap_or(0)))
     }
 
     pub fn list_directories(
@@ -81,7 +85,19 @@ impl FsCatalog {
         directory: Option<&Path>,
     ) -> Result<Vec<DirectorySummary>, FsError> {
         let directory = self.resolve_session_directory(session_id, directory)?;
-        list_directories(&directory)
+        let directories = self.cached_directories(&directory)?;
+        Ok(directories.as_ref().clone())
+    }
+
+    pub fn refresh_directory(
+        &self,
+        session_id: &str,
+        directory: Option<&Path>,
+    ) -> Result<(), FsError> {
+        let directory = self.resolve_session_directory(session_id, directory)?;
+        self.asset_cache.write().remove(&directory);
+        self.directory_cache.write().remove(&directory);
+        Ok(())
     }
 
     pub fn get_asset(&self, path: impl AsRef<Path>) -> Result<AssetSummary, FsError> {
@@ -108,6 +124,32 @@ impl FsCatalog {
         }
         Ok(directory)
     }
+
+    fn cached_assets(&self, directory: &Path) -> Result<Arc<Vec<AssetSummary>>, FsError> {
+        if let Some(assets) = self.asset_cache.read().get(directory).cloned() {
+            return Ok(assets);
+        }
+
+        let assets = Arc::new(scan_assets(directory)?);
+        let mut cache = self.asset_cache.write();
+        Ok(cache
+            .entry(directory.to_owned())
+            .or_insert_with(|| assets.clone())
+            .clone())
+    }
+
+    fn cached_directories(&self, directory: &Path) -> Result<Arc<Vec<DirectorySummary>>, FsError> {
+        if let Some(directories) = self.directory_cache.read().get(directory).cloned() {
+            return Ok(directories);
+        }
+
+        let directories = Arc::new(list_directories(directory)?);
+        let mut cache = self.directory_cache.write();
+        Ok(cache
+            .entry(directory.to_owned())
+            .or_insert_with(|| directories.clone())
+            .clone())
+    }
 }
 
 pub fn list_directories(root: &Path) -> Result<Vec<DirectorySummary>, FsError> {
@@ -121,28 +163,28 @@ pub fn list_directories(root: &Path) -> Result<Vec<DirectorySummary>, FsError> {
             Err(_) => continue,
         };
         let path = entry.path();
-        if !path.is_dir() {
+        if path.is_dir() {
+            let Some(name) = path
+                .file_name()
+                .and_then(|value| value.to_str())
+                .map(str::to_owned)
+            else {
+                continue;
+            };
+            let has_children = fs::read_dir(&path)
+                .map(|entries| {
+                    entries
+                        .filter_map(Result::ok)
+                        .any(|child| child.path().is_dir())
+                })
+                .unwrap_or(false);
+            directories.push(DirectorySummary {
+                path,
+                name,
+                has_children,
+            });
             continue;
         }
-        let Some(name) = path
-            .file_name()
-            .and_then(|value| value.to_str())
-            .map(str::to_owned)
-        else {
-            continue;
-        };
-        let has_children = fs::read_dir(&path)
-            .map(|entries| {
-                entries
-                    .filter_map(Result::ok)
-                    .any(|child| child.path().is_dir())
-            })
-            .unwrap_or(false);
-        directories.push(DirectorySummary {
-            path,
-            name,
-            has_children,
-        });
     }
     directories.sort_unstable_by(|left, right| {
         left.name
@@ -162,17 +204,31 @@ pub fn scan_directory(
         return Err(FsError::InvalidFolder(root.to_owned()));
     }
 
-    let search = query.search.as_deref().map(str::to_lowercase);
-    let mut items = Vec::new();
+    let assets = scan_assets(root)?;
+    Ok(page_assets(&assets, query, offset))
+}
+
+fn scan_assets(root: &Path) -> Result<Vec<AssetSummary>, FsError> {
+    if !root.is_dir() {
+        return Err(FsError::InvalidFolder(root.to_owned()));
+    }
+    let mut assets = Vec::new();
     for entry in fs::read_dir(root)? {
         let entry = match entry {
             Ok(entry) => entry,
             Err(_) => continue,
         };
-        let path = entry.path();
-        let Some(summary) = summary_for_path(&path)? else {
-            continue;
-        };
+        if let Some(summary) = summary_for_path(&entry.path())? {
+            assets.push(summary);
+        }
+    }
+    Ok(assets)
+}
+
+fn page_assets(assets: &[AssetSummary], query: &AssetQuery, offset: usize) -> Page<AssetSummary> {
+    let search = query.search.as_deref().map(str::to_lowercase);
+    let mut items = Vec::new();
+    for summary in assets {
         if query.kind.is_some_and(|kind| kind != summary.kind) {
             continue;
         }
@@ -182,7 +238,7 @@ pub fn scan_directory(
         {
             continue;
         }
-        items.push(summary);
+        items.push(summary.clone());
     }
 
     items.sort_unstable_by(|left, right| compare_assets(left, right, query.sort));
@@ -202,11 +258,11 @@ pub fn scan_directory(
         Vec::new()
     };
 
-    Ok(Page {
+    Page {
         items: page_items,
         next_cursor: (end < total).then_some(end),
         total,
-    })
+    }
 }
 
 pub fn execute_file_operation(operation: &FileOperation) -> Result<FileOperationResult, FsError> {
@@ -446,6 +502,49 @@ mod tests {
             catalog.list_directories(&session.id, Some(outside.path())),
             Err(FsError::OutsideSessionRoot(_))
         ));
+    }
+
+    #[test]
+    fn directory_cache_is_reused_until_refreshed() {
+        let root = tempdir().unwrap();
+        File::create(root.path().join("one.jpg")).unwrap();
+        let catalog = FsCatalog::default();
+        let session = catalog.open_folder(root.path()).unwrap();
+
+        let first = catalog
+            .list_assets(&session.id, None, &AssetQuery::default(), None)
+            .unwrap();
+        assert_eq!(first.total, 1);
+
+        File::create(root.path().join("two.jpg")).unwrap();
+        let cached = catalog
+            .list_assets(&session.id, None, &AssetQuery::default(), None)
+            .unwrap();
+        assert_eq!(cached.total, 1);
+
+        assert!(
+            catalog
+                .list_directories(&session.id, None)
+                .unwrap()
+                .is_empty()
+        );
+        fs::create_dir(root.path().join("new-folder")).unwrap();
+        assert!(
+            catalog
+                .list_directories(&session.id, None)
+                .unwrap()
+                .is_empty()
+        );
+
+        catalog.refresh_directory(&session.id, None).unwrap();
+        let refreshed = catalog
+            .list_assets(&session.id, None, &AssetQuery::default(), None)
+            .unwrap();
+        assert_eq!(refreshed.total, 2);
+        assert_eq!(
+            catalog.list_directories(&session.id, None).unwrap().len(),
+            1
+        );
     }
 
     #[test]

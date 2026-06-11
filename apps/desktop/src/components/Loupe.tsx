@@ -425,6 +425,7 @@ function FilmstripItem({ active, asset, onClick, root }: FilmstripItemProps) {
       title={asset.name}
     >
       <Thumbnail asset={asset} enabled={visible || active} />
+      <span className="filmstrip__name">{asset.name}</span>
     </button>
   );
 }

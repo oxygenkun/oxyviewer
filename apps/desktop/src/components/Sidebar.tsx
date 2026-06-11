@@ -9,6 +9,7 @@ import {
   Library,
   LoaderCircle,
   Plus,
+  RefreshCw,
 } from "lucide-react";
 import { useState } from "react";
 import { listDirectories } from "../lib/api";
@@ -21,6 +22,8 @@ interface SidebarProps {
   libraryRoots: string[];
   onOpen: () => void;
   onNavigate: (path: string) => void;
+  onRefresh: () => void;
+  isRefreshing: boolean;
   onAddLibrary: () => void;
   t: (key: MessageKey) => string;
 }
@@ -51,7 +54,7 @@ function DirectoryNode({
     queryKey: ["directories", sessionId, entry.path],
     queryFn: () => listDirectories(sessionId, entry.path),
     enabled: expanded,
-    staleTime: 5_000,
+    staleTime: Infinity,
   });
   const isActive = currentPath === entry.path;
   const hasChildren = children.data ? children.data.length > 0 : entry.hasChildren;
@@ -60,7 +63,7 @@ function DirectoryNode({
     <div className="directory-node">
       <div
         className={`tree-row tree-row--directory ${isActive ? "tree-row--active" : ""}`}
-        style={{ "--tree-depth": depth } as React.CSSProperties}
+        style={{ "--tree-indent": `${depth * 13}px` } as React.CSSProperties}
       >
         <button
           className="tree-row__toggle"
@@ -110,6 +113,8 @@ export function Sidebar({
   libraryRoots,
   onOpen,
   onNavigate,
+  onRefresh,
+  isRefreshing,
   onAddLibrary,
   t,
 }: SidebarProps) {
@@ -129,7 +134,17 @@ export function Sidebar({
       <div className="sidebar__section sidebar__section--folders">
         <div className="sidebar__heading">
           <span>{t("folders")}</span>
-          <button title={t("openFolder")} onClick={onOpen}><Plus size={14} /></button>
+          <span className="sidebar__heading-actions">
+            <button
+              title={t("refreshFolder")}
+              aria-label={t("refreshFolder")}
+              disabled={isRefreshing}
+              onClick={onRefresh}
+            >
+              <RefreshCw className={isRefreshing ? "tree-row__loader" : undefined} size={13} />
+            </button>
+            <button title={t("openFolder")} onClick={onOpen}><Plus size={14} /></button>
+          </span>
         </div>
         <DirectoryNode
           key={session.id}
