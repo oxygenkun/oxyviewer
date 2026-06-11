@@ -1,6 +1,7 @@
 use oxy_domain::{
     AssetDetails, AssetKind, AssetQuery, AssetSummary, DirectorySummary, EditableMetadata,
-    FileOperation, FileOperationResult, FolderSession, JobId, JobPriority, Page,
+    FileOperation, FileOperationResult, FolderSession, JobId, JobPriority, Page, PreviewMode,
+    PreviewResult,
 };
 use oxy_fs::FsCatalog;
 use oxy_library::Library;
@@ -67,11 +68,12 @@ fn get_asset_details(path: PathBuf, state: State<'_, AppState>) -> Result<AssetD
 }
 
 #[tauri::command]
-async fn get_preview_path(
+async fn get_preview(
     path: PathBuf,
-    max_size: u32,
+    mode: PreviewMode,
+    max_size: Option<u32>,
     state: State<'_, AppState>,
-) -> Result<Option<PathBuf>, String> {
+) -> Result<PreviewResult, String> {
     let asset = state
         .files
         .get_asset(&path)
@@ -80,12 +82,15 @@ async fn get_preview_path(
         asset.kind,
         AssetKind::Raw | AssetKind::Heif | AssetKind::Tiff
     ) {
-        return Ok(Some(path));
+        return oxy_media::original(path).map_err(|error| error.to_string());
     }
     let preview_dir = state.preview_dir.clone();
-    let max_size = max_size.clamp(128, 8_192);
+    let max_size = max_size.unwrap_or(4_096).clamp(128, 8_192);
     tauri::async_runtime::spawn_blocking(move || {
         if asset.kind == AssetKind::Raw {
+            if mode == PreviewMode::FullRaw {
+                return oxy_media::raw_full(&path, &preview_dir).map_err(|error| error.to_string());
+            }
             oxy_media::raw_preview(&path, &preview_dir, max_size)
                 .map_err(|error| error.to_string())
                 .or_else(|libraw_error| {
@@ -94,13 +99,15 @@ async fn get_preview_path(
                     )
                 })
         } else {
+            if mode == PreviewMode::FullRaw {
+                return Err("fullRaw preview mode only supports RAW assets".into());
+            }
             oxy_media::system_preview(&path, &preview_dir, max_size)
                 .map_err(|error| error.to_string())
         }
     })
     .await
     .map_err(|error| error.to_string())?
-    .map(Some)
 }
 
 #[tauri::command]
@@ -168,7 +175,7 @@ pub fn run() {
             list_assets,
             list_directories,
             get_asset_details,
-            get_preview_path,
+            get_preview,
             patch_metadata,
             execute_file_operation,
             add_library_root,

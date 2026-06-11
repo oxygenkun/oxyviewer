@@ -8,6 +8,8 @@ import type {
   DirectorySummary,
   FolderSession,
   Page,
+  PreviewMode,
+  PreviewResult,
 } from "../types";
 
 const demoNames: Array<[string, AssetKind, number]> = [
@@ -154,11 +156,16 @@ export function previewUrl(asset: AssetSummary): string | undefined {
   return convertFileSrc(asset.path);
 }
 
-export async function generatedPreviewUrl(
+export async function generatedPreview(
   asset: AssetSummary,
-  maxSize: number,
-): Promise<string | undefined> {
+  mode: PreviewMode,
+  maxSize?: number,
+): Promise<PreviewResult | undefined> {
   if (!isTauri()) return undefined;
-  const path = await invoke<string | null>("get_preview_path", { path: asset.path, maxSize });
-  return path ? convertFileSrc(path) : undefined;
+  const result = await invoke<Omit<PreviewResult, "url">>("get_preview", {
+    path: asset.path,
+    mode,
+    maxSize,
+  });
+  return { ...result, url: convertFileSrc(result.path) };
 }

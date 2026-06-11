@@ -18,8 +18,12 @@ frontend never receives image bytes through JSON IPC.
 RAW assets use bundled LibRaw 0.22.1. The media pipeline extracts an embedded
 preview first and falls back to half-size RAW development when necessary.
 Generated JPEGs are stored in the rebuildable app cache, with separate cache
-entries and bounded decode lanes for grid thumbnails and loupe previews. macOS
-Quick Look remains a final compatibility fallback.
+entries and bounded decode lanes for grid thumbnails and loupe previews. The
+loupe then develops a full-resolution RAW in a separate decode lane and upgrades
+the displayed preview only after the full-resolution JPEG is ready. Full RAW
+development preserves fine detail by avoiding full-strength pre-demosaic noise
+reduction and applies modest output sharpening for loupe viewing. macOS Quick
+Look remains a final compatibility fallback for preview generation.
 
 HEIF/HIF and TIFF assets currently use the operating system's preview generator
 on macOS until the planned libheif and TIFF adapters replace it.

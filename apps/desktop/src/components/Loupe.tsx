@@ -22,12 +22,14 @@ import {
   fitSize,
   getNavigatorViewport,
   panFromNavigatorPoint,
+  pixelZoomPercent,
   zoomAtPoint,
   type Point,
   type Size,
 } from "../lib/loupe";
 import { getAssetDetails } from "../lib/api";
 import type { MessageKey } from "../lib/i18n";
+import type { RawPreviewStatus } from "../lib/rawPreview";
 import { useWorkspaceStore } from "../store";
 import type { AssetSummary, NavigatorPosition } from "../types";
 import { Thumbnail } from "./Thumbnail";
@@ -76,6 +78,7 @@ export function Loupe({ assets, t }: LoupeProps) {
   const [layoutVersion, setLayoutVersion] = useState(0);
   const [stageContentSize, setStageContentSize] = useState<Size>({ width: 0, height: 0 });
   const [naturalSize, setNaturalSize] = useState<{ assetId: string; size: Size } | undefined>(undefined);
+  const [rawPreviewStatus, setRawPreviewStatus] = useState<RawPreviewStatus>({ state: "loadingPreview" });
   const details = useQuery({
     queryKey: ["asset-details", active.id],
     queryFn: () => getAssetDetails(active),
@@ -108,6 +111,7 @@ export function Loupe({ assets, t }: LoupeProps) {
 
   useEffect(() => {
     resetZoom();
+    setRawPreviewStatus({ state: "loadingPreview" });
   }, [active.id, resetZoom]);
 
   useLayoutEffect(() => {
@@ -187,7 +191,7 @@ export function Loupe({ assets, t }: LoupeProps) {
     return getNavigatorViewport(zoom, offset, stage, image);
   }, [getSizes, layoutVersion, offset, zoom]);
 
-  const zoomLabel = `${Math.round(zoom * 100)}%`;
+  const zoomLabel = `${pixelZoomPercent(fittedImageSize, sourceSize, zoom)}%`;
   const positionLabels: Record<NavigatorPosition, MessageKey> = {
     "top-left": "topLeft",
     "top-right": "topRight",
@@ -210,20 +214,41 @@ export function Loupe({ assets, t }: LoupeProps) {
           <span>{active.name}</span>
           <small>{active.extension} · {formatBytes(active.sizeBytes)}</small>
         </div>
+        {active.kind === "raw" ? (
+          <div className={`loupe__raw-status loupe__raw-status--${rawPreviewStatus.state}`}>
+            <i />
+            {rawPreviewStatus.state === "loadingPreview"
+              ? t("rawLoadingPreview")
+              : rawPreviewStatus.state === "developingFull"
+                ? t("rawDevelopingFull")
+                : rawPreviewStatus.state === "fullFailed"
+                  ? t("rawFullFailed")
+                  : `${t("rawFullReady")} · ${rawPreviewStatus.width} × ${rawPreviewStatus.height}`}
+          </div>
+        ) : null}
         <div
           className="loupe__image"
           ref={imageRef}
           style={{
             width: fittedImageSize.width || undefined,
             height: fittedImageSize.height || undefined,
-            transform: `translate3d(${offset.x}px, ${offset.y}px, 0) scale(${zoom})`,
+            transform: `translate3d(${offset.x}px, ${offset.y}px, 0)`,
           }}
         >
-          <Thumbnail
-            asset={active}
-            large
-            onImageLoad={(size) => setNaturalSize({ assetId: active.id, size })}
-          />
+          <div
+            className="loupe__render"
+            style={{
+              width: fittedImageSize.width ? fittedImageSize.width * zoom : undefined,
+              height: fittedImageSize.height ? fittedImageSize.height * zoom : undefined,
+            }}
+          >
+            <Thumbnail
+              asset={active}
+              large
+              onImageLoad={(size) => setNaturalSize({ assetId: active.id, size })}
+              onRawPreviewStatus={setRawPreviewStatus}
+            />
+          </div>
         </div>
         {navigatorVisible && zoom > 1.001 ? (
           <div className={`loupe__navigator loupe__navigator--${navigatorPosition}`}>

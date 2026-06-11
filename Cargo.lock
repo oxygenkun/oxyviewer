@@ -2340,6 +2340,7 @@ version = "0.1.0"
 dependencies = [
  "cc",
  "image",
+ "oxy-domain",
  "tempfile",
  "thiserror 2.0.18",
 ]

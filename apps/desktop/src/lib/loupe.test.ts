@@ -1,5 +1,12 @@
 import { describe, expect, it } from "vitest";
-import { clampPan, fitSize, getNavigatorViewport, panFromNavigatorPoint, zoomAtPoint } from "./loupe";
+import {
+  clampPan,
+  fitSize,
+  getNavigatorViewport,
+  panFromNavigatorPoint,
+  pixelZoomPercent,
+  zoomAtPoint,
+} from "./loupe";
 
 const stage = { width: 800, height: 600 };
 const image = { width: 700, height: 500 };
@@ -10,6 +17,11 @@ describe("loupe geometry", () => {
       .toEqual({ width: 800, height: 450 });
     expect(fitSize({ width: 800, height: 600 }, { width: 900, height: 1_600 }))
       .toEqual({ width: 337.5, height: 600 });
+  });
+
+  it("reports zoom as displayed pixels relative to source pixels", () => {
+    expect(pixelZoomPercent({ width: 1_000, height: 667 }, { width: 6_000, height: 4_000 }, 3))
+      .toBe(50);
   });
 
   it("clamps panning to the visible image bounds", () => {

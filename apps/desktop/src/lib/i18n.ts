@@ -48,6 +48,10 @@ const messages = {
     gridPreference: "网格显示偏好",
     landscapePriority: "横图优先",
     portraitPriority: "竖图优先",
+    rawLoadingPreview: "正在加载预览",
+    rawDevelopingFull: "预览图 · 完整解析中",
+    rawFullReady: "完整解析完成",
+    rawFullFailed: "完整解析失败 · 显示预览",
   },
   en: {
     openFolder: "Open folder",
@@ -96,6 +100,10 @@ const messages = {
     gridPreference: "Grid display preference",
     landscapePriority: "Landscape priority",
     portraitPriority: "Portrait priority",
+    rawLoadingPreview: "Loading preview",
+    rawDevelopingFull: "Preview · developing full RAW",
+    rawFullReady: "Full RAW ready",
+    rawFullFailed: "Full RAW failed · showing preview",
   },
 } as const;
 

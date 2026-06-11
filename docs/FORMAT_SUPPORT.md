@@ -4,7 +4,7 @@
 | --- | --- | --- | --- | --- |
 | JPEG/JPG | Implemented | Foundation implemented | Planned ExifTool worker | Planned embedded write |
 | HEIF/HEIC/HIF | Implemented | macOS Quick Look fallback; planned libheif adapter | Planned ExifTool worker | Planned embedded write |
-| ARW/CR2/CR3/NEF/DNG/RAF/RW2/ORF | Implemented | Bundled LibRaw 0.22.1 embedded preview with half-size development fallback; macOS Quick Look final fallback | Planned ExifTool worker | Planned XMP sidecar |
+| ARW/CR2/CR3/NEF/DNG/RAF/RW2/ORF | Implemented | Bundled LibRaw 0.22.1 embedded preview with half-size preview fallback, followed by full-resolution loupe development; macOS Quick Look final preview fallback | Planned ExifTool worker | Planned XMP sidecar |
 | PNG/WebP/TIFF | Implemented as secondary formats | Foundation/Planned | Read-only planned | Not in MVP |
 
 RAW support follows bundled LibRaw 0.22.1. The code builds LibRaw from the

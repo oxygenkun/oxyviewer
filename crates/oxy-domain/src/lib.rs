@@ -68,6 +68,32 @@ pub struct AssetDetails {
     pub sidecar_path: Option<PathBuf>,
 }
 
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub enum PreviewMode {
+    Thumbnail,
+    LoupePreview,
+    FullRaw,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub enum PreviewKind {
+    Embedded,
+    Developed,
+    System,
+    Original,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct PreviewResult {
+    pub path: PathBuf,
+    pub width: u32,
+    pub height: u32,
+    pub kind: PreviewKind,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 #[serde(rename_all = "camelCase")]
 pub struct AssetQuery {

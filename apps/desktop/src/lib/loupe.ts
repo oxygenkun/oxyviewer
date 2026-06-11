@@ -33,6 +33,11 @@ export function fitSize(container: Size, source: Size): Size {
   };
 }
 
+export function pixelZoomPercent(fitted: Size, source: Size, zoom: number) {
+  if (fitted.width <= 0 || source.width <= 0) return 0;
+  return Math.round((fitted.width * zoom / source.width) * 100);
+}
+
 export function clampPan(offset: Point, zoom: number, stage: Size, image: Size): Point {
   const maxX = Math.max(0, (image.width * zoom - stage.width) / 2);
   const maxY = Math.max(0, (image.height * zoom - stage.height) / 2);

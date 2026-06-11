@@ -44,3 +44,14 @@ extern "C" void oxy_libraw_configure_preview(libraw_data_t *raw) {
   raw->params.output_color = 1;
   raw->params.output_bps = 8;
 }
+
+extern "C" void oxy_libraw_configure_full(libraw_data_t *raw) {
+  raw->params.half_size = 0;
+  raw->params.use_camera_wb = 1;
+  raw->params.use_camera_matrix = 3;
+  raw->params.output_color = 1;
+  raw->params.output_bps = 8;
+  raw->params.four_color_rgb = 1;
+  raw->params.user_qual = 3;
+  raw->params.fbdd_noiserd = 0;
+}

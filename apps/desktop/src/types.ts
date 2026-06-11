@@ -47,6 +47,17 @@ export interface AssetDetails {
   sidecarPath?: string;
 }
 
+export type PreviewMode = "thumbnail" | "loupePreview" | "fullRaw";
+export type PreviewKind = "embedded" | "developed" | "system" | "original";
+
+export interface PreviewResult {
+  path: string;
+  url: string;
+  width: number;
+  height: number;
+  kind: PreviewKind;
+}
+
 export interface AssetQuery {
   search?: string;
   kind?: AssetKind;

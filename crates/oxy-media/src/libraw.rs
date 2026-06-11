@@ -58,6 +58,7 @@ unsafe extern "C" {
     fn libraw_get_iheight(raw: *mut LibRawData) -> c_int;
     fn libraw_get_iwidth(raw: *mut LibRawData) -> c_int;
     fn libraw_strerror(error: c_int) -> *const c_char;
+    fn oxy_libraw_configure_full(raw: *mut LibRawData);
     fn oxy_libraw_configure_preview(raw: *mut LibRawData);
     fn oxy_libraw_unpack_sized_thumb(raw: *mut LibRawData, target_size: c_uint) -> c_int;
 }
@@ -86,7 +87,7 @@ pub fn preview(
             Ok(Preview::EmbeddedJpeg(image.data().to_vec()))
         }
         Ok(image) => image.decode().map(|image| Preview::Image(fit(image, max_size))),
-        Err(embedded_error) => developed_preview(path)
+        Err(embedded_error) => developed_preview(path, false)
             .map(|image| Preview::Image(fit(image, max_size)))
             .map_err(|developed_error| {
                 format!(
@@ -96,15 +97,25 @@ pub fn preview(
     }
 }
 
+pub fn full(path: &Path) -> Result<DynamicImage, String> {
+    developed_preview(path, true)
+}
+
 fn embedded_preview(path: &Path, max_size: u32) -> Result<ProcessedImage, String> {
     let raw = Processor::open(path)?;
     check(unsafe { oxy_libraw_unpack_sized_thumb(raw.inner, max_size) })?;
     ProcessedImage::thumbnail(&raw)
 }
 
-fn developed_preview(path: &Path) -> Result<DynamicImage, String> {
+fn developed_preview(path: &Path, full: bool) -> Result<DynamicImage, String> {
     let raw = Processor::open(path)?;
-    unsafe { oxy_libraw_configure_preview(raw.inner) };
+    unsafe {
+        if full {
+            oxy_libraw_configure_full(raw.inner);
+        } else {
+            oxy_libraw_configure_preview(raw.inner);
+        }
+    };
     check(unsafe { libraw_unpack(raw.inner) })?;
     check(unsafe { libraw_dcraw_process(raw.inner) })?;
     let image = ProcessedImage::developed(&raw)?;

@@ -7,6 +7,7 @@ Reference budgets are measured on a local SSD with a release build.
 | First page from a 100k-file directory | Begin rendering within 300 ms |
 | Warm cached loupe preview | Under 150 ms |
 | Cold selected-image preview | Under 800 ms |
+| Full-resolution RAW development | Measured separately; preview remains visible |
 | Search/filter response over loaded page | Under one animation frame |
 | Main-thread scroll work | No long task above 50 ms |
 
@@ -32,6 +33,16 @@ Reference budgets are measured on a local SSD with a release build.
   | `DSC02948.ARW` | 85 ms | 11 ms | 0.03 ms |
   | `DSC00511.HIF` | 261 ms | 753 ms | 0.04 ms |
   | `DSC00526.HIF` | 226 ms | 666 ms | 0.04 ms |
+- 2026-06-11: RAW loupe viewing now starts full-resolution LibRaw development
+  after the progressive preview is available. Full development uses a separate
+  cache and decode lane, does not count against the 800 ms cold-preview budget,
+  and keeps the preview visible until the full-resolution JPEG has loaded. A
+  release fixture run for `DSC00529.ARW` took 23.75 seconds and produced an
+  output matching LibRaw's full reported dimensions.
+- 2026-06-11: Full RAW loupe output now avoids full-strength FBDD pre-demosaic
+  noise reduction, applies modest output sharpening, and renders zoomed images
+  at their target CSS dimensions instead of scaling a fit-sized composited
+  layer. This improves fine-detail inspection at high zoom.
 - The generated 100k-entry directory benchmark is not yet recorded. Phase 1
   must add it before its performance gate can be marked complete.
 
