@@ -43,6 +43,12 @@ Reference budgets are measured on a local SSD with a release build.
   noise reduction, applies modest output sharpening, and renders zoomed images
   at their target CSS dimensions instead of scaling a fit-sized composited
   layer. This improves fine-detail inspection at high zoom.
+- 2026-06-11: Selected HEIF/HIF images now request a full-detail stage after
+  the 512 px and 4096 px progressive previews. The primary libheif image is
+  decoded in a dedicated lane and cached as a color-profiled 16-bit SDR PNG;
+  HLG/PQ inputs are tone-mapped to SDR. macOS uses an 8192 px Quick Look result
+  when the packaged HEVC decoder rejects the stream, avoiding the previous
+  unconditional 4096 px ceiling.
 - The generated 100k-entry directory benchmark is not yet recorded. Phase 1
   must add it before its performance gate can be marked complete.
 

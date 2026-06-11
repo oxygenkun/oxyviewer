@@ -8,6 +8,8 @@ version.workspace = true
 
 [dependencies]
 image.workspace = true
+lcms2.workspace = true
+libheif-rs.workspace = true
 oxy-domain = { path = "../oxy-domain" }
 tempfile.workspace = true
 thiserror.workspace = true

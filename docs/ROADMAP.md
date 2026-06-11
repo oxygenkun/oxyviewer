@@ -33,7 +33,9 @@ performance gate has not yet been measured.
 ## Phase 2: Image Pipeline and Loupe
 
 - [~] Media crate contracts, JPEG preview foundation, and RAW preview pipeline
-- [~] Bundle and integrate LibRaw and libheif on all target platforms
+- [~] Bundle and integrate LibRaw and libheif on all target platforms; libheif
+  full-detail integration is implemented, while packaged HEVC decoder
+  validation remains
 - [ ] Priority scheduler, cancellation, thumbnail cache, and custom protocol
 - [ ] Color-managed progressive loupe and filmstrip previews
 
@@ -50,6 +52,15 @@ performance gate has not yet been measured.
 - [ ] Validate ARW, CR2, CR3, NEF, DNG, RAF, RW2, and ORF fixtures
 - [ ] Validate LibRaw builds and RAW preview behavior in Windows and Linux CI
 - [ ] Add full priority scheduling and request cancellation
+
+### Milestone HEIF-1: Full-detail and Color-managed Display
+
+- [x] Decode the primary image through libheif after progressive previews
+- [x] Preserve high-bit-depth pixels through SDR conversion and 16-bit PNG cache
+- [x] Convert ICC profiles and map HLG/PQ inputs to SDR
+- [x] Bound full-detail HEIF decoding to one task
+- [x] Keep an 8192 px macOS Quick Look compatibility fallback
+- [ ] Bundle and validate libde265 for macOS, Windows, and Linux releases
 
 **Gate:** a supported RAW file displays a cached thumbnail and loupe preview
 without depending on operating-system RAW support. Unsupported or damaged RAW

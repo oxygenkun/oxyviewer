@@ -47,8 +47,8 @@ export interface AssetDetails {
   sidecarPath?: string;
 }
 
-export type PreviewMode = "thumbnail" | "loupePreview" | "fullRaw";
-export type PreviewKind = "embedded" | "developed" | "system" | "original";
+export type PreviewMode = "thumbnail" | "loupePreview" | "fullDetail";
+export type PreviewKind = "embedded" | "developed" | "decoded" | "system" | "original";
 
 export interface PreviewResult {
   path: string;

@@ -50,11 +50,11 @@ export function Thumbnail({
     retry: 0,
   });
   const fullSource = useQuery({
-    queryKey: ["asset-preview", asset.id, asset.modifiedAtMs, "fullRaw"],
-    queryFn: () => generatedPreview(asset, "fullRaw"),
+    queryKey: ["asset-preview", asset.id, asset.modifiedAtMs, "fullDetail"],
+    queryFn: () => generatedPreview(asset, "fullDetail"),
     enabled: enabled
       && isTauri()
-      && asset.kind === "raw"
+      && (asset.kind === "raw" || asset.kind === "heif")
       && large
       && Boolean(loupeSource.data || loupeSource.isError),
     staleTime: Infinity,

@@ -25,8 +25,13 @@ development preserves fine detail by avoiding full-strength pre-demosaic noise
 reduction and applies modest output sharpening for loupe viewing. macOS Quick
 Look remains a final compatibility fallback for preview generation.
 
-HEIF/HIF and TIFF assets currently use the operating system's preview generator
-on macOS until the planned libheif and TIFF adapters replace it.
+HEIF/HIF assets use a progressive pipeline similar to RAW: a 512 px and 4096 px
+Quick Look preview is shown first on macOS, then the selected image is upgraded
+in a dedicated decode lane. The full-detail path decodes the primary image with
+libheif, preserves 9-16 bit samples during color conversion, maps HLG/PQ content
+to SDR, and writes a color-profiled 16-bit PNG cache entry. Quick Look at 8192 px
+remains the compatibility fallback when the packaged HEVC decoder rejects a
+stream. TIFF assets still use the operating system preview generator.
 
 ## Boundaries
 

@@ -108,7 +108,7 @@ async fn get_preview(
     let max_size = max_size.unwrap_or(4_096).clamp(128, 8_192);
     tauri::async_runtime::spawn_blocking(move || {
         if asset.kind == AssetKind::Raw {
-            if mode == PreviewMode::FullRaw {
+            if mode == PreviewMode::FullDetail {
                 return oxy_media::raw_full(&path, &preview_dir).map_err(|error| error.to_string());
             }
             oxy_media::raw_preview(&path, &preview_dir, max_size)
@@ -119,8 +119,24 @@ async fn get_preview(
                     )
                 })
         } else {
-            if mode == PreviewMode::FullRaw {
-                return Err("fullRaw preview mode only supports RAW assets".into());
+            if mode == PreviewMode::FullDetail && asset.kind == AssetKind::Heif {
+                return oxy_media::heif_full(&path, &preview_dir)
+                    .map_err(|error| error.to_string())
+                    .or_else(|heif_error| {
+                        eprintln!(
+                            "full-detail libheif decode failed for {}: {heif_error}",
+                            path.display()
+                        );
+                        let fallback_size = oxy_media::dimensions(&path)
+                            .map(|size| size.width.max(size.height).min(8_192))
+                            .unwrap_or(8_192);
+                        oxy_media::system_preview(&path, &preview_dir, fallback_size).map_err(
+                            |system_error| format!("{heif_error}; fallback failed: {system_error}"),
+                        )
+                    });
+            }
+            if mode == PreviewMode::FullDetail {
+                return Err("fullDetail preview mode only supports RAW and HEIF assets".into());
             }
             oxy_media::system_preview(&path, &preview_dir, max_size)
                 .map_err(|error| error.to_string())

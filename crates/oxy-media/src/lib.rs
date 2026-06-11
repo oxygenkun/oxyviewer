@@ -1,3 +1,4 @@
+mod heif;
 mod libraw;
 
 use image::{DynamicImage, ImageReader, codecs::jpeg::JpegEncoder};
@@ -17,11 +18,13 @@ use thiserror::Error;
 
 const LIBRAW_CACHE_VERSION: &str = "libraw-0.22.1-v5";
 const LIBRAW_FULL_CACHE_VERSION: &str = "libraw-0.22.1-full-detail-v2";
+const HEIF_FULL_CACHE_VERSION: &str = "libheif-1.23-sdr-v1";
 const SYSTEM_CACHE_VERSION: &str = "system-preview-v2";
 const LOUPE_PREVIEW_THRESHOLD: u32 = 2_048;
 static RAW_THUMBNAIL_DECODE_LOCK: Mutex<()> = Mutex::new(());
 static RAW_LOUPE_DECODE_LOCK: Mutex<()> = Mutex::new(());
 static RAW_FULL_DECODE_LOCK: Mutex<()> = Mutex::new(());
+static HEIF_FULL_DECODE_LOCK: Mutex<()> = Mutex::new(());
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ImageDimensions {
@@ -35,6 +38,10 @@ pub enum MediaError {
     NativeDecoderUnavailable,
     #[error("LibRaw failed for {path}: {message}")]
     LibRaw { path: PathBuf, message: String },
+    #[error("libheif failed for {path}: {message}")]
+    Heif { path: PathBuf, message: String },
+    #[error("color conversion failed: {0}")]
+    Color(String),
     #[error("system preview generation failed for {path}: {message}")]
     PreviewGenerationFailed { path: PathBuf, message: String },
     #[error(transparent)]
@@ -50,7 +57,9 @@ pub fn dimensions(path: &Path) -> Result<ImageDimensions, MediaError> {
         Ok(ImageDimensions { width, height })
     };
 
-    raster().or_else(|_| raw_dimensions(path))
+    raster()
+        .or_else(|_| heif::dimensions(path))
+        .or_else(|_| raw_dimensions(path))
 }
 
 pub fn raw_dimensions(path: &Path) -> Result<ImageDimensions, MediaError> {
@@ -142,6 +151,30 @@ pub fn raw_full(path: &Path, cache_dir: &Path) -> Result<PreviewResult, MediaErr
     let image = image.unsharpen(0.8, 2);
     write_jpeg_atomically(&image, &destination, 95)?;
     preview_result(destination, PreviewKind::Developed)
+}
+
+pub fn heif_full(path: &Path, cache_dir: &Path) -> Result<PreviewResult, MediaError> {
+    fs::create_dir_all(cache_dir)?;
+    let destination = cache_dir.join(format!(
+        "{}.png",
+        preview_cache_key(path, HEIF_FULL_CACHE_VERSION, 0)?
+    ));
+    if destination.is_file() {
+        return preview_result(destination, PreviewKind::Decoded);
+    }
+
+    let _decode_guard = HEIF_FULL_DECODE_LOCK
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    if destination.is_file() {
+        return preview_result(destination, PreviewKind::Decoded);
+    }
+
+    let image = heif::decode_primary(path)?;
+    let temporary = NamedTempFile::new_in(destination.parent().unwrap_or_else(|| Path::new(".")))?;
+    heif::write_srgb_png(&image, temporary.path())?;
+    persist_atomically(temporary, &destination)?;
+    preview_result(destination, PreviewKind::Decoded)
 }
 
 pub fn system_preview(
@@ -403,6 +436,57 @@ mod tests {
         assert_eq!((full.width, full.height), (raw_size.width, raw_size.height));
         assert!(full.path.is_file());
         assert_eq!(raw_full(&raw_path, directory.path()).unwrap(), full);
+    }
+
+    #[test]
+    #[ignore = "requires OXY_HEIF_FIXTURE to point to a camera HEIF file"]
+    fn decodes_full_resolution_heif_fixture() {
+        let heif_path = fs::canonicalize(workspace_path(
+            std::env::var_os("OXY_HEIF_FIXTURE").unwrap(),
+        ))
+        .unwrap();
+        let directory = tempfile::tempdir().unwrap();
+        let original_size = heif::dimensions(&heif_path).unwrap();
+        let started = Instant::now();
+        let full = heif_full(&heif_path, directory.path()).unwrap();
+
+        eprintln!("{}: full HEIF={:?}", heif_path.display(), started.elapsed());
+        assert_eq!(full.kind, PreviewKind::Decoded);
+        assert_eq!(
+            (full.width, full.height),
+            (original_size.width, original_size.height)
+        );
+        assert!(full.path.is_file());
+        assert_eq!(heif_full(&heif_path, directory.path()).unwrap(), full);
+
+        let mut decoder = ImageReader::open(&full.path)
+            .unwrap()
+            .into_decoder()
+            .unwrap();
+        assert!(decoder.icc_profile().unwrap().is_some());
+    }
+
+    #[test]
+    #[ignore = "requires OXY_HEIF_FIXTURE and macOS Quick Look"]
+    fn generates_large_system_fallback_for_heif_fixture() {
+        let heif_path = fs::canonicalize(workspace_path(
+            std::env::var_os("OXY_HEIF_FIXTURE").unwrap(),
+        ))
+        .unwrap();
+        let directory = tempfile::tempdir().unwrap();
+        let original = heif::dimensions(&heif_path).unwrap();
+        let preview = system_preview(
+            &heif_path,
+            directory.path(),
+            original.width.max(original.height).min(8_192),
+        )
+        .unwrap();
+
+        assert_eq!(preview.kind, PreviewKind::System);
+        assert_eq!(
+            (preview.width, preview.height),
+            (original.width, original.height)
+        );
     }
 
     #[test]

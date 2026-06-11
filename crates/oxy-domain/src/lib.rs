@@ -73,7 +73,7 @@ pub struct AssetDetails {
 pub enum PreviewMode {
     Thumbnail,
     LoupePreview,
-    FullRaw,
+    FullDetail,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
@@ -81,6 +81,7 @@ pub enum PreviewMode {
 pub enum PreviewKind {
     Embedded,
     Developed,
+    Decoded,
     System,
     Original,
 }
