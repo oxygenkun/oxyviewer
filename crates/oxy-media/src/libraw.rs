@@ -2,11 +2,13 @@ use image::{
     DynamicImage, ImageDecoder, ImageFormat, ImageReader, RgbImage, RgbaImage, imageops::FilterType,
 };
 use std::{
-    ffi::{CStr, CString, c_char, c_int, c_uint},
+    ffi::{CStr, c_char, c_int, c_uint},
     io::Cursor,
     path::Path,
     slice,
 };
+#[cfg(unix)]
+use std::ffi::CString;
 
 const LIBRAW_OPTIONS_NO_DATAERR_CALLBACK: c_uint = 1 << 1;
 const LIBRAW_SUCCESS: c_int = 0;
@@ -32,6 +34,7 @@ struct LibRawProcessedImage {
 unsafe extern "C" {
     fn libraw_init(flags: c_uint) -> *mut LibRawData;
     fn libraw_close(raw: *mut LibRawData);
+    #[cfg(unix)]
     fn libraw_open_file(raw: *mut LibRawData, path: *const c_char) -> c_int;
     #[cfg(windows)]
     fn libraw_open_wfile(raw: *mut LibRawData, path: *const u16) -> c_int;

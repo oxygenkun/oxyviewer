@@ -5,7 +5,7 @@ use std::{
 
 fn main() {
     let manifest_dir = PathBuf::from(env::var_os("CARGO_MANIFEST_DIR").unwrap());
-    let libraw_dir = manifest_dir.join("../../native/libraw/0.22.1");
+    let libraw_dir = manifest_dir.join("../../3rdpart/libraw");
     let wrapper = manifest_dir.join("src/libraw_wrapper.cpp");
 
     println!("cargo:rerun-if-changed={}", wrapper.display());

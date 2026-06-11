@@ -20,7 +20,7 @@ metadata, and indexing work.
 - `crates/oxy-library`: rebuildable SQLite cache and library roots.
 - `crates/oxy-runtime`: job priority and cancellation vocabulary.
 - `docs`: architecture, roadmap, format support, performance budgets, and ADRs.
-- `native/libraw`: vendored LibRaw source; do not modify casually.
+- `3rdpart/libraw`: vendored LibRaw source (git submodule); do not modify casually.
 
 ## Development Commands
 
@@ -64,7 +64,7 @@ Use `pnpm icons` only when intentionally regenerating application icons.
   the implementation; frontend tests use Vitest and `*.test.ts`/`*.test.tsx`.
 - Avoid hand-editing generated outputs such as `target`, `apps/desktop/dist`,
   `*.tsbuildinfo`, generated Tauri schemas, and generated icons.
-- Do not update vendored native dependencies or third-party notices unless the
+- Do not update vendored third-party dependencies or third-party notices unless the
   task explicitly requires it.
 - Update relevant files in `docs` when changing architecture, format support,
   performance behavior, native dependencies, or roadmap status.

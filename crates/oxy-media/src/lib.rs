@@ -7,9 +7,10 @@ use std::{
     hash::{Hash, Hasher},
     io::BufReader,
     path::{Path, PathBuf},
-    process::{Command, Stdio},
     sync::Mutex,
 };
+#[cfg(target_os = "macos")]
+use std::process::{Command, Stdio};
 use tempfile::NamedTempFile;
 use thiserror::Error;
 

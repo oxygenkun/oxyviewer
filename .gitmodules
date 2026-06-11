@@ -1,0 +1,3 @@
+[submodule "3rdpart/libraw"]
+	path = 3rdpart/libraw
+	url = https://github.com/LibRaw/LibRaw.git
