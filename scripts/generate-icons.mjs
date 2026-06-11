@@ -5,58 +5,62 @@ import { dirname, resolve } from "node:path";
 const output = resolve("apps/desktop/src-tauri/icons/icon.png");
 const size = 1024;
 const pixels = Buffer.alloc((size * 4 + 1) * size);
+const center = size / 2;
+const markColor = [210, 255, 72];
+const strokeWidth = 34;
+const outerRadius = 284;
+
+const segments = [
+  [[578, 398], [741, 681]],
+  [[446, 398], [772, 398]],
+  [[381, 512], [544, 230]],
+  [[446, 626], [283, 343]],
+  [[578, 626], [252, 626]],
+  [[643, 512], [480, 794]],
+];
+
+function distanceToSegment(x, y, [ax, ay], [bx, by]) {
+  const abx = bx - ax;
+  const aby = by - ay;
+  const projection = Math.max(
+    0,
+    Math.min(1, ((x - ax) * abx + (y - ay) * aby) / (abx * abx + aby * aby)),
+  );
+  return Math.hypot(x - (ax + projection * abx), y - (ay + projection * aby));
+}
+
+function coverage(distance, halfWidth) {
+  return Math.max(0, Math.min(1, halfWidth + 0.75 - distance));
+}
 
 for (let y = 0; y < size; y += 1) {
   const row = y * (size * 4 + 1);
   pixels[row] = 0;
   for (let x = 0; x < size; x += 1) {
     const index = row + 1 + x * 4;
-    const dx = x - size / 2;
-    const dy = y - size / 2;
-    const distance = Math.hypot(dx, dy);
-    const angle = Math.atan2(dy, dx);
+    const dx = x - center;
+    const dy = y - center;
     const roundedCorner =
       Math.hypot(Math.max(Math.abs(dx) - 288, 0), Math.max(Math.abs(dy) - 288, 0));
     const inside = roundedCorner < 224;
-    let red = 11;
-    let green = 13;
-    let blue = 15;
-    let alpha = inside ? 255 : 0;
+    const radial = Math.hypot(dx, dy);
+    const backgroundLift = Math.max(0, 1 - Math.hypot(dx + 150, dy + 200) / 760);
+    const base = [
+      9 + Math.round(backgroundLift * 14),
+      12 + Math.round(backgroundLift * 17),
+      13 + Math.round(backgroundLift * 18),
+    ];
 
-    if (inside) {
-      const glow = Math.max(0, 1 - Math.hypot(dx + 180, dy + 220) / 700);
-      red += Math.round(glow * 26);
-      green += Math.round(glow * 30);
-      blue += Math.round(glow * 31);
+    let lineDistance = Math.abs(radial - outerRadius);
+    for (const [start, end] of segments) {
+      lineDistance = Math.min(lineDistance, distanceToSegment(x, y, start, end));
     }
-    if (distance > 284 && distance < 316) {
-      red = 57;
-      green = 64;
-      blue = 71;
-    }
-    if (distance < 280 && distance > 138) {
-      const blade = Math.cos(angle * 4 + distance / 180);
-      if (blade > 0.25) {
-        red = 205 + Math.round(blade * 22);
-        green = 235 + Math.round(blade * 18);
-        blue = 104 + Math.round(blade * 18);
-      }
-    }
-    if (distance < 140) {
-      red = distance < 54 ? 228 : 17;
-      green = distance < 54 ? 255 : 20;
-      blue = distance < 54 ? 145 : 23;
-    }
-    if (distance > 126 && distance < 144) {
-      red = 228;
-      green = 255;
-      blue = 145;
-    }
+    const markCoverage = coverage(lineDistance, strokeWidth / 2);
 
-    pixels[index] = red;
-    pixels[index + 1] = green;
-    pixels[index + 2] = blue;
-    pixels[index + 3] = alpha;
+    pixels[index] = Math.round(base[0] * (1 - markCoverage) + markColor[0] * markCoverage);
+    pixels[index + 1] = Math.round(base[1] * (1 - markCoverage) + markColor[1] * markCoverage);
+    pixels[index + 2] = Math.round(base[2] * (1 - markCoverage) + markColor[2] * markCoverage);
+    pixels[index + 3] = inside ? 255 : 0;
   }
 }
 
@@ -96,4 +100,3 @@ const png = Buffer.concat([
 mkdirSync(dirname(output), { recursive: true });
 writeFileSync(output, png);
 console.log(`Generated ${output}`);
-
