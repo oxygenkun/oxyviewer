@@ -1,4 +1,6 @@
 import { Check, X } from "lucide-react";
+import { useQuery } from "@tanstack/react-query";
+import { getHeifCapabilities, getHeifDiagnostics } from "../lib/api";
 import type { Locale, MessageKey } from "../lib/i18n";
 import { useWorkspaceStore } from "../store";
 
@@ -12,7 +14,22 @@ const languages: { value: Locale; label: string }[] = [
 ];
 
 export function SettingsPanel({ t }: SettingsPanelProps) {
-  const { locale, setLocale, toggleSettings } = useWorkspaceStore();
+  const {
+    hardwareAcceleration,
+    locale,
+    setHardwareAcceleration,
+    setLocale,
+    toggleSettings,
+  } = useWorkspaceStore();
+  const capabilities = useQuery({
+    queryKey: ["heif-capabilities"],
+    queryFn: getHeifCapabilities,
+    staleTime: Infinity,
+  });
+  const diagnostics = useQuery({
+    queryKey: ["heif-diagnostics"],
+    queryFn: getHeifDiagnostics,
+  });
 
   return (
     <div className="settings-overlay" onClick={toggleSettings}>
@@ -35,6 +52,39 @@ export function SettingsPanel({ t }: SettingsPanelProps) {
                 {locale === value ? <Check size={12} /> : null}
               </button>
             ))}
+          </div>
+        </div>
+
+        <div className="settings-panel__section">
+          <span className="settings-panel__label">{t("hardwareAcceleration")}</span>
+          <div className="settings-panel__options">
+            {[
+              { enabled: true, label: t("automatic") },
+              { enabled: false, label: t("disabled") },
+            ].map(({ enabled, label }) => (
+              <button
+                key={String(enabled)}
+                className={`settings-panel__option ${hardwareAcceleration === enabled ? "is-active" : ""}`}
+                onClick={() => setHardwareAcceleration(enabled)}
+              >
+                <span>{label}</span>
+                {hardwareAcceleration === enabled ? <Check size={12} /> : null}
+              </button>
+            ))}
+          </div>
+          <div className="settings-panel__diagnostics">
+            <small>{t("heifDiagnostics")}</small>
+            {capabilities.data?.map((capability) => (
+              <span key={capability.backend}>
+                {capability.backend}: {capability.available ? capability.acceleration : t("unavailable")}
+              </span>
+            ))}
+            {diagnostics.data ? (
+              <span>
+                {diagnostics.data.backend} · {diagnostics.data.totalMs} ms
+                {diagnostics.data.fallbackReason ? ` · ${diagnostics.data.fallbackReason}` : ""}
+              </span>
+            ) : null}
           </div>
         </div>
 

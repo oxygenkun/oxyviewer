@@ -62,6 +62,20 @@ performance gate has not yet been measured.
 - [x] Keep an 8192 px macOS Quick Look compatibility fallback
 - [ ] Bundle and validate libde265 for macOS, Windows, and Linux releases
 
+### Milestone HEIF-2: HEIF Decoding Performance
+
+- [x] Scale decoded image in libheif before expensive pixel processing (Image::scale)
+- [x] LUT-accelerated HDR tone mapping (transfer function + sRGB gamma lookup tables)
+- [x] SIMD-friendly unpack_rgb: split 8/16-bit paths, iterator-based batch processing
+- [x] Confirm libheif parallel tile decoding enabled by default in v1.23
+- [x] Preview cache write path: use JPEG instead of PNG for non-full-detail previews
+- [x] Replace global Mutex decode locks with per-file granular locking
+- [x] Pass DecodingOptions with explicit thread counts to leverage multi-core HEVC decode
+- [x] Use embedded HEIF thumbnails first, including undersized thumbnails as a progressive first stage
+- [x] Use an 8-bit RGB fast path for preview JPEGs while retaining color-managed high-bit-depth full detail
+- [x] Profile end-to-end decode pipeline; establish performance regression budget
+- [ ] Evaluate true reduced-resolution HEVC decode when supported by the bundled decoder
+
 **Gate:** a supported RAW file displays a cached thumbnail and loupe preview
 without depending on operating-system RAW support. Unsupported or damaged RAW
 files return a concrete LibRaw and fallback error instead of failing silently.

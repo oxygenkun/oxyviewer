@@ -54,7 +54,7 @@ export function Thumbnail({
     queryFn: () => generatedPreview(asset, "fullDetail"),
     enabled: enabled
       && isTauri()
-      && (asset.kind === "raw" || asset.kind === "heif")
+      && asset.kind === "raw"
       && large
       && Boolean(loupeSource.data || loupeSource.isError),
     staleTime: Infinity,

@@ -49,6 +49,24 @@ Reference budgets are measured on a local SSD with a release build.
   HLG/PQ inputs are tone-mapped to SDR. macOS uses an 8192 px Quick Look result
   when the packaged HEVC decoder rejects the stream, avoiding the previous
   unconditional 4096 px ceiling.
+- 2026-06-12: HEIF preview generation now follows nomacs' fastest useful
+  behavior: prefer container thumbnails before primary-image decode, accept an
+  undersized embedded thumbnail as the immediate progressive stage, cache
+  preview JPEGs, and serialize different preview sizes for the same source to
+  avoid duplicate concurrent HEVC decodes. Preview JPEGs use a direct 8-bit
+  RGB decode path; high-bit-depth color-managed processing remains isolated to
+  the later full-detail stage. An experimental all-tile path was removed
+  because it decoded every tile sequentially and did not reduce HEVC work.
+- 2026-06-12: A clean release-mode libheif benchmark was added at
+  `crates/oxy-media/src/bin/heif_decode_bench.rs`. On the Windows reference
+  machine, `tests/fixtures/DSC00449.HIF` is 4672x7008, 10-bit, and has no
+  embedded thumbnail. libheif 1.23.0 reports only the libde265 1.1.1 decoder.
+  Full-resolution display-ready RGB8 decode measured 2.51 seconds median and
+  2.30 seconds minimum; tight pixel copying added about 32 ms. One, default,
+  and 24 codec threads performed nearly identically. The current libde265
+  backend therefore cannot meet a one-second full-resolution target for this
+  fixture; reaching it requires evaluating a faster or hardware-accelerated
+  HEVC decoder such as libheif's FFmpeg decoder.
 - The generated 100k-entry directory benchmark is not yet recorded. Phase 1
   must add it before its performance gate can be marked complete.
 
@@ -81,3 +99,11 @@ display. Remaining improvements should be adopted in this order:
    half-size RAW fallbacks.
 5. Evaluate RawSpeed/OpenMP only for the measured half-size fallback bottleneck;
    neither improves the normal embedded-preview path.
+- 2026-06-12: Full-resolution HEIF display now has a cancellable tile session
+  boundary and keeps the 4096 px preview visible during compatibility decode.
+  The portable libheif/libde265 backend does not meet the `<1s` hardware target;
+  native adapters must only be enabled after cold-load P95 qualification on
+  real GPU runners.
+  On the current Windows workstation, `DSC00449.HIF` (4672x7008, 10-bit) took
+  2.60 s for the fastest full RGB8 libheif/libde265 run; native decode and copy
+  took 3.06 s. This is the compatibility baseline, not an acceptance result.

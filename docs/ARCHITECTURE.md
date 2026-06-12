@@ -26,12 +26,13 @@ reduction and applies modest output sharpening for loupe viewing. macOS Quick
 Look remains a final compatibility fallback for preview generation.
 
 HEIF/HIF assets use a progressive pipeline similar to RAW: a 512 px and 4096 px
-Quick Look preview is shown first on macOS, then the selected image is upgraded
-in a dedicated decode lane. The full-detail path decodes the primary image with
-libheif, preserves 9-16 bit samples during color conversion, maps HLG/PQ content
-to SDR, and writes a color-profiled 16-bit PNG cache entry. Quick Look at 8192 px
-remains the compatibility fallback when the packaged HEVC decoder rejects a
-stream. TIFF assets still use the operating system preview generator.
+preview is shown first, then the selected image starts a cancellable
+full-resolution RGB8 SDR session. Tile metadata crosses Tauri events while RGBA
+bytes use the custom media protocol. The current portable backend is
+libheif/libde265; platform-native adapters remain capability-gated until they
+pass GPU qualification. The older color-profiled 16-bit PNG path remains
+available as a compatibility/cache operation. TIFF assets still use the
+operating system preview generator.
 
 ## Boundaries
 
@@ -58,3 +59,7 @@ next Phase 1/2 steps.
 Visited directories have a rebuildable, in-memory snapshot cache in `oxy-fs`.
 Asset pagination, sorting, and filtering reuse that non-recursive snapshot
 until the user explicitly refreshes the current folder.
+Full-resolution HEIF display is managed by `oxy-media::HeifDecodeService`.
+The Tauri layer starts/cancels sessions and publishes metadata events; RGBA8
+tile bytes are served by the `oxy-media://tile/...` custom protocol and painted
+onto a Canvas above the retained 4096 px preview. See ADR 0004.

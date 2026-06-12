@@ -1,17 +1,19 @@
 mod heif;
+mod heif_service;
 mod libraw;
 
+pub use heif_service::{DEFAULT_TILE_SIZE, HeifBackend, HeifDecodeService, HeifTile, TileSink};
 use image::{DynamicImage, ImageReader, codecs::jpeg::JpegEncoder};
 use oxy_domain::{PreviewKind, PreviewResult};
 #[cfg(target_os = "macos")]
 use std::process::{Command, Stdio};
 use std::{
-    collections::hash_map::DefaultHasher,
+    collections::{HashMap, hash_map::DefaultHasher},
     fs::{self, File},
     hash::{Hash, Hasher},
     io::{BufReader, Write},
     path::{Path, PathBuf},
-    sync::Mutex,
+    sync::{Arc, LazyLock, Mutex},
 };
 use tempfile::NamedTempFile;
 use thiserror::Error;
@@ -19,12 +21,36 @@ use thiserror::Error;
 const LIBRAW_CACHE_VERSION: &str = "libraw-0.22.1-v5";
 const LIBRAW_FULL_CACHE_VERSION: &str = "libraw-0.22.1-full-detail-v2";
 const HEIF_FULL_CACHE_VERSION: &str = "libheif-1.23-sdr-v1";
+const HEIF_CACHE_VERSION: &str = "libheif-1.23-preview-v4";
 const SYSTEM_CACHE_VERSION: &str = "system-preview-v2";
 const LOUPE_PREVIEW_THRESHOLD: u32 = 2_048;
 static RAW_THUMBNAIL_DECODE_LOCK: Mutex<()> = Mutex::new(());
 static RAW_LOUPE_DECODE_LOCK: Mutex<()> = Mutex::new(());
 static RAW_FULL_DECODE_LOCK: Mutex<()> = Mutex::new(());
-static HEIF_FULL_DECODE_LOCK: Mutex<()> = Mutex::new(());
+
+// Per-file HEIF decode locks: different files decode concurrently, same file
+// is serialised to avoid redundant work.
+static HEIF_LOCKS: LazyLock<Mutex<HashMap<String, Arc<Mutex<()>>>>> =
+    LazyLock::new(|| Mutex::new(HashMap::new()));
+
+/// Look up or create a per-file `Mutex`, clone the `Arc`, then lock it.
+/// Returns `(Arc<Mutex<()>>, MutexGuard)` — caller must keep the `Arc` alive
+/// alongside the guard (it is dropped last due to reverse-order drop).
+fn acquire_heif_lock(cache_key: &str) -> (Arc<Mutex<()>>, std::sync::MutexGuard<'static, ()>) {
+    let arc: Arc<Mutex<()>> = HEIF_LOCKS
+        .lock()
+        .unwrap()
+        .entry(cache_key.to_owned())
+        .or_insert_with(|| Arc::new(Mutex::new(())))
+        .clone();
+    // Access the Mutex via raw pointer to decouple the guard's lifetime from
+    // the local `arc` binding. This lets us return both the Arc and the guard.
+    // Safety: the Mutex lives inside the static HEIF_LOCKS HashMap behind an
+    // Arc that is never removed; the returned Arc keeps it alive.
+    let mutex: &'static Mutex<()> = unsafe { &*Arc::as_ptr(&arc) };
+    let guard = mutex.lock().unwrap_or_else(|e| e.into_inner());
+    (arc, guard)
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ImageDimensions {
@@ -42,6 +68,8 @@ pub enum MediaError {
     Heif { path: PathBuf, message: String },
     #[error("color conversion failed: {0}")]
     Color(String),
+    #[error("decode session was cancelled")]
+    Cancelled,
     #[error("system preview generation failed for {path}: {message}")]
     PreviewGenerationFailed { path: PathBuf, message: String },
     #[error(transparent)]
@@ -155,17 +183,14 @@ pub fn raw_full(path: &Path, cache_dir: &Path) -> Result<PreviewResult, MediaErr
 
 pub fn heif_full(path: &Path, cache_dir: &Path) -> Result<PreviewResult, MediaError> {
     fs::create_dir_all(cache_dir)?;
-    let destination = cache_dir.join(format!(
-        "{}.png",
-        preview_cache_key(path, HEIF_FULL_CACHE_VERSION, 0)?
-    ));
+    let cache_key = preview_cache_key(path, HEIF_FULL_CACHE_VERSION, 0)?;
+    let destination = cache_dir.join(format!("{cache_key}.png"));
     if destination.is_file() {
         return preview_result(destination, PreviewKind::Decoded);
     }
 
-    let _decode_guard = HEIF_FULL_DECODE_LOCK
-        .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    let source_lock_key = preview_cache_key(path, "heif-source-decode", 0)?;
+    let (_heif_lock_arc, _decode_guard) = acquire_heif_lock(&source_lock_key);
     if destination.is_file() {
         return preview_result(destination, PreviewKind::Decoded);
     }
@@ -175,6 +200,63 @@ pub fn heif_full(path: &Path, cache_dir: &Path) -> Result<PreviewResult, MediaEr
     heif::write_srgb_png(&image, temporary.path())?;
     persist_atomically(temporary, &destination)?;
     preview_result(destination, PreviewKind::Decoded)
+}
+
+pub fn heif_preview(
+    path: &Path,
+    cache_dir: &Path,
+    max_size: u32,
+) -> Result<PreviewResult, MediaError> {
+    let max_size = max_size.max(1);
+    fs::create_dir_all(cache_dir)?;
+    let cache_key = preview_cache_key(path, HEIF_CACHE_VERSION, max_size)?;
+    let destination = cache_dir.join(format!("{cache_key}.jpg"));
+    if destination.is_file() {
+        return preview_result(destination, PreviewKind::Decoded);
+    }
+    if let Some(result) = larger_heif_preview(path, cache_dir, max_size)? {
+        return Ok(result);
+    }
+
+    let source_lock_key = preview_cache_key(path, "heif-source-decode", 0)?;
+    let (_heif_lock_arc, _decode_guard) = acquire_heif_lock(&source_lock_key);
+    if destination.is_file() {
+        return preview_result(destination, PreviewKind::Decoded);
+    }
+    if let Some(result) = larger_heif_preview(path, cache_dir, max_size)? {
+        return Ok(result);
+    }
+
+    // Reuse full-detail cache if available to avoid redundant decoding.
+    let full_cache_key = preview_cache_key(path, HEIF_FULL_CACHE_VERSION, 0)?;
+    let full_cache_path = cache_dir.join(format!("{full_cache_key}.png"));
+    let image = if full_cache_path.is_file() {
+        image::ImageReader::open(&full_cache_path)?
+            .decode()?
+            .thumbnail(max_size, max_size)
+    } else {
+        heif::decode_scaled(path, max_size)?
+    };
+    write_jpeg_atomically(&image, &destination, 90)?;
+    preview_result(destination, PreviewKind::Decoded)
+}
+
+fn larger_heif_preview(
+    path: &Path,
+    cache_dir: &Path,
+    max_size: u32,
+) -> Result<Option<PreviewResult>, MediaError> {
+    for candidate_size in [512, 4_096, 8_192] {
+        if candidate_size <= max_size {
+            continue;
+        }
+        let key = preview_cache_key(path, HEIF_CACHE_VERSION, candidate_size)?;
+        let candidate = cache_dir.join(format!("{key}.jpg"));
+        if candidate.is_file() {
+            return preview_result(candidate, PreviewKind::Decoded).map(Some);
+        }
+    }
+    Ok(None)
 }
 
 pub fn system_preview(
@@ -330,6 +412,23 @@ mod tests {
 
         assert_ne!(first, different_backend);
         assert_ne!(first, different_size);
+    }
+
+    #[test]
+    fn larger_cached_heif_preview_satisfies_smaller_request() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("image.heic");
+        fs::write(&path, b"heif").unwrap();
+        let key = preview_cache_key(&path, HEIF_CACHE_VERSION, 4_096).unwrap();
+        let cached = directory.path().join(format!("{key}.jpg"));
+        write_jpeg_atomically(&DynamicImage::new_rgb8(32, 16), &cached, 90).unwrap();
+
+        let result = larger_heif_preview(&path, directory.path(), 512)
+            .unwrap()
+            .unwrap();
+
+        assert_eq!(result.path, cached);
+        assert_eq!((result.width, result.height), (32, 16));
     }
 
     #[test]
@@ -559,5 +658,82 @@ mod tests {
                 fixture.display()
             );
         }
+    }
+
+    #[test]
+    #[ignore = "requires OXY_HEIF_FIXTURE to point to a HEIF file"]
+    fn heif_decode_performance_budget() {
+        let heif_path = fs::canonicalize(workspace_path(
+            std::env::var_os("OXY_HEIF_FIXTURE").unwrap(),
+        ))
+        .unwrap();
+
+        // Cold full decode + PNG cache write.
+        let cache_full = tempfile::tempdir().unwrap();
+        let started = Instant::now();
+        let full = heif_full(&heif_path, cache_full.path()).unwrap();
+        let full_elapsed = started.elapsed();
+        eprintln!("HEIF full decode: {:?}", full_elapsed);
+        assert!(
+            full_elapsed < Duration::from_secs(3),
+            "full decode took {:?}",
+            full_elapsed
+        );
+
+        // Warm full-detail cache hit.
+        let started = Instant::now();
+        assert_eq!(
+            heif_full(&heif_path, cache_full.path()).unwrap().path,
+            full.path
+        );
+        let warm_full = started.elapsed();
+        eprintln!("HEIF warm full: {:?}", warm_full);
+        assert!(
+            warm_full < Duration::from_millis(100),
+            "warm full took {:?}",
+            warm_full
+        );
+
+        // Cold 512 px thumbnail via decode_scaled (8-bit fast path).
+        let cache_thumb = tempfile::tempdir().unwrap();
+        let started = Instant::now();
+        let thumb = heif_preview(&heif_path, cache_thumb.path(), 512).unwrap();
+        let thumb_elapsed = started.elapsed();
+        eprintln!("HEIF thumbnail (512): {:?}", thumb_elapsed);
+        assert!(
+            thumb_elapsed < Duration::from_millis(800),
+            "thumbnail took {:?}",
+            thumb_elapsed
+        );
+        assert!(thumb.width <= 512 && thumb.height <= 512);
+
+        // Cold 4096 px loupe preview via decode_scaled.
+        let cache_loupe = tempfile::tempdir().unwrap();
+        let started = Instant::now();
+        let loupe = heif_preview(&heif_path, cache_loupe.path(), 4_096).unwrap();
+        let loupe_elapsed = started.elapsed();
+        eprintln!("HEIF loupe (4096): {:?}", loupe_elapsed);
+        assert!(
+            loupe_elapsed < Duration::from_millis(1_500),
+            "loupe took {:?}",
+            loupe_elapsed
+        );
+        assert!(loupe.width <= 4_096 && loupe.height <= 4_096);
+
+        // Warm loupe cache hit.
+        let started = Instant::now();
+        assert_eq!(
+            heif_preview(&heif_path, cache_loupe.path(), 4_096)
+                .unwrap()
+                .path,
+            loupe.path
+        );
+        let warm_loupe = started.elapsed();
+        eprintln!("HEIF warm loupe: {:?}", warm_loupe);
+        assert!(
+            warm_loupe < Duration::from_millis(100),
+            "warm loupe took {:?}",
+            warm_loupe
+        );
     }
 }

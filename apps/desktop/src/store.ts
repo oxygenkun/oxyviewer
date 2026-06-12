@@ -20,6 +20,7 @@ interface WorkspaceState {
   locale: Locale;
   navigatorVisible: boolean;
   navigatorPosition: NavigatorPosition;
+  hardwareAcceleration: boolean;
   search: string;
   kind?: AssetKind;
   sort: AssetSort;
@@ -34,6 +35,7 @@ interface WorkspaceState {
   setLocale: (locale: Locale) => void;
   setNavigatorVisible: (visible: boolean) => void;
   setNavigatorPosition: (position: NavigatorPosition) => void;
+  setHardwareAcceleration: (enabled: boolean) => void;
   setSearch: (search: string) => void;
   setKind: (kind?: AssetKind) => void;
   setSort: (sort: AssetSort) => void;
@@ -50,6 +52,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set) => ({
   locale: "zh-CN",
   navigatorVisible: true,
   navigatorPosition: "bottom-right",
+  hardwareAcceleration: true,
   search: "",
   sort: "name",
   direction: "ascending",
@@ -70,6 +73,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set) => ({
   setLocale: (locale) => set({ locale }),
   setNavigatorVisible: (navigatorVisible) => set({ navigatorVisible }),
   setNavigatorPosition: (navigatorPosition) => set({ navigatorPosition }),
+  setHardwareAcceleration: (hardwareAcceleration) => set({ hardwareAcceleration }),
   setSearch: (search) => set({ search }),
   setKind: (kind) => set({ kind }),
   setSort: (sort) => set({ sort }),

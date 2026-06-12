@@ -71,3 +71,64 @@ export interface Page<T> {
   nextCursor?: number;
   total: number;
 }
+
+export type HeifBackendKind =
+  | "windowsWic"
+  | "windowsMediaFoundation"
+  | "appleImageIo"
+  | "linuxVaapi"
+  | "libheifSoftware";
+export type AccelerationKind = "hardware" | "software" | "unknown";
+export type HeifDecodeStatus =
+  | "probing"
+  | "decoding"
+  | "compatibilityFallback"
+  | "complete"
+  | "failed"
+  | "cancelled";
+
+export interface HeifCapabilities {
+  backend: HeifBackendKind;
+  acceleration: AccelerationKind;
+  available: boolean;
+  detail?: string;
+}
+
+export interface HeifDecodeSession {
+  id: string;
+  generation: number;
+  width: number;
+  height: number;
+  tileSize: number;
+  backend: HeifBackendKind;
+  acceleration: AccelerationKind;
+  status: HeifDecodeStatus;
+}
+
+export interface HeifTileReady {
+  sessionId: string;
+  generation: number;
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+  url: string;
+}
+
+export interface HeifDiagnostics {
+  backend: HeifBackendKind;
+  acceleration: AccelerationKind;
+  codec?: string;
+  decodeMs: number;
+  tilePublishMs: number;
+  totalMs: number;
+  fallbackReason?: string;
+}
+
+export interface HeifStatusEvent {
+  sessionId: string;
+  generation: number;
+  status: HeifDecodeStatus;
+  diagnostics?: HeifDiagnostics;
+  message?: string;
+}

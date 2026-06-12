@@ -1,19 +1,20 @@
 use oxy_domain::{
     AssetDetails, AssetKind, AssetQuery, AssetSummary, DirectorySummary, EditableMetadata,
-    FileOperation, FileOperationResult, FolderSession, JobId, JobPriority, Page, PreviewMode,
-    PreviewResult,
+    FileOperation, FileOperationResult, FolderSession, HeifCapabilities, HeifDecodeSession,
+    HeifDecodeStatus, HeifDiagnostics, JobId, JobPriority, Page, PreviewMode, PreviewResult,
 };
 use oxy_fs::FsCatalog;
 use oxy_library::Library;
 use oxy_runtime::JobRegistry;
 use std::{path::PathBuf, sync::Arc};
-use tauri::{Manager, State};
+use tauri::{Emitter, Manager, State, http};
 
 struct AppState {
     files: Arc<FsCatalog>,
     jobs: JobRegistry,
     library: Arc<Library>,
     preview_dir: PathBuf,
+    heif: Arc<oxy_media::HeifDecodeService>,
 }
 
 #[tauri::command]
@@ -127,19 +128,23 @@ async fn get_preview(
                             "full-detail libheif decode failed for {}: {heif_error}",
                             path.display()
                         );
-                        let fallback_size = oxy_media::dimensions(&path)
-                            .map(|size| size.width.max(size.height).min(8_192))
-                            .unwrap_or(8_192);
-                        oxy_media::system_preview(&path, &preview_dir, fallback_size).map_err(
-                            |system_error| format!("{heif_error}; fallback failed: {system_error}"),
+                        oxy_media::heif_preview(&path, &preview_dir, 8_192).map_err(
+                            |preview_error| {
+                                format!("{heif_error}; preview fallback failed: {preview_error}")
+                            },
                         )
                     });
             }
             if mode == PreviewMode::FullDetail {
                 return Err("fullDetail preview mode only supports RAW and HEIF assets".into());
             }
-            oxy_media::system_preview(&path, &preview_dir, max_size)
-                .map_err(|error| error.to_string())
+            if asset.kind == AssetKind::Heif {
+                oxy_media::heif_preview(&path, &preview_dir, max_size)
+                    .map_err(|error| error.to_string())
+            } else {
+                oxy_media::system_preview(&path, &preview_dir, max_size)
+                    .map_err(|error| error.to_string())
+            }
         }
     })
     .await
@@ -189,12 +194,126 @@ fn cancel_job(job_id: String, state: State<'_, AppState>) -> bool {
     state.jobs.cancel(&job_id)
 }
 
+#[tauri::command]
+fn get_heif_capabilities(state: State<'_, AppState>) -> Vec<HeifCapabilities> {
+    state.heif.capabilities()
+}
+
+#[tauri::command]
+fn get_heif_diagnostics(state: State<'_, AppState>) -> Option<HeifDiagnostics> {
+    state.heif.diagnostics()
+}
+
+#[tauri::command]
+async fn start_heif_decode(
+    path: PathBuf,
+    generation: u64,
+    hardware_acceleration: bool,
+    app: tauri::AppHandle,
+    state: State<'_, AppState>,
+) -> Result<HeifDecodeSession, String> {
+    let asset = state
+        .files
+        .get_asset(&path)
+        .map_err(|error| error.to_string())?;
+    if asset.kind != AssetKind::Heif {
+        return Err("full-resolution HEIF sessions require a HEIF asset".into());
+    }
+    let service = state.heif.clone();
+    let session = service
+        .begin(&path, generation, hardware_acceleration)
+        .map_err(|error| error.to_string())?;
+    let worker_session = session.clone();
+    let fallback_status = (session.status == HeifDecodeStatus::CompatibilityFallback).then(|| {
+        oxy_media::HeifDecodeService::status_event(
+            &session,
+            HeifDecodeStatus::CompatibilityFallback,
+            None,
+            Some("native hardware decoder unavailable; using compatibility mode".into()),
+        )
+    });
+    if let Some(status) = fallback_status {
+        let _ = app.emit("heif-decode-status", status);
+    }
+    tauri::async_runtime::spawn_blocking(move || {
+        let result = service.decode(&worker_session, path, |tile| {
+            let _ = app.emit("heif-tile-ready", tile);
+        });
+        let event = match result {
+            Ok(diagnostics) => oxy_media::HeifDecodeService::status_event(
+                &worker_session,
+                HeifDecodeStatus::Complete,
+                Some(diagnostics),
+                None,
+            ),
+            Err(oxy_media::MediaError::Cancelled) => oxy_media::HeifDecodeService::status_event(
+                &worker_session,
+                HeifDecodeStatus::Cancelled,
+                None,
+                None,
+            ),
+            Err(error) => oxy_media::HeifDecodeService::status_event(
+                &worker_session,
+                HeifDecodeStatus::Failed,
+                None,
+                Some(error.to_string()),
+            ),
+        };
+        let _ = app.emit("heif-decode-status", event);
+    });
+    Ok(session)
+}
+
+#[tauri::command]
+fn cancel_heif_decode(session_id: String, state: State<'_, AppState>) -> bool {
+    state.heif.cancel(&session_id)
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    let heif = Arc::new(oxy_media::HeifDecodeService::default());
+    let protocol_heif = heif.clone();
     tauri::Builder::default()
+        .register_uri_scheme_protocol("oxy-media", move |_context, request| {
+            let parts = request
+                .uri()
+                .path()
+                .trim_start_matches('/')
+                .split('/')
+                .collect::<Vec<_>>();
+            let tile = if parts.len() == 5 && parts[0] == "tile" {
+                let generation = parts[2].parse().ok();
+                let x = parts[3].parse().ok();
+                let y = parts[4].parse().ok();
+                match (generation, x, y) {
+                    (Some(generation), Some(x), Some(y)) => {
+                        protocol_heif.tile(parts[1], generation, x, y)
+                    }
+                    _ => None,
+                }
+            } else {
+                None
+            };
+            match tile {
+                Some(tile) => http::Response::builder()
+                    .status(http::StatusCode::OK)
+                    .header(http::header::CONTENT_TYPE, "application/octet-stream")
+                    .header(http::header::ACCESS_CONTROL_ALLOW_ORIGIN, "*")
+                    .header("x-oxy-width", tile.width)
+                    .header("x-oxy-height", tile.height)
+                    .header("x-oxy-stride", tile.stride)
+                    .body(tile.rgba.to_vec())
+                    .expect("valid tile protocol response"),
+                None => http::Response::builder()
+                    .status(http::StatusCode::NOT_FOUND)
+                    .header(http::header::ACCESS_CONTROL_ALLOW_ORIGIN, "*")
+                    .body(Vec::new())
+                    .expect("valid missing tile response"),
+            }
+        })
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_log::Builder::new().build())
-        .setup(|app| {
+        .setup(move |app| {
             let data_dir = app.path().app_data_dir()?;
             let preview_dir = app.path().app_cache_dir()?.join("previews");
             let library = Library::open(&data_dir.join("oxyviewer.sqlite"))?;
@@ -203,6 +322,7 @@ pub fn run() {
                 jobs: JobRegistry::default(),
                 library: Arc::new(library),
                 preview_dir,
+                heif: heif.clone(),
             });
 
             Ok(())
@@ -218,7 +338,11 @@ pub fn run() {
             execute_file_operation,
             add_library_root,
             list_library_roots,
-            cancel_job
+            cancel_job,
+            get_heif_capabilities,
+            get_heif_diagnostics,
+            start_heif_decode,
+            cancel_heif_decode
         ])
         .run(tauri::generate_context!())
         .expect("error while running OxyViewer");

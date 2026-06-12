@@ -95,6 +95,100 @@ pub struct PreviewResult {
     pub kind: PreviewKind,
 }
 
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub enum HeifBackendKind {
+    WindowsWic,
+    WindowsMediaFoundation,
+    AppleImageIo,
+    LinuxVaapi,
+    LibheifSoftware,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub enum AccelerationKind {
+    Hardware,
+    Software,
+    Unknown,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub enum HeifDecodeStatus {
+    Probing,
+    Decoding,
+    CompatibilityFallback,
+    Complete,
+    Failed,
+    Cancelled,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct HeifCapabilities {
+    pub backend: HeifBackendKind,
+    pub acceleration: AccelerationKind,
+    pub available: bool,
+    pub detail: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct HeifDecodeRequest {
+    pub path: PathBuf,
+    pub generation: u64,
+    pub hardware_acceleration: bool,
+    pub tile_size: u32,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct HeifDecodeSession {
+    pub id: SessionId,
+    pub generation: u64,
+    pub width: u32,
+    pub height: u32,
+    pub tile_size: u32,
+    pub backend: HeifBackendKind,
+    pub acceleration: AccelerationKind,
+    pub status: HeifDecodeStatus,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct HeifTileReady {
+    pub session_id: SessionId,
+    pub generation: u64,
+    pub x: u32,
+    pub y: u32,
+    pub width: u32,
+    pub height: u32,
+    pub url: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct HeifDiagnostics {
+    pub backend: HeifBackendKind,
+    pub acceleration: AccelerationKind,
+    pub codec: Option<String>,
+    pub decode_ms: u64,
+    pub tile_publish_ms: u64,
+    pub total_ms: u64,
+    pub fallback_reason: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct HeifStatusEvent {
+    pub session_id: SessionId,
+    pub generation: u64,
+    pub status: HeifDecodeStatus,
+    pub diagnostics: Option<HeifDiagnostics>,
+    pub message: Option<String>,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 #[serde(rename_all = "camelCase")]
 pub struct AssetQuery {

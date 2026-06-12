@@ -3,7 +3,7 @@
 | Format | Discovery | Preview | Metadata read | Metadata write |
 | --- | --- | --- | --- | --- |
 | JPEG/JPG | Implemented | Foundation implemented | Planned ExifTool worker | Planned embedded write |
-| HEIF/HEIC/HIF | Implemented | Progressive Quick Look preview followed by full-detail libheif decode; 16-bit SDR cache with ICC/NCLX handling and HLG/PQ tone mapping; macOS Quick Look fallback | Planned ExifTool worker | Planned embedded write |
+| HEIF/HEIC/HIF | Implemented | 512/4096 px preview plus cancellable full-resolution RGBA8 tile session; libheif compatibility backend; native hardware adapters are capability-gated and pending GPU qualification | Planned ExifTool worker | Planned embedded write |
 | ARW/CR2/CR3/NEF/DNG/RAF/RW2/ORF | Implemented | Bundled LibRaw 0.22.1 embedded preview with half-size preview fallback, followed by full-resolution loupe development; macOS Quick Look final preview fallback | Planned ExifTool worker | Planned XMP sidecar |
 | PNG/WebP/TIFF | Implemented as secondary formats | Foundation/Planned | Read-only planned | Not in MVP |
 

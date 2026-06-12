@@ -33,7 +33,8 @@ import { getAssetDetails } from "../lib/api";
 import type { MessageKey } from "../lib/i18n";
 import type { RawPreviewStatus } from "../lib/rawPreview";
 import { useWorkspaceStore } from "../store";
-import type { AssetSummary, NavigatorPosition } from "../types";
+import type { AssetSummary, HeifDecodeStatus, NavigatorPosition } from "../types";
+import { HeifTileCanvas } from "./HeifTileCanvas";
 import { Thumbnail } from "./Thumbnail";
 
 interface LoupeProps {
@@ -74,6 +75,7 @@ export function Loupe({
   const select = useWorkspaceStore((state) => state.select);
   const navigatorVisible = useWorkspaceStore((state) => state.navigatorVisible);
   const navigatorPosition = useWorkspaceStore((state) => state.navigatorPosition);
+  const hardwareAcceleration = useWorkspaceStore((state) => state.hardwareAcceleration);
   const setNavigatorVisible = useWorkspaceStore((state) => state.setNavigatorVisible);
   const setNavigatorPosition = useWorkspaceStore((state) => state.setNavigatorPosition);
   const active = assets.find((asset) => asset.id === activeId) ?? assets[0];
@@ -93,6 +95,7 @@ export function Loupe({
   const [stageContentSize, setStageContentSize] = useState<Size>({ width: 0, height: 0 });
   const [naturalSize, setNaturalSize] = useState<{ assetId: string; size: Size } | undefined>(undefined);
   const [rawPreviewStatus, setRawPreviewStatus] = useState<RawPreviewStatus>({ state: "loadingPreview" });
+  const [heifStatus, setHeifStatus] = useState<HeifDecodeStatus>("probing");
   const details = useQuery({
     queryKey: ["asset-details", active.id],
     queryFn: () => getAssetDetails(active),
@@ -127,6 +130,7 @@ export function Loupe({
   useEffect(() => {
     resetZoom();
     setRawPreviewStatus({ state: "loadingPreview" });
+    setHeifStatus("probing");
   }, [active.id, resetZoom]);
 
   useLayoutEffect(() => {
@@ -254,6 +258,17 @@ export function Loupe({
                   ? t("rawFullFailed")
                   : `${t("rawFullReady")} · ${rawPreviewStatus.width} × ${rawPreviewStatus.height}`}
           </div>
+        ) : active.kind === "heif" ? (
+          <div className={`loupe__raw-status loupe__raw-status--${heifStatus}`}>
+            <i />
+            {heifStatus === "complete"
+              ? t("fullQualityReady")
+              : heifStatus === "compatibilityFallback"
+                ? t("fullQualityCompatibility")
+                : heifStatus === "failed"
+                  ? t("fullQualityFailed")
+                  : t("fullQualityLoading")}
+          </div>
         ) : null}
         <div
           className="loupe__image"
@@ -277,6 +292,13 @@ export function Loupe({
               onImageLoad={(size) => setNaturalSize({ assetId: active.id, size })}
               onRawPreviewStatus={setRawPreviewStatus}
             />
+            {active.kind === "heif" ? (
+              <HeifTileCanvas
+                asset={active}
+                hardwareAcceleration={hardwareAcceleration}
+                onStatus={setHeifStatus}
+              />
+            ) : null}
           </div>
         </div>
         {navigatorVisible && zoom > 1.001 ? (

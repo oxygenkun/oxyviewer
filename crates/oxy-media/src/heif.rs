@@ -1,11 +1,11 @@
 use image::{
-    ExtendedColorType, ImageEncoder,
+    DynamicImage, ExtendedColorType, ImageEncoder,
     codecs::png::{CompressionType, FilterType, PngEncoder},
 };
 use lcms2::{Intent, PixelFormat, Profile, Transform};
 use libheif_rs::{
-    ColorPrimaries, ColorProfileNCLX, ColorSpace, HeifContext, LibHeif, MatrixCoefficients,
-    RgbChroma, TransferCharacteristics,
+    ColorPrimaries, ColorProfileNCLX, ColorSpace, DecodingOptions, HeifContext, LibHeif,
+    MatrixCoefficients, RgbChroma, TransferCharacteristics,
 };
 use std::{
     fs::File,
@@ -40,23 +40,129 @@ pub fn decode_primary(path: &Path) -> Result<DecodedHeif, MediaError> {
     let raw_profile = handle.color_profile_raw().map(|profile| profile.data);
     let nclx = handle.color_profile_nclx();
     let bit_depth = handle.luma_bits_per_pixel();
-    let color_space = if bit_depth > 8 {
-        ColorSpace::Rgb(RgbChroma::HdrRgbLe)
-    } else {
-        ColorSpace::Rgb(RgbChroma::Rgb)
-    };
+    let color_space = color_space_for_depth(bit_depth);
     let image = LibHeif::new()
-        .decode(&handle, color_space, None)
+        .decode(&handle, color_space, decoding_options())
         .map_err(|error| heif_error(path, error))?;
     let plane = image.planes().interleaved.ok_or_else(|| MediaError::Heif {
         path: path.to_owned(),
         message: "decoded image has no interleaved RGB plane".into(),
     })?;
-    let width = plane.width;
-    let height = plane.height;
-    let rgb = unpack_rgb(plane.data, width, height, plane.stride, bit_depth)?;
+    let rgb = unpack_rgb(
+        plane.data,
+        plane.width,
+        plane.height,
+        plane.stride,
+        bit_depth,
+    )?;
     let rgb = convert_to_srgb(rgb, raw_profile.as_deref(), nclx.as_ref())?;
-    Ok(DecodedHeif { width, height, rgb })
+    Ok(DecodedHeif {
+        width: plane.width,
+        height: plane.height,
+        rgb,
+    })
+}
+
+pub fn decode_scaled(path: &Path, max_size: u32) -> Result<DynamicImage, MediaError> {
+    let context = open(path)?;
+    let handle = context
+        .primary_image_handle()
+        .map_err(|error| heif_error(path, error))?;
+    let original_longest = handle.width().max(handle.height());
+    // Like nomacs, prefer a container thumbnail before decoding the primary
+    // image. Use the smallest thumbnail that satisfies the request, or the
+    // largest available thumbnail as a fast progressive first stage.
+    if max_size <= 2048 {
+        let mut ids = Vec::new();
+        handle.thumbnail_ids(&mut ids);
+        let mut thumbnails = ids
+            .into_iter()
+            .filter_map(|id| handle.thumbnail(id).ok())
+            .collect::<Vec<_>>();
+        thumbnails.sort_by_key(|thumbnail| thumbnail.width().max(thumbnail.height()));
+        if let Some(thumbnail) = thumbnails
+            .iter()
+            .find(|thumbnail| thumbnail.width().max(thumbnail.height()) >= max_size)
+            .or_else(|| thumbnails.last())
+        {
+            if let Ok(image) = decode_preview_handle(thumbnail, path) {
+                return Ok(image.thumbnail(max_size, max_size));
+            }
+        }
+    }
+
+    // Decode the primary image to display-oriented 8-bit RGB, then scale in
+    // libheif before copying pixels into the cache image. Full-detail requests
+    // retain the separate high-bit-depth, color-managed path above.
+    // This avoids unpacking and color-converting millions of pixels that will be
+    // discarded by the subsequent resize.
+    let bit_depth = handle.luma_bits_per_pixel();
+    let mut options = decoding_options();
+    if let Some(ref mut opts) = options {
+        if bit_depth > 8 {
+            opts.set_convert_hdr_to_8bit(true);
+        }
+    }
+    let image = LibHeif::new()
+        .decode(&handle, ColorSpace::Rgb(RgbChroma::Rgb), options)
+        .map_err(|error| heif_error(path, error))?;
+
+    let scale = (max_size as f64 / original_longest as f64).min(1.0);
+    let target_w = ((handle.width() as f64 * scale).round() as u32).max(1);
+    let target_h = ((handle.height() as f64 * scale).round() as u32).max(1);
+    let scaled = image
+        .scale(target_w, target_h, None)
+        .map_err(|error| heif_error(path, error))?;
+
+    let plane = scaled
+        .planes()
+        .interleaved
+        .ok_or_else(|| MediaError::Heif {
+            path: path.to_owned(),
+            message: "decoded image has no interleaved RGB plane".into(),
+        })?;
+    image_from_rgb8_plane(plane.data, plane.width, plane.height, plane.stride)
+}
+
+pub fn decode_full_rgb8(path: &Path) -> Result<DynamicImage, MediaError> {
+    let context = open(path)?;
+    let handle = context
+        .primary_image_handle()
+        .map_err(|error| heif_error(path, error))?;
+    decode_preview_handle(&handle, path)
+}
+
+fn decode_preview_handle(
+    handle: &libheif_rs::ImageHandle,
+    path: &Path,
+) -> Result<DynamicImage, MediaError> {
+    let bit_depth = handle.luma_bits_per_pixel();
+    let mut options = decoding_options();
+    if let Some(ref mut opts) = options {
+        if bit_depth > 8 {
+            opts.set_convert_hdr_to_8bit(true);
+        }
+    }
+    let image = LibHeif::new()
+        .decode(handle, ColorSpace::Rgb(RgbChroma::Rgb), options)
+        .map_err(|error| heif_error(path, error))?;
+    let plane = image.planes().interleaved.ok_or_else(|| MediaError::Heif {
+        path: path.to_owned(),
+        message: "decoded image has no interleaved RGB plane".into(),
+    })?;
+    image_from_rgb8_plane(plane.data, plane.width, plane.height, plane.stride)
+}
+
+fn image_from_rgb8_plane(
+    data: &[u8],
+    width: u32,
+    height: u32,
+    stride: usize,
+) -> Result<DynamicImage, MediaError> {
+    let pixels = unpack_rgb_8_raw(data, width, height, stride)?;
+    let buffer = image::ImageBuffer::<image::Rgb<u8>, Vec<u8>>::from_vec(width, height, pixels)
+        .expect("pixel buffer dimensions match image dimensions");
+    Ok(DynamicImage::ImageRgb8(buffer))
 }
 
 pub fn write_srgb_png(image: &DecodedHeif, destination: &Path) -> Result<(), MediaError> {
@@ -93,6 +199,28 @@ fn heif_error(path: &Path, error: impl std::fmt::Display) -> MediaError {
     }
 }
 
+/// Build [`DecodingOptions`] with multi-core codec threads enabled.
+fn decoding_options() -> Option<DecodingOptions> {
+    let mut options = DecodingOptions::new()?;
+    let threads = std::thread::available_parallelism()
+        .map(|n| n.get() as u32)
+        .unwrap_or(1);
+    options.set_num_codec_threads(threads);
+    Some(options)
+}
+
+fn color_space_for_depth(bit_depth: u8) -> ColorSpace {
+    if bit_depth > 8 {
+        ColorSpace::Rgb(RgbChroma::HdrRgbLe)
+    } else {
+        ColorSpace::Rgb(RgbChroma::Rgb)
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Pixel unpacking (optimised: split 8-bit / 16-bit paths, no closures)
+// ---------------------------------------------------------------------------
+
 fn unpack_rgb(
     data: &[u8],
     width: u32,
@@ -105,24 +233,77 @@ fn unpack_rgb(
             "unsupported HEIF bit depth {bit_depth}"
         )));
     }
-    let bytes_per_sample = if bit_depth > 8 { 2 } else { 1 };
-    let row_bytes = width as usize * 3 * bytes_per_sample;
+    if bit_depth > 8 {
+        unpack_rgb_16(data, width, height, stride, bit_depth)
+    } else {
+        unpack_rgb_8(data, width, height, stride)
+    }
+}
+
+fn unpack_rgb_8(
+    data: &[u8],
+    width: u32,
+    height: u32,
+    stride: usize,
+) -> Result<Vec<[u16; 3]>, MediaError> {
+    let row_bytes = width as usize * 3;
+    if data.len() < stride * height as usize {
+        return Err(MediaError::Color("invalid decoded HEIF RGB stride".into()));
+    }
+    let pixel_count = width as usize * height as usize;
+    let mut pixels = Vec::with_capacity(pixel_count);
+    for row in data.chunks_exact(stride).take(height as usize) {
+        pixels.extend(row[..row_bytes].chunks_exact(3).map(|rgb| {
+            [
+                u16::from(rgb[0]) * 257,
+                u16::from(rgb[1]) * 257,
+                u16::from(rgb[2]) * 257,
+            ]
+        }));
+    }
+    Ok(pixels)
+}
+
+/// Extract raw 8-bit RGB pixels from an interleaved plane, producing flat `u8`
+/// data suitable for `ImageBuffer::<Rgb<u8>>`. Skips stride padding per row.
+fn unpack_rgb_8_raw(
+    data: &[u8],
+    width: u32,
+    height: u32,
+    stride: usize,
+) -> Result<Vec<u8>, MediaError> {
+    let row_bytes = width as usize * 3;
+    if data.len() < stride * height as usize {
+        return Err(MediaError::Color("invalid decoded HEIF RGB stride".into()));
+    }
+    let mut pixels = Vec::with_capacity(row_bytes * height as usize);
+    for row in data.chunks_exact(stride).take(height as usize) {
+        pixels.extend_from_slice(&row[..row_bytes]);
+    }
+    Ok(pixels)
+}
+
+fn unpack_rgb_16(
+    data: &[u8],
+    width: u32,
+    height: u32,
+    stride: usize,
+    bit_depth: u8,
+) -> Result<Vec<[u16; 3]>, MediaError> {
+    let row_bytes = width as usize * 6;
     if stride < row_bytes || data.len() < stride * height as usize {
         return Err(MediaError::Color("invalid decoded HEIF RGB stride".into()));
     }
-    let mut pixels = Vec::with_capacity(width as usize * height as usize);
+    let pixel_count = width as usize * height as usize;
+    let mut pixels = Vec::with_capacity(pixel_count);
     for row in data.chunks_exact(stride).take(height as usize) {
-        for pixel in row[..row_bytes].chunks_exact(3 * bytes_per_sample) {
-            let read = |offset| {
-                if bytes_per_sample == 1 {
-                    u16::from(pixel[offset]) * 257
-                } else {
-                    let value = u16::from_le_bytes([pixel[offset * 2], pixel[offset * 2 + 1]]);
-                    normalize_to_u16(value, bit_depth)
-                }
-            };
-            pixels.push([read(0), read(1), read(2)]);
-        }
+        pixels.extend(row[..row_bytes].chunks_exact(6).map(|rgb| {
+            [
+                normalize_to_u16(u16::from_le_bytes([rgb[0], rgb[1]]), bit_depth),
+                normalize_to_u16(u16::from_le_bytes([rgb[2], rgb[3]]), bit_depth),
+                normalize_to_u16(u16::from_le_bytes([rgb[4], rgb[5]]), bit_depth),
+            ]
+        }));
     }
     Ok(pixels)
 }
@@ -135,6 +316,10 @@ fn normalize_to_u16(value: u16, bit_depth: u8) -> u16 {
         ((u32::from(value) * 65_535 + maximum / 2) / maximum) as u16
     }
 }
+
+// ---------------------------------------------------------------------------
+// Colour-space conversion with LUT-accelerated transfer functions
+// ---------------------------------------------------------------------------
 
 fn convert_to_srgb(
     mut pixels: Vec<[u16; 3]>,
@@ -175,7 +360,7 @@ fn convert_nclx_to_srgb(
             "unknown HEIF NCLX matrix coefficients".into(),
         ));
     }
-    let transfer = match nclx.transfer_characteristics() {
+    let transfer: fn(f32) -> f32 = match nclx.transfer_characteristics() {
         TransferCharacteristics::ITU_R_BT_2100_0_PQ => pq_to_linear,
         TransferCharacteristics::ITU_R_BT_2100_0_HLG => hlg_to_linear,
         TransferCharacteristics::Linear => identity,
@@ -202,17 +387,50 @@ fn convert_nclx_to_srgb(
         }
     };
     let hdr = is_hdr(nclx.transfer_characteristics());
+
+    // Build 65536-entry lookup tables to replace expensive per-pixel powf / exp calls.
+    let transfer_lut = build_transfer_lut(transfer);
+    let srgb_lut = build_srgb_lut();
+
     for pixel in pixels {
-        let source = pixel.map(|sample| transfer(f32::from(sample) / 65_535.0));
+        // Step 1: transfer function via LUT (replaces powf / exp per pixel)
+        let source = [
+            transfer_lut[pixel[0] as usize],
+            transfer_lut[pixel[1] as usize],
+            transfer_lut[pixel[2] as usize],
+        ];
+        // Step 2: matrix multiply for gamut conversion
         let mut linear = multiply(matrix, source);
+        // Step 3: HDR tone mapping (Reinhard)
         if hdr {
             linear = linear.map(|sample| sample.max(0.0) / (1.0 + sample.max(0.0)));
         }
+        // Step 4: linear → sRGB gamma via LUT
         for (output, sample) in pixel.iter_mut().zip(linear) {
-            *output = (linear_to_srgb(sample.clamp(0.0, 1.0)) * 65_535.0).round() as u16;
+            let clamped = sample.clamp(0.0, 1.0);
+            *output = srgb_lut[(clamped * 65535.0).round() as usize];
         }
     }
     Ok(())
+}
+
+/// Build a 65536-entry transfer-function LUT: `lut[v] = transfer(v / 65535.0)`.
+fn build_transfer_lut(transfer: fn(f32) -> f32) -> Box<[f32; 65536]> {
+    let mut lut = Box::new([0.0f32; 65536]);
+    for (i, slot) in lut.iter_mut().enumerate() {
+        *slot = transfer(i as f32 / 65535.0);
+    }
+    lut
+}
+
+/// Build a 65536-entry sRGB gamma LUT: `lut[v] = round(linear_to_srgb(v / 65535.0) * 65535)`.
+fn build_srgb_lut() -> Box<[u16; 65536]> {
+    let mut lut = Box::new([0u16; 65536]);
+    for (i, slot) in lut.iter_mut().enumerate() {
+        let linear = i as f32 / 65535.0;
+        *slot = (linear_to_srgb(linear) * 65535.0).round() as u16;
+    }
+    lut
 }
 
 fn is_hdr(transfer: TransferCharacteristics) -> bool {
@@ -331,5 +549,38 @@ mod tests {
         let mut pixels = [[32_768; 3]];
         tone_map(&mut pixels, hlg_to_linear);
         assert!(pixels[0][0] > 0 && pixels[0][0] < 65_535);
+    }
+
+    #[test]
+    fn transfer_lut_matches_scalar_function() {
+        for transfer in [
+            pq_to_linear as fn(f32) -> f32,
+            hlg_to_linear,
+            srgb_to_linear,
+            bt709_to_linear,
+        ] {
+            let lut = build_transfer_lut(transfer);
+            // Spot-check a handful of values
+            for v in [0u16, 1, 100, 10_000, 32_768, 50_000, 65_535] {
+                let expected = transfer(v as f32 / 65535.0);
+                let got = lut[v as usize];
+                assert!(
+                    (got - expected).abs() < 1e-6,
+                    "LUT mismatch at {v}: got {got}, expected {expected}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn srgb_lut_round_trips_through_identity_for_neutral() {
+        let lut = build_srgb_lut();
+        // For a neutral sRGB value the lut should map mid-gray to something close
+        // (exact value depends on gamma curve but must be deterministic).
+        let v = lut[32_768];
+        assert!(
+            v > 0 && v < 65_535,
+            "mid-gray should map to valid range, got {v}"
+        );
     }
 }

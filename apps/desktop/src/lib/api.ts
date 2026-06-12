@@ -7,6 +7,9 @@ import type {
   AssetSummary,
   DirectorySummary,
   FolderSession,
+  HeifCapabilities,
+  HeifDecodeSession,
+  HeifDiagnostics,
   Page,
   PreviewMode,
   PreviewResult,
@@ -173,4 +176,36 @@ export async function generatedPreview(
     maxSize,
   });
   return { ...result, url: convertFileSrc(result.path) };
+}
+
+export async function startHeifDecode(
+  path: string,
+  generation: number,
+  hardwareAcceleration: boolean,
+): Promise<HeifDecodeSession> {
+  return invoke<HeifDecodeSession>("start_heif_decode", {
+    path,
+    generation,
+    hardwareAcceleration,
+  });
+}
+
+export async function cancelHeifDecode(sessionId: string): Promise<boolean> {
+  return invoke<boolean>("cancel_heif_decode", { sessionId });
+}
+
+export async function getHeifCapabilities(): Promise<HeifCapabilities[]> {
+  if (!isTauri()) return [];
+  return invoke<HeifCapabilities[]>("get_heif_capabilities");
+}
+
+export async function getHeifDiagnostics(): Promise<HeifDiagnostics | undefined> {
+  if (!isTauri()) return undefined;
+  return invoke<HeifDiagnostics | undefined>("get_heif_diagnostics");
+}
+
+export function heifTileUrl(url: string): string {
+  return navigator.userAgent.includes("Windows")
+    ? url.replace("oxy-media://localhost", "http://oxy-media.localhost")
+    : url;
 }
