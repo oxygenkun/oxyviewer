@@ -99,23 +99,23 @@ jobs:
         if: runner.os == 'macOS'
         uses: actions/upload-artifact@v4
         with:
-          name: OxyViewer-macOS-App
+          name: OxyViewer-macOS-${{ runner.arch }}-App
           path: target/release/bundle/macos/*.app
       - name: Upload Windows MSI
         if: runner.os == 'Windows'
         uses: actions/upload-artifact@v4
         with:
-          name: OxyViewer-Windows-MSI
+          name: OxyViewer-Windows-${{ runner.arch }}-MSI
           path: target/release/bundle/msi/*.msi
       - name: Upload Linux DEB
         if: runner.os == 'Linux'
         uses: actions/upload-artifact@v4
         with:
-          name: OxyViewer-Linux-DEB
+          name: OxyViewer-Linux-${{ runner.arch }}-DEB
           path: target/release/bundle/deb/*.deb
       - name: Upload Linux AppImage
         if: runner.os == 'Linux'
         uses: actions/upload-artifact@v4
         with:
-          name: OxyViewer-Linux-AppImage
+          name: OxyViewer-Linux-${{ runner.arch }}-AppImage
           path: target/release/bundle/appimage/*.AppImage
