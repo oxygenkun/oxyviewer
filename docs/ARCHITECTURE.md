@@ -28,9 +28,10 @@ Look remains a final compatibility fallback for preview generation.
 HEIF/HIF assets use a progressive pipeline similar to RAW: a 512 px and 4096 px
 preview is shown first, then the selected image starts a cancellable
 full-resolution RGB8 SDR session. Tile metadata crosses Tauri events while RGBA
-bytes use the custom media protocol. The current portable backend is
-libheif/libde265; platform-native adapters remain capability-gated until they
-pass GPU qualification. The older color-profiled 16-bit PNG path remains
+bytes use the custom media protocol. The current portable backend is FFmpeg
+tile-grid software decode with libheif/libde265 fallback; platform-native
+adapters remain capability-gated until they pass GPU qualification. The older
+color-profiled 16-bit PNG path remains
 available as a compatibility/cache operation. TIFF assets still use the
 operating system preview generator.
 

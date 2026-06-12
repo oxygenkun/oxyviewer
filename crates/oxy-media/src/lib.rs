@@ -1,6 +1,9 @@
+mod ffmpeg_heif;
 mod heif;
 mod heif_service;
 mod libraw;
+#[cfg(target_os = "windows")]
+mod windows_wic;
 
 pub use heif_service::{DEFAULT_TILE_SIZE, HeifBackend, HeifDecodeService, HeifTile, TileSink};
 use image::{DynamicImage, ImageReader, codecs::jpeg::JpegEncoder};
@@ -62,6 +65,11 @@ pub struct ImageDimensions {
 pub enum MediaError {
     #[error("format requires a native decoder that is not available")]
     NativeDecoderUnavailable,
+    #[error("{backend} native decode failed: {message}")]
+    NativeDecode {
+        backend: &'static str,
+        message: String,
+    },
     #[error("LibRaw failed for {path}: {message}")]
     LibRaw { path: PathBuf, message: String },
     #[error("libheif failed for {path}: {message}")]

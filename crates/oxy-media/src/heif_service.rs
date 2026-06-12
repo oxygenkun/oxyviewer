@@ -55,7 +55,11 @@ pub struct HeifDecodeService {
 
 impl HeifDecodeService {
     pub fn capabilities(&self) -> Vec<HeifCapabilities> {
-        vec![platform_capability(), software_capability()]
+        vec![
+            platform_capability(),
+            ffmpeg_capability(),
+            libheif_capability(),
+        ]
     }
 
     pub fn begin(
@@ -80,15 +84,33 @@ impl HeifDecodeService {
             cancelled: Arc::new(AtomicBool::new(false)),
         });
         let platform = platform_capability();
-        let fallback = hardware_acceleration && !platform.available;
+        #[cfg(target_os = "windows")]
+        let use_platform = hardware_acceleration
+            && platform.available
+            && crate::windows_wic::can_decode(path).is_ok();
+        #[cfg(not(target_os = "windows"))]
+        let use_platform = hardware_acceleration && platform.available;
+        let use_ffmpeg = !use_platform && crate::ffmpeg_heif::can_decode(path).is_ok();
+        let fallback = hardware_acceleration && !use_platform;
+        let backend = if use_platform {
+            platform.backend
+        } else if use_ffmpeg {
+            HeifBackendKind::FfmpegSoftware
+        } else {
+            HeifBackendKind::LibheifSoftware
+        };
         Ok(HeifDecodeSession {
             id,
             generation,
             width: size.width,
             height: size.height,
             tile_size: DEFAULT_TILE_SIZE,
-            backend: HeifBackendKind::LibheifSoftware,
-            acceleration: AccelerationKind::Software,
+            backend,
+            acceleration: if use_platform {
+                platform.acceleration
+            } else {
+                AccelerationKind::Software
+            },
             status: if fallback {
                 HeifDecodeStatus::CompatibilityFallback
             } else {
@@ -117,7 +139,8 @@ impl HeifDecodeService {
             }
             active.cancelled.clone()
         };
-        let image = heif::decode_full_rgb8(&path)?;
+        let (image, backend, acceleration, codec, fallback_reason) =
+            decode_for_session(session, &path)?;
         let decode_ms = elapsed_ms(started);
         let tile_started = Instant::now();
         for (x, y) in tile_coordinates(image.width(), image.height(), session.tile_size) {
@@ -144,17 +167,14 @@ impl HeifDecodeService {
                 .insert((session.id.clone(), session.generation, x, y), tile);
             publish(event);
         }
-        let platform = platform_capability();
         let diagnostics = HeifDiagnostics {
-            backend: HeifBackendKind::LibheifSoftware,
-            acceleration: AccelerationKind::Software,
-            codec: Some("libheif/libde265".into()),
+            backend,
+            acceleration,
+            codec: Some(codec.into()),
             decode_ms,
             tile_publish_ms: elapsed_ms(tile_started),
             total_ms: elapsed_ms(started),
-            fallback_reason: platform
-                .detail
-                .filter(|_| session.status == HeifDecodeStatus::CompatibilityFallback),
+            fallback_reason,
         };
         self.state
             .lock()
@@ -238,7 +258,24 @@ fn tile_coordinates(width: u32, height: u32, tile_size: u32) -> Vec<(u32, u32)> 
     result
 }
 
-fn software_capability() -> HeifCapabilities {
+fn ffmpeg_capability() -> HeifCapabilities {
+    match crate::ffmpeg_heif::capability() {
+        Ok(()) => HeifCapabilities {
+            backend: HeifBackendKind::FfmpegSoftware,
+            acceleration: AccelerationKind::Software,
+            available: true,
+            detail: Some("FFmpeg HEIF tile-grid decoder".into()),
+        },
+        Err(error) => HeifCapabilities {
+            backend: HeifBackendKind::FfmpegSoftware,
+            acceleration: AccelerationKind::Software,
+            available: false,
+            detail: Some(error.to_string()),
+        },
+    }
+}
+
+fn libheif_capability() -> HeifCapabilities {
     HeifCapabilities {
         backend: HeifBackendKind::LibheifSoftware,
         acceleration: AccelerationKind::Software,
@@ -249,18 +286,157 @@ fn software_capability() -> HeifCapabilities {
 
 fn platform_capability() -> HeifCapabilities {
     #[cfg(target_os = "windows")]
-    let backend = HeifBackendKind::WindowsWic;
-    #[cfg(target_os = "macos")]
-    let backend = HeifBackendKind::AppleImageIo;
-    #[cfg(target_os = "linux")]
-    let backend = HeifBackendKind::LinuxVaapi;
-    #[cfg(not(any(target_os = "windows", target_os = "macos", target_os = "linux")))]
-    let backend = HeifBackendKind::LibheifSoftware;
-    HeifCapabilities {
-        backend,
-        acceleration: AccelerationKind::Hardware,
-        available: false,
-        detail: Some("native hardware adapter is not available in this build".into()),
+    return match crate::windows_wic::capability() {
+        Ok(()) => HeifCapabilities {
+            backend: HeifBackendKind::WindowsWic,
+            acceleration: AccelerationKind::Unknown,
+            available: true,
+            detail: Some(
+                "Windows WIC HEIF decoder installed; GPU acceleration is not verified".into(),
+            ),
+        },
+        Err(error) => HeifCapabilities {
+            backend: HeifBackendKind::WindowsWic,
+            acceleration: AccelerationKind::Unknown,
+            available: false,
+            detail: Some(error.to_string()),
+        },
+    };
+    #[cfg(not(target_os = "windows"))]
+    {
+        #[cfg(target_os = "windows")]
+        let backend = HeifBackendKind::WindowsWic;
+        #[cfg(target_os = "macos")]
+        let backend = HeifBackendKind::AppleImageIo;
+        #[cfg(target_os = "linux")]
+        let backend = HeifBackendKind::LinuxVaapi;
+        #[cfg(not(any(target_os = "windows", target_os = "macos", target_os = "linux")))]
+        let backend = HeifBackendKind::LibheifSoftware;
+        HeifCapabilities {
+            backend,
+            acceleration: AccelerationKind::Hardware,
+            available: false,
+            detail: Some("native hardware adapter is not available in this build".into()),
+        }
+    }
+}
+
+fn decode_for_session(
+    session: &HeifDecodeSession,
+    path: &Path,
+) -> Result<
+    (
+        DynamicImage,
+        HeifBackendKind,
+        AccelerationKind,
+        &'static str,
+        Option<String>,
+    ),
+    MediaError,
+> {
+    #[cfg(target_os = "windows")]
+    if session.backend == HeifBackendKind::WindowsWic {
+        match crate::windows_wic::decode_full_rgba8(path) {
+            Ok(image) => {
+                return Ok((
+                    image,
+                    HeifBackendKind::WindowsWic,
+                    AccelerationKind::Unknown,
+                    "Windows WIC HEIF decoder",
+                    None,
+                ));
+            }
+            Err(error) => {
+                return decode_ffmpeg_or_libheif(path, session, Some(error.to_string()));
+            }
+        }
+    }
+    decode_ffmpeg_or_libheif(
+        path,
+        session,
+        (session.status == HeifDecodeStatus::CompatibilityFallback).then(|| fallback_reason(path)),
+    )
+}
+
+fn decode_ffmpeg_or_libheif(
+    path: &Path,
+    session: &HeifDecodeSession,
+    fallback_reason: Option<String>,
+) -> Result<
+    (
+        DynamicImage,
+        HeifBackendKind,
+        AccelerationKind,
+        &'static str,
+        Option<String>,
+    ),
+    MediaError,
+> {
+    if session.backend == HeifBackendKind::FfmpegSoftware
+        || crate::ffmpeg_heif::can_decode(path).is_ok()
+    {
+        match crate::ffmpeg_heif::decode_full_rgba8(
+            path,
+            crate::ImageDimensions {
+                width: session.width,
+                height: session.height,
+            },
+        ) {
+            Ok(image) => {
+                return Ok((
+                    image,
+                    HeifBackendKind::FfmpegSoftware,
+                    AccelerationKind::Software,
+                    "FFmpeg HEVC tile-grid",
+                    fallback_reason,
+                ));
+            }
+            Err(error) => {
+                let reason = append_fallback_reason(fallback_reason, error.to_string());
+                return Ok((
+                    heif::decode_full_rgb8(path)?,
+                    HeifBackendKind::LibheifSoftware,
+                    AccelerationKind::Software,
+                    "libheif/libde265",
+                    Some(reason),
+                ));
+            }
+        }
+    }
+    Ok((
+        heif::decode_full_rgb8(path)?,
+        HeifBackendKind::LibheifSoftware,
+        AccelerationKind::Software,
+        "libheif/libde265",
+        fallback_reason,
+    ))
+}
+
+fn append_fallback_reason(existing: Option<String>, next: String) -> String {
+    existing
+        .map(|existing| format!("{existing}; {next}"))
+        .unwrap_or(next)
+}
+
+fn fallback_reason(path: &Path) -> String {
+    #[cfg(target_os = "windows")]
+    {
+        let platform = platform_capability();
+        if platform.available {
+            return crate::windows_wic::can_decode(path)
+                .err()
+                .map(|error| error.to_string())
+                .unwrap_or_else(|| "Windows WIC was not selected".into());
+        }
+        platform
+            .detail
+            .unwrap_or_else(|| "Windows WIC is unavailable".into())
+    }
+    #[cfg(not(target_os = "windows"))]
+    {
+        platform_capability()
+            .detail
+            .unwrap_or_else(|| "native HEIF decoder is unavailable".into())
     }
 }
 
@@ -286,5 +462,21 @@ mod tests {
         let tile = crop_rgba(&image, 512, 512, 512);
         assert_eq!((tile.width, tile.height, tile.stride), (88, 38, 352));
         assert_eq!(tile.rgba.len(), 88 * 38 * 4);
+    }
+
+    #[test]
+    fn selects_and_decodes_ffmpeg_tile_grid_fixture() {
+        if crate::ffmpeg_heif::capability().is_err() {
+            return;
+        }
+        let fixture =
+            Path::new(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/DSC00449.HIF");
+        let service = HeifDecodeService::default();
+        let session = service.begin(&fixture, 1, false).unwrap();
+        assert_eq!(session.backend, HeifBackendKind::FfmpegSoftware);
+        let mut tiles = 0;
+        let diagnostics = service.decode(&session, fixture, |_| tiles += 1).unwrap();
+        assert_eq!(diagnostics.backend, HeifBackendKind::FfmpegSoftware);
+        assert!(tiles > 100);
     }
 }

@@ -11,8 +11,16 @@ image.workspace = true
 lcms2.workspace = true
 libheif-rs.workspace = true
 oxy-domain = { path = "../oxy-domain" }
+serde_json.workspace = true
 tempfile.workspace = true
 thiserror.workspace = true
+
+[target.'cfg(target_os = "windows")'.dependencies]
+windows = { workspace = true, features = [
+  "Win32_Foundation",
+  "Win32_Graphics_Imaging",
+  "Win32_System_Com",
+] }
 
 [build-dependencies]
 cc = { version = "1.2", features = ["parallel"] }

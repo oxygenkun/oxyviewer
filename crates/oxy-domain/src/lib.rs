@@ -102,6 +102,7 @@ pub enum HeifBackendKind {
     WindowsMediaFoundation,
     AppleImageIo,
     LinuxVaapi,
+    FfmpegSoftware,
     LibheifSoftware,
 }
 

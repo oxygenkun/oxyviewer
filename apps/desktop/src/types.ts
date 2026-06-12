@@ -77,6 +77,7 @@ export type HeifBackendKind =
   | "windowsMediaFoundation"
   | "appleImageIo"
   | "linuxVaapi"
+  | "ffmpegSoftware"
   | "libheifSoftware";
 export type AccelerationKind = "hardware" | "software" | "unknown";
 export type HeifDecodeStatus =

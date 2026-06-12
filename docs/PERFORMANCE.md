@@ -107,3 +107,24 @@ display. Remaining improvements should be adopted in this order:
   On the current Windows workstation, `DSC00449.HIF` (4672x7008, 10-bit) took
   2.60 s for the fastest full RGB8 libheif/libde265 run; native decode and copy
   took 3.06 s. This is the compatibility baseline, not an acceptance result.
+- 2026-06-12: The Windows WIC HEIF adapter now probes installed codecs and each
+  selected file before use, then falls back to libheif with stage-specific
+  diagnostics. The reference workstation enumerates a WIC HEIF decoder, but it
+  rejects `DSC00449.HIF` while opening the decoder with `0x88982F8B`; that
+  fixture therefore remains on the compatibility backend. WIC GPU use cannot
+  be verified through its public API and is reported as unknown.
+- 2026-06-12: Added the minimal `heif_gpu_probe` FFmpeg experiment for Windows
+  HEIF hardware paths. The Sony fixture stores its 7008x4672 primary image as
+  six HEVC Rext 10-bit 4:2:2 tiles. Intel UHD 770 QSV genuinely decodes these
+  tiles into GPU surfaces and can compose them with `xstack_qsv`. The reusable
+  probe measured 0.76 s for decode plus GPU composition and 0.95 s for complete
+  BGRA readback, with about 1.46 GB peak RSS. RTX 4090 NVDEC rejects the chroma
+  format, while D3D12 creates a device but falls back to software output.
+  FFmpeg's software HEVC decoder decoded, composed, converted, and copied the
+  full RGBA frame in 0.48 s, making FFmpeg software the fastest measured
+  Windows backend for this fixture despite the available sub-second QSV path.
+- 2026-06-12: The FFmpeg software experiment is now a production HEIF session
+  backend. It reads tile-grid offsets dynamically through `ffprobe`, composes
+  and crops the primary image, applies display orientation, emits RGBA8, and
+  falls back to libheif if probing or decoding fails. Release packages that
+  enable this backend must bundle compatible `ffmpeg` and `ffprobe` binaries.
