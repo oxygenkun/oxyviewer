@@ -16,6 +16,7 @@ interface WorkspaceState {
   activeId?: string;
   inspectorOpen: boolean;
   leftPanelOpen: boolean;
+  settingsOpen: boolean;
   locale: Locale;
   navigatorVisible: boolean;
   navigatorPosition: NavigatorPosition;
@@ -29,6 +30,7 @@ interface WorkspaceState {
   clearSelection: () => void;
   toggleInspector: () => void;
   toggleLeftPanel: () => void;
+  toggleSettings: () => void;
   setLocale: (locale: Locale) => void;
   setNavigatorVisible: (visible: boolean) => void;
   setNavigatorPosition: (position: NavigatorPosition) => void;
@@ -44,6 +46,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set) => ({
   selectedIds: [],
   inspectorOpen: true,
   leftPanelOpen: true,
+  settingsOpen: false,
   locale: "zh-CN",
   navigatorVisible: true,
   navigatorPosition: "bottom-right",
@@ -63,6 +66,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set) => ({
   clearSelection: () => set({ selectedIds: [], activeId: undefined }),
   toggleInspector: () => set((state) => ({ inspectorOpen: !state.inspectorOpen })),
   toggleLeftPanel: () => set((state) => ({ leftPanelOpen: !state.leftPanelOpen })),
+  toggleSettings: () => set((state) => ({ settingsOpen: !state.settingsOpen })),
   setLocale: (locale) => set({ locale }),
   setNavigatorVisible: (navigatorVisible) => set({ navigatorVisible }),
   setNavigatorPosition: (navigatorPosition) => set({ navigatorPosition }),

@@ -7,7 +7,7 @@ use oxy_fs::FsCatalog;
 use oxy_library::Library;
 use oxy_runtime::JobRegistry;
 use std::{path::PathBuf, sync::Arc};
-use tauri::{Emitter, Manager, State};
+use tauri::{Manager, State};
 
 struct AppState {
     files: Arc<FsCatalog>,
@@ -203,45 +203,6 @@ pub fn run() {
                 jobs: JobRegistry::default(),
                 library: Arc::new(library),
                 preview_dir,
-            });
-
-            let locale_zh = tauri::menu::CheckMenuItem::with_id(
-                app,
-                "locale-zh-cn",
-                "中文",
-                true,
-                true,
-                None::<&str>,
-            )?;
-            let locale_en = tauri::menu::CheckMenuItem::with_id(
-                app,
-                "locale-en",
-                "English",
-                true,
-                false,
-                None::<&str>,
-            )?;
-            let appearance = tauri::menu::Submenu::new(app, "外观 Appearance", true)?;
-            appearance.append_items(&[&locale_zh, &locale_en])?;
-            let settings = tauri::menu::Submenu::new(app, "设置 Settings", true)?;
-            settings.append_items(&[&appearance])?;
-            let menu = tauri::menu::Menu::with_items(app, &[&settings])?;
-            app.set_menu(menu)?;
-
-            let zh = locale_zh.clone();
-            let en = locale_en.clone();
-            app.on_menu_event(move |app, event| match event.id().as_ref() {
-                "locale-zh-cn" => {
-                    let _ = zh.set_checked(true);
-                    let _ = en.set_checked(false);
-                    let _ = app.emit("locale-changed", "zh-CN");
-                }
-                "locale-en" => {
-                    let _ = en.set_checked(true);
-                    let _ = zh.set_checked(false);
-                    let _ = app.emit("locale-changed", "en");
-                }
-                _ => {}
             });
 
             Ok(())

@@ -10,6 +10,7 @@ import {
   LoaderCircle,
   Plus,
   RefreshCw,
+  Settings,
 } from "lucide-react";
 import { useState } from "react";
 import { listDirectories } from "../lib/api";
@@ -25,6 +26,7 @@ interface SidebarProps {
   onRefresh: () => void;
   isRefreshing: boolean;
   onAddLibrary: () => void;
+  onSettings: () => void;
   t: (key: MessageKey) => string;
 }
 
@@ -116,6 +118,7 @@ export function Sidebar({
   onRefresh,
   isRefreshing,
   onAddLibrary,
+  onSettings,
   t,
 }: SidebarProps) {
   const root: DirectorySummary = {
@@ -184,6 +187,16 @@ export function Sidebar({
         ) : null}
       </div>
 
+      <div className="sidebar__bottom">
+        <button
+          className="sidebar__bottom-btn"
+          title={t("settings")}
+          aria-label={t("settings")}
+          onClick={onSettings}
+        >
+          <Settings size={15} />
+        </button>
+      </div>
       <div className="sidebar__path" title={currentPath}>{currentPath}</div>
     </aside>
   );

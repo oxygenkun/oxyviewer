@@ -54,6 +54,10 @@ const messages = {
     rawDevelopingFull: "预览图 · 完整解析中",
     rawFullReady: "完整解析完成",
     rawFullFailed: "完整解析失败 · 显示预览",
+    settings: "设置",
+    language: "语言",
+    appearance: "外观",
+    theme: "主题",
   },
   en: {
     openFolder: "Open folder",
@@ -108,6 +112,10 @@ const messages = {
     rawDevelopingFull: "Preview · developing full RAW",
     rawFullReady: "Full RAW ready",
     rawFullFailed: "Full RAW failed · showing preview",
+    settings: "Settings",
+    language: "Language",
+    appearance: "Appearance",
+    theme: "Theme",
   },
 } as const;
 

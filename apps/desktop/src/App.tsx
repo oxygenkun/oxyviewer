@@ -1,9 +1,10 @@
 import { useInfiniteQuery, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Aperture, CircleAlert, FolderOpen, RectangleHorizontal, RectangleVertical } from "lucide-react";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useMemo, useState } from "react";
 import { AssetBrowser } from "./components/AssetBrowser";
 import { EmptyState } from "./components/EmptyState";
 import { Inspector } from "./components/Inspector";
+import { SettingsPanel } from "./components/SettingsPanel";
 import { Sidebar } from "./components/Sidebar";
 import { Toolbar } from "./components/Toolbar";
 import {
@@ -15,7 +16,6 @@ import {
   openFolder,
   refreshDirectory,
 } from "./lib/api";
-import type { Locale } from "./lib/i18n";
 import { translate } from "./lib/i18n";
 import { useWorkspaceStore } from "./store";
 import type { AssetQuery, FolderSession } from "./types";
@@ -27,21 +27,10 @@ export function App() {
   const [isRefreshing, setIsRefreshing] = useState(false);
   const queryClient = useQueryClient();
   const {
-    view, gridPreference, activeId, selectedIds, inspectorOpen, leftPanelOpen, locale,
-    search, kind, sort, direction, clearSelection, setGridPreference, setLocale,
+    view, gridPreference, activeId, selectedIds, inspectorOpen, leftPanelOpen, settingsOpen, locale,
+    search, kind, sort, direction, clearSelection, setGridPreference, setLocale, toggleSettings,
   } = useWorkspaceStore();
   const t = useCallback((key: Parameters<typeof translate>[1]) => translate(locale, key), [locale]);
-
-  useEffect(() => {
-    if (!isTauri()) return;
-    let unlisten: (() => void) | undefined;
-    import("@tauri-apps/api/event").then(({ listen }) =>
-      listen<string>("locale-changed", (event) => setLocale(event.payload as Locale)).then(
-        (fn) => { unlisten = fn; },
-      ),
-    );
-    return () => { unlisten?.(); };
-  }, [setLocale]);
 
   const query = useMemo<AssetQuery>(() => ({
     search: search || undefined,
@@ -144,6 +133,7 @@ export function App() {
         onRefresh={handleRefresh}
         isRefreshing={isRefreshing}
         onAddLibrary={handleAddLibrary}
+        onSettings={toggleSettings}
         t={t}
       />
       <section className="workspace">
@@ -193,6 +183,7 @@ export function App() {
       </section>
       <Inspector asset={activeAsset} selectedCount={selectedIds.length} t={t} />
       {error ? <button className="error-toast" onClick={() => setError(undefined)}><CircleAlert size={16} />{error}<span>×</span></button> : null}
+      {settingsOpen ? <SettingsPanel t={t} /> : null}
     </div>
   );
 }
