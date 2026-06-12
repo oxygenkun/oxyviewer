@@ -73,29 +73,38 @@ jobs:
           cache: pnpm
       - run: pnpm install --frozen-lockfile
       - name: Build Tauri app
+        if: runner.os == 'Linux'
         working-directory: apps/desktop
         run: pnpm tauri build
-      - name: Upload macOS artifacts
+      - name: Build Tauri app (App)
+        if: runner.os == 'macOS'
+        working-directory: apps/desktop
+        run: pnpm tauri build --bundles app
+      - name: Build Tauri app (MSI)
+        if: runner.os == 'Windows'
+        working-directory: apps/desktop
+        run: pnpm tauri build --bundles msi
+      - name: Upload macOS app
         if: runner.os == 'macOS'
         uses: actions/upload-artifact@v4
         with:
-          name: OxyViewer-macOS
-          path: |
-            target/release/bundle/dmg/*.dmg
-            target/release/bundle/macos/*.app
-      - name: Upload Windows artifacts
+          name: OxyViewer-macOS-App
+          path: target/release/bundle/macos/*.app
+      - name: Upload Windows MSI
         if: runner.os == 'Windows'
         uses: actions/upload-artifact@v4
         with:
-          name: OxyViewer-Windows
-          path: |
-            target/release/bundle/msi/*.msi
-            target/release/bundle/nsis/*.exe
-      - name: Upload Linux artifacts
+          name: OxyViewer-Windows-MSI
+          path: target/release/bundle/msi/*.msi
+      - name: Upload Linux DEB
         if: runner.os == 'Linux'
         uses: actions/upload-artifact@v4
         with:
-          name: OxyViewer-Linux
-          path: |
-            target/release/bundle/deb/*.deb
-            target/release/bundle/appimage/*.AppImage
+          name: OxyViewer-Linux-DEB
+          path: target/release/bundle/deb/*.deb
+      - name: Upload Linux AppImage
+        if: runner.os == 'Linux'
+        uses: actions/upload-artifact@v4
+        with:
+          name: OxyViewer-Linux-AppImage
+          path: target/release/bundle/appimage/*.AppImage
