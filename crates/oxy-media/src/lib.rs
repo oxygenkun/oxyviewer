@@ -1,3 +1,5 @@
+#[cfg(target_os = "macos")]
+mod apple_image_io;
 mod ffmpeg_heif;
 mod heif;
 mod heif_service;
@@ -24,7 +26,7 @@ use thiserror::Error;
 const LIBRAW_CACHE_VERSION: &str = "libraw-0.22.1-v5";
 const LIBRAW_FULL_CACHE_VERSION: &str = "libraw-0.22.1-full-detail-v2";
 const HEIF_FULL_CACHE_VERSION: &str = "libheif-1.23-sdr-v1";
-const HEIF_CACHE_VERSION: &str = "libheif-1.23-preview-v4";
+const HEIF_CACHE_VERSION: &str = "heif-native-preview-v5";
 const SYSTEM_CACHE_VERSION: &str = "system-preview-v2";
 const LOUPE_PREVIEW_THRESHOLD: u32 = 2_048;
 static RAW_THUMBNAIL_DECODE_LOCK: Mutex<()> = Mutex::new(());
@@ -348,10 +350,20 @@ pub fn heif_preview_with_priority(
             .decode()?
             .thumbnail(max_size, max_size)
     } else {
-        heif::decode_scaled(path, max_size)?
+        decode_heif_preview(path, max_size)?
     };
     write_jpeg_atomically(&image, &destination, 90)?;
     preview_result(destination, PreviewKind::Decoded)
+}
+
+fn decode_heif_preview(path: &Path, max_size: u32) -> Result<DynamicImage, MediaError> {
+    #[cfg(target_os = "macos")]
+    if crate::apple_image_io::can_decode(path).is_ok() {
+        if let Ok(image) = crate::apple_image_io::decode_rgba8(path, max_size) {
+            return Ok(image);
+        }
+    }
+    heif::decode_scaled(path, max_size)
 }
 
 fn larger_heif_preview(

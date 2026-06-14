@@ -23,12 +23,13 @@ arrive.
 ## Current Implementation
 
 The session, cancellation, diagnostics, protocol, Canvas, compatibility
-backend, Windows WIC adapter, and FFmpeg software tile-grid adapter are
-implemented. WIC is selected only when an installed HEIF decoder accepts the
-selected file. FFmpeg dynamically reads tile offsets from `ffprobe`, decodes
-and composes the primary grid, and falls back to libheif on failure. WIC
-acceleration is reported as unknown because the API does not expose reliable
-GPU-use diagnostics. Windows Media Foundation/D3D11, macOS ImageIO/CoreImage,
+backend, Windows WIC adapter, macOS ImageIO adapter, and FFmpeg software
+tile-grid adapter are implemented. WIC and ImageIO are selected only when the
+installed native decoder accepts the selected file. FFmpeg dynamically reads
+tile offsets from `ffprobe`, decodes and composes the primary grid, and falls
+back to libheif on failure. WIC and ImageIO acceleration are reported as
+unknown because their public APIs do not expose reliable GPU-use diagnostics.
+Windows Media Foundation/D3D11, explicit macOS VideoToolbox/Metal tile decode,
 and Linux VAAPI adapters remain pending. Native hardware adapters must pass
 correctness and cold-load P95 tests on real GPU runners before being reported
 as hardware accelerated.

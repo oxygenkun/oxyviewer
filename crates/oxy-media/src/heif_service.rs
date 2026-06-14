@@ -1,4 +1,4 @@
-use crate::{MediaError, heif};
+use crate::{HeifDecodePriority, MediaError, heif};
 use image::DynamicImage;
 use oxy_domain::{
     AccelerationKind, HeifBackendKind, HeifCapabilities, HeifDecodeRequest, HeifDecodeSession,
@@ -88,7 +88,11 @@ impl HeifDecodeService {
         let use_platform = hardware_acceleration
             && platform.available
             && crate::windows_wic::can_decode(path).is_ok();
-        #[cfg(not(target_os = "windows"))]
+        #[cfg(target_os = "macos")]
+        let use_platform = hardware_acceleration
+            && platform.available
+            && crate::apple_image_io::can_decode(path).is_ok();
+        #[cfg(not(any(target_os = "windows", target_os = "macos")))]
         let use_platform = hardware_acceleration && platform.available;
         let use_ffmpeg = !use_platform && crate::ffmpeg_heif::can_decode(path).is_ok();
         let fallback = hardware_acceleration && !use_platform;
@@ -139,6 +143,10 @@ impl HeifDecodeService {
             }
             active.cancelled.clone()
         };
+        let _decode_permit = crate::acquire_heif_decode(HeifDecodePriority::Foreground);
+        if cancelled.load(Ordering::Acquire) {
+            return Err(MediaError::Cancelled);
+        }
         let (image, backend, acceleration, codec, fallback_reason) =
             decode_for_session(session, &path)?;
         let decode_ms = elapsed_ms(started);
@@ -302,7 +310,24 @@ fn platform_capability() -> HeifCapabilities {
             detail: Some(error.to_string()),
         },
     };
-    #[cfg(not(target_os = "windows"))]
+    #[cfg(target_os = "macos")]
+    return match crate::apple_image_io::capability() {
+        Ok(()) => HeifCapabilities {
+            backend: HeifBackendKind::AppleImageIo,
+            acceleration: AccelerationKind::Unknown,
+            available: true,
+            detail: Some(
+                "Apple ImageIO native HEIF decoder; hardware use is selected internally and cannot be verified".into(),
+            ),
+        },
+        Err(error) => HeifCapabilities {
+            backend: HeifBackendKind::AppleImageIo,
+            acceleration: AccelerationKind::Unknown,
+            available: false,
+            detail: Some(error.to_string()),
+        },
+    };
+    #[cfg(not(any(target_os = "windows", target_os = "macos")))]
     {
         #[cfg(target_os = "windows")]
         let backend = HeifBackendKind::WindowsWic;
@@ -343,6 +368,23 @@ fn decode_for_session(
                     HeifBackendKind::WindowsWic,
                     AccelerationKind::Unknown,
                     "Windows WIC HEIF decoder",
+                    None,
+                ));
+            }
+            Err(error) => {
+                return decode_ffmpeg_or_libheif(path, session, Some(error.to_string()));
+            }
+        }
+    }
+    #[cfg(target_os = "macos")]
+    if session.backend == HeifBackendKind::AppleImageIo {
+        match crate::apple_image_io::decode_rgba8(path, session.width.max(session.height)) {
+            Ok(image) => {
+                return Ok((
+                    image,
+                    HeifBackendKind::AppleImageIo,
+                    AccelerationKind::Unknown,
+                    "Apple ImageIO HEIF decoder",
                     None,
                 ));
             }
@@ -418,12 +460,12 @@ fn append_fallback_reason(existing: Option<String>, next: String) -> String {
         .unwrap_or(next)
 }
 
-fn fallback_reason(path: &Path) -> String {
+fn fallback_reason(_path: &Path) -> String {
     #[cfg(target_os = "windows")]
     {
         let platform = platform_capability();
         if platform.available {
-            return crate::windows_wic::can_decode(path)
+            return crate::windows_wic::can_decode(_path)
                 .err()
                 .map(|error| error.to_string())
                 .unwrap_or_else(|| "Windows WIC was not selected".into());
@@ -432,7 +474,20 @@ fn fallback_reason(path: &Path) -> String {
             .detail
             .unwrap_or_else(|| "Windows WIC is unavailable".into())
     }
-    #[cfg(not(target_os = "windows"))]
+    #[cfg(target_os = "macos")]
+    {
+        let platform = platform_capability();
+        if platform.available {
+            return crate::apple_image_io::can_decode(_path)
+                .err()
+                .map(|error| error.to_string())
+                .unwrap_or_else(|| "Apple ImageIO was not selected".into());
+        }
+        platform
+            .detail
+            .unwrap_or_else(|| "Apple ImageIO is unavailable".into())
+    }
+    #[cfg(not(any(target_os = "windows", target_os = "macos")))]
     {
         platform_capability()
             .detail
@@ -477,6 +532,24 @@ mod tests {
         let mut tiles = 0;
         let diagnostics = service.decode(&session, fixture, |_| tiles += 1).unwrap();
         assert_eq!(diagnostics.backend, HeifBackendKind::FfmpegSoftware);
+        assert!(tiles > 100);
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn selects_and_decodes_apple_image_io_fixture() {
+        let fixture =
+            Path::new(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/DSC00449.HIF");
+        if crate::apple_image_io::can_decode(&fixture).is_err() {
+            return;
+        }
+        let service = HeifDecodeService::default();
+        let session = service.begin(&fixture, 1, true).unwrap();
+        assert_eq!(session.backend, HeifBackendKind::AppleImageIo);
+        assert_eq!(session.acceleration, AccelerationKind::Unknown);
+        let mut tiles = 0;
+        let diagnostics = service.decode(&session, fixture, |_| tiles += 1).unwrap();
+        assert_eq!(diagnostics.backend, HeifBackendKind::AppleImageIo);
         assert!(tiles > 100);
     }
 }

@@ -8,6 +8,8 @@ fn main() {
     let libraw_dir = manifest_dir.join("../../3rdpart/libraw");
     let wrapper = manifest_dir.join("src/libraw_wrapper.cpp");
 
+    build_apple_image_io(&manifest_dir);
+
     println!("cargo:rerun-if-changed={}", wrapper.display());
     println!(
         "cargo:rerun-if-changed={}",
@@ -38,6 +40,23 @@ fn main() {
 
     add_cpp_sources(&mut build, &libraw_dir.join("src"));
     build.compile("oxy_libraw");
+}
+
+fn build_apple_image_io(manifest_dir: &Path) {
+    if env::var("CARGO_CFG_TARGET_OS").as_deref() != Ok("macos") {
+        return;
+    }
+
+    let wrapper = manifest_dir.join("src/apple_image_io.c");
+    println!("cargo:rerun-if-changed={}", wrapper.display());
+    println!("cargo:rustc-link-lib=framework=CoreFoundation");
+    println!("cargo:rustc-link-lib=framework=CoreGraphics");
+    println!("cargo:rustc-link-lib=framework=ImageIO");
+    cc::Build::new()
+        .warnings(false)
+        .extra_warnings(false)
+        .file(wrapper)
+        .compile("oxy_apple_image_io");
 }
 
 fn add_cpp_sources(build: &mut cc::Build, directory: &Path) {

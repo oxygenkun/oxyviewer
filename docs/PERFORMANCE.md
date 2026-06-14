@@ -67,6 +67,17 @@ Reference budgets are measured on a local SSD with a release build.
   thumbnails use one codec/library thread, while larger progressive previews
   receive modestly higher limits, preventing background browsing from
   saturating macOS CPU cores.
+- 2026-06-14: macOS HEIF thumbnail, 4096 px preview, and full-resolution tile
+  sessions now prefer the native ImageIO decoder and fall back to FFmpeg or
+  libheif. ImageIO may use the platform media stack internally, but is reported
+  as unknown acceleration until GPU use can be verified. The reusable
+  `heif_display_bench` binary measures cold 512/4096 previews, first full tile,
+  and all-tile publication. On the reference Mac, three release runs of
+  `DSC00449.HIF` measured 537 ms median for a cold-cache 512 px preview and
+  565 ms for 4096 px. After those preview runs had warmed the system decoder,
+  full-resolution ImageIO decode took 9-27 ms, the first center tile arrived
+  in 13 ms median, and all tiles were published in 74 ms median. The remaining
+  measured costs are preview JPEG cache writing and frontend per-tile transfer.
 - 2026-06-12: A clean release-mode libheif benchmark was added at
   `crates/oxy-media/src/bin/heif_decode_bench.rs`. On the Windows reference
   machine, `tests/fixtures/DSC00449.HIF` is 4672x7008, 10-bit, and has no
