@@ -42,7 +42,7 @@ pub fn decode_primary(path: &Path) -> Result<DecodedHeif, MediaError> {
     let bit_depth = handle.luma_bits_per_pixel();
     let color_space = color_space_for_depth(bit_depth);
     let image = LibHeif::new()
-        .decode(&handle, color_space, decoding_options())
+        .decode(&handle, color_space, decoding_options(None))
         .map_err(|error| heif_error(path, error))?;
     let plane = image.planes().interleaved.ok_or_else(|| MediaError::Heif {
         path: path.to_owned(),
@@ -85,7 +85,9 @@ pub fn decode_scaled(path: &Path, max_size: u32) -> Result<DynamicImage, MediaEr
             .find(|thumbnail| thumbnail.width().max(thumbnail.height()) >= max_size)
             .or_else(|| thumbnails.last())
         {
-            if let Ok(image) = decode_preview_handle(thumbnail, path) {
+            if let Ok(image) =
+                decode_preview_handle(thumbnail, path, Some(preview_thread_limit(max_size)))
+            {
                 return Ok(image.thumbnail(max_size, max_size));
             }
         }
@@ -97,7 +99,7 @@ pub fn decode_scaled(path: &Path, max_size: u32) -> Result<DynamicImage, MediaEr
     // This avoids unpacking and color-converting millions of pixels that will be
     // discarded by the subsequent resize.
     let bit_depth = handle.luma_bits_per_pixel();
-    let mut options = decoding_options();
+    let mut options = decoding_options(Some(preview_thread_limit(max_size)));
     if let Some(ref mut opts) = options {
         if bit_depth > 8 {
             opts.set_convert_hdr_to_8bit(true);
@@ -129,15 +131,16 @@ pub fn decode_full_rgb8(path: &Path) -> Result<DynamicImage, MediaError> {
     let handle = context
         .primary_image_handle()
         .map_err(|error| heif_error(path, error))?;
-    decode_preview_handle(&handle, path)
+    decode_preview_handle(&handle, path, None)
 }
 
 fn decode_preview_handle(
     handle: &libheif_rs::ImageHandle,
     path: &Path,
+    thread_limit: Option<u32>,
 ) -> Result<DynamicImage, MediaError> {
     let bit_depth = handle.luma_bits_per_pixel();
-    let mut options = decoding_options();
+    let mut options = decoding_options(thread_limit);
     if let Some(ref mut opts) = options {
         if bit_depth > 8 {
             opts.set_convert_hdr_to_8bit(true);
@@ -199,14 +202,24 @@ fn heif_error(path: &Path, error: impl std::fmt::Display) -> MediaError {
     }
 }
 
-/// Build [`DecodingOptions`] with multi-core codec threads enabled.
-fn decoding_options() -> Option<DecodingOptions> {
+/// Build [`DecodingOptions`] with an optional workload-specific thread limit.
+fn decoding_options(thread_limit: Option<u32>) -> Option<DecodingOptions> {
     let mut options = DecodingOptions::new()?;
-    let threads = std::thread::available_parallelism()
+    let available = std::thread::available_parallelism()
         .map(|n| n.get() as u32)
         .unwrap_or(1);
+    let threads = thread_limit.unwrap_or(available).min(available).max(1);
     options.set_num_codec_threads(threads);
+    options.set_num_library_threads(threads);
     Some(options)
+}
+
+fn preview_thread_limit(max_size: u32) -> u32 {
+    match max_size {
+        0..=512 => 1,
+        513..=2_048 => 2,
+        _ => 4,
+    }
 }
 
 fn color_space_for_depth(bit_depth: u8) -> ColorSpace {
@@ -582,5 +595,12 @@ mod tests {
             v > 0 && v < 65_535,
             "mid-gray should map to valid range, got {v}"
         );
+    }
+
+    #[test]
+    fn preview_thread_limits_keep_grid_decode_lightweight() {
+        assert_eq!(preview_thread_limit(512), 1);
+        assert_eq!(preview_thread_limit(1_024), 2);
+        assert_eq!(preview_thread_limit(4_096), 4);
     }
 }

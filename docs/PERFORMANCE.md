@@ -57,6 +57,10 @@ Reference budgets are measured on a local SSD with a release build.
   RGB decode path; high-bit-depth color-managed processing remains isolated to
   the later full-detail stage. An experimental all-tile path was removed
   because it decoded every tile sequentially and did not reduce HEVC work.
+- 2026-06-14: libheif preview decoding now uses size-based thread limits. Grid
+  thumbnails use one codec/library thread, while larger progressive previews
+  receive modestly higher limits, preventing background browsing from
+  saturating macOS CPU cores.
 - 2026-06-12: A clean release-mode libheif benchmark was added at
   `crates/oxy-media/src/bin/heif_decode_bench.rs`. On the Windows reference
   machine, `tests/fixtures/DSC00449.HIF` is 4672x7008, 10-bit, and has no
