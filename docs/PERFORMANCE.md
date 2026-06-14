@@ -57,6 +57,12 @@ Reference budgets are measured on a local SSD with a release build.
   RGB decode path; high-bit-depth color-managed processing remains isolated to
   the later full-detail stage. An experimental all-tile path was removed
   because it decoded every tile sequentially and did not reduce HEVC work.
+- 2026-06-13: HEIF decode work is now globally single-flight with three
+  priorities: the current loupe image first, visible grid/filmstrip thumbnails
+  second, and nearby overscan thumbnails last. Grid and filmstrip HEIF
+  thumbnails also use a cancellable priority queue, so requests that have not
+  started are discarded or reprioritized as visibility changes instead of
+  continuing after navigation.
 - 2026-06-14: libheif preview decoding now uses size-based thread limits. Grid
   thumbnails use one codec/library thread, while larger progressive previews
   receive modestly higher limits, preventing background browsing from

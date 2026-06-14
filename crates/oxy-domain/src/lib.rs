@@ -78,6 +78,14 @@ pub enum PreviewMode {
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
+pub enum PreviewPriority {
+    Nearby,
+    Visible,
+    Loupe,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
 pub enum PreviewKind {
     Embedded,
     Developed,

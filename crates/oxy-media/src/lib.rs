@@ -16,7 +16,7 @@ use std::{
     hash::{Hash, Hasher},
     io::{BufReader, Write},
     path::{Path, PathBuf},
-    sync::{Arc, LazyLock, Mutex},
+    sync::{Arc, Condvar, LazyLock, Mutex},
 };
 use tempfile::NamedTempFile;
 use thiserror::Error;
@@ -30,11 +30,94 @@ const LOUPE_PREVIEW_THRESHOLD: u32 = 2_048;
 static RAW_THUMBNAIL_DECODE_LOCK: Mutex<()> = Mutex::new(());
 static RAW_LOUPE_DECODE_LOCK: Mutex<()> = Mutex::new(());
 static RAW_FULL_DECODE_LOCK: Mutex<()> = Mutex::new(());
+static HEIF_DECODE_GATE: HeifDecodeGate = HeifDecodeGate::new();
 
-// Per-file HEIF decode locks: different files decode concurrently, same file
-// is serialised to avoid redundant work.
+// Per-file HEIF locks coalesce duplicate cache work after the global decode
+// gate has selected the next source.
 static HEIF_LOCKS: LazyLock<Mutex<HashMap<String, Arc<Mutex<()>>>>> =
     LazyLock::new(|| Mutex::new(HashMap::new()));
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum HeifDecodePriority {
+    Background,
+    Visible,
+    Foreground,
+}
+
+struct HeifDecodeGate {
+    state: Mutex<HeifDecodeGateState>,
+    ready: Condvar,
+}
+
+#[derive(Default)]
+struct HeifDecodeGateState {
+    active: bool,
+    foreground_waiters: usize,
+    visible_waiters: usize,
+}
+
+struct HeifDecodePermit<'a> {
+    gate: &'a HeifDecodeGate,
+}
+
+impl HeifDecodeGate {
+    const fn new() -> Self {
+        Self {
+            state: Mutex::new(HeifDecodeGateState {
+                active: false,
+                foreground_waiters: 0,
+                visible_waiters: 0,
+            }),
+            ready: Condvar::new(),
+        }
+    }
+
+    fn acquire(&self, priority: HeifDecodePriority) -> HeifDecodePermit<'_> {
+        let mut state = self.state.lock().unwrap_or_else(|error| error.into_inner());
+        if priority == HeifDecodePriority::Foreground {
+            state.foreground_waiters += 1;
+        } else if priority == HeifDecodePriority::Visible {
+            state.visible_waiters += 1;
+        }
+        while state.active
+            || match priority {
+                HeifDecodePriority::Foreground => false,
+                HeifDecodePriority::Visible => state.foreground_waiters > 0,
+                HeifDecodePriority::Background => {
+                    state.foreground_waiters > 0 || state.visible_waiters > 0
+                }
+            }
+        {
+            state = self
+                .ready
+                .wait(state)
+                .unwrap_or_else(|error| error.into_inner());
+        }
+        if priority == HeifDecodePriority::Foreground {
+            state.foreground_waiters -= 1;
+        } else if priority == HeifDecodePriority::Visible {
+            state.visible_waiters -= 1;
+        }
+        state.active = true;
+        HeifDecodePermit { gate: self }
+    }
+}
+
+impl Drop for HeifDecodePermit<'_> {
+    fn drop(&mut self) {
+        let mut state = self
+            .gate
+            .state
+            .lock()
+            .unwrap_or_else(|error| error.into_inner());
+        state.active = false;
+        self.gate.ready.notify_all();
+    }
+}
+
+pub(crate) fn acquire_heif_decode(priority: HeifDecodePriority) -> impl Drop {
+    HEIF_DECODE_GATE.acquire(priority)
+}
 
 /// Look up or create a per-file `Mutex`, clone the `Arc`, then lock it.
 /// Returns `(Arc<Mutex<()>>, MutexGuard)` — caller must keep the `Arc` alive
@@ -197,6 +280,11 @@ pub fn heif_full(path: &Path, cache_dir: &Path) -> Result<PreviewResult, MediaEr
         return preview_result(destination, PreviewKind::Decoded);
     }
 
+    let _decode_permit = acquire_heif_decode(HeifDecodePriority::Foreground);
+    if destination.is_file() {
+        return preview_result(destination, PreviewKind::Decoded);
+    }
+
     let source_lock_key = preview_cache_key(path, "heif-source-decode", 0)?;
     let (_heif_lock_arc, _decode_guard) = acquire_heif_lock(&source_lock_key);
     if destination.is_file() {
@@ -215,10 +303,27 @@ pub fn heif_preview(
     cache_dir: &Path,
     max_size: u32,
 ) -> Result<PreviewResult, MediaError> {
+    heif_preview_with_priority(path, cache_dir, max_size, HeifDecodePriority::Background)
+}
+
+pub fn heif_preview_with_priority(
+    path: &Path,
+    cache_dir: &Path,
+    max_size: u32,
+    priority: HeifDecodePriority,
+) -> Result<PreviewResult, MediaError> {
     let max_size = max_size.max(1);
     fs::create_dir_all(cache_dir)?;
     let cache_key = preview_cache_key(path, HEIF_CACHE_VERSION, max_size)?;
     let destination = cache_dir.join(format!("{cache_key}.jpg"));
+    if destination.is_file() {
+        return preview_result(destination, PreviewKind::Decoded);
+    }
+    if let Some(result) = larger_heif_preview(path, cache_dir, max_size)? {
+        return Ok(result);
+    }
+
+    let _decode_permit = acquire_heif_decode(priority);
     if destination.is_file() {
         return preview_result(destination, PreviewKind::Decoded);
     }
@@ -392,6 +497,8 @@ mod tests {
     use image::{DynamicImage, ImageDecoder, ImageFormat, ImageReader, Rgb, RgbImage};
     use std::{
         io::Cursor,
+        sync::mpsc,
+        thread,
         time::{Duration, Instant},
     };
 
@@ -404,6 +511,52 @@ mod tests {
                 .join("../..")
                 .join(path)
         }
+    }
+
+    #[test]
+    fn heif_decode_gate_prefers_loupe_then_visible_then_nearby() {
+        let gate = Arc::new(HeifDecodeGate::new());
+        let active = gate.acquire(HeifDecodePriority::Background);
+        let (acquired_tx, acquired_rx) = mpsc::channel();
+        let spawn_waiter = |priority| {
+            let gate = gate.clone();
+            let acquired_tx = acquired_tx.clone();
+            thread::spawn(move || {
+                let _permit = gate.acquire(priority);
+                acquired_tx.send(priority).unwrap();
+            })
+        };
+        let nearby = spawn_waiter(HeifDecodePriority::Background);
+        let visible = spawn_waiter(HeifDecodePriority::Visible);
+        let loupe = spawn_waiter(HeifDecodePriority::Foreground);
+
+        let started = Instant::now();
+        loop {
+            let state = gate.state.lock().unwrap_or_else(|error| error.into_inner());
+            if state.foreground_waiters == 1 && state.visible_waiters == 1 {
+                break;
+            }
+            drop(state);
+            assert!(started.elapsed() < Duration::from_secs(1));
+            thread::yield_now();
+        }
+        drop(active);
+
+        assert_eq!(
+            acquired_rx.recv_timeout(Duration::from_secs(1)).unwrap(),
+            HeifDecodePriority::Foreground
+        );
+        assert_eq!(
+            acquired_rx.recv_timeout(Duration::from_secs(1)).unwrap(),
+            HeifDecodePriority::Visible
+        );
+        assert_eq!(
+            acquired_rx.recv_timeout(Duration::from_secs(1)).unwrap(),
+            HeifDecodePriority::Background
+        );
+        nearby.join().unwrap();
+        visible.join().unwrap();
+        loupe.join().unwrap();
     }
 
     #[test]

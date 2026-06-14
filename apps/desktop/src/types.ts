@@ -48,6 +48,7 @@ export interface AssetDetails {
 }
 
 export type PreviewMode = "thumbnail" | "loupePreview" | "fullDetail";
+export type PreviewPriority = "nearby" | "visible" | "loupe";
 export type PreviewKind = "embedded" | "developed" | "decoded" | "system" | "original";
 
 export interface PreviewResult {

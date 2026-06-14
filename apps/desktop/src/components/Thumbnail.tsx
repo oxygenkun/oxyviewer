@@ -3,12 +3,13 @@ import { useEffect, useMemo, useState } from "react";
 import { generatedPreview, isTauri, previewUrl } from "../lib/api";
 import { previewStages } from "../lib/preview";
 import { rawPreviewStatus, type RawPreviewStatus } from "../lib/rawPreview";
-import type { AssetSummary, PreviewResult } from "../types";
+import type { AssetSummary, PreviewPriority, PreviewResult } from "../types";
 
 interface ThumbnailProps {
   asset: AssetSummary;
   enabled?: boolean;
   large?: boolean;
+  priority?: PreviewPriority;
   onImageLoad?: (size: { width: number; height: number }) => void;
   onRawPreviewStatus?: (status: RawPreviewStatus) => void;
 }
@@ -25,6 +26,7 @@ export function Thumbnail({
   asset,
   enabled = true,
   large = false,
+  priority = "visible",
   onImageLoad,
   onRawPreviewStatus,
 }: ThumbnailProps) {
@@ -35,23 +37,36 @@ export function Thumbnail({
   const stages = previewStages(large);
   const thumbnailSize = stages[0];
   const loupeSize = stages.length > 1 ? stages[1] : undefined;
+  const thumbnailPriority = large ? "loupe" : priority;
   const thumbnailSource = useQuery({
-    queryKey: ["asset-preview", asset.id, asset.modifiedAtMs, thumbnailSize],
-    queryFn: () => generatedPreview(asset, "thumbnail", thumbnailSize),
+    queryKey: ["asset-preview", asset.id, asset.modifiedAtMs, thumbnailSize, thumbnailPriority],
+    queryFn: ({ signal }) => generatedPreview(
+      asset,
+      large ? "loupePreview" : "thumbnail",
+      thumbnailSize,
+      signal,
+      thumbnailPriority,
+    ),
     enabled: enabled && isTauri() && !directSource,
     staleTime: Infinity,
     retry: 0,
   });
   const loupeSource = useQuery({
     queryKey: ["asset-preview", asset.id, asset.modifiedAtMs, loupeSize],
-    queryFn: () => generatedPreview(asset, "loupePreview", loupeSize ?? thumbnailSize),
+    queryFn: ({ signal }) => generatedPreview(
+      asset,
+      "loupePreview",
+      loupeSize ?? thumbnailSize,
+      signal,
+      "loupe",
+    ),
     enabled: enabled && isTauri() && !directSource && Boolean(loupeSize && thumbnailSource.data),
     staleTime: Infinity,
     retry: 0,
   });
   const fullSource = useQuery({
     queryKey: ["asset-preview", asset.id, asset.modifiedAtMs, "fullDetail"],
-    queryFn: () => generatedPreview(asset, "fullDetail"),
+    queryFn: ({ signal }) => generatedPreview(asset, "fullDetail", undefined, signal, "loupe"),
     enabled: enabled
       && isTauri()
       && asset.kind === "raw"

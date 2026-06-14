@@ -19,12 +19,19 @@ interface AssetBrowserProps {
 
 interface AssetCardProps {
   asset: AssetSummary;
+  priority: "nearby" | "visible";
   selected: boolean;
   onSelect: (event: React.MouseEvent) => void;
   onOpen: () => void;
 }
 
-const AssetCard = memo(function AssetCard({ asset, selected, onSelect, onOpen }: AssetCardProps) {
+const AssetCard = memo(function AssetCard({
+  asset,
+  priority,
+  selected,
+  onSelect,
+  onOpen,
+}: AssetCardProps) {
   return (
     <button
       className={`asset-card ${selected ? "is-selected" : ""}`}
@@ -32,7 +39,7 @@ const AssetCard = memo(function AssetCard({ asset, selected, onSelect, onOpen }:
       onDoubleClick={onOpen}
       title={asset.path}
     >
-      <Thumbnail asset={asset} />
+      <Thumbnail asset={asset} priority={priority} />
       <span className="asset-card__name">{asset.name}</span>
       <span className="asset-card__meta">
         {asset.extension}
@@ -127,6 +134,7 @@ function VirtualGrid({
               <AssetCard
                 key={asset.id}
                 asset={asset}
+                priority={isVisible(row.start, row.end, parentRef.current) ? "visible" : "nearby"}
                 selected={selectedIds.includes(asset.id)}
                 onSelect={(event) => select(asset.id, event.metaKey || event.ctrlKey)}
                 onOpen={() => {
@@ -184,7 +192,10 @@ function VirtualList({
               onClick={(event) => select(asset.id, event.metaKey || event.ctrlKey)}
               onDoubleClick={() => setView("loupe")}
             >
-              <Thumbnail asset={asset} />
+              <Thumbnail
+                asset={asset}
+                priority={isVisible(row.start, row.end, parentRef.current) ? "visible" : "nearby"}
+              />
               <strong>{asset.name}</strong>
               <span>{asset.extension}</span>
               <span>{formatBytes(asset.sizeBytes)}</span>
@@ -200,4 +211,9 @@ function VirtualList({
 export function formatBytes(bytes: number) {
   if (bytes < 1_000_000) return `${(bytes / 1_000).toFixed(0)} KB`;
   return `${(bytes / 1_000_000).toFixed(1)} MB`;
+}
+
+function isVisible(start: number, end: number, scrollElement: HTMLElement | null) {
+  if (!scrollElement) return true;
+  return end > scrollElement.scrollTop && start < scrollElement.scrollTop + scrollElement.clientHeight;
 }

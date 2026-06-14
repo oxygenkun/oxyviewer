@@ -1,7 +1,8 @@
 use oxy_domain::{
     AssetDetails, AssetKind, AssetQuery, AssetSummary, DirectorySummary, EditableMetadata,
     FileOperation, FileOperationResult, FolderSession, HeifCapabilities, HeifDecodeSession,
-    HeifDecodeStatus, HeifDiagnostics, JobId, JobPriority, Page, PreviewMode, PreviewResult,
+    HeifDecodeStatus, HeifDiagnostics, JobId, JobPriority, Page, PreviewMode, PreviewPriority,
+    PreviewResult,
 };
 use oxy_fs::FsCatalog;
 use oxy_library::Library;
@@ -93,6 +94,7 @@ async fn get_preview(
     path: PathBuf,
     mode: PreviewMode,
     max_size: Option<u32>,
+    priority: PreviewPriority,
     state: State<'_, AppState>,
 ) -> Result<PreviewResult, String> {
     let asset = state
@@ -128,18 +130,27 @@ async fn get_preview(
                             "full-detail libheif decode failed for {}: {heif_error}",
                             path.display()
                         );
-                        oxy_media::heif_preview(&path, &preview_dir, 8_192).map_err(
-                            |preview_error| {
-                                format!("{heif_error}; preview fallback failed: {preview_error}")
-                            },
+                        oxy_media::heif_preview_with_priority(
+                            &path,
+                            &preview_dir,
+                            8_192,
+                            oxy_media::HeifDecodePriority::Foreground,
                         )
+                        .map_err(|preview_error| {
+                            format!("{heif_error}; preview fallback failed: {preview_error}")
+                        })
                     });
             }
             if mode == PreviewMode::FullDetail {
                 return Err("fullDetail preview mode only supports RAW and HEIF assets".into());
             }
             if asset.kind == AssetKind::Heif {
-                oxy_media::heif_preview(&path, &preview_dir, max_size)
+                let priority = match priority {
+                    PreviewPriority::Nearby => oxy_media::HeifDecodePriority::Background,
+                    PreviewPriority::Visible => oxy_media::HeifDecodePriority::Visible,
+                    PreviewPriority::Loupe => oxy_media::HeifDecodePriority::Foreground,
+                };
+                oxy_media::heif_preview_with_priority(&path, &preview_dir, max_size, priority)
                     .map_err(|error| error.to_string())
             } else {
                 oxy_media::system_preview(&path, &preview_dir, max_size)

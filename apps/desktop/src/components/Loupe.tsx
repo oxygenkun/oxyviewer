@@ -457,24 +457,35 @@ interface FilmstripItemProps {
 
 function FilmstripItem({ active, asset, onClick, root }: FilmstripItemProps) {
   const itemRef = useRef<HTMLButtonElement>(null);
+  const [nearby, setNearby] = useState(active);
   const [visible, setVisible] = useState(active);
 
   useEffect(() => {
     const item = itemRef.current;
     if (!item || !root.current || typeof IntersectionObserver === "undefined") {
+      setNearby(true);
       setVisible(true);
       return;
     }
-    const observer = new IntersectionObserver(
-      ([entry]) => setVisible(entry.isIntersecting),
+    const nearbyObserver = new IntersectionObserver(
+      ([entry]) => setNearby(entry.isIntersecting),
       { root: root.current, rootMargin: "0px 320px" },
     );
-    observer.observe(item);
-    return () => observer.disconnect();
+    const visibleObserver = new IntersectionObserver(
+      ([entry]) => setVisible(entry.isIntersecting),
+      { root: root.current },
+    );
+    nearbyObserver.observe(item);
+    visibleObserver.observe(item);
+    return () => {
+      nearbyObserver.disconnect();
+      visibleObserver.disconnect();
+    };
   }, [root]);
 
   useEffect(() => {
     if (active) {
+      setNearby(true);
       setVisible(true);
       itemRef.current?.scrollIntoView({ block: "nearest", inline: "nearest" });
     }
@@ -487,7 +498,11 @@ function FilmstripItem({ active, asset, onClick, root }: FilmstripItemProps) {
       onClick={onClick}
       title={asset.name}
     >
-      <Thumbnail asset={asset} enabled={visible || active} />
+      <Thumbnail
+        asset={asset}
+        enabled={nearby || active}
+        priority={active ? "loupe" : visible ? "visible" : "nearby"}
+      />
       <span className="filmstrip__name">{asset.name}</span>
     </button>
   );

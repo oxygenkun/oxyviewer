@@ -12,8 +12,10 @@ import type {
   HeifDiagnostics,
   Page,
   PreviewMode,
+  PreviewPriority,
   PreviewResult,
 } from "../types";
+import { heifThumbnailQueue } from "./previewQueue";
 
 const demoNames: Array<[string, AssetKind, number]> = [
   ["DSC_4281.NEF", "raw", 42_840_312],
@@ -168,13 +170,19 @@ export async function generatedPreview(
   asset: AssetSummary,
   mode: PreviewMode,
   maxSize?: number,
+  signal?: AbortSignal,
+  priority: PreviewPriority = "visible",
 ): Promise<PreviewResult | undefined> {
   if (!isTauri()) return undefined;
-  const result = await invoke<Omit<PreviewResult, "url">>("get_preview", {
+  const request = () => invoke<Omit<PreviewResult, "url">>("get_preview", {
     path: asset.path,
     mode,
     maxSize,
+    priority,
   });
+  const result = asset.kind === "heif" && mode === "thumbnail"
+    ? await heifThumbnailQueue.enqueue(priority === "visible" ? 1 : 0, signal, request)
+    : await request();
   return { ...result, url: convertFileSrc(result.path) };
 }
 
