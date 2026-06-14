@@ -35,6 +35,7 @@ struct Tile {
 struct TileGrid {
     width: u32,
     height: u32,
+    rotation: i32,
     tiles: Vec<Tile>,
 }
 
@@ -121,7 +122,14 @@ fn command_supports(
 
 fn probe_grid(path: &Path) -> Result<TileGrid, MediaError> {
     let output = Command::new("ffprobe")
-        .args(["-v", "error", "-show_stream_groups", "-of", "json"])
+        .args([
+            "-v",
+            "error",
+            "-show_stream_groups",
+            "-show_streams",
+            "-of",
+            "json",
+        ])
         .arg(path)
         .stdin(Stdio::null())
         .output()
@@ -188,12 +196,24 @@ fn parse_grid(json: &[u8]) -> Result<TileGrid, MediaError> {
             })
         })
         .collect::<Result<Vec<_>, MediaError>>()?;
+    let rotation = groups
+        .iter()
+        .flat_map(|group| group["streams"].as_array().into_iter().flatten())
+        .chain(root["streams"].as_array().into_iter().flatten())
+        .filter(|stream| stream["codec_type"].as_str() == Some("video"))
+        .filter(|stream| stream["disposition"]["dependent"].as_u64() == Some(0))
+        .flat_map(|stream| stream["side_data_list"].as_array().into_iter().flatten())
+        .find_map(|side_data| side_data["rotation"].as_i64())
+        .unwrap_or(0)
+        .try_into()
+        .map_err(|_| native_error("ffprobe display rotation exceeds i32"))?;
     if tiles.is_empty() {
         return Err(native_error("tile-grid component has no tiles"));
     }
     Ok(TileGrid {
         width,
         height,
+        rotation,
         tiles,
     })
 }
@@ -222,7 +242,15 @@ fn filter_for_grid(
     let output_size = if grid.width == display_size.width && grid.height == display_size.height {
         display_size
     } else if grid.width == display_size.height && grid.height == display_size.width {
-        filter.push_str(",transpose=clock");
+        match grid.rotation {
+            -90 | 270 => filter.push_str(",transpose=cclock"),
+            90 | -270 => filter.push_str(",transpose=clock"),
+            rotation => {
+                return Err(native_error(format!(
+                    "tile-grid requires a quarter turn but display rotation is {rotation}"
+                )));
+            }
+        }
         display_size
     } else {
         return Err(native_error(format!(
@@ -280,6 +308,11 @@ mod tests {
             {"stream_index": 1, "tile_horizontal_offset": 3520, "tile_vertical_offset": 0}
           ]
         }]
+      }],
+      "streams": [{
+        "codec_type": "video",
+        "disposition": {"dependent": 0},
+        "side_data_list": [{"rotation": -90}]
       }]
     }"#;
 
@@ -298,8 +331,23 @@ mod tests {
         assert_eq!((width, height), (4672, 7008));
         assert_eq!(
             filter,
-            "[0:0][0:1]xstack=inputs=2:layout=0_0|3520_0,crop=7008:4672,transpose=clock,format=rgba[out]"
+            "[0:0][0:1]xstack=inputs=2:layout=0_0|3520_0,crop=7008:4672,transpose=cclock,format=rgba[out]"
         );
+    }
+
+    #[test]
+    fn uses_clockwise_rotation_when_requested_by_display_matrix() {
+        let mut grid = parse_grid(GRID_JSON).unwrap();
+        grid.rotation = 90;
+        let (filter, _, _) = filter_for_grid(
+            &grid,
+            ImageDimensions {
+                width: 4672,
+                height: 7008,
+            },
+        )
+        .unwrap();
+        assert!(filter.contains("transpose=clock"));
     }
 
     #[test]
