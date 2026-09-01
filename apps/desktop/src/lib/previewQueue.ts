@@ -1,3 +1,5 @@
+import type { PreviewPriority } from "../types";
+
 type PendingTask<T> = {
   priority: number;
   signal?: AbortSignal;
@@ -5,6 +7,24 @@ type PendingTask<T> = {
   resolve: (value: T) => void;
   reject: (reason: unknown) => void;
 };
+
+/**
+ * Numeric priority used by the serial queue. Higher runs first. The frontend
+ * queue is the first layer of the two-tier scheduler: it orders pending work
+ * so on-screen (visible) and loupe thumbnails jump ahead of off-screen
+ * (nearby) overscan work, and drops requests that scroll out of view before
+ * they start.
+ */
+export function priorityWeight(priority: PreviewPriority): number {
+  switch (priority) {
+    case "loupe":
+      return 2;
+    case "visible":
+      return 1;
+    case "nearby":
+      return 0;
+  }
+}
 
 export class SerialTaskQueue {
   private active = false;
@@ -43,4 +63,11 @@ export class SerialTaskQueue {
   }
 }
 
-export const heifThumbnailQueue = new SerialTaskQueue();
+/**
+ * Unified preview queue. Covers every format and every preview stage so that a
+ * visible RAW/HEIF/TIFF thumbnail is never stuck behind unrelated work. The
+ * backend decode gate is the second layer; this queue ensures only one preview
+ * request is in flight at a time and that pending requests are both prioritized
+ * and droppable via AbortSignal.
+ */
+export const previewQueue = new SerialTaskQueue();

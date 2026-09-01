@@ -33,3 +33,12 @@ tokio = { version = "1.47", features = ["process", "io-util", "sync", "rt-multi-
 trash = "5.2"
 walkdir = "2.5"
 windows = "0.61"
+
+# Media decoding, pixel conversion, and JPEG encoding are intentionally hot
+# even in Debug builds. Optimizing only these crates keeps fast application
+# rebuilds while making Debug performance diagnostics representative.
+[profile.dev.package.oxy-media]
+opt-level = 2
+
+[profile.dev.package.image]
+opt-level = 2

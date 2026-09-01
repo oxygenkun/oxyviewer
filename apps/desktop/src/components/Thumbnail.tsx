@@ -1,9 +1,10 @@
 import { useQuery } from "@tanstack/react-query";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { generatedPreview, isTauri, previewUrl } from "../lib/api";
 import { previewStages } from "../lib/preview";
+import { beginPreviewDebug, type PreviewDebugHandle } from "../lib/previewDebug";
 import { rawPreviewStatus, type RawPreviewStatus } from "../lib/rawPreview";
-import type { AssetSummary, PreviewPriority, PreviewResult } from "../types";
+import type { AssetKind, AssetSummary, PreviewPriority, PreviewResult } from "../types";
 
 interface ThumbnailProps {
   asset: AssetSummary;
@@ -22,6 +23,16 @@ function hashSeed(value: string) {
   return seed;
 }
 
+/**
+ * Formats whose loupe experience includes a full-resolution single-image stage
+ * (developed by the backend into one JPEG). HEIF is intentionally excluded:
+ * its full resolution is streamed as tiles by `HeifTileCanvas`, so the
+ * progressive `<img>` chain keeps only a 512px placeholder for HEIF.
+ */
+function hasFullDetailStage(kind: AssetKind): boolean {
+  return kind === "raw";
+}
+
 export function Thumbnail({
   asset,
   enabled = true,
@@ -33,10 +44,13 @@ export function Thumbnail({
   const [failed, setFailed] = useState(false);
   const [fullImageFailed, setFullImageFailed] = useState(false);
   const [loaded, setLoaded] = useState<{ assetId: string; mode: "preview" | "full" }>();
+  const imageDebug = useRef<{ source: string; handle: PreviewDebugHandle } | undefined>(undefined);
   const directSource = useMemo(() => previewUrl(asset), [asset]);
-  const stages = previewStages(large);
-  const thumbnailSize = stages[0];
-  const loupeSize = stages.length > 1 ? stages[1] : undefined;
+  const stages = previewStages(asset.kind, large);
+  // stages[0] is always the numeric thumbnail size (512) per previewStages.
+  const thumbnailSize = stages[0] as number;
+  const loupeSize = stages.length > 1 && stages[1] !== "full" ? (stages[1] as number) : undefined;
+  const hasFullStage = stages.includes("full");
   const thumbnailPriority = large ? "loupe" : priority;
   const thumbnailSource = useQuery({
     queryKey: ["asset-preview", asset.id, asset.modifiedAtMs, thumbnailSize, thumbnailPriority],
@@ -52,7 +66,7 @@ export function Thumbnail({
     retry: 0,
   });
   const loupeSource = useQuery({
-    queryKey: ["asset-preview", asset.id, asset.modifiedAtMs, loupeSize],
+    queryKey: ["asset-preview", asset.id, asset.modifiedAtMs, loupeSize ?? "loupe"],
     queryFn: ({ signal }) => generatedPreview(
       asset,
       "loupePreview",
@@ -69,7 +83,7 @@ export function Thumbnail({
     queryFn: ({ signal }) => generatedPreview(asset, "fullDetail", undefined, signal, "loupe"),
     enabled: enabled
       && isTauri()
-      && asset.kind === "raw"
+      && hasFullStage
       && large
       && Boolean(loupeSource.data || loupeSource.isError),
     staleTime: Infinity,
@@ -87,12 +101,47 @@ export function Thumbnail({
 
   useEffect(() => setFailed(false), [source]);
   useEffect(() => {
+    if (!source || failed) return;
+    let disposed = false;
+
+    // Deferring one microtask suppresses React StrictMode's throwaway effect
+    // cycle, keeping development timing output one-to-one with real loads.
+    queueMicrotask(() => {
+      if (disposed || imageDebug.current?.source === source) return;
+      const handle = __OXY_DEBUG__
+        ? beginPreviewDebug({
+            assetName: asset.name,
+            stage: directSource ? "image-direct" : "image-decode",
+            priority: thumbnailPriority,
+          })
+        : undefined;
+      if (!handle) return;
+      imageDebug.current = { source, handle };
+      handle.start();
+    });
+
+    return () => {
+      disposed = true;
+      if (imageDebug.current?.source !== source) return;
+      imageDebug.current.handle.cancel();
+      imageDebug.current = undefined;
+    };
+  }, [asset.name, directSource, failed, source]);
+
+  useEffect(() => {
+    imageDebug.current?.handle.updatePriority(thumbnailPriority);
+  }, [thumbnailPriority]);
+
+  useEffect(() => {
     setLoaded(undefined);
     setFullImageFailed(false);
   }, [asset.id]);
 
   useEffect(() => {
-    if (!onRawPreviewStatus || !large || asset.kind !== "raw") return;
+    // Report progressive status only for formats that run the full-detail
+    // stage here (currently RAW). HEIF's full-resolution status is owned by
+    // the tile canvas and surfaced through a separate event channel.
+    if (!onRawPreviewStatus || !large || !hasFullDetailStage(asset.kind)) return;
     onRawPreviewStatus(rawPreviewStatus({
       assetId: asset.id,
       loaded,
@@ -112,13 +161,44 @@ export function Thumbnail({
   ]);
 
   const handleLoad = (size: { width: number; height: number }, result?: PreviewResult) => {
-    if (asset.kind === "raw" && large && result) {
+    const currentDebug = imageDebug.current;
+    let debug: PreviewDebugHandle | undefined;
+    if (currentDebug && currentDebug.source === source) debug = currentDebug.handle;
+    if (!debug && source) {
+      // A memory-cached image can finish before the effect above runs.
+      debug = __OXY_DEBUG__
+        ? beginPreviewDebug({
+            assetName: asset.name,
+            stage: directSource ? "image-direct" : "image-decode",
+            priority: thumbnailPriority,
+          })
+        : undefined;
+      debug?.start();
+      if (debug) imageDebug.current = { source, handle: debug };
+    }
+    debug?.complete();
+    if (hasFullDetailStage(asset.kind) && large && result) {
       setLoaded({ assetId: asset.id, mode: result === fullSource.data ? "full" : "preview" });
     }
     onImageLoad?.(size);
   };
 
   const handleError = (result?: PreviewResult) => {
+    const currentDebug = imageDebug.current;
+    let debug: PreviewDebugHandle | undefined;
+    if (currentDebug && currentDebug.source === source) debug = currentDebug.handle;
+    if (!debug && source) {
+      debug = __OXY_DEBUG__
+        ? beginPreviewDebug({
+            assetName: asset.name,
+            stage: directSource ? "image-direct" : "image-decode",
+            priority: thumbnailPriority,
+          })
+        : undefined;
+      debug?.start();
+      if (debug) imageDebug.current = { source, handle: debug };
+    }
+    debug?.fail();
     if (result && result === fullSource.data) {
       setFullImageFailed(true);
     } else {

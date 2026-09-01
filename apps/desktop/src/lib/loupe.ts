@@ -1,3 +1,5 @@
+import type { AssetKind } from "../types";
+
 export interface Point {
   x: number;
   y: number;
@@ -17,6 +19,21 @@ export interface NavigatorViewport {
 
 export const MIN_ZOOM = 1;
 export const MAX_PIXEL_ZOOM_PERCENT = 400;
+
+export function resolveLoupeSourceSize(
+  kind: AssetKind,
+  previewNaturalSize: Size | undefined,
+  fullResolutionSize: Size | undefined,
+  metadataSize: Size | undefined,
+  fallback: Size,
+) {
+  // HEIF's <img> is only a 512 px placeholder. It must never define the
+  // pixel-zoom scale once the full-resolution tile canvas is available.
+  if (kind === "heif") {
+    return fullResolutionSize ?? metadataSize ?? previewNaturalSize ?? fallback;
+  }
+  return previewNaturalSize ?? metadataSize ?? fallback;
+}
 
 export function clampZoom(zoom: number, maxZoom = MAX_PIXEL_ZOOM_PERCENT) {
   return Math.min(Math.max(MIN_ZOOM, maxZoom), Math.max(MIN_ZOOM, zoom));

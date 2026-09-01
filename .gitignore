@@ -2,6 +2,7 @@ target/
 node_modules/
 .pnpm-store/
 apps/desktop/dist/
+*.tsbuildinfo
 apps/desktop/src-tauri/gen/
 .DS_Store
 *.log

@@ -94,6 +94,58 @@ pub enum PreviewKind {
     Original,
 }
 
+/// Semantic preview stage shared across formats. Replaces the magic numbers
+/// `512` / `4_096` and lets the frontend/backend agree on which band of the
+/// progressive pipeline a request belongs to.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub enum PreviewStage {
+    /// Cheap thumbnail (~512 px) used for grid/list/filmstrip.
+    Thumb512,
+    /// Loupe preview (~4096 px) shown while full detail develops.
+    Loupe4096,
+    /// Full-resolution output. For HEIF this is served by the tile session;
+    /// for other formats it is a single full-resolution JPEG.
+    Full,
+}
+
+impl PreviewStage {
+    pub fn target_size(self) -> u32 {
+        match self {
+            PreviewStage::Thumb512 => 512,
+            PreviewStage::Loupe4096 => 4_096,
+            // 0 signals "no downscale" to the cache key / decoder.
+            PreviewStage::Full => 0,
+        }
+    }
+}
+
+/// Format-agnostic decode diagnostics. Generalizes `HeifDiagnostics` so any
+/// decoder (RAW, system, future formats) can report timing/backend info.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct PreviewDiagnostics {
+    /// Human-readable backend label, e.g. `"libraw-embedded"` or
+    /// `"ffmpeg-hevc-tile-grid"`.
+    pub backend: Option<String>,
+    /// Time spent waiting for the shared decode gate.
+    pub queue_wait_ms: Option<u64>,
+    /// Time spent waiting for another request for the same source file.
+    pub source_wait_ms: Option<u64>,
+    /// Decode wall time in milliseconds.
+    pub decode_ms: Option<u64>,
+    /// Cache image encoding/write wall time in milliseconds.
+    pub encode_ms: Option<u64>,
+    /// Time spent durably syncing the temporary cache file.
+    pub cache_sync_ms: Option<u64>,
+    /// Time spent atomically committing the temporary cache file.
+    pub cache_commit_ms: Option<u64>,
+    /// Total measured backend wall time for this request.
+    pub total_ms: Option<u64>,
+    /// Why a fallback path was taken, if any.
+    pub fallback_reason: Option<String>,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct PreviewResult {
@@ -101,6 +153,14 @@ pub struct PreviewResult {
     pub width: u32,
     pub height: u32,
     pub kind: PreviewKind,
+    /// Stage that produced this result, when known. `Original` results (direct
+    /// raster passthrough) leave this as `None`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub stage: Option<PreviewStage>,
+    /// Optional decode diagnostics. Populated by decoders that measure
+    /// backend/timing; absent for cache hits and direct passthrough.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub diagnostics: Option<PreviewDiagnostics>,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
@@ -182,6 +242,9 @@ pub struct HeifDiagnostics {
     pub backend: HeifBackendKind,
     pub acceleration: AccelerationKind,
     pub codec: Option<String>,
+    /// Time spent waiting for the shared foreground decode gate.
+    pub queue_wait_ms: u64,
+    /// Time spent inside the selected platform/codec decoder.
     pub decode_ms: u64,
     pub tile_publish_ms: u64,
     pub total_ms: u64,

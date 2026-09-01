@@ -37,6 +37,22 @@ fn benchmark_preview(path: &Path, size: u32, runs: usize) -> Result<(), Box<dyn 
         samples.push(started.elapsed());
         let longest_edge = preview.width.max(preview.height);
         assert!(longest_edge <= size && longest_edge >= size.saturating_sub(2));
+        if let Some(diagnostics) = preview.diagnostics {
+            println!(
+                "  {size}px {}x{} {:.1}KiB backend={} queue={}ms source={}ms decode={}ms encode={}ms sync={}ms commit={}ms total={}ms",
+                preview.width,
+                preview.height,
+                std::fs::metadata(&preview.path)?.len() as f64 / 1024.0,
+                diagnostics.backend.as_deref().unwrap_or("unknown"),
+                diagnostics.queue_wait_ms.unwrap_or_default(),
+                diagnostics.source_wait_ms.unwrap_or_default(),
+                diagnostics.decode_ms.unwrap_or_default(),
+                diagnostics.encode_ms.unwrap_or_default(),
+                diagnostics.cache_sync_ms.unwrap_or_default(),
+                diagnostics.cache_commit_ms.unwrap_or_default(),
+                diagnostics.total_ms.unwrap_or_default(),
+            );
+        }
     }
     print_samples(&format!("{size}px preview"), &mut samples);
     Ok(())
@@ -56,11 +72,13 @@ fn benchmark_tiles(path: &Path, runs: usize) -> Result<(), Box<dyn Error>> {
         first_tile.push(first.unwrap_or_else(|| started.elapsed()));
         totals.push(started.elapsed());
         println!(
-            "  backend={:?} acceleration={:?} decode={}ms publish={}ms",
+            "  backend={:?} acceleration={:?} queue={}ms decode={}ms publish={}ms total={}ms",
             diagnostics.backend,
             diagnostics.acceleration,
+            diagnostics.queue_wait_ms,
             diagnostics.decode_ms,
-            diagnostics.tile_publish_ms
+            diagnostics.tile_publish_ms,
+            diagnostics.total_ms
         );
     }
     print_samples("full first tile", &mut first_tile);

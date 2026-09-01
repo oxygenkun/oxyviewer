@@ -1,5 +1,12 @@
 import { describe, expect, it, vi } from "vitest";
-import { SerialTaskQueue } from "./previewQueue";
+import { SerialTaskQueue, priorityWeight } from "./previewQueue";
+
+describe("priorityWeight", () => {
+  it("maps loupe above visible above nearby", () => {
+    expect(priorityWeight("loupe")).toBeGreaterThan(priorityWeight("visible"));
+    expect(priorityWeight("visible")).toBeGreaterThan(priorityWeight("nearby"));
+  });
+});
 
 describe("serial preview task queue", () => {
   it("does not start a second task while the first is active", async () => {
@@ -37,22 +44,27 @@ describe("serial preview task queue", () => {
     expect(run).not.toHaveBeenCalled();
   });
 
-  it("runs higher priority queued work first", async () => {
+  it("runs higher priority queued work first across three tiers", async () => {
+    // Unified queue: a loupe request arriving last still wins, then visible,
+    // then nearby — regardless of which format/stage produced the request.
     const queue = new SerialTaskQueue();
     let release!: () => void;
     const first = queue.enqueue(0, undefined, () => new Promise<void>((resolve) => {
       release = resolve;
     }));
     const order: string[] = [];
-    const nearby = queue.enqueue(0, undefined, async () => {
+    const nearby = queue.enqueue(priorityWeight("nearby"), undefined, async () => {
       order.push("nearby");
     });
-    const visible = queue.enqueue(1, undefined, async () => {
+    const visible = queue.enqueue(priorityWeight("visible"), undefined, async () => {
       order.push("visible");
+    });
+    const loupe = queue.enqueue(priorityWeight("loupe"), undefined, async () => {
+      order.push("loupe");
     });
 
     release();
-    await Promise.all([first, nearby, visible]);
-    expect(order).toEqual(["visible", "nearby"]);
+    await Promise.all([first, nearby, visible, loupe]);
+    expect(order).toEqual(["loupe", "visible", "nearby"]);
   });
 });

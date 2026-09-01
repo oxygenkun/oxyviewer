@@ -1,5 +1,5 @@
 use crate::{HeifDecodePriority, MediaError, heif};
-use image::DynamicImage;
+use image::{DynamicImage, RgbaImage};
 use oxy_domain::{
     AccelerationKind, HeifBackendKind, HeifCapabilities, HeifDecodeRequest, HeifDecodeSession,
     HeifDecodeStatus, HeifDiagnostics, HeifStatusEvent, HeifTileReady,
@@ -144,12 +144,18 @@ impl HeifDecodeService {
             active.cancelled.clone()
         };
         let _decode_permit = crate::acquire_heif_decode(HeifDecodePriority::Foreground);
+        let queue_wait_ms = elapsed_ms(started);
         if cancelled.load(Ordering::Acquire) {
             return Err(MediaError::Cancelled);
         }
+        let decode_started = Instant::now();
         let (image, backend, acceleration, codec, fallback_reason) =
             decode_for_session(session, &path)?;
-        let decode_ms = elapsed_ms(started);
+        // Native adapters already return RGBA8. Compatibility adapters may
+        // return RGB8, so normalize once here instead of asking every tile
+        // crop to repeat dynamic-image conversion work.
+        let image = image.into_rgba8();
+        let decode_ms = elapsed_ms(decode_started);
         let tile_started = Instant::now();
         for (x, y) in tile_coordinates(image.width(), image.height(), session.tile_size) {
             if cancelled.load(Ordering::Acquire) {
@@ -179,6 +185,7 @@ impl HeifDecodeService {
             backend,
             acceleration,
             codec: Some(codec.into()),
+            queue_wait_ms,
             decode_ms,
             tile_publish_ms: elapsed_ms(tile_started),
             total_ms: elapsed_ms(started),
@@ -236,15 +243,22 @@ impl HeifDecodeService {
     }
 }
 
-fn crop_rgba(image: &DynamicImage, x: u32, y: u32, tile_size: u32) -> HeifTile {
+fn crop_rgba(image: &RgbaImage, x: u32, y: u32, tile_size: u32) -> HeifTile {
     let width = tile_size.min(image.width() - x);
     let height = tile_size.min(image.height() - y);
-    let rgba = image.crop_imm(x, y, width, height).into_rgba8();
+    let row_bytes = width as usize * 4;
+    let source_stride = image.width() as usize * 4;
+    let source = image.as_raw();
+    let mut rgba = Vec::with_capacity(row_bytes * height as usize);
+    for row in y..(y + height) {
+        let start = row as usize * source_stride + x as usize * 4;
+        rgba.extend_from_slice(&source[start..start + row_bytes]);
+    }
     HeifTile {
         width,
         height,
         stride: width * 4,
-        rgba: Arc::from(rgba.into_raw()),
+        rgba: Arc::from(rgba),
     }
 }
 
@@ -513,7 +527,7 @@ mod tests {
 
     #[test]
     fn crop_produces_tightly_packed_edge_tile() {
-        let image = DynamicImage::new_rgb8(600, 550);
+        let image = DynamicImage::new_rgb8(600, 550).into_rgba8();
         let tile = crop_rgba(&image, 512, 512, 512);
         assert_eq!((tile.width, tile.height, tile.stride), (88, 38, 352));
         assert_eq!(tile.rgba.len(), 88 * 38 * 4);

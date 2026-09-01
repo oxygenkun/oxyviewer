@@ -1,5 +1,6 @@
 use image::{
     DynamicImage, ExtendedColorType, ImageEncoder,
+    codecs::jpeg::JpegEncoder,
     codecs::png::{CompressionType, FilterType, PngEncoder},
 };
 use lcms2::{Intent, PixelFormat, Profile, Transform};
@@ -168,6 +169,10 @@ fn image_from_rgb8_plane(
     Ok(DynamicImage::ImageRgb8(buffer))
 }
 
+/// Retained for reference and potential high-bit-depth recovery. The unified
+/// cache layer now writes 8-bit sRGB JPEG via [`write_srgb_jpeg`]; this 16-bit
+/// PNG path is not on any production call site.
+#[allow(dead_code)]
 pub fn write_srgb_png(image: &DecodedHeif, destination: &Path) -> Result<(), MediaError> {
     let file = File::create(destination)?;
     let mut writer = BufWriter::new(file);
@@ -186,6 +191,39 @@ pub fn write_srgb_png(image: &DecodedHeif, destination: &Path) -> Result<(), Med
         )
     };
     encoder.write_image(bytes, image.width, image.height, ExtendedColorType::Rgb16)?;
+    writer.flush()?;
+    Ok(())
+}
+
+/// Write a full-resolution HEIF decode as an 8-bit sRGB JPEG with an embedded
+/// ICC profile. This replaces the previous 16-bit PNG cache: depth is reduced
+/// to 8-bit (the already-tone-mapped `DecodedHeif.rgb` samples are normalized
+/// to `u16` then dithered down), while color management is preserved via the
+/// APP2 ICC chunk that `image`'s `JpegEncoder` emits through `set_icc_profile`.
+pub fn write_srgb_jpeg(
+    image: &DecodedHeif,
+    destination: &Path,
+    quality: u8,
+) -> Result<(), MediaError> {
+    let file = File::create(destination)?;
+    let mut writer = BufWriter::new(file);
+    let icc = Profile::new_srgb()
+        .icc()
+        .map_err(|error| MediaError::Color(error.to_string()))?;
+    let mut encoder = JpegEncoder::new_with_quality(&mut writer, quality);
+    encoder
+        .set_icc_profile(icc)
+        .map_err(|error| MediaError::Color(error.to_string()))?;
+    // `DecodedHeif.rgb` holds `[u16; 3]` already mapped to sRGB. Downscale to
+    // 8-bit with rounding: `(v + 128) / 257` maps the full 0..=65535 range onto
+    // 0..=255 invertibly (`u8 * 257` round-trips).
+    let mut bytes = Vec::with_capacity(image.rgb.len() * 3);
+    for [r, g, b] in &image.rgb {
+        bytes.push(u8::try_from((r + 128) / 257).unwrap_or(255));
+        bytes.push(u8::try_from((g + 128) / 257).unwrap_or(255));
+        bytes.push(u8::try_from((b + 128) / 257).unwrap_or(255));
+    }
+    encoder.write_image(&bytes, image.width, image.height, ExtendedColorType::Rgb8)?;
     writer.flush()?;
     Ok(())
 }

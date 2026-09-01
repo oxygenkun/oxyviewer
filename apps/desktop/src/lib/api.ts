@@ -15,7 +15,8 @@ import type {
   PreviewPriority,
   PreviewResult,
 } from "../types";
-import { heifThumbnailQueue } from "./previewQueue";
+import { previewQueue, priorityWeight } from "./previewQueue";
+import { beginPreviewDebug } from "./previewDebug";
 
 const demoNames: Array<[string, AssetKind, number]> = [
   ["DSC_4281.NEF", "raw", 42_840_312],
@@ -174,16 +175,38 @@ export async function generatedPreview(
   priority: PreviewPriority = "visible",
 ): Promise<PreviewResult | undefined> {
   if (!isTauri()) return undefined;
-  const request = () => invoke<Omit<PreviewResult, "url">>("get_preview", {
-    path: asset.path,
-    mode,
-    maxSize,
-    priority,
-  });
-  const result = asset.kind === "heif" && mode === "thumbnail"
-    ? await heifThumbnailQueue.enqueue(priority === "visible" ? 1 : 0, signal, request)
-    : await request();
-  return { ...result, url: convertFileSrc(result.path) };
+  const debug = __OXY_DEBUG__
+    ? beginPreviewDebug({
+        assetName: asset.name,
+        stage: `${mode}${maxSize ? `@${maxSize}` : ""}`,
+        priority,
+      })
+    : undefined;
+  const request = () => {
+    debug?.start();
+    return invoke<Omit<PreviewResult, "url">>("get_preview", {
+      path: asset.path,
+      mode,
+      maxSize,
+      priority,
+    });
+  };
+  try {
+    const result = await previewQueue.enqueue(priorityWeight(priority), signal, request);
+    debug?.mark("backend-result", {
+      width: result.width,
+      height: result.height,
+      kind: result.kind,
+      stage: result.stage,
+      diagnostics: result.diagnostics,
+    });
+    debug?.complete({ diagnostics: result.diagnostics });
+    return { ...result, url: convertFileSrc(result.path) };
+  } catch (error) {
+    if (signal?.aborted) debug?.cancel();
+    else debug?.fail(error);
+    throw error;
+  }
 }
 
 export async function startHeifDecode(

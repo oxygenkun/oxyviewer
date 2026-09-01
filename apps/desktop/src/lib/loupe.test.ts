@@ -7,6 +7,7 @@ import {
   MAX_PIXEL_ZOOM_PERCENT,
   panFromNavigatorPoint,
   pixelZoomPercent,
+  resolveLoupeSourceSize,
   zoomAtPoint,
   zoomForPixelPercent,
 } from "./loupe";
@@ -15,6 +16,16 @@ const stage = { width: 800, height: 600 };
 const image = { width: 700, height: 500 };
 
 describe("loupe geometry", () => {
+  it("uses HEIF full-resolution dimensions instead of the 512 px placeholder", () => {
+    expect(resolveLoupeSourceSize(
+      "heif",
+      { width: 512, height: 341 },
+      { width: 7_008, height: 4_672 },
+      undefined,
+      { width: 3, height: 2 },
+    )).toEqual({ width: 7_008, height: 4_672 });
+  });
+
   it("fits landscape and portrait images without changing their aspect ratio", () => {
     expect(fitSize({ width: 800, height: 600 }, { width: 1_600, height: 900 }))
       .toEqual({ width: 800, height: 450 });

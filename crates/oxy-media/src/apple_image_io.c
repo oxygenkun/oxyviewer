@@ -97,4 +97,58 @@ int32_t oxy_apple_image_io_decode_rgba8(const uint8_t *path, size_t path_len,
   return 0;
 }
 
+int32_t oxy_apple_image_io_write_jpeg(const uint8_t *path, size_t path_len,
+                                      const uint8_t *pixels, size_t pixels_len,
+                                      uint32_t width, uint32_t height,
+                                      uint8_t quality) {
+  if (width == 0 || height == 0 || width > SIZE_MAX / 4 ||
+      height > SIZE_MAX / ((size_t)width * 4) ||
+      pixels_len != (size_t)width * (size_t)height * 4) {
+    return 1;
+  }
+
+  CFURLRef url = CFURLCreateFromFileSystemRepresentation(
+      kCFAllocatorDefault, path, path_len, false);
+  if (url == NULL) {
+    return 2;
+  }
+  CGImageDestinationRef destination =
+      CGImageDestinationCreateWithURL(url, CFSTR("public.jpeg"), 1, NULL);
+  CFRelease(url);
+  if (destination == NULL) {
+    return 3;
+  }
+
+  CGDataProviderRef provider =
+      CGDataProviderCreateWithData(NULL, pixels, pixels_len, NULL);
+  CGColorSpaceRef color_space = CGColorSpaceCreateWithName(kCGColorSpaceSRGB);
+  CGBitmapInfo bitmap_info =
+      kCGImageAlphaLast | kCGBitmapByteOrder32Big;
+  CGImageRef image = CGImageCreate(
+      width, height, 8, 32, (size_t)width * 4, color_space, bitmap_info,
+      provider, NULL, false, kCGRenderingIntentDefault);
+  CGColorSpaceRelease(color_space);
+  CGDataProviderRelease(provider);
+  if (image == NULL) {
+    CFRelease(destination);
+    return 4;
+  }
+
+  float quality_value = (float)quality / 100.0f;
+  CFNumberRef quality_number = CFNumberCreate(
+      kCFAllocatorDefault, kCFNumberFloatType, &quality_value);
+  const void *keys[] = {kCGImageDestinationLossyCompressionQuality};
+  const void *values[] = {quality_number};
+  CFDictionaryRef properties = CFDictionaryCreate(
+      kCFAllocatorDefault, keys, values, 1, &kCFTypeDictionaryKeyCallBacks,
+      &kCFTypeDictionaryValueCallBacks);
+  CGImageDestinationAddImage(destination, image, properties);
+  bool finalized = CGImageDestinationFinalize(destination);
+  CFRelease(properties);
+  CFRelease(quality_number);
+  CGImageRelease(image);
+  CFRelease(destination);
+  return finalized ? 0 : 5;
+}
+
 void oxy_apple_image_io_free(void *pixels) { free(pixels); }

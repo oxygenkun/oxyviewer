@@ -101,62 +101,18 @@ async fn get_preview(
         .files
         .get_asset(&path)
         .map_err(|error| error.to_string())?;
-    if !matches!(
-        asset.kind,
-        AssetKind::Raw | AssetKind::Heif | AssetKind::Tiff
-    ) {
+    // Raster formats the web view renders directly are served as originals;
+    // every format that needs decoding funnels through the unified dispatcher.
+    if !oxy_media::needs_decode(asset.kind) {
         return oxy_media::original(path).map_err(|error| error.to_string());
     }
     let preview_dir = state.preview_dir.clone();
     let max_size = max_size.unwrap_or(4_096).clamp(128, 8_192);
+    let decode_priority = oxy_media::decode_priority_for(priority);
+    let kind = asset.kind;
     tauri::async_runtime::spawn_blocking(move || {
-        if asset.kind == AssetKind::Raw {
-            if mode == PreviewMode::FullDetail {
-                return oxy_media::raw_full(&path, &preview_dir).map_err(|error| error.to_string());
-            }
-            oxy_media::raw_preview(&path, &preview_dir, max_size)
-                .map_err(|error| error.to_string())
-                .or_else(|libraw_error| {
-                    oxy_media::system_preview(&path, &preview_dir, max_size).map_err(
-                        |system_error| format!("{libraw_error}; fallback failed: {system_error}"),
-                    )
-                })
-        } else {
-            if mode == PreviewMode::FullDetail && asset.kind == AssetKind::Heif {
-                return oxy_media::heif_full(&path, &preview_dir)
-                    .map_err(|error| error.to_string())
-                    .or_else(|heif_error| {
-                        eprintln!(
-                            "full-detail libheif decode failed for {}: {heif_error}",
-                            path.display()
-                        );
-                        oxy_media::heif_preview_with_priority(
-                            &path,
-                            &preview_dir,
-                            8_192,
-                            oxy_media::HeifDecodePriority::Foreground,
-                        )
-                        .map_err(|preview_error| {
-                            format!("{heif_error}; preview fallback failed: {preview_error}")
-                        })
-                    });
-            }
-            if mode == PreviewMode::FullDetail {
-                return Err("fullDetail preview mode only supports RAW and HEIF assets".into());
-            }
-            if asset.kind == AssetKind::Heif {
-                let priority = match priority {
-                    PreviewPriority::Nearby => oxy_media::HeifDecodePriority::Background,
-                    PreviewPriority::Visible => oxy_media::HeifDecodePriority::Visible,
-                    PreviewPriority::Loupe => oxy_media::HeifDecodePriority::Foreground,
-                };
-                oxy_media::heif_preview_with_priority(&path, &preview_dir, max_size, priority)
-                    .map_err(|error| error.to_string())
-            } else {
-                oxy_media::system_preview(&path, &preview_dir, max_size)
-                    .map_err(|error| error.to_string())
-            }
-        }
+        oxy_media::preview(&path, &preview_dir, mode, max_size, decode_priority, kind)
+            .map_err(|error| error.to_string())
     })
     .await
     .map_err(|error| error.to_string())?

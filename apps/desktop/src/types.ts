@@ -50,6 +50,19 @@ export interface AssetDetails {
 export type PreviewMode = "thumbnail" | "loupePreview" | "fullDetail";
 export type PreviewPriority = "nearby" | "visible" | "loupe";
 export type PreviewKind = "embedded" | "developed" | "decoded" | "system" | "original";
+export type PreviewStage = "thumb512" | "loupe4096" | "full";
+
+export interface PreviewDiagnostics {
+  backend?: string;
+  queueWaitMs?: number;
+  sourceWaitMs?: number;
+  decodeMs?: number;
+  encodeMs?: number;
+  cacheSyncMs?: number;
+  cacheCommitMs?: number;
+  totalMs?: number;
+  fallbackReason?: string;
+}
 
 export interface PreviewResult {
   path: string;
@@ -57,6 +70,8 @@ export interface PreviewResult {
   width: number;
   height: number;
   kind: PreviewKind;
+  stage?: PreviewStage;
+  diagnostics?: PreviewDiagnostics;
 }
 
 export interface AssetQuery {
@@ -121,6 +136,7 @@ export interface HeifDiagnostics {
   backend: HeifBackendKind;
   acceleration: AccelerationKind;
   codec?: string;
+  queueWaitMs: number;
   decodeMs: number;
   tilePublishMs: number;
   totalMs: number;

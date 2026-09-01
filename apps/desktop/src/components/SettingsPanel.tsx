@@ -81,7 +81,9 @@ export function SettingsPanel({ t }: SettingsPanelProps) {
             ))}
             {diagnostics.data ? (
               <span>
-                {diagnostics.data.backend} · {diagnostics.data.totalMs} ms
+                {diagnostics.data.backend} · queue {diagnostics.data.queueWaitMs} ms
+                {` · decode ${diagnostics.data.decodeMs} ms · publish ${diagnostics.data.tilePublishMs} ms`}
+                {` · total ${diagnostics.data.totalMs} ms`}
                 {diagnostics.data.fallbackReason ? ` · ${diagnostics.data.fallbackReason}` : ""}
               </span>
             ) : null}

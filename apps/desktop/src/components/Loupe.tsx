@@ -24,6 +24,7 @@ import {
   MAX_PIXEL_ZOOM_PERCENT,
   panFromNavigatorPoint,
   pixelZoomPercent,
+  resolveLoupeSourceSize,
   zoomAtPoint,
   zoomForPixelPercent,
   type Point,
@@ -94,6 +95,7 @@ export function Loupe({
   const [layoutVersion, setLayoutVersion] = useState(0);
   const [stageContentSize, setStageContentSize] = useState<Size>({ width: 0, height: 0 });
   const [naturalSize, setNaturalSize] = useState<{ assetId: string; size: Size } | undefined>(undefined);
+  const [heifFullSize, setHeifFullSize] = useState<{ assetId: string; size: Size } | undefined>(undefined);
   const [rawPreviewStatus, setRawPreviewStatus] = useState<RawPreviewStatus>({ state: "loadingPreview" });
   const [heifStatus, setHeifStatus] = useState<HeifDecodeStatus>("probing");
   const details = useQuery({
@@ -101,11 +103,16 @@ export function Loupe({
     queryFn: () => getAssetDetails(active),
   });
 
-  const sourceSize = naturalSize?.assetId === active.id
-    ? naturalSize.size
-    : details.data?.width && details.data.height
-      ? { width: details.data.width, height: details.data.height }
-      : DEFAULT_IMAGE_SIZE;
+  const metadataSize = details.data?.width && details.data.height
+    ? { width: details.data.width, height: details.data.height }
+    : undefined;
+  const sourceSize = resolveLoupeSourceSize(
+    active.kind,
+    naturalSize?.assetId === active.id ? naturalSize.size : undefined,
+    heifFullSize?.assetId === active.id ? heifFullSize.size : undefined,
+    metadataSize,
+    DEFAULT_IMAGE_SIZE,
+  );
   const fittedImageSize = fitSize(stageContentSize, sourceSize);
   const navigatorImageSize = fitSize(NAVIGATOR_MAX_SIZE, sourceSize);
 
@@ -126,6 +133,16 @@ export function Loupe({
     setZoom(1);
     setOffset({ x: 0, y: 0 });
   }, []);
+
+  const handleHeifImageSize = useCallback((size: Size) => {
+    setHeifFullSize((current) => (
+      current?.assetId === active.id
+        && current.size.width === size.width
+        && current.size.height === size.height
+        ? current
+        : { assetId: active.id, size }
+    ));
+  }, [active.id]);
 
   useEffect(() => {
     resetZoom();
@@ -296,6 +313,7 @@ export function Loupe({
               <HeifTileCanvas
                 asset={active}
                 hardwareAcceleration={hardwareAcceleration}
+                onImageSize={handleHeifImageSize}
                 onStatus={setHeifStatus}
               />
             ) : null}

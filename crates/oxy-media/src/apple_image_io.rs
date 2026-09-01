@@ -13,6 +13,15 @@ unsafe extern "C" {
         width: *mut u32,
         height: *mut u32,
     ) -> i32;
+    fn oxy_apple_image_io_write_jpeg(
+        path: *const u8,
+        path_len: usize,
+        pixels: *const u8,
+        pixels_len: usize,
+        width: u32,
+        height: u32,
+        quality: u8,
+    ) -> i32;
     fn oxy_apple_image_io_free(pixels: *mut u8);
 }
 
@@ -73,6 +82,35 @@ pub fn decode_rgba8(path: &Path, max_size: u32) -> Result<DynamicImage, MediaErr
     Ok(DynamicImage::ImageRgba8(image))
 }
 
+pub fn write_jpeg(image: &DynamicImage, path: &Path, quality: u8) -> Result<(), MediaError> {
+    let converted;
+    let rgba = if let Some(rgba) = image.as_rgba8() {
+        rgba
+    } else {
+        converted = image.to_rgba8();
+        &converted
+    };
+    let path_bytes = path.as_os_str().as_bytes();
+    let status = unsafe {
+        oxy_apple_image_io_write_jpeg(
+            path_bytes.as_ptr(),
+            path_bytes.len(),
+            rgba.as_raw().as_ptr(),
+            rgba.as_raw().len(),
+            rgba.width(),
+            rgba.height(),
+            quality,
+        )
+    };
+    if status == 0 {
+        Ok(())
+    } else {
+        Err(native_error(format!(
+            "JPEG encode failed at native stage {status}"
+        )))
+    }
+}
+
 fn native_error(message: impl Into<String>) -> MediaError {
     MediaError::NativeDecode {
         backend: "Apple ImageIO",
@@ -83,7 +121,6 @@ fn native_error(message: impl Into<String>) -> MediaError {
 #[cfg(test)]
 mod tests {
     use super::*;
-
     #[test]
     fn decodes_repository_heif_fixture() {
         let fixture =
@@ -94,5 +131,17 @@ mod tests {
         }
         let image = decode_rgba8(&fixture, 512).unwrap();
         assert!((510..=512).contains(&image.width().max(image.height())));
+    }
+
+    #[test]
+    fn writes_jpeg_with_image_io() {
+        let output = tempfile::Builder::new().suffix(".jpg").tempfile().unwrap();
+        let image = DynamicImage::new_rgba8(32, 16);
+        write_jpeg(&image, output.path(), 90).unwrap();
+        let decoded = image::ImageReader::open(output.path())
+            .unwrap()
+            .decode()
+            .unwrap();
+        assert_eq!((decoded.width(), decoded.height()), (32, 16));
     }
 }

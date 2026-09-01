@@ -8,8 +8,8 @@ mod libraw;
 mod windows_wic;
 
 pub use heif_service::{DEFAULT_TILE_SIZE, HeifBackend, HeifDecodeService, HeifTile, TileSink};
-use image::{DynamicImage, ImageReader, codecs::jpeg::JpegEncoder};
-use oxy_domain::{PreviewKind, PreviewResult};
+use image::{DynamicImage, ImageEncoder, ImageReader, codecs::jpeg::JpegEncoder};
+use oxy_domain::{PreviewDiagnostics, PreviewKind, PreviewResult};
 #[cfg(target_os = "macos")]
 use std::process::{Command, Stdio};
 use std::{
@@ -19,53 +19,72 @@ use std::{
     io::{BufReader, Write},
     path::{Path, PathBuf},
     sync::{Arc, Condvar, LazyLock, Mutex},
+    time::Instant,
 };
 use tempfile::NamedTempFile;
 use thiserror::Error;
 
 const LIBRAW_CACHE_VERSION: &str = "libraw-0.22.1-v5";
 const LIBRAW_FULL_CACHE_VERSION: &str = "libraw-0.22.1-full-detail-v2";
-const HEIF_FULL_CACHE_VERSION: &str = "libheif-1.23-sdr-v1";
+// Bumped from `libheif-1.23-sdr-v1` (16-bit PNG) to an 8-bit sRGB JPEG with an
+// embedded ICC profile, unifying the cache format across every preview stage
+// and format. Old PNG caches are rebuildable and simply ignored.
+const HEIF_FULL_CACHE_VERSION: &str = "heif-sdr-jpeg-v1";
 const HEIF_CACHE_VERSION: &str = "heif-native-preview-v5";
 const SYSTEM_CACHE_VERSION: &str = "system-preview-v2";
 const LOUPE_PREVIEW_THRESHOLD: u32 = 2_048;
-static RAW_THUMBNAIL_DECODE_LOCK: Mutex<()> = Mutex::new(());
-static RAW_LOUPE_DECODE_LOCK: Mutex<()> = Mutex::new(());
+/// Cache sizes shared by every format's progressive pipeline. A request for a
+/// smaller size may be satisfied by any larger cached entry (see
+/// [`larger_cached_preview`]).
+const PREVIEW_CACHE_SIZES: [u32; 2] = [512, 4_096];
+// Full-resolution RAW development (potentially tens of seconds) stays on its
+// own lane so it never blocks the unified thumbnail/loupe gate. The gate below
+// covers the progressive stages (512 / 4096) for every format.
 static RAW_FULL_DECODE_LOCK: Mutex<()> = Mutex::new(());
-static HEIF_DECODE_GATE: HeifDecodeGate = HeifDecodeGate::new();
+static DECODE_GATE: DecodeGate = DecodeGate::new();
 
-// Per-file HEIF locks coalesce duplicate cache work after the global decode
-// gate has selected the next source.
-static HEIF_LOCKS: LazyLock<Mutex<HashMap<String, Arc<Mutex<()>>>>> =
+// Per-file locks coalesce duplicate cache work after the global decode gate has
+// selected the next source. Shared by every format.
+static DECODE_LOCKS: LazyLock<Mutex<HashMap<String, Arc<Mutex<()>>>>> =
     LazyLock::new(|| Mutex::new(HashMap::new()));
 
+/// Priority for the unified decode gate. Higher priorities jump ahead of
+/// lower-priority waiters but never preempt a running decode.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum HeifDecodePriority {
+pub enum DecodePriority {
+    /// Overscan/off-screen thumbnails — served only when nothing else wants the gate.
     Background,
+    /// On-screen thumbnails and filmstrip — served before background work.
     Visible,
+    /// The currently-selected loupe image — served first.
     Foreground,
 }
 
-struct HeifDecodeGate {
-    state: Mutex<HeifDecodeGateState>,
+/// Backwards-compatible alias. HEIF code historically used `HeifDecodePriority`;
+/// the gate is now format-agnostic but the name is retained to avoid churning
+/// `heif_service.rs` and the public re-exports.
+pub type HeifDecodePriority = DecodePriority;
+
+struct DecodeGate {
+    state: Mutex<DecodeGateState>,
     ready: Condvar,
 }
 
 #[derive(Default)]
-struct HeifDecodeGateState {
+struct DecodeGateState {
     active: bool,
     foreground_waiters: usize,
     visible_waiters: usize,
 }
 
-struct HeifDecodePermit<'a> {
-    gate: &'a HeifDecodeGate,
+struct DecodePermit<'a> {
+    gate: &'a DecodeGate,
 }
 
-impl HeifDecodeGate {
+impl DecodeGate {
     const fn new() -> Self {
         Self {
-            state: Mutex::new(HeifDecodeGateState {
+            state: Mutex::new(DecodeGateState {
                 active: false,
                 foreground_waiters: 0,
                 visible_waiters: 0,
@@ -74,18 +93,18 @@ impl HeifDecodeGate {
         }
     }
 
-    fn acquire(&self, priority: HeifDecodePriority) -> HeifDecodePermit<'_> {
+    fn acquire(&self, priority: DecodePriority) -> DecodePermit<'_> {
         let mut state = self.state.lock().unwrap_or_else(|error| error.into_inner());
-        if priority == HeifDecodePriority::Foreground {
+        if priority == DecodePriority::Foreground {
             state.foreground_waiters += 1;
-        } else if priority == HeifDecodePriority::Visible {
+        } else if priority == DecodePriority::Visible {
             state.visible_waiters += 1;
         }
         while state.active
             || match priority {
-                HeifDecodePriority::Foreground => false,
-                HeifDecodePriority::Visible => state.foreground_waiters > 0,
-                HeifDecodePriority::Background => {
+                DecodePriority::Foreground => false,
+                DecodePriority::Visible => state.foreground_waiters > 0,
+                DecodePriority::Background => {
                     state.foreground_waiters > 0 || state.visible_waiters > 0
                 }
             }
@@ -95,17 +114,17 @@ impl HeifDecodeGate {
                 .wait(state)
                 .unwrap_or_else(|error| error.into_inner());
         }
-        if priority == HeifDecodePriority::Foreground {
+        if priority == DecodePriority::Foreground {
             state.foreground_waiters -= 1;
-        } else if priority == HeifDecodePriority::Visible {
+        } else if priority == DecodePriority::Visible {
             state.visible_waiters -= 1;
         }
         state.active = true;
-        HeifDecodePermit { gate: self }
+        DecodePermit { gate: self }
     }
 }
 
-impl Drop for HeifDecodePermit<'_> {
+impl Drop for DecodePermit<'_> {
     fn drop(&mut self) {
         let mut state = self
             .gate
@@ -117,15 +136,23 @@ impl Drop for HeifDecodePermit<'_> {
     }
 }
 
-pub(crate) fn acquire_heif_decode(priority: HeifDecodePriority) -> impl Drop {
-    HEIF_DECODE_GATE.acquire(priority)
+/// Acquire the unified decode gate. Higher-priority waiters are served before
+/// lower-priority ones; a running decode is never preempted (caller opted into
+/// the "order pending only" scheduling policy).
+pub(crate) fn acquire_decode(priority: DecodePriority) -> impl Drop {
+    DECODE_GATE.acquire(priority)
+}
+
+/// Backwards-compatible alias for [`acquire_decode`].
+pub(crate) fn acquire_heif_decode(priority: DecodePriority) -> impl Drop {
+    acquire_decode(priority)
 }
 
 /// Look up or create a per-file `Mutex`, clone the `Arc`, then lock it.
 /// Returns `(Arc<Mutex<()>>, MutexGuard)` — caller must keep the `Arc` alive
 /// alongside the guard (it is dropped last due to reverse-order drop).
-fn acquire_heif_lock(cache_key: &str) -> (Arc<Mutex<()>>, std::sync::MutexGuard<'static, ()>) {
-    let arc: Arc<Mutex<()>> = HEIF_LOCKS
+fn acquire_file_lock(cache_key: &str) -> (Arc<Mutex<()>>, std::sync::MutexGuard<'static, ()>) {
+    let arc: Arc<Mutex<()>> = DECODE_LOCKS
         .lock()
         .unwrap()
         .entry(cache_key.to_owned())
@@ -133,7 +160,7 @@ fn acquire_heif_lock(cache_key: &str) -> (Arc<Mutex<()>>, std::sync::MutexGuard<
         .clone();
     // Access the Mutex via raw pointer to decouple the guard's lifetime from
     // the local `arc` binding. This lets us return both the Arc and the guard.
-    // Safety: the Mutex lives inside the static HEIF_LOCKS HashMap behind an
+    // Safety: the Mutex lives inside the static DECODE_LOCKS HashMap behind an
     // Arc that is never removed; the returned Arc keeps it alive.
     let mutex: &'static Mutex<()> = unsafe { &*Arc::as_ptr(&arc) };
     let guard = mutex.lock().unwrap_or_else(|e| e.into_inner());
@@ -195,6 +222,15 @@ pub fn raw_preview(
     cache_dir: &Path,
     max_size: u32,
 ) -> Result<PreviewResult, MediaError> {
+    raw_preview_with_priority(path, cache_dir, max_size, DecodePriority::Background)
+}
+
+pub fn raw_preview_with_priority(
+    path: &Path,
+    cache_dir: &Path,
+    max_size: u32,
+    priority: DecodePriority,
+) -> Result<PreviewResult, MediaError> {
     let max_size = max_size.max(1);
     fs::create_dir_all(cache_dir)?;
     let cache_key = preview_cache_key(path, LIBRAW_CACHE_VERSION, max_size)?;
@@ -207,15 +243,15 @@ pub fn raw_preview(
             return preview_result(destination, kind);
         }
     }
+    // Up-tier reuse: a larger cached RAW preview can satisfy this request
+    // without re-decoding. Mirrors the HEIF path's behavior.
+    if let Some(result) = larger_cached_preview(path, cache_dir, LIBRAW_CACHE_VERSION, max_size)? {
+        return Ok(result);
+    }
 
-    let decode_lock = if max_size >= LOUPE_PREVIEW_THRESHOLD {
-        &RAW_LOUPE_DECODE_LOCK
-    } else {
-        &RAW_THUMBNAIL_DECODE_LOCK
-    };
-    let _decode_guard = decode_lock
-        .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    // Unified decode gate: visible/loupe thumbnails jump ahead of background
+    // overscan. Per-file lock coalesces duplicate work for the same source.
+    let _decode_permit = acquire_decode(priority);
     for (suffix, kind) in [
         ("embedded.jpg", PreviewKind::Embedded),
         ("developed.jpg", PreviewKind::Developed),
@@ -224,6 +260,24 @@ pub fn raw_preview(
         if destination.is_file() {
             return preview_result(destination, kind);
         }
+    }
+    if let Some(result) = larger_cached_preview(path, cache_dir, LIBRAW_CACHE_VERSION, max_size)? {
+        return Ok(result);
+    }
+
+    let source_lock_key = preview_cache_key(path, "raw-source-decode", 0)?;
+    let (_lock_arc, _decode_guard) = acquire_file_lock(&source_lock_key);
+    for (suffix, kind) in [
+        ("embedded.jpg", PreviewKind::Embedded),
+        ("developed.jpg", PreviewKind::Developed),
+    ] {
+        let destination = cache_dir.join(format!("{cache_key}.{suffix}"));
+        if destination.is_file() {
+            return preview_result(destination, kind);
+        }
+    }
+    if let Some(result) = larger_cached_preview(path, cache_dir, LIBRAW_CACHE_VERSION, max_size)? {
+        return Ok(result);
     }
 
     let preserve_embedded_jpeg = max_size >= LOUPE_PREVIEW_THRESHOLD;
@@ -277,7 +331,7 @@ pub fn raw_full(path: &Path, cache_dir: &Path) -> Result<PreviewResult, MediaErr
 pub fn heif_full(path: &Path, cache_dir: &Path) -> Result<PreviewResult, MediaError> {
     fs::create_dir_all(cache_dir)?;
     let cache_key = preview_cache_key(path, HEIF_FULL_CACHE_VERSION, 0)?;
-    let destination = cache_dir.join(format!("{cache_key}.png"));
+    let destination = cache_dir.join(format!("{cache_key}.jpg"));
     if destination.is_file() {
         return preview_result(destination, PreviewKind::Decoded);
     }
@@ -288,14 +342,14 @@ pub fn heif_full(path: &Path, cache_dir: &Path) -> Result<PreviewResult, MediaEr
     }
 
     let source_lock_key = preview_cache_key(path, "heif-source-decode", 0)?;
-    let (_heif_lock_arc, _decode_guard) = acquire_heif_lock(&source_lock_key);
+    let (_heif_lock_arc, _decode_guard) = acquire_file_lock(&source_lock_key);
     if destination.is_file() {
         return preview_result(destination, PreviewKind::Decoded);
     }
 
     let image = heif::decode_primary(path)?;
     let temporary = NamedTempFile::new_in(destination.parent().unwrap_or_else(|| Path::new(".")))?;
-    heif::write_srgb_png(&image, temporary.path())?;
+    heif::write_srgb_jpeg(&image, temporary.path(), 95)?;
     persist_atomically(temporary, &destination)?;
     preview_result(destination, PreviewKind::Decoded)
 }
@@ -314,6 +368,7 @@ pub fn heif_preview_with_priority(
     max_size: u32,
     priority: HeifDecodePriority,
 ) -> Result<PreviewResult, MediaError> {
+    let total_started = Instant::now();
     let max_size = max_size.max(1);
     fs::create_dir_all(cache_dir)?;
     let cache_key = preview_cache_key(path, HEIF_CACHE_VERSION, max_size)?;
@@ -321,61 +376,115 @@ pub fn heif_preview_with_priority(
     if destination.is_file() {
         return preview_result(destination, PreviewKind::Decoded);
     }
-    if let Some(result) = larger_heif_preview(path, cache_dir, max_size)? {
+    if let Some(result) = larger_cached_preview(path, cache_dir, HEIF_CACHE_VERSION, max_size)? {
         return Ok(result);
     }
 
-    let _decode_permit = acquire_heif_decode(priority);
+    let queue_started = Instant::now();
+    let decode_permit = acquire_heif_decode(priority);
+    let queue_wait_ms = duration_ms(queue_started);
     if destination.is_file() {
         return preview_result(destination, PreviewKind::Decoded);
     }
-    if let Some(result) = larger_heif_preview(path, cache_dir, max_size)? {
+    if let Some(result) = larger_cached_preview(path, cache_dir, HEIF_CACHE_VERSION, max_size)? {
         return Ok(result);
     }
 
     let source_lock_key = preview_cache_key(path, "heif-source-decode", 0)?;
-    let (_heif_lock_arc, _decode_guard) = acquire_heif_lock(&source_lock_key);
+    let source_wait_started = Instant::now();
+    let (_heif_lock_arc, _decode_guard) = acquire_file_lock(&source_lock_key);
+    let source_wait_ms = duration_ms(source_wait_started);
     if destination.is_file() {
         return preview_result(destination, PreviewKind::Decoded);
     }
-    if let Some(result) = larger_heif_preview(path, cache_dir, max_size)? {
+    if let Some(result) = larger_cached_preview(path, cache_dir, HEIF_CACHE_VERSION, max_size)? {
         return Ok(result);
     }
 
     // Reuse full-detail cache if available to avoid redundant decoding.
     let full_cache_key = preview_cache_key(path, HEIF_FULL_CACHE_VERSION, 0)?;
-    let full_cache_path = cache_dir.join(format!("{full_cache_key}.png"));
-    let image = if full_cache_path.is_file() {
-        image::ImageReader::open(&full_cache_path)?
-            .decode()?
-            .thumbnail(max_size, max_size)
+    let full_cache_path = cache_dir.join(format!("{full_cache_key}.jpg"));
+    let decode_started = Instant::now();
+    let (image, backend, fallback_reason) = if full_cache_path.is_file() {
+        (
+            image::ImageReader::open(&full_cache_path)?
+                .decode()?
+                .thumbnail(max_size, max_size),
+            "full-detail-cache",
+            None,
+        )
     } else {
         decode_heif_preview(path, max_size)?
     };
-    write_jpeg_atomically(&image, &destination, 90)?;
-    preview_result(destination, PreviewKind::Decoded)
+    let decode_ms = duration_ms(decode_started);
+    // The global gate protects scarce source decoding, not JPEG compression or
+    // disk I/O. Releasing it here lets the selected full-resolution session and
+    // visible thumbnails progress while this preview is being encoded.
+    drop(decode_permit);
+    let cache_write = write_jpeg_atomically_timed(&image, &destination, 90)?;
+    let mut result = preview_result(destination, PreviewKind::Decoded)?;
+    result.diagnostics = Some(PreviewDiagnostics {
+        backend: Some(backend.into()),
+        queue_wait_ms: Some(queue_wait_ms),
+        source_wait_ms: Some(source_wait_ms),
+        decode_ms: Some(decode_ms),
+        encode_ms: Some(cache_write.encode_ms),
+        cache_sync_ms: Some(cache_write.sync_ms),
+        cache_commit_ms: Some(cache_write.commit_ms),
+        total_ms: Some(duration_ms(total_started)),
+        fallback_reason,
+    });
+    Ok(result)
 }
 
-fn decode_heif_preview(path: &Path, max_size: u32) -> Result<DynamicImage, MediaError> {
+fn decode_heif_preview(
+    path: &Path,
+    max_size: u32,
+) -> Result<(DynamicImage, &'static str, Option<String>), MediaError> {
+    #[cfg(target_os = "macos")]
+    let mut fallback_reason = None;
     #[cfg(target_os = "macos")]
     if crate::apple_image_io::can_decode(path).is_ok() {
-        if let Ok(image) = crate::apple_image_io::decode_rgba8(path, max_size) {
-            return Ok(image);
+        match crate::apple_image_io::decode_rgba8(path, max_size) {
+            Ok(image) => return Ok((image, "Apple ImageIO thumbnail", None)),
+            Err(error) => fallback_reason = Some(error.to_string()),
         }
     }
-    heif::decode_scaled(path, max_size)
+    let image = heif::decode_scaled(path, max_size)?;
+    #[cfg(target_os = "macos")]
+    return Ok((image, "libheif scaled preview", fallback_reason));
+    #[cfg(not(target_os = "macos"))]
+    Ok((image, "libheif scaled preview", None))
 }
 
-fn larger_heif_preview(
+fn duration_ms(started: Instant) -> u64 {
+    started.elapsed().as_millis().try_into().unwrap_or(u64::MAX)
+}
+
+/// Satisfy a request for `max_size` from any larger cached entry produced by
+/// the same backend. This generalizes the former HEIF-only
+/// `larger_heif_preview` to every format: a 512 px request can be served from a
+/// cached 4096 px entry or the full-resolution entry without re-decoding. The
+/// browser downscales the returned JPEG via CSS, so no backend resize is
+/// needed.
+///
+/// `backend_tag` is the same cache-version string used for writes (e.g.
+/// [`HEIF_CACHE_VERSION`], [`LIBRAW_CACHE_VERSION`]). Candidates are scanned
+/// smallest-first so the closest larger entry wins, minimizing transfer size.
+fn larger_cached_preview(
     path: &Path,
     cache_dir: &Path,
+    backend_tag: &str,
     max_size: u32,
 ) -> Result<Option<PreviewResult>, MediaError> {
-    for candidate_size in [512, 4_096, 8_192] {
-        if candidate_size <= max_size {
-            continue;
-        }
-        let key = preview_cache_key(path, HEIF_CACHE_VERSION, candidate_size)?;
+    let mut candidates: Vec<u32> = PREVIEW_CACHE_SIZES
+        .iter()
+        .copied()
+        .filter(|&size| size > max_size)
+        .collect();
+    candidates.sort();
+    for candidate_size in candidates {
+        let key = preview_cache_key(path, backend_tag, candidate_size)?;
         let candidate = cache_dir.join(format!("{key}.jpg"));
         if candidate.is_file() {
             return preview_result(candidate, PreviewKind::Decoded).map(Some);
@@ -405,6 +514,82 @@ pub fn original(path: PathBuf) -> Result<PreviewResult, MediaError> {
     preview_result(path, PreviewKind::Original)
 }
 
+/// Convert the IPC-level [`PreviewPriority`] into the unified
+/// [`DecodePriority`]. Kept here (in oxy-media) so the Tauri layer does not
+/// need to know about the gate vocabulary.
+pub fn decode_priority_for(priority: oxy_domain::PreviewPriority) -> DecodePriority {
+    use oxy_domain::PreviewPriority;
+    match priority {
+        PreviewPriority::Nearby => DecodePriority::Background,
+        PreviewPriority::Visible => DecodePriority::Visible,
+        PreviewPriority::Loupe => DecodePriority::Foreground,
+    }
+}
+
+/// Whether a given asset kind needs server-side decoding. Raster formats that
+/// the web view can render directly (JPEG/PNG/WebP) are served as originals;
+/// everything else flows through the unified pipeline.
+pub fn needs_decode(kind: oxy_domain::AssetKind) -> bool {
+    use oxy_domain::AssetKind;
+    matches!(kind, AssetKind::Raw | AssetKind::Heif | AssetKind::Tiff)
+}
+
+/// Unified preview dispatcher. Subsumes the per-format `match kind` branch that
+/// used to live in the Tauri `get_preview` command. Every format that needs
+/// decoding funnels through this entry point, so the cache/gate/fallback policy
+/// is defined in exactly one place and new formats only need to extend this
+/// function.
+///
+/// Stage dispatch:
+/// - `FullDetail` for RAW → full-resolution development ([`raw_full`]).
+/// - `FullDetail` for HEIF → full-resolution JPEG ([`heif_full`]); the Tile
+///   session is started separately by the frontend for streaming display.
+/// - `Thumbnail` / `LoupePreview` for RAW/HEIF → progressive preview with the
+///   supplied priority.
+/// - TIFF and any future raster-needing format → [`system_preview`].
+pub fn preview(
+    path: &Path,
+    cache_dir: &Path,
+    mode: oxy_domain::PreviewMode,
+    max_size: u32,
+    priority: DecodePriority,
+    kind: oxy_domain::AssetKind,
+) -> Result<PreviewResult, MediaError> {
+    use oxy_domain::{AssetKind, PreviewMode};
+    match (kind, mode) {
+        (AssetKind::Raw, PreviewMode::FullDetail) => raw_full(path, cache_dir),
+        (AssetKind::Heif, PreviewMode::FullDetail) => heif_full(path, cache_dir).or_else(|error| {
+            // Keep the documented fallback: if the full-detail decode fails,
+            // serve the largest progressive preview at foreground priority so
+            // the loupe is never left empty.
+            eprintln!(
+                "full-detail HEIF decode failed for {}: {error}",
+                path.display()
+            );
+            heif_preview_with_priority(path, cache_dir, 8_192, DecodePriority::Foreground)
+        }),
+        (AssetKind::Raw, _) => {
+            raw_preview_with_priority(path, cache_dir, max_size, priority).or_else(|error| {
+                // Fallback to the OS generator, preserving the original error
+                // in the message so diagnostics stay actionable.
+                match system_preview(path, cache_dir, max_size) {
+                    Ok(result) => Ok(result),
+                    Err(system_error) => Err(MediaError::LibRaw {
+                        path: path.to_owned(),
+                        message: format!("{error}; fallback failed: {system_error}"),
+                    }),
+                }
+            })
+        }
+        (AssetKind::Heif, _) => heif_preview_with_priority(path, cache_dir, max_size, priority),
+        (AssetKind::Tiff, _) => system_preview(path, cache_dir, max_size),
+        // Future formats: route through the system generator until a native
+        // adapter is registered. Falling through here also keeps the exhaustiveness
+        // check honest when new AssetKind variants are added.
+        (_, _) => system_preview(path, cache_dir, max_size),
+    }
+}
+
 fn preview_cache_key(path: &Path, backend: &str, max_size: u32) -> Result<String, MediaError> {
     let metadata = fs::metadata(path)?;
     let mut hasher = DefaultHasher::new();
@@ -421,9 +606,63 @@ fn write_jpeg_atomically(
     destination: &Path,
     quality: u8,
 ) -> Result<(), MediaError> {
+    write_jpeg_atomically_with_icc(image, destination, quality, None)
+}
+
+#[derive(Debug, Clone, Copy)]
+struct CacheWriteTiming {
+    encode_ms: u64,
+    sync_ms: u64,
+    commit_ms: u64,
+}
+
+fn write_jpeg_atomically_timed(
+    image: &DynamicImage,
+    destination: &Path,
+    quality: u8,
+) -> Result<CacheWriteTiming, MediaError> {
+    let temporary = tempfile::Builder::new()
+        .suffix(".jpg")
+        .tempfile_in(destination.parent().unwrap_or_else(|| Path::new(".")))?;
+    let encode_started = Instant::now();
+    #[cfg(target_os = "macos")]
+    apple_image_io::write_jpeg(image, temporary.path(), quality)?;
+    #[cfg(not(target_os = "macos"))]
+    {
+        let mut output = temporary.as_file();
+        JpegEncoder::new_with_quality(&mut output, quality).encode_image(image)?;
+    }
+    let encode_ms = duration_ms(encode_started);
+    let sync_started = Instant::now();
+    temporary.as_file().sync_all()?;
+    let sync_ms = duration_ms(sync_started);
+    let commit_started = Instant::now();
+    persist_noclobber(temporary, destination)?;
+    Ok(CacheWriteTiming {
+        encode_ms,
+        sync_ms,
+        commit_ms: duration_ms(commit_started),
+    })
+}
+
+/// Encode `image` as JPEG, optionally embedding an ICC profile in an APP2 chunk.
+/// Used by the unified cache layer so every preview stage and format lands as a
+/// color-managed JPEG on disk.
+fn write_jpeg_atomically_with_icc(
+    image: &DynamicImage,
+    destination: &Path,
+    quality: u8,
+    icc: Option<Vec<u8>>,
+) -> Result<(), MediaError> {
     let mut temporary =
         NamedTempFile::new_in(destination.parent().unwrap_or_else(|| Path::new(".")))?;
-    JpegEncoder::new_with_quality(&mut temporary, quality).encode_image(image)?;
+    let mut encoder = JpegEncoder::new_with_quality(&mut temporary, quality);
+    if let Some(profile) = icc {
+        encoder
+            .set_icc_profile(profile)
+            .map_err(|error| MediaError::Color(error.to_string()))?;
+    }
+    encoder.encode_image(image)?;
     persist_atomically(temporary, destination)
 }
 
@@ -434,6 +673,8 @@ fn preview_result(path: PathBuf, kind: PreviewKind) -> Result<PreviewResult, Med
         width: size.width,
         height: size.height,
         kind,
+        stage: None,
+        diagnostics: None,
     })
 }
 
@@ -447,6 +688,10 @@ fn write_bytes_atomically(data: &[u8], destination: &Path) -> Result<(), MediaEr
 fn persist_atomically(temporary: NamedTempFile, destination: &Path) -> Result<(), MediaError> {
     temporary.as_file().sync_all()?;
 
+    persist_noclobber(temporary, destination)
+}
+
+fn persist_noclobber(temporary: NamedTempFile, destination: &Path) -> Result<(), MediaError> {
     match temporary.persist_noclobber(destination) {
         Ok(_) => Ok(()),
         Err(_error) if destination.is_file() => Ok(()),
@@ -526,9 +771,11 @@ mod tests {
     }
 
     #[test]
-    fn heif_decode_gate_prefers_loupe_then_visible_then_nearby() {
-        let gate = Arc::new(HeifDecodeGate::new());
-        let active = gate.acquire(HeifDecodePriority::Background);
+    fn decode_gate_prefers_foreground_then_visible_then_background() {
+        // The gate is now format-agnostic; the priority contract (loupe first,
+        // visible second, overscan last) is preserved unchanged.
+        let gate = Arc::new(DecodeGate::new());
+        let active = gate.acquire(DecodePriority::Background);
         let (acquired_tx, acquired_rx) = mpsc::channel();
         let spawn_waiter = |priority| {
             let gate = gate.clone();
@@ -538,9 +785,9 @@ mod tests {
                 acquired_tx.send(priority).unwrap();
             })
         };
-        let nearby = spawn_waiter(HeifDecodePriority::Background);
-        let visible = spawn_waiter(HeifDecodePriority::Visible);
-        let loupe = spawn_waiter(HeifDecodePriority::Foreground);
+        let nearby = spawn_waiter(DecodePriority::Background);
+        let visible = spawn_waiter(DecodePriority::Visible);
+        let loupe = spawn_waiter(DecodePriority::Foreground);
 
         let started = Instant::now();
         loop {
@@ -556,19 +803,63 @@ mod tests {
 
         assert_eq!(
             acquired_rx.recv_timeout(Duration::from_secs(1)).unwrap(),
-            HeifDecodePriority::Foreground
+            DecodePriority::Foreground
         );
         assert_eq!(
             acquired_rx.recv_timeout(Duration::from_secs(1)).unwrap(),
-            HeifDecodePriority::Visible
+            DecodePriority::Visible
         );
         assert_eq!(
             acquired_rx.recv_timeout(Duration::from_secs(1)).unwrap(),
-            HeifDecodePriority::Background
+            DecodePriority::Background
         );
         nearby.join().unwrap();
         visible.join().unwrap();
         loupe.join().unwrap();
+    }
+
+    #[test]
+    fn decode_gate_orders_visible_thumbnail_before_nearby() {
+        // Regression for the unified gate: a visible thumbnail that arrives
+        // *after* a nearby one must still be served first. This is the core
+        // "scroll into view jumps the queue" guarantee for every format.
+        let gate = Arc::new(DecodeGate::new());
+        let active = gate.acquire(DecodePriority::Foreground);
+        let (acquired_tx, acquired_rx) = mpsc::channel();
+        let spawn_waiter = |priority| {
+            let gate = gate.clone();
+            let acquired_tx = acquired_tx.clone();
+            thread::spawn(move || {
+                let _permit = gate.acquire(priority);
+                acquired_tx.send(priority).unwrap();
+            })
+        };
+        // Nearby arrives first, visible second.
+        let nearby = spawn_waiter(DecodePriority::Background);
+        let visible = spawn_waiter(DecodePriority::Visible);
+
+        let started = Instant::now();
+        loop {
+            let state = gate.state.lock().unwrap_or_else(|error| error.into_inner());
+            if state.visible_waiters == 1 {
+                break;
+            }
+            drop(state);
+            assert!(started.elapsed() < Duration::from_secs(1));
+            thread::yield_now();
+        }
+        drop(active);
+
+        assert_eq!(
+            acquired_rx.recv_timeout(Duration::from_secs(1)).unwrap(),
+            DecodePriority::Visible
+        );
+        assert_eq!(
+            acquired_rx.recv_timeout(Duration::from_secs(1)).unwrap(),
+            DecodePriority::Background
+        );
+        visible.join().unwrap();
+        nearby.join().unwrap();
     }
 
     #[test]
@@ -588,7 +879,7 @@ mod tests {
     }
 
     #[test]
-    fn larger_cached_heif_preview_satisfies_smaller_request() {
+    fn larger_cached_preview_satisfies_smaller_request() {
         let directory = tempfile::tempdir().unwrap();
         let path = directory.path().join("image.heic");
         fs::write(&path, b"heif").unwrap();
@@ -596,12 +887,63 @@ mod tests {
         let cached = directory.path().join(format!("{key}.jpg"));
         write_jpeg_atomically(&DynamicImage::new_rgb8(32, 16), &cached, 90).unwrap();
 
-        let result = larger_heif_preview(&path, directory.path(), 512)
+        let result = larger_cached_preview(&path, directory.path(), HEIF_CACHE_VERSION, 512)
             .unwrap()
             .unwrap();
 
         assert_eq!(result.path, cached);
         assert_eq!((result.width, result.height), (32, 16));
+    }
+
+    #[test]
+    fn larger_cached_preview_serves_any_backend_tag() {
+        // The unified cache lookup must work for non-HEIF backends too. A
+        // synthetic RAW-style tag with a 4096 entry should satisfy a 512
+        // request without re-decoding.
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("image.arw");
+        fs::write(&path, b"raw").unwrap();
+        let raw_tag = "libraw-0.22.1-v5";
+        let key = preview_cache_key(&path, raw_tag, 4_096).unwrap();
+        let cached = directory.path().join(format!("{key}.jpg"));
+        write_jpeg_atomically(&DynamicImage::new_rgb8(48, 24), &cached, 90).unwrap();
+
+        let result = larger_cached_preview(&path, directory.path(), raw_tag, 512)
+            .unwrap()
+            .unwrap();
+
+        assert_eq!(result.path, cached);
+    }
+
+    #[test]
+    fn heif_preview_reports_cold_backend_timing_breakdown() {
+        let path = workspace_path("tests/fixtures/DSC00449.HIF");
+        let cache = tempfile::tempdir().unwrap();
+
+        let preview = heif_preview(&path, cache.path(), 512).unwrap();
+        let diagnostics = preview.diagnostics.expect("cold preview diagnostics");
+
+        assert!(diagnostics.backend.is_some());
+        assert!(diagnostics.queue_wait_ms.is_some());
+        assert!(diagnostics.source_wait_ms.is_some());
+        assert!(diagnostics.decode_ms.is_some());
+        assert!(diagnostics.encode_ms.is_some());
+        assert!(diagnostics.cache_sync_ms.is_some());
+        assert!(diagnostics.cache_commit_ms.is_some());
+        assert!(diagnostics.total_ms.is_some());
+        assert!(
+            diagnostics.total_ms.unwrap()
+                >= diagnostics.decode_ms.unwrap()
+                    + diagnostics.encode_ms.unwrap()
+                    + diagnostics.cache_sync_ms.unwrap()
+                    + diagnostics.cache_commit_ms.unwrap()
+        );
+
+        let warm = heif_preview(&path, cache.path(), 512).unwrap();
+        assert!(
+            warm.diagnostics.is_none(),
+            "warm cache hits skip decode timing"
+        );
     }
 
     #[test]
