@@ -15,8 +15,10 @@ const languages: { value: Locale; label: string }[] = [
 
 export function SettingsPanel({ t }: SettingsPanelProps) {
   const {
+    displaySharpening,
     hardwareAcceleration,
     locale,
+    setDisplaySharpening,
     setHardwareAcceleration,
     setLocale,
     toggleSettings,
@@ -50,6 +52,25 @@ export function SettingsPanel({ t }: SettingsPanelProps) {
               >
                 <span>{label}</span>
                 {locale === value ? <Check size={12} /> : null}
+              </button>
+            ))}
+          </div>
+        </div>
+
+        <div className="settings-panel__section">
+          <span className="settings-panel__label">{t("displaySharpening")}</span>
+          <div className="settings-panel__options">
+            {[
+              { enabled: true, label: t("standard") },
+              { enabled: false, label: t("disabled") },
+            ].map(({ enabled, label }) => (
+              <button
+                key={String(enabled)}
+                className={`settings-panel__option ${displaySharpening === enabled ? "is-active" : ""}`}
+                onClick={() => setDisplaySharpening(enabled)}
+              >
+                <span>{label}</span>
+                {displaySharpening === enabled ? <Check size={12} /> : null}
               </button>
             ))}
           </div>

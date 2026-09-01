@@ -77,6 +77,7 @@ export function Loupe({
   const navigatorVisible = useWorkspaceStore((state) => state.navigatorVisible);
   const navigatorPosition = useWorkspaceStore((state) => state.navigatorPosition);
   const hardwareAcceleration = useWorkspaceStore((state) => state.hardwareAcceleration);
+  const displaySharpening = useWorkspaceStore((state) => state.displaySharpening);
   const setNavigatorVisible = useWorkspaceStore((state) => state.setNavigatorVisible);
   const setNavigatorPosition = useWorkspaceStore((state) => state.setNavigatorPosition);
   const active = assets.find((asset) => asset.id === activeId) ?? assets[0];
@@ -312,6 +313,7 @@ export function Loupe({
             {active.kind === "heif" ? (
               <HeifTileCanvas
                 asset={active}
+                displaySharpening={displaySharpening}
                 hardwareAcceleration={hardwareAcceleration}
                 onImageSize={handleHeifImageSize}
                 onStatus={setHeifStatus}

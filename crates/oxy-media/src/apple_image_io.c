@@ -1,8 +1,10 @@
 #include <CoreFoundation/CoreFoundation.h>
 #include <CoreGraphics/CoreGraphics.h>
 #include <ImageIO/ImageIO.h>
+#include <Accelerate/Accelerate.h>
 #include <stdint.h>
 #include <stdlib.h>
+#include <string.h>
 #include <limits.h>
 
 static CGImageSourceRef oxy_image_source(const uint8_t *path, size_t path_len) {
@@ -149,6 +151,42 @@ int32_t oxy_apple_image_io_write_jpeg(const uint8_t *path, size_t path_len,
   CGImageRelease(image);
   CFRelease(destination);
   return finalized ? 0 : 5;
+}
+
+int32_t oxy_apple_image_io_sharpen_rgba8(uint8_t *pixels, size_t pixels_len,
+                                         uint32_t width, uint32_t height) {
+  if (pixels == NULL || width == 0 || height == 0 || width > SIZE_MAX / 4 ||
+      height > SIZE_MAX / ((size_t)width * 4) ||
+      pixels_len != (size_t)width * (size_t)height * 4) {
+    return 1;
+  }
+
+  uint8_t *output = malloc(pixels_len);
+  if (output == NULL) {
+    return 2;
+  }
+  vImage_Buffer source = {
+      .data = pixels,
+      .height = height,
+      .width = width,
+      .rowBytes = (size_t)width * 4,
+  };
+  vImage_Buffer destination = {
+      .data = output,
+      .height = height,
+      .width = width,
+      .rowBytes = (size_t)width * 4,
+  };
+  // output = source + 0.2 * (4 * source - left - right - up - down)
+  const int16_t kernel[9] = {0, -1, 0, -1, 9, -1, 0, -1, 0};
+  vImage_Error error = vImageConvolve_ARGB8888(
+      &source, &destination, NULL, 0, 0, kernel, 3, 3, 5, NULL,
+      kvImageEdgeExtend);
+  if (error == kvImageNoError) {
+    memcpy(pixels, output, pixels_len);
+  }
+  free(output);
+  return error == kvImageNoError ? 0 : 3;
 }
 
 void oxy_apple_image_io_free(void *pixels) { free(pixels); }

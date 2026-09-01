@@ -13,6 +13,16 @@ Reference budgets are measured on a local SSD with a release build.
 
 ## Verification Log
 
+- 2026-09-02: HEIF loupe zoom now uses the full tile-session dimensions rather
+  than the 512 px placeholder's natural size. A displayed 100% therefore maps
+  one source pixel to one CSS pixel and 400% is a true four-times pixel zoom.
+  HEIF full-resolution display tiles also receive an optional mild luma
+  unsharp mask, enabled as the default Standard setting to match Sony Imaging
+  Edge Viewer edge definition without modifying source files or caches. macOS
+  uses Accelerate/vImage for the full-frame convolution before tile slicing,
+  so neighboring samples cross tile boundaries. Three Debug runs on the NAS
+  `DSC00518.HIF` fixture measured 36-52 ms ImageIO decode, 42-49 ms sharpened
+  tile publication, and 78-101 ms backend total.
 - 2026-09-01: The HEIF loupe path now uses the 512 px JPEG only as a temporary
   base layer and starts the full-resolution tile session without requesting a
   second 4096 px JPEG. On macOS, HEIF preview JPEGs are encoded by ImageIO and

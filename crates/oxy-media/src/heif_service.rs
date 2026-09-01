@@ -44,6 +44,7 @@ struct ServiceState {
 struct ActiveSession {
     id: String,
     generation: u64,
+    display_sharpening: bool,
     cancelled: Arc<AtomicBool>,
 }
 
@@ -67,6 +68,7 @@ impl HeifDecodeService {
         path: &Path,
         generation: u64,
         hardware_acceleration: bool,
+        display_sharpening: bool,
     ) -> Result<HeifDecodeSession, MediaError> {
         let size = heif::dimensions(path)?;
         let id = format!(
@@ -81,6 +83,7 @@ impl HeifDecodeService {
         state.active = Some(ActiveSession {
             id: id.clone(),
             generation,
+            display_sharpening,
             cancelled: Arc::new(AtomicBool::new(false)),
         });
         let platform = platform_capability();
@@ -133,7 +136,7 @@ impl HeifDecodeService {
         F: FnMut(HeifTileReady),
     {
         let started = Instant::now();
-        let cancelled = {
+        let (cancelled, display_sharpening) = {
             let state = self.state.lock().unwrap_or_else(|error| error.into_inner());
             let Some(active) = &state.active else {
                 return Err(MediaError::Cancelled);
@@ -141,7 +144,7 @@ impl HeifDecodeService {
             if active.id != session.id || active.generation != session.generation {
                 return Err(MediaError::Cancelled);
             }
-            active.cancelled.clone()
+            (active.cancelled.clone(), active.display_sharpening)
         };
         let _decode_permit = crate::acquire_heif_decode(HeifDecodePriority::Foreground);
         let queue_wait_ms = elapsed_ms(started);
@@ -154,14 +157,27 @@ impl HeifDecodeService {
         // Native adapters already return RGBA8. Compatibility adapters may
         // return RGB8, so normalize once here instead of asking every tile
         // crop to repeat dynamic-image conversion work.
-        let image = image.into_rgba8();
+        let mut image = image.into_rgba8();
         let decode_ms = elapsed_ms(decode_started);
         let tile_started = Instant::now();
+        let per_tile_sharpening = if display_sharpening {
+            #[cfg(target_os = "macos")]
+            {
+                crate::apple_image_io::sharpen_rgba8(&mut image)?;
+                false
+            }
+            #[cfg(not(target_os = "macos"))]
+            {
+                true
+            }
+        } else {
+            false
+        };
         for (x, y) in tile_coordinates(image.width(), image.height(), session.tile_size) {
             if cancelled.load(Ordering::Acquire) {
                 return Err(MediaError::Cancelled);
             }
-            let tile = crop_rgba(&image, x, y, session.tile_size);
+            let tile = crop_rgba(&image, x, y, session.tile_size, per_tile_sharpening);
             let event = HeifTileReady {
                 session_id: session.id.clone(),
                 generation: session.generation,
@@ -243,16 +259,57 @@ impl HeifDecodeService {
     }
 }
 
-fn crop_rgba(image: &RgbaImage, x: u32, y: u32, tile_size: u32) -> HeifTile {
+fn crop_rgba(
+    image: &RgbaImage,
+    x: u32,
+    y: u32,
+    tile_size: u32,
+    display_sharpening: bool,
+) -> HeifTile {
     let width = tile_size.min(image.width() - x);
     let height = tile_size.min(image.height() - y);
     let row_bytes = width as usize * 4;
     let source_stride = image.width() as usize * 4;
     let source = image.as_raw();
     let mut rgba = Vec::with_capacity(row_bytes * height as usize);
-    for row in y..(y + height) {
-        let start = row as usize * source_stride + x as usize * 4;
-        rgba.extend_from_slice(&source[start..start + row_bytes]);
+    if !display_sharpening {
+        for row in y..(y + height) {
+            let start = row as usize * source_stride + x as usize * 4;
+            rgba.extend_from_slice(&source[start..start + row_bytes]);
+        }
+    } else {
+        for source_y in y..(y + height) {
+            let up = source_y.saturating_sub(1);
+            let down = (source_y + 1).min(image.height() - 1);
+            for source_x in x..(x + width) {
+                let left = source_x.saturating_sub(1);
+                let right = (source_x + 1).min(image.width() - 1);
+                let center_index = source_y as usize * source_stride + source_x as usize * 4;
+                let laplacian = 4 * pixel_luma(source, center_index)
+                    - pixel_luma(
+                        source,
+                        source_y as usize * source_stride + left as usize * 4,
+                    )
+                    - pixel_luma(
+                        source,
+                        source_y as usize * source_stride + right as usize * 4,
+                    )
+                    - pixel_luma(source, up as usize * source_stride + source_x as usize * 4)
+                    - pixel_luma(
+                        source,
+                        down as usize * source_stride + source_x as usize * 4,
+                    );
+                // A one-fifth luma unsharp mask gives Sony-like edge definition
+                // without color halos. This affects only transient display tiles.
+                let delta = laplacian / 5;
+                rgba.extend_from_slice(&[
+                    (source[center_index] as i32 + delta).clamp(0, 255) as u8,
+                    (source[center_index + 1] as i32 + delta).clamp(0, 255) as u8,
+                    (source[center_index + 2] as i32 + delta).clamp(0, 255) as u8,
+                    source[center_index + 3],
+                ]);
+            }
+        }
     }
     HeifTile {
         width,
@@ -260,6 +317,11 @@ fn crop_rgba(image: &RgbaImage, x: u32, y: u32, tile_size: u32) -> HeifTile {
         stride: width * 4,
         rgba: Arc::from(rgba),
     }
+}
+
+#[inline]
+fn pixel_luma(source: &[u8], index: usize) -> i32 {
+    (2 * source[index] as i32 + 5 * source[index + 1] as i32 + source[index + 2] as i32) / 8
 }
 
 fn tile_coordinates(width: u32, height: u32, tile_size: u32) -> Vec<(u32, u32)> {
@@ -528,9 +590,26 @@ mod tests {
     #[test]
     fn crop_produces_tightly_packed_edge_tile() {
         let image = DynamicImage::new_rgb8(600, 550).into_rgba8();
-        let tile = crop_rgba(&image, 512, 512, 512);
+        let tile = crop_rgba(&image, 512, 512, 512, false);
         assert_eq!((tile.width, tile.height, tile.stride), (88, 38, 352));
         assert_eq!(tile.rgba.len(), 88 * 38 * 4);
+    }
+
+    #[test]
+    fn display_sharpening_preserves_flat_pixels_and_alpha() {
+        let image = RgbaImage::from_pixel(3, 3, image::Rgba([80, 120, 160, 77]));
+        let tile = crop_rgba(&image, 0, 0, 3, true);
+        assert_eq!(tile.rgba.as_ref(), image.as_raw());
+    }
+
+    #[test]
+    fn display_sharpening_increases_edge_definition() {
+        let mut image = RgbaImage::from_pixel(3, 3, image::Rgba([64, 64, 64, 255]));
+        image.put_pixel(1, 1, image::Rgba([128, 128, 128, 255]));
+        let tile = crop_rgba(&image, 0, 0, 3, true);
+        let center = (3 + 1) * 4;
+        assert!(tile.rgba[center] > 128);
+        assert_eq!(tile.rgba[center + 3], 255);
     }
 
     #[test]
@@ -541,7 +620,7 @@ mod tests {
         let fixture =
             Path::new(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/DSC00449.HIF");
         let service = HeifDecodeService::default();
-        let session = service.begin(&fixture, 1, false).unwrap();
+        let session = service.begin(&fixture, 1, false, false).unwrap();
         assert_eq!(session.backend, HeifBackendKind::FfmpegSoftware);
         let mut tiles = 0;
         let diagnostics = service.decode(&session, fixture, |_| tiles += 1).unwrap();
@@ -558,7 +637,7 @@ mod tests {
             return;
         }
         let service = HeifDecodeService::default();
-        let session = service.begin(&fixture, 1, true).unwrap();
+        let session = service.begin(&fixture, 1, true, true).unwrap();
         assert_eq!(session.backend, HeifBackendKind::AppleImageIo);
         assert_eq!(session.acceleration, AccelerationKind::Unknown);
         let mut tiles = 0;

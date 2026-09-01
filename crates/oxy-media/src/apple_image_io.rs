@@ -1,5 +1,5 @@
 use crate::MediaError;
-use image::{DynamicImage, ImageBuffer, Rgba};
+use image::{DynamicImage, ImageBuffer, Rgba, RgbaImage};
 use std::{os::unix::ffi::OsStrExt, path::Path, ptr, slice};
 
 unsafe extern "C" {
@@ -21,6 +21,12 @@ unsafe extern "C" {
         width: u32,
         height: u32,
         quality: u8,
+    ) -> i32;
+    fn oxy_apple_image_io_sharpen_rgba8(
+        pixels: *mut u8,
+        pixels_len: usize,
+        width: u32,
+        height: u32,
     ) -> i32;
     fn oxy_apple_image_io_free(pixels: *mut u8);
 }
@@ -111,6 +117,22 @@ pub fn write_jpeg(image: &DynamicImage, path: &Path, quality: u8) -> Result<(), 
     }
 }
 
+pub fn sharpen_rgba8(image: &mut RgbaImage) -> Result<(), MediaError> {
+    let width = image.width();
+    let height = image.height();
+    let pixels = image.as_mut();
+    let status = unsafe {
+        oxy_apple_image_io_sharpen_rgba8(pixels.as_mut_ptr(), pixels.len(), width, height)
+    };
+    if status == 0 {
+        Ok(())
+    } else {
+        Err(native_error(format!(
+            "display sharpening failed at native stage {status}"
+        )))
+    }
+}
+
 fn native_error(message: impl Into<String>) -> MediaError {
     MediaError::NativeDecode {
         backend: "Apple ImageIO",
@@ -143,5 +165,14 @@ mod tests {
             .decode()
             .unwrap();
         assert_eq!((decoded.width(), decoded.height()), (32, 16));
+    }
+
+    #[test]
+    fn sharpens_rgba_with_accelerate() {
+        let mut image = RgbaImage::from_pixel(3, 3, Rgba([64, 64, 64, 255]));
+        image.put_pixel(1, 1, Rgba([128, 128, 128, 255]));
+        sharpen_rgba8(&mut image).unwrap();
+        assert!(image.get_pixel(1, 1)[0] > 128);
+        assert_eq!(image.get_pixel(1, 1)[3], 255);
     }
 }

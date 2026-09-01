@@ -180,6 +180,10 @@ tile 中心到整图中心的平方距离排序，因此最接近画面中心的
 每个 `HeifTile` 包含：宽、高、stride 和 `Arc<[u8]>` RGBA。tile 放入 service 的 HashMap，event
 只携带可定位它的 metadata 和 URL。
 
+macOS 的“标准”高倍查看锐化在完整 RGBA 图上通过 Accelerate/vImage 执行轻量亮度 unsharp
+mask，再切成瓦片。它只改变内存中的显示瓦片，不修改原文件或缓存；先整图处理也保证 512 px
+瓦片边界能够读取相邻像素，不产生格状接缝。用户可在设置中关闭该显示增强。
+
 需要准确理解：当前中心优先优化的是**完整解码之后的发布顺序**。对于非 grid-aware backend，
 它并没有让 HEVC 只解中心区域。真正的 early tile decode 仍属于未来 adapter 优化。
 

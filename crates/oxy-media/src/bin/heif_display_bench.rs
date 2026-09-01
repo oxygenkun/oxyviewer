@@ -63,7 +63,7 @@ fn benchmark_tiles(path: &Path, runs: usize) -> Result<(), Box<dyn Error>> {
     let mut totals = Vec::with_capacity(runs);
     for generation in 0..runs {
         let service = HeifDecodeService::default();
-        let session = service.begin(path, generation as u64, true)?;
+        let session = service.begin(path, generation as u64, true, true)?;
         let started = Instant::now();
         let mut first = None;
         let diagnostics = service.decode(&session, path.to_owned(), |_| {

@@ -20,6 +20,7 @@ let nextGeneration = 0;
 
 interface HeifTileCanvasProps {
   asset: AssetSummary;
+  displaySharpening: boolean;
   hardwareAcceleration: boolean;
   onImageSize: (size: { width: number; height: number }) => void;
   onStatus: (status: HeifDecodeStatus, diagnostics?: HeifDiagnostics) => void;
@@ -27,6 +28,7 @@ interface HeifTileCanvasProps {
 
 export function HeifTileCanvas({
   asset,
+  displaySharpening,
   hardwareAcceleration,
   onImageSize,
   onStatus,
@@ -200,7 +202,12 @@ export function HeifTileCanvas({
         if (payload.sessionId === sessionId) handleStatus(payload);
       }));
       if (__OXY_DEBUG__) debug?.mark("listeners-ready");
-      const session = await startHeifDecode(asset.path, generation, hardwareAcceleration);
+      const session = await startHeifDecode(
+        asset.path,
+        generation,
+        hardwareAcceleration,
+        displaySharpening,
+      );
       if (disposed) {
         await cancelHeifDecode(session.id);
         return;
@@ -250,7 +257,7 @@ export function HeifTileCanvas({
       if (sessionId) void cancelHeifDecode(sessionId);
       if (__OXY_DEBUG__) debug?.cancel(detail?.());
     };
-  }, [asset.id, asset.path, hardwareAcceleration, onImageSize, onStatus]);
+  }, [asset.id, asset.path, displaySharpening, hardwareAcceleration, onImageSize, onStatus]);
 
   return <canvas className="loupe__heif-canvas" ref={canvasRef} />;
 }

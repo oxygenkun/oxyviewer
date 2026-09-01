@@ -21,6 +21,7 @@ interface WorkspaceState {
   navigatorVisible: boolean;
   navigatorPosition: NavigatorPosition;
   hardwareAcceleration: boolean;
+  displaySharpening: boolean;
   search: string;
   kind?: AssetKind;
   sort: AssetSort;
@@ -36,6 +37,7 @@ interface WorkspaceState {
   setNavigatorVisible: (visible: boolean) => void;
   setNavigatorPosition: (position: NavigatorPosition) => void;
   setHardwareAcceleration: (enabled: boolean) => void;
+  setDisplaySharpening: (enabled: boolean) => void;
   setSearch: (search: string) => void;
   setKind: (kind?: AssetKind) => void;
   setSort: (sort: AssetSort) => void;
@@ -53,6 +55,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set) => ({
   navigatorVisible: true,
   navigatorPosition: "bottom-right",
   hardwareAcceleration: true,
+  displaySharpening: true,
   search: "",
   sort: "name",
   direction: "ascending",
@@ -74,6 +77,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set) => ({
   setNavigatorVisible: (navigatorVisible) => set({ navigatorVisible }),
   setNavigatorPosition: (navigatorPosition) => set({ navigatorPosition }),
   setHardwareAcceleration: (hardwareAcceleration) => set({ hardwareAcceleration }),
+  setDisplaySharpening: (displaySharpening) => set({ displaySharpening }),
   setSearch: (search) => set({ search }),
   setKind: (kind) => set({ kind }),
   setSort: (sort) => set({ sort }),

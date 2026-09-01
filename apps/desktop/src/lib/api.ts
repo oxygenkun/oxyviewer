@@ -213,11 +213,13 @@ export async function startHeifDecode(
   path: string,
   generation: number,
   hardwareAcceleration: boolean,
+  displaySharpening: boolean,
 ): Promise<HeifDecodeSession> {
   return invoke<HeifDecodeSession>("start_heif_decode", {
     path,
     generation,
     hardwareAcceleration,
+    displaySharpening,
   });
 }
 

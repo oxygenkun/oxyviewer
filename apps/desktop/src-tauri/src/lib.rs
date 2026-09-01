@@ -176,6 +176,7 @@ async fn start_heif_decode(
     path: PathBuf,
     generation: u64,
     hardware_acceleration: bool,
+    display_sharpening: bool,
     app: tauri::AppHandle,
     state: State<'_, AppState>,
 ) -> Result<HeifDecodeSession, String> {
@@ -188,7 +189,7 @@ async fn start_heif_decode(
     }
     let service = state.heif.clone();
     let session = service
-        .begin(&path, generation, hardware_acceleration)
+        .begin(&path, generation, hardware_acceleration, display_sharpening)
         .map_err(|error| error.to_string())?;
     let worker_session = session.clone();
     let fallback_status = (session.status == HeifDecodeStatus::CompatibilityFallback).then(|| {
