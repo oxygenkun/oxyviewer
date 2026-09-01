@@ -13,6 +13,18 @@ Reference budgets are measured on a local SSD with a release build.
 
 ## Verification Log
 
+- 2026-09-01: The HEIF loupe path now uses the 512 px JPEG only as a temporary
+  base layer and starts the full-resolution tile session without requesting a
+  second 4096 px JPEG. On macOS, HEIF preview JPEGs are encoded by ImageIO and
+  the global decode permit is released after decode, before JPEG encode and
+  cache sync. Full-tile publication converts the decoded image to RGBA once
+  and copies contiguous rows into tiles. On the reference Mac against
+  `literal:<NAS_FIXTURE_DIR>/DSC00463.HIF`,
+  the optimized Debug backend measured about 46 ms ImageIO decode and 31 ms
+  tile publication, versus the previous in-app 308 ms and 1363 ms. A real
+  cold loupe run painted its first tile in 505 ms and all tiles in 756 ms while
+  grid/filmstrip thumbnail work was active. The former concurrent 4096 request
+  (about 7.5 s including queue wait) is no longer issued.
 - 2026-06-10: grid/list rendering uses TanStack Virtual and browser interaction
   checks passed for selection, search filtering, inspector updates, and loupe
   switching.
@@ -149,3 +161,23 @@ display. Remaining improvements should be adopted in this order:
   and crops the primary image, applies display orientation, emits RGBA8, and
   falls back to libheif if probing or decoding fails. Release packages that
   enable this backend must bundle compatible `ffmpeg` and `ffprobe` binaries.
+- 2026-06-15: Unified the preview pipeline across RAW/HEIF/TIFF (ADR 0005).
+  Every format now flows through a single `oxy_media::preview` dispatcher and
+  a shared two-tier scheduler: the frontend `previewQueue` orders pending
+  requests `loupe > visible > nearby` (three-level weights via
+  `priorityWeight`) and drops requests that scroll out of view before they
+  start; the backend `DecodeGate` (generalized from `HeifDecodeGate`) applies
+  the same ordering to waiters but never preempts a running decode. RAW
+  thumbnails now participate in priority scheduling for the first time
+  (previously three FIFO mutex lanes). Cache format is unified to 8-bit JPEG:
+  HEIF full resolution switched from 16-bit PNG (`libheif-1.23-sdr-v1`) to
+  8-bit sRGB JPEG with embedded ICC (`heif-sdr-jpeg-v1`, via
+  `write_srgb_jpeg`); `write_jpeg_atomically_with_icc` is available to all
+  decoders. Up-tier reuse (`larger_cached_preview`) generalizes the former
+  HEIF-only path to any backend tag, so a cached 4096 px or full-resolution
+  JPEG can satisfy a 512 px request without re-decoding. RAW full
+  development stays on its own `RAW_FULL_DECODE_LOCK` lane (not the gate) so
+  multi-second develops never block thumbnail decoding. Performance budgets
+  for cache hits and cold previews are unchanged in shape; the unified JPEG
+  cache is expected to be faster on cache write and equal or faster on hit
+  versus the prior PNG path.

@@ -36,8 +36,8 @@ performance gate has not yet been measured.
 - [~] Bundle and integrate LibRaw and libheif on all target platforms; libheif
   full-detail integration is implemented, while packaged HEVC decoder
   validation remains
-- [ ] Priority scheduler, cancellation, thumbnail cache, and custom protocol
-- [ ] Color-managed progressive loupe and filmstrip previews
+- [~] Priority scheduler, cancellation, thumbnail cache, and custom protocol — unified priority scheduler (ADR 0005) covers ordering + abort-before-start; full cooperative cancellation is still open
+- [x] Color-managed progressive loupe and filmstrip previews — unified JPEG + ICC cache (ADR 0005)
 
 ### Milestone RAW-1: Reliable RAW Display
 
@@ -51,7 +51,7 @@ performance gate has not yet been measured.
 - [x] Pass a real camera RAW smoke test on macOS
 - [ ] Validate ARW, CR2, CR3, NEF, DNG, RAF, RW2, and ORF fixtures
 - [ ] Validate LibRaw builds and RAW preview behavior in Windows and Linux CI
-- [ ] Add full priority scheduling and request cancellation
+- [~] Add full priority scheduling and request cancellation — unified two-tier scheduler (frontend `previewQueue` + backend `DecodeGate`) landed in ADR 0005; cooperative mid-decode cancellation is still outstanding
 
 ### Milestone HEIF-1: Full-detail and Color-managed Display
 
