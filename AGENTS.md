@@ -81,3 +81,7 @@ cross-boundary work.
 For performance-sensitive browsing or media changes, verify against the budgets
 in `docs/PERFORMANCE.md` and avoid regressions to first-page rendering,
 virtualized scrolling, or preview latency.
+
+## Behavior
+
+Close debug instance when finished
