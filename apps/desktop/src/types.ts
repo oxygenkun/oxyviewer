@@ -131,6 +131,7 @@ export interface HeifDecodeSession {
   width: number;
   height: number;
   tileSize: number;
+  expectedTiles: number;
   backend: HeifBackendKind;
   acceleration: AccelerationKind;
   status: HeifDecodeStatus;
@@ -143,6 +144,7 @@ export interface HeifTileReady {
   y: number;
   width: number;
   height: number;
+  encoding?: "jpeg";
   url: string;
 }
 

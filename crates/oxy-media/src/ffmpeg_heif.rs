@@ -1,11 +1,13 @@
 use crate::{ImageDimensions, MediaError};
-use image::{DynamicImage, ImageBuffer, Rgba};
+use image::{DynamicImage, RgbaImage};
 use serde_json::Value;
+#[cfg(target_os = "windows")]
+use std::os::windows::process::CommandExt;
 use std::{
     collections::HashMap,
     fs,
     hash::Hash,
-    path::Path,
+    path::{Path, PathBuf},
     process::{Command, Stdio},
     sync::{LazyLock, Mutex},
     time::SystemTime,
@@ -16,6 +18,8 @@ static CAPABILITY: LazyLock<Result<(), String>> =
     LazyLock::new(|| capability_probe().map_err(|error| error.to_string()));
 static GRID_CACHE: LazyLock<Mutex<HashMap<GridCacheKey, TileGrid>>> =
     LazyLock::new(|| Mutex::new(HashMap::new()));
+static FFMPEG_COMMAND: LazyLock<PathBuf> = LazyLock::new(|| resolve_command("ffmpeg"));
+static FFPROBE_COMMAND: LazyLock<PathBuf> = LazyLock::new(|| resolve_command("ffprobe"));
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 struct GridCacheKey {
@@ -29,6 +33,8 @@ struct Tile {
     stream_index: u64,
     x: u64,
     y: u64,
+    width: u32,
+    height: u32,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -37,6 +43,23 @@ struct TileGrid {
     height: u32,
     rotation: i32,
     tiles: Vec<Tile>,
+    previews: Vec<PreviewStream>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct PreviewStream {
+    index: u64,
+    width: u32,
+    height: u32,
+}
+
+#[derive(Debug)]
+pub struct EncodedTile {
+    pub x: u32,
+    pub y: u32,
+    pub width: u32,
+    pub height: u32,
+    pub jpeg: Vec<u8>,
 }
 
 pub fn capability() -> Result<(), MediaError> {
@@ -44,41 +67,144 @@ pub fn capability() -> Result<(), MediaError> {
 }
 
 fn capability_probe() -> Result<(), MediaError> {
-    command_supports("ffmpeg", "-filters", "xstack")?;
-    command_supports("ffprobe", "-h", "-show_stream_groups")?;
+    command_supports(&FFMPEG_COMMAND, "-decoders", "hevc")?;
+    command_supports(&FFPROBE_COMMAND, "-h", "-show_stream_groups")?;
     Ok(())
 }
 
 pub fn can_decode(path: &Path) -> Result<(), MediaError> {
-    capability()?;
+    // Parsing this specific file is both cheaper and stronger evidence than
+    // launching two additional generic capability probes. The actual decode
+    // still reports a precise error and falls back to libheif if FFmpeg is
+    // absent or incompatible.
     cached_grid(path).map(|_| ())
+}
+
+pub fn tile_count(path: &Path) -> Result<usize, MediaError> {
+    cached_grid(path).map(|grid| grid.tiles.len())
+}
+
+/// Lets FFmpeg keep each HEVC grid component compressed for delivery to the
+/// WebView. Six high-quality JPEG tiles are much cheaper to cross the custom
+/// protocol boundary than 35 raw RGBA tiles (roughly 131 MB for the fixture).
+pub fn decode_full_jpeg_tiles(
+    path: &Path,
+    display_size: ImageDimensions,
+    display_sharpening: bool,
+) -> Result<Vec<EncodedTile>, MediaError> {
+    let grid = cached_grid(path)?;
+    filter_for_grid(&grid, display_size)?;
+    let output_dir = tempfile::tempdir()?;
+    let mut command = media_command(&FFMPEG_COMMAND);
+    command
+        .args(["-v", "error", "-threads", "2", "-i"])
+        .arg(path);
+    let mut outputs = Vec::with_capacity(grid.tiles.len());
+    for (position, tile) in grid.tiles.iter().enumerate() {
+        let output_path = output_dir.path().join(format!("{position}.jpg"));
+        let (mut filter, x, y, width, height) = oriented_tile(&grid, tile)?;
+        if display_sharpening {
+            filter.push_str(",unsharp=3:3:0.2:3:3:0");
+        }
+        command
+            .args([
+                "-map",
+                &format!("0:{}", tile.stream_index),
+                "-frames:v",
+                "1",
+            ])
+            .args(["-vf", &filter])
+            .args(["-pix_fmt", "yuvj444p", "-c:v", "mjpeg", "-q:v", "2"])
+            .arg(&output_path);
+        outputs.push((output_path, x, y, width, height));
+    }
+    let output = command
+        .stdin(Stdio::null())
+        .output()
+        .map_err(|error| native_error(format!("start ffmpeg JPEG tile decode: {error}")))?;
+    if !output.status.success() {
+        return Err(native_error(format!(
+            "JPEG tile decode failed with {}: {}",
+            output.status,
+            String::from_utf8_lossy(&output.stderr).trim()
+        )));
+    }
+    let mut tiles = outputs
+        .into_iter()
+        .map(|(path, x, y, width, height)| {
+            Ok(EncodedTile {
+                x,
+                y,
+                width,
+                height,
+                jpeg: fs::read(path)?,
+            })
+        })
+        .collect::<Result<Vec<_>, MediaError>>()?;
+    let center = (
+        display_size.width as i64 / 2,
+        display_size.height as i64 / 2,
+    );
+    tiles.sort_by_key(|tile| {
+        let tile_center = (
+            tile.x as i64 + tile.width as i64 / 2,
+            tile.y as i64 + tile.height as i64 / 2,
+        );
+        (tile_center.0 - center.0).abs() + (tile_center.1 - center.1).abs()
+    });
+    Ok(tiles)
 }
 
 pub fn decode_full_rgba8(
     path: &Path,
     display_size: ImageDimensions,
+    display_sharpening: bool,
 ) -> Result<DynamicImage, MediaError> {
     let grid = cached_grid(path)?;
-    let (filter, width, height) = filter_for_grid(&grid, display_size)?;
-    let output = Command::new("ffmpeg")
-        .args(["-v", "error", "-i"])
-        .arg(path)
-        .args([
-            "-filter_complex",
-            &filter,
-            "-map",
-            "[out]",
-            "-frames:v",
-            "1",
-            "-f",
-            "rawvideo",
-            "-pix_fmt",
-            "rgba",
-            "pipe:1",
-        ])
+    filter_for_grid(&grid, display_size)?;
+    let (output_dir, output_paths) = decode_tile_bitmaps(path, &grid, display_sharpening)?;
+    let mut image = RgbaImage::new(display_size.width, display_size.height);
+    for (tile, output_path) in grid.tiles.iter().zip(&output_paths) {
+        let (_, x, y, width, height) = oriented_tile(&grid, tile)?;
+        copy_bmp_tile(&mut image, output_path, x, y, width, height)?;
+    }
+    drop(output_dir);
+    Ok(DynamicImage::ImageRgba8(image))
+}
+
+fn decode_tile_bitmaps(
+    path: &Path,
+    grid: &TileGrid,
+    display_sharpening: bool,
+) -> Result<(tempfile::TempDir, Vec<PathBuf>), MediaError> {
+    let output_dir = tempfile::tempdir()?;
+    let mut command = media_command(&FFMPEG_COMMAND);
+    command
+        .args(["-v", "error", "-threads", "2", "-i"])
+        .arg(path);
+    let mut output_paths = Vec::with_capacity(grid.tiles.len());
+    for (position, tile) in grid.tiles.iter().enumerate() {
+        let output_path = output_dir.path().join(format!("{position}.bmp"));
+        let (mut filter, _, _, _, _) = oriented_tile(grid, tile)?;
+        if display_sharpening {
+            filter.push_str(",unsharp=3:3:0.2:3:3:0");
+        }
+        command
+            .args([
+                "-map",
+                &format!("0:{}", tile.stream_index),
+                "-frames:v",
+                "1",
+            ])
+            .args(["-vf", &filter])
+            .args(["-pix_fmt", "bgra", "-c:v", "bmp"])
+            .arg(&output_path);
+        output_paths.push(output_path);
+    }
+    let output = command
         .stdin(Stdio::null())
         .output()
-        .map_err(|error| native_error(format!("start ffmpeg: {error}")))?;
+        .map_err(|error| native_error(format!("start ffmpeg tile decode: {error}")))?;
     if !output.status.success() {
         return Err(native_error(format!(
             "decode failed with {}: {}",
@@ -86,28 +212,205 @@ pub fn decode_full_rgba8(
             String::from_utf8_lossy(&output.stderr).trim()
         )));
     }
-    let expected_len = rgba_buffer_len(width, height)?;
-    if output.stdout.len() != expected_len {
+    Ok((output_dir, output_paths))
+}
+
+fn copy_bmp_tile(
+    destination: &mut RgbaImage,
+    path: &Path,
+    x: u32,
+    y: u32,
+    width: u32,
+    height: u32,
+) -> Result<(), MediaError> {
+    let bmp = fs::read(path)?;
+    if bmp.get(0..2) != Some(b"BM") || bmp.len() < 54 {
+        return Err(native_error("FFmpeg tile output is not a BMP image"));
+    }
+    let data_offset = bmp_u32(&bmp, 10)? as usize;
+    let bmp_width = bmp_i32(&bmp, 18)?;
+    let signed_height = bmp_i32(&bmp, 22)?;
+    if bmp_width <= 0
+        || signed_height == 0
+        || bmp_u16(&bmp, 28)? != 32
+        || bmp_u32(&bmp, 30)? != 0
+        || u32::try_from(bmp_width).ok() != Some(width)
+        || signed_height.unsigned_abs() != height
+    {
+        return Err(native_error(
+            "FFmpeg produced an unexpected BMP tile layout",
+        ));
+    }
+    if x.checked_add(width)
+        .is_none_or(|right| right > destination.width())
+        || y.checked_add(height)
+            .is_none_or(|bottom| bottom > destination.height())
+    {
+        return Err(native_error(
+            "decoded tile lies outside the HEIF display canvas",
+        ));
+    }
+    let source_stride = usize::try_from(width)
+        .ok()
+        .and_then(|width| width.checked_mul(4))
+        .ok_or_else(|| native_error("source tile stride overflow"))?;
+    let destination_stride = usize::try_from(destination.width())
+        .ok()
+        .and_then(|width| width.checked_mul(4))
+        .ok_or_else(|| native_error("destination stride overflow"))?;
+    let height = usize::try_from(height).map_err(|_| native_error("tile height exceeds usize"))?;
+    let x = usize::try_from(x).map_err(|_| native_error("tile x offset exceeds usize"))?;
+    let y = usize::try_from(y).map_err(|_| native_error("tile y offset exceeds usize"))?;
+    let pixel_bytes = source_stride
+        .checked_mul(height)
+        .ok_or_else(|| native_error("BMP tile size overflow"))?;
+    if bmp.len() < data_offset.saturating_add(pixel_bytes) {
+        return Err(native_error("FFmpeg BMP tile is truncated"));
+    }
+    for row in 0..height {
+        let source_row = if signed_height > 0 {
+            height - row - 1
+        } else {
+            row
+        };
+        let source_start = data_offset + source_row * source_stride;
+        let destination_start = (y + row) * destination_stride + x * 4;
+        let source = &bmp[source_start..source_start + source_stride];
+        let target =
+            &mut destination.as_mut()[destination_start..destination_start + source_stride];
+        for (bgra, rgba) in source.chunks_exact(4).zip(target.chunks_exact_mut(4)) {
+            rgba.copy_from_slice(&[bgra[2], bgra[1], bgra[0], bgra[3]]);
+        }
+    }
+    Ok(())
+}
+
+fn bmp_u16(bytes: &[u8], offset: usize) -> Result<u16, MediaError> {
+    bytes
+        .get(offset..offset + 2)
+        .and_then(|value| value.try_into().ok())
+        .map(u16::from_le_bytes)
+        .ok_or_else(|| native_error("truncated BMP header"))
+}
+
+fn bmp_u32(bytes: &[u8], offset: usize) -> Result<u32, MediaError> {
+    bytes
+        .get(offset..offset + 4)
+        .and_then(|value| value.try_into().ok())
+        .map(u32::from_le_bytes)
+        .ok_or_else(|| native_error("truncated BMP header"))
+}
+
+fn bmp_i32(bytes: &[u8], offset: usize) -> Result<i32, MediaError> {
+    bytes
+        .get(offset..offset + 4)
+        .and_then(|value| value.try_into().ok())
+        .map(i32::from_le_bytes)
+        .ok_or_else(|| native_error("truncated BMP header"))
+}
+
+fn oriented_tile(grid: &TileGrid, tile: &Tile) -> Result<(String, u32, u32, u32, u32), MediaError> {
+    let x: u32 = tile
+        .x
+        .try_into()
+        .map_err(|_| native_error("tile x exceeds u32"))?;
+    let y: u32 = tile
+        .y
+        .try_into()
+        .map_err(|_| native_error("tile y exceeds u32"))?;
+    let width = tile.width.min(
+        grid.width
+            .checked_sub(x)
+            .ok_or_else(|| native_error("tile x outside grid"))?,
+    );
+    let height = tile.height.min(
+        grid.height
+            .checked_sub(y)
+            .ok_or_else(|| native_error("tile y outside grid"))?,
+    );
+    let crop = format!("crop={width}:{height}:0:0");
+    match grid.rotation {
+        -90 | 270 => Ok((
+            format!("{crop},transpose=clock"),
+            grid.height - y - height,
+            x,
+            height,
+            width,
+        )),
+        90 | -270 => Ok((
+            format!("{crop},transpose=cclock"),
+            y,
+            grid.width - x - width,
+            height,
+            width,
+        )),
+        180 | -180 => Ok((
+            format!("{crop},hflip,vflip"),
+            grid.width - x - width,
+            grid.height - y - height,
+            width,
+            height,
+        )),
+        _ => Ok((crop, x, y, width, height)),
+    }
+}
+
+/// Decode the smallest non-tile image that can satisfy a progressive preview.
+/// Sony HIF files commonly carry a medium-sized camera-rendered HEVC image in
+/// addition to the primary tile grid. Decoding that single stream avoids
+/// paying for all six full-resolution tiles just to paint the first frame.
+pub fn decode_scaled_preview(path: &Path, max_size: u32) -> Result<DynamicImage, MediaError> {
+    let grid = cached_grid(path)?;
+    let stream = grid
+        .previews
+        .iter()
+        .filter(|stream| stream.width.max(stream.height) >= max_size)
+        .min_by_key(|stream| stream.width.max(stream.height))
+        .ok_or_else(|| native_error("HEIF has no sufficiently large independent preview stream"))?;
+    let map = format!("0:{}", stream.index);
+    let scale = format!("scale={max_size}:{max_size}:force_original_aspect_ratio=decrease");
+    let output = media_command(&FFMPEG_COMMAND)
+        .args(["-v", "error", "-i"])
+        .arg(path)
+        .args([
+            "-map",
+            &map,
+            "-frames:v",
+            "1",
+            "-vf",
+            &scale,
+            "-q:v",
+            "2",
+            "-c:v",
+            "mjpeg",
+            "-f",
+            "image2pipe",
+            "pipe:1",
+        ])
+        .stdin(Stdio::null())
+        .output()
+        .map_err(|error| native_error(format!("start ffmpeg preview: {error}")))?;
+    if !output.status.success() {
         return Err(native_error(format!(
-            "decoded RGBA length mismatch: expected {expected_len}, got {}",
-            output.stdout.len()
+            "preview decode failed with {}: {}",
+            output.status,
+            String::from_utf8_lossy(&output.stderr).trim()
         )));
     }
-    let image = ImageBuffer::<Rgba<u8>, Vec<u8>>::from_vec(width, height, output.stdout)
-        .ok_or_else(|| native_error("decoded image buffer dimensions do not match"))?;
-    Ok(DynamicImage::ImageRgba8(image))
+    image::load_from_memory(&output.stdout)
+        .map_err(|error| native_error(format!("decode ffmpeg preview bitmap: {error}")))
 }
 
 fn command_supports(
-    command: &'static str,
+    command: &Path,
     argument: &'static str,
     expected: &'static str,
 ) -> Result<(), MediaError> {
-    let output = Command::new(command)
+    let output = media_command(command)
         .arg(argument)
         .stdin(Stdio::null())
         .output()
-        .map_err(|error| native_error(format!("{command} is unavailable: {error}")))?;
+        .map_err(|error| native_error(format!("{} is unavailable: {error}", command.display())))?;
     if output.status.success()
         && (String::from_utf8_lossy(&output.stdout).contains(expected)
             || String::from_utf8_lossy(&output.stderr).contains(expected))
@@ -115,13 +418,61 @@ fn command_supports(
         Ok(())
     } else {
         Err(native_error(format!(
-            "{command} does not expose required {expected} support"
+            "{} does not expose required {expected} support",
+            command.display()
         )))
     }
 }
 
+fn resolve_command(name: &str) -> PathBuf {
+    let executable = if cfg!(windows) {
+        format!("{name}.exe")
+    } else {
+        name.to_owned()
+    };
+    let mut candidates = Vec::new();
+    if let Some(directory) = std::env::var_os("OXY_FFMPEG_DIR") {
+        candidates.push(PathBuf::from(directory).join(&executable));
+    }
+    if let Ok(current_exe) = std::env::current_exe()
+        && let Some(directory) = current_exe.parent()
+    {
+        candidates.push(directory.join(&executable));
+        candidates.push(directory.join("resources").join(&executable));
+        candidates.push(directory.join("bin").join(&executable));
+    }
+    #[cfg(target_os = "windows")]
+    {
+        if let Some(scoop) = std::env::var_os("SCOOP") {
+            candidates.push(
+                PathBuf::from(scoop)
+                    .join("apps/ffmpeg/current/bin")
+                    .join(&executable),
+            );
+        }
+        if let Some(profile) = std::env::var_os("USERPROFILE") {
+            candidates.push(
+                PathBuf::from(profile)
+                    .join("scoop/apps/ffmpeg/current/bin")
+                    .join(&executable),
+            );
+        }
+    }
+    candidates
+        .into_iter()
+        .find(|candidate| candidate.is_file())
+        .unwrap_or_else(|| PathBuf::from(name))
+}
+
+fn media_command(executable: &Path) -> Command {
+    let mut command = Command::new(executable);
+    #[cfg(target_os = "windows")]
+    command.creation_flags(0x0800_0000 | 0x0000_0080);
+    command
+}
+
 fn probe_grid(path: &Path) -> Result<TileGrid, MediaError> {
-    let output = Command::new("ffprobe")
+    let output = media_command(&FFPROBE_COMMAND)
         .args([
             "-v",
             "error",
@@ -186,24 +537,77 @@ fn parse_grid(json: &[u8]) -> Result<TileGrid, MediaError> {
     let subcomponents = component["subcomponents"]
         .as_array()
         .ok_or_else(|| native_error("tile-grid component has no tiles"))?;
+    let stream_dimensions = root["streams"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter_map(|stream| {
+            Some((
+                stream["index"].as_u64()?,
+                (
+                    stream["width"].as_u64()?.try_into().ok()?,
+                    stream["height"].as_u64()?.try_into().ok()?,
+                ),
+            ))
+        })
+        .collect::<HashMap<_, _>>();
     let tiles = subcomponents
         .iter()
         .map(|tile| {
+            let stream_index = json_u64(tile, "stream_index")?;
+            let (width, height) =
+                stream_dimensions
+                    .get(&stream_index)
+                    .copied()
+                    .ok_or_else(|| {
+                        native_error(format!(
+                            "ffprobe omitted dimensions for tile stream {stream_index}"
+                        ))
+                    })?;
             Ok(Tile {
-                stream_index: json_u64(tile, "stream_index")?,
+                stream_index,
                 x: json_u64(tile, "tile_horizontal_offset")?,
                 y: json_u64(tile, "tile_vertical_offset")?,
+                width,
+                height,
             })
         })
         .collect::<Result<Vec<_>, MediaError>>()?;
-    let rotation = groups
+    let tile_indices = tiles
         .iter()
-        .flat_map(|group| group["streams"].as_array().into_iter().flatten())
-        .chain(root["streams"].as_array().into_iter().flatten())
+        .map(|tile| tile.stream_index)
+        .collect::<std::collections::HashSet<_>>();
+    let previews = root["streams"]
+        .as_array()
+        .into_iter()
+        .flatten()
         .filter(|stream| stream["codec_type"].as_str() == Some("video"))
-        .filter(|stream| stream["disposition"]["dependent"].as_u64() == Some(0))
-        .flat_map(|stream| stream["side_data_list"].as_array().into_iter().flatten())
-        .find_map(|side_data| side_data["rotation"].as_i64())
+        .filter_map(|stream| {
+            let index = stream["index"].as_u64()?;
+            let width = stream["width"].as_u64()?.try_into().ok()?;
+            let height = stream["height"].as_u64()?.try_into().ok()?;
+            (!tile_indices.contains(&index)).then_some(PreviewStream {
+                index,
+                width,
+                height,
+            })
+        })
+        .collect();
+    // The display transform belongs to the primary Tile Grid component. An
+    // auxiliary preview often repeats it, but that is not guaranteed and some
+    // cameras give the preview a different transform. Prefer the component so
+    // full-resolution tiles cannot inherit an unrelated preview orientation.
+    let rotation = rotation_from_side_data(component)
+        .or_else(|| rotation_from_side_data(group))
+        .or_else(|| {
+            groups
+                .iter()
+                .flat_map(|group| group["streams"].as_array().into_iter().flatten())
+                .chain(root["streams"].as_array().into_iter().flatten())
+                .filter(|stream| stream["codec_type"].as_str() == Some("video"))
+                .filter(|stream| stream["disposition"]["dependent"].as_u64() == Some(0))
+                .find_map(rotation_from_side_data)
+        })
         .unwrap_or(0)
         .try_into()
         .map_err(|_| native_error("ffprobe display rotation exceeds i32"))?;
@@ -215,7 +619,15 @@ fn parse_grid(json: &[u8]) -> Result<TileGrid, MediaError> {
         height,
         rotation,
         tiles,
+        previews,
     })
+}
+
+fn rotation_from_side_data(value: &Value) -> Option<i64> {
+    value["side_data_list"]
+        .as_array()?
+        .iter()
+        .find_map(|side_data| side_data["rotation"].as_i64())
 }
 
 fn filter_for_grid(
@@ -243,8 +655,11 @@ fn filter_for_grid(
         display_size
     } else if grid.width == display_size.height && grid.height == display_size.width {
         match grid.rotation {
-            -90 | 270 => filter.push_str(",transpose=cclock"),
-            90 | -270 => filter.push_str(",transpose=clock"),
+            // ffprobe reports display-matrix rotation using the opposite sign
+            // from FFmpeg's transpose filter direction. A reported -90 degree
+            // transform therefore needs a clockwise pixel rotation.
+            -90 | 270 => filter.push_str(",transpose=clock"),
+            90 | -270 => filter.push_str(",transpose=cclock"),
             rotation => {
                 return Err(native_error(format!(
                     "tile-grid requires a quarter turn but display rotation is {rotation}"
@@ -260,18 +675,6 @@ fn filter_for_grid(
     };
     filter.push_str(",format=rgba[out]");
     Ok((filter, output_size.width, output_size.height))
-}
-
-fn rgba_buffer_len(width: u32, height: u32) -> Result<usize, MediaError> {
-    usize::try_from(width)
-        .ok()
-        .and_then(|width| {
-            usize::try_from(height)
-                .ok()
-                .and_then(|height| width.checked_mul(height))
-        })
-        .and_then(|pixels| pixels.checked_mul(4))
-        .ok_or_else(|| native_error("decoded RGBA buffer size overflow"))
 }
 
 fn json_u32(value: &Value, key: &str) -> Result<u32, MediaError> {
@@ -303,6 +706,10 @@ mod tests {
         "components": [{
           "width": 7008,
           "height": 4672,
+          "side_data_list": [{
+            "side_data_type": "Display Matrix",
+            "rotation": -90
+          }],
           "subcomponents": [
             {"stream_index": 0, "tile_horizontal_offset": 0, "tile_vertical_offset": 0},
             {"stream_index": 1, "tile_horizontal_offset": 3520, "tile_vertical_offset": 0}
@@ -310,9 +717,23 @@ mod tests {
         }]
       }],
       "streams": [{
+        "index": 0,
         "codec_type": "video",
+        "width": 3520,
+        "height": 1600,
+        "disposition": {"dependent": 1}
+      }, {
+        "index": 1,
+        "codec_type": "video",
+        "width": 3520,
+        "height": 1600
+      }, {
+        "index": 6,
+        "codec_type": "video",
+        "width": 1664,
+        "height": 1088,
         "disposition": {"dependent": 0},
-        "side_data_list": [{"rotation": -90}]
+        "side_data_list": [{"rotation": 90}]
       }]
     }"#;
 
@@ -320,6 +741,8 @@ mod tests {
     fn parses_grid_and_builds_dynamic_rotated_filter() {
         let grid = parse_grid(GRID_JSON).unwrap();
         assert_eq!(grid.tiles.len(), 2);
+        assert_eq!(grid.previews.len(), 1);
+        assert_eq!(grid.rotation, -90);
         let (filter, width, height) = filter_for_grid(
             &grid,
             ImageDimensions {
@@ -331,12 +754,26 @@ mod tests {
         assert_eq!((width, height), (4672, 7008));
         assert_eq!(
             filter,
-            "[0:0][0:1]xstack=inputs=2:layout=0_0|3520_0,crop=7008:4672,transpose=cclock,format=rgba[out]"
+            "[0:0][0:1]xstack=inputs=2:layout=0_0|3520_0,crop=7008:4672,transpose=clock,format=rgba[out]"
         );
     }
 
     #[test]
-    fn uses_clockwise_rotation_when_requested_by_display_matrix() {
+    fn falls_back_to_independent_preview_rotation_when_component_has_none() {
+        let mut root: Value = serde_json::from_slice(GRID_JSON).unwrap();
+        root["stream_groups"][0]["components"][0]
+            .as_object_mut()
+            .unwrap()
+            .remove("side_data_list");
+        let json = serde_json::to_vec(&root).unwrap();
+
+        let grid = parse_grid(&json).unwrap();
+
+        assert_eq!(grid.rotation, 90);
+    }
+
+    #[test]
+    fn uses_counterclockwise_pixels_for_positive_display_matrix_rotation() {
         let mut grid = parse_grid(GRID_JSON).unwrap();
         grid.rotation = 90;
         let (filter, _, _) = filter_for_grid(
@@ -347,7 +784,7 @@ mod tests {
             },
         )
         .unwrap();
-        assert!(filter.contains("transpose=clock"));
+        assert!(filter.contains("transpose=cclock"));
     }
 
     #[test]
@@ -363,9 +800,23 @@ mod tests {
                 width: 4672,
                 height: 7008,
             },
+            false,
         )
         .unwrap();
         assert_eq!((image.width(), image.height()), (4672, 7008));
+    }
+
+    #[test]
+    fn decodes_fast_auxiliary_preview_when_ffmpeg_is_available() {
+        if capability().is_err() {
+            return;
+        }
+        let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/DSC00449.HIF");
+        if !path.is_file() {
+            return;
+        }
+        let image = decode_scaled_preview(&path, 512).unwrap();
+        assert_eq!(image.width().max(image.height()), 512);
     }
 
     #[test]
@@ -382,6 +833,7 @@ mod tests {
                 width: 4672,
                 height: 7008,
             },
+            false,
         )
         .unwrap()
         .thumbnail_exact(64, 96)

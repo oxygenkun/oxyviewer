@@ -9,7 +9,7 @@
  *   node scripts/perf-e2e.mjs [--scenario <name>]... [--runs N]
  *                             [--update-baseline] [--verbose] [--app <path>]
  *
- * Requires a release build: pnpm build && cargo build --release -p oxyviewer
+ * Requires an embedded release build: pnpm tauri build --no-bundle
  */
 import { execFileSync, spawn } from "node:child_process";
 import fs from "node:fs";
@@ -322,7 +322,7 @@ async function main() {
   const appBinary = args.app ?? defaultAppBinary();
   if (!fs.existsSync(appBinary)) {
     console.error(`Release binary not found: ${appBinary}`);
-    console.error("Build it first: pnpm build && cargo build --release -p oxyviewer");
+    console.error("Build it first: pnpm tauri build --no-bundle");
     process.exit(2);
   }
   fs.mkdirSync(REPORTS_DIR, { recursive: true });

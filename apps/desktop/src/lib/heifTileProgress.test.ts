@@ -23,4 +23,11 @@ describe("HEIF tile progress", () => {
       allSettled: true,
     });
   });
+
+  it("uses the received count when a backend finishes with a fallback layout", () => {
+    const progress = new HeifTileProgressTracker(35);
+    progress.receive({ x: 0, y: 0 });
+    progress.settle({ x: 0, y: 0 }, true);
+    expect(progress.finishReceiving()).toMatchObject({ expected: 1, allSettled: true });
+  });
 });

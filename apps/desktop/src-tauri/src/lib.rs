@@ -299,15 +299,21 @@ pub fn run() {
                 None
             };
             match tile {
-                Some(tile) => http::Response::builder()
-                    .status(http::StatusCode::OK)
-                    .header(http::header::CONTENT_TYPE, "application/octet-stream")
-                    .header(http::header::ACCESS_CONTROL_ALLOW_ORIGIN, "*")
-                    .header("x-oxy-width", tile.width)
-                    .header("x-oxy-height", tile.height)
-                    .header("x-oxy-stride", tile.stride)
-                    .body(tile.rgba.to_vec())
-                    .expect("valid tile protocol response"),
+                Some(tile) => {
+                    let (content_type, body) = match tile.encoded_jpeg {
+                        Some(jpeg) => ("image/jpeg", jpeg.to_vec()),
+                        None => ("application/octet-stream", tile.rgba.to_vec()),
+                    };
+                    http::Response::builder()
+                        .status(http::StatusCode::OK)
+                        .header(http::header::CONTENT_TYPE, content_type)
+                        .header(http::header::ACCESS_CONTROL_ALLOW_ORIGIN, "*")
+                        .header("x-oxy-width", tile.width)
+                        .header("x-oxy-height", tile.height)
+                        .header("x-oxy-stride", tile.stride)
+                        .body(body)
+                        .expect("valid tile protocol response")
+                }
                 None => http::Response::builder()
                     .status(http::StatusCode::NOT_FOUND)
                     .header(http::header::ACCESS_CONTROL_ALLOW_ORIGIN, "*")

@@ -61,9 +61,13 @@ export function HeifTileCanvas({
     let firstTileFetched = false;
     let firstPaintFrame: number | undefined;
     let completionPaintFrame: number | undefined;
+    let startFrame: number | undefined;
     let frontendFetchWorkMs = 0;
     let frontendDrawWorkMs = 0;
     let slowestTileMs = 0;
+    const tileQueue: HeifTileReady[] = [];
+    let activeTileFetches = 0;
+    const maxConcurrentTileFetches = 4;
 
     const detail = track
       ? () => ({
@@ -103,8 +107,11 @@ export function HeifTileCanvas({
       try {
         const response = await fetch(heifTileUrl(tile.url));
         if (!response.ok) throw new Error(`tile fetch returned ${response.status}`);
+        const encoded = response.headers.get("content-type") === "image/jpeg";
+        const payload = encoded
+          ? await response.blob()
+          : new Uint8ClampedArray(await response.arrayBuffer());
         if (disposed) return;
-        const pixels = new Uint8ClampedArray(await response.arrayBuffer());
         const fetchedAt = track ? performance.now() : 0;
         if (track) frontendFetchWorkMs += fetchedAt - fetchStarted;
         if (track && !firstTileFetched) {
@@ -112,18 +119,24 @@ export function HeifTileCanvas({
           debug?.mark("first-tile-fetched", {
             x: tile.x,
             y: tile.y,
-            bytes: pixels.byteLength,
+            bytes: payload instanceof Blob ? payload.size : payload.byteLength,
           });
         }
         const context = canvasRef.current?.getContext("2d");
         if (!context) throw new Error("HEIF canvas 2D context is unavailable");
         if (disposed) return;
         const drawStarted = track ? performance.now() : 0;
-        context.putImageData(
-          new ImageData(pixels, tile.width, tile.height),
-          tile.x,
-          tile.y,
-        );
+        if (payload instanceof Blob) {
+          const bitmap = await createImageBitmap(payload);
+          context.drawImage(bitmap, tile.x, tile.y, tile.width, tile.height);
+          bitmap.close();
+        } else {
+          context.putImageData(
+            new ImageData(payload, tile.width, tile.height),
+            tile.x,
+            tile.y,
+          );
+        }
         const drawnAt = track ? performance.now() : 0;
         if (track) {
           frontendDrawWorkMs += drawnAt - drawStarted;
@@ -153,7 +166,18 @@ export function HeifTileCanvas({
           });
         }
       } finally {
+        activeTileFetches -= 1;
+        pumpTileQueue();
         maybeComplete();
+      }
+    };
+
+    const pumpTileQueue = () => {
+      while (!disposed && activeTileFetches < maxConcurrentTileFetches) {
+        const tile = tileQueue.shift();
+        if (!tile) return;
+        activeTileFetches += 1;
+        void drawTile(tile);
       }
     };
 
@@ -167,7 +191,8 @@ export function HeifTileCanvas({
           progress: received.snapshot,
         });
       }
-      void drawTile(tile);
+      tileQueue.push(tile);
+      pumpTileQueue();
     };
 
     const handleStatus = (event: HeifStatusEvent) => {
@@ -186,6 +211,7 @@ export function HeifTileCanvas({
         if (track) {
           backendComplete = true;
           backendDiagnostics = event.diagnostics;
+          progress?.finishReceiving();
           maybeComplete();
         }
       } else if (event.status === "failed") {
@@ -226,7 +252,8 @@ export function HeifTileCanvas({
       sessionId = session.id;
       progress = track
         ? new HeifTileProgressTracker(
-            expectedHeifTiles(session.width, session.height, session.tileSize),
+            session.expectedTiles
+              ?? expectedHeifTiles(session.width, session.height, session.tileSize),
           )
         : undefined;
       const canvas = canvasRef.current;
@@ -255,13 +282,22 @@ export function HeifTileCanvas({
         .filter((event) => event.sessionId === session.id)
         .forEach(handleStatus);
     };
-    start().catch((error) => {
-      onStatus("failed");
-      if (__OXY_DEBUG__) debug?.fail(error, detail?.());
+    // Defer backend creation by one frame. React StrictMode intentionally
+    // mounts, cleans up, and remounts effects; starting immediately lets the
+    // throwaway mount create an orphan decode before it has a session id to
+    // cancel. The cleanup below cancels that scheduled start, so only the
+    // durable mount reaches the backend.
+    startFrame = requestAnimationFrame(() => {
+      startFrame = undefined;
+      void start().catch((error) => {
+        onStatus("failed");
+        if (__OXY_DEBUG__) debug?.fail(error, detail?.());
+      });
     });
 
     return () => {
       disposed = true;
+      if (startFrame !== undefined) cancelAnimationFrame(startFrame);
       if (firstPaintFrame !== undefined) cancelAnimationFrame(firstPaintFrame);
       if (completionPaintFrame !== undefined) cancelAnimationFrame(completionPaintFrame);
       unlisten.forEach((stop) => stop());

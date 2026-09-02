@@ -487,11 +487,22 @@ fn decode_heif_preview(
             Err(error) => fallback_reason = Some(error.to_string()),
         }
     }
+    #[cfg(target_os = "windows")]
+    let mut fallback_reason = None;
+    #[cfg(target_os = "windows")]
+    if crate::ffmpeg_heif::can_decode(path).is_ok() {
+        match crate::ffmpeg_heif::decode_scaled_preview(path, max_size) {
+            Ok(image) => return Ok((image, "FFmpeg auxiliary preview", None)),
+            Err(error) => fallback_reason = Some(error.to_string()),
+        }
+    }
+    #[cfg(not(any(target_os = "macos", target_os = "windows")))]
+    let fallback_reason = None;
     let image = heif::decode_scaled(path, max_size)?;
     #[cfg(target_os = "macos")]
     return Ok((image, "libheif scaled preview", fallback_reason));
     #[cfg(not(target_os = "macos"))]
-    Ok((image, "libheif scaled preview", None))
+    Ok((image, "libheif scaled preview", fallback_reason))
 }
 
 fn duration_ms(started: Instant) -> u64 {

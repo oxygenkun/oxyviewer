@@ -27,7 +27,12 @@ export class HeifTileProgressTracker {
   private drawn = 0;
   private failed = 0;
 
-  constructor(readonly expected: number) {}
+  constructor(public expected: number) {}
+
+  finishReceiving() {
+    this.expected = this.received.size;
+    return this.snapshot();
+  }
 
   receive(tile: TileIdentity) {
     const before = this.received.size;

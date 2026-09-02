@@ -14,6 +14,9 @@ use std::{
     time::Instant,
 };
 
+#[cfg(target_os = "windows")]
+pub const DEFAULT_TILE_SIZE: u32 = 1_024;
+#[cfg(not(target_os = "windows"))]
 pub const DEFAULT_TILE_SIZE: u32 = 512;
 pub type TileSink = Box<dyn FnMut(HeifTileReady) + Send>;
 
@@ -32,6 +35,7 @@ pub struct HeifTile {
     pub height: u32,
     pub stride: u32,
     pub rgba: Arc<[u8]>,
+    pub encoded_jpeg: Option<Arc<[u8]>>,
 }
 
 #[derive(Default)]
@@ -88,7 +92,10 @@ impl HeifDecodeService {
         });
         let platform = platform_capability();
         #[cfg(target_os = "windows")]
-        let use_platform = hardware_acceleration
+        let use_ffmpeg = crate::ffmpeg_heif::can_decode(path).is_ok();
+        #[cfg(target_os = "windows")]
+        let use_platform = !use_ffmpeg
+            && hardware_acceleration
             && platform.available
             && crate::windows_wic::can_decode(path).is_ok();
         #[cfg(target_os = "macos")]
@@ -97,6 +104,7 @@ impl HeifDecodeService {
             && crate::apple_image_io::can_decode(path).is_ok();
         #[cfg(not(any(target_os = "windows", target_os = "macos")))]
         let use_platform = hardware_acceleration && platform.available;
+        #[cfg(not(target_os = "windows"))]
         let use_ffmpeg = !use_platform && crate::ffmpeg_heif::can_decode(path).is_ok();
         let fallback = hardware_acceleration && !use_platform;
         let backend = if use_platform {
@@ -106,12 +114,24 @@ impl HeifDecodeService {
         } else {
             HeifBackendKind::LibheifSoftware
         };
+        #[cfg(target_os = "windows")]
+        let expected_tiles = if backend == HeifBackendKind::FfmpegSoftware {
+            crate::ffmpeg_heif::tile_count(path).unwrap_or_else(|_| {
+                tile_coordinates(size.width, size.height, DEFAULT_TILE_SIZE).len()
+            })
+        } else {
+            tile_coordinates(size.width, size.height, DEFAULT_TILE_SIZE).len()
+        } as u32;
+        #[cfg(not(target_os = "windows"))]
+        let expected_tiles =
+            tile_coordinates(size.width, size.height, DEFAULT_TILE_SIZE).len() as u32;
         Ok(HeifDecodeSession {
             id,
             generation,
             width: size.width,
             height: size.height,
             tile_size: DEFAULT_TILE_SIZE,
+            expected_tiles,
             backend,
             acceleration: if use_platform {
                 platform.acceleration
@@ -152,27 +172,88 @@ impl HeifDecodeService {
             return Err(MediaError::Cancelled);
         }
         let decode_started = Instant::now();
+        #[cfg(target_os = "windows")]
+        if session.backend == HeifBackendKind::FfmpegSoftware
+            && let Ok(tiles) = crate::ffmpeg_heif::decode_full_jpeg_tiles(
+                &path,
+                crate::ImageDimensions {
+                    width: session.width,
+                    height: session.height,
+                },
+                display_sharpening,
+            )
+        {
+            let decode_ms = elapsed_ms(decode_started);
+            let tile_started = Instant::now();
+            for tile in tiles {
+                if cancelled.load(Ordering::Acquire) {
+                    return Err(MediaError::Cancelled);
+                }
+                let event = HeifTileReady {
+                    session_id: session.id.clone(),
+                    generation: session.generation,
+                    x: tile.x,
+                    y: tile.y,
+                    width: tile.width,
+                    height: tile.height,
+                    encoding: Some("jpeg".into()),
+                    url: format!(
+                        "oxy-media://localhost/tile/{}/{}/{}/{}",
+                        session.id, session.generation, tile.x, tile.y
+                    ),
+                };
+                self.state
+                    .lock()
+                    .unwrap_or_else(|error| error.into_inner())
+                    .tiles
+                    .insert(
+                        (session.id.clone(), session.generation, tile.x, tile.y),
+                        HeifTile {
+                            width: tile.width,
+                            height: tile.height,
+                            stride: tile.width * 4,
+                            rgba: Arc::from([]),
+                            encoded_jpeg: Some(Arc::from(tile.jpeg)),
+                        },
+                    );
+                publish(event);
+            }
+            let diagnostics = HeifDiagnostics {
+                backend: HeifBackendKind::FfmpegSoftware,
+                acceleration: AccelerationKind::Software,
+                codec: Some("FFmpeg HEVC tile-grid".into()),
+                queue_wait_ms,
+                decode_ms,
+                tile_publish_ms: elapsed_ms(tile_started),
+                total_ms: elapsed_ms(started),
+                fallback_reason: (session.status == HeifDecodeStatus::CompatibilityFallback)
+                    .then(|| fallback_reason(&path)),
+            };
+            self.state
+                .lock()
+                .unwrap_or_else(|error| error.into_inner())
+                .diagnostics = Some(diagnostics.clone());
+            return Ok(diagnostics);
+        }
         let (image, backend, acceleration, codec, fallback_reason) =
-            decode_for_session(session, &path)?;
+            decode_for_session(session, &path, display_sharpening)?;
         // Native adapters already return RGBA8. Compatibility adapters may
         // return RGB8, so normalize once here instead of asking every tile
         // crop to repeat dynamic-image conversion work.
-        let mut image = image.into_rgba8();
+        let image = image.into_rgba8();
+        #[cfg(target_os = "macos")]
+        let mut image = image;
         let decode_ms = elapsed_ms(decode_started);
         let tile_started = Instant::now();
+        #[cfg(target_os = "macos")]
         let per_tile_sharpening = if display_sharpening {
-            #[cfg(target_os = "macos")]
-            {
-                crate::apple_image_io::sharpen_rgba8(&mut image)?;
-                false
-            }
-            #[cfg(not(target_os = "macos"))]
-            {
-                true
-            }
+            crate::apple_image_io::sharpen_rgba8(&mut image)?;
+            false
         } else {
             false
         };
+        #[cfg(not(target_os = "macos"))]
+        let per_tile_sharpening = display_sharpening && backend != HeifBackendKind::FfmpegSoftware;
         for (x, y) in tile_coordinates(image.width(), image.height(), session.tile_size) {
             if cancelled.load(Ordering::Acquire) {
                 return Err(MediaError::Cancelled);
@@ -185,6 +266,7 @@ impl HeifDecodeService {
                 y,
                 width: tile.width,
                 height: tile.height,
+                encoding: None,
                 url: format!(
                     "oxy-media://localhost/tile/{}/{}/{}/{}",
                     session.id, session.generation, x, y
@@ -316,6 +398,7 @@ fn crop_rgba(
         height,
         stride: width * 4,
         rgba: Arc::from(rgba),
+        encoded_jpeg: None,
     }
 }
 
@@ -425,6 +508,7 @@ fn platform_capability() -> HeifCapabilities {
 fn decode_for_session(
     session: &HeifDecodeSession,
     path: &Path,
+    display_sharpening: bool,
 ) -> Result<
     (
         DynamicImage,
@@ -448,7 +532,12 @@ fn decode_for_session(
                 ));
             }
             Err(error) => {
-                return decode_ffmpeg_or_libheif(path, session, Some(error.to_string()));
+                return decode_ffmpeg_or_libheif(
+                    path,
+                    session,
+                    Some(error.to_string()),
+                    display_sharpening,
+                );
             }
         }
     }
@@ -465,7 +554,12 @@ fn decode_for_session(
                 ));
             }
             Err(error) => {
-                return decode_ffmpeg_or_libheif(path, session, Some(error.to_string()));
+                return decode_ffmpeg_or_libheif(
+                    path,
+                    session,
+                    Some(error.to_string()),
+                    display_sharpening,
+                );
             }
         }
     }
@@ -473,6 +567,7 @@ fn decode_for_session(
         path,
         session,
         (session.status == HeifDecodeStatus::CompatibilityFallback).then(|| fallback_reason(path)),
+        display_sharpening,
     )
 }
 
@@ -480,6 +575,7 @@ fn decode_ffmpeg_or_libheif(
     path: &Path,
     session: &HeifDecodeSession,
     fallback_reason: Option<String>,
+    display_sharpening: bool,
 ) -> Result<
     (
         DynamicImage,
@@ -499,6 +595,7 @@ fn decode_ffmpeg_or_libheif(
                 width: session.width,
                 height: session.height,
             },
+            display_sharpening,
         ) {
             Ok(image) => {
                 return Ok((
@@ -622,10 +719,43 @@ mod tests {
         let service = HeifDecodeService::default();
         let session = service.begin(&fixture, 1, false, false).unwrap();
         assert_eq!(session.backend, HeifBackendKind::FfmpegSoftware);
-        let mut tiles = 0;
-        let diagnostics = service.decode(&session, fixture, |_| tiles += 1).unwrap();
+        let mut events = Vec::new();
+        let diagnostics = service
+            .decode(&session, fixture, |event| events.push(event))
+            .unwrap();
         assert_eq!(diagnostics.backend, HeifBackendKind::FfmpegSoftware);
-        assert!(tiles > 100);
+        assert_eq!(events.len(), session.expected_tiles as usize);
+        let mut covered_pixels = 0_u64;
+        for event in events {
+            assert_eq!(event.encoding.as_deref(), Some("jpeg"));
+            assert!(event.x + event.width <= session.width);
+            assert!(event.y + event.height <= session.height);
+            let tile = service
+                .tile(&session.id, session.generation, event.x, event.y)
+                .unwrap();
+            let decoded = image::load_from_memory(tile.encoded_jpeg.as_deref().unwrap()).unwrap();
+            assert_eq!(decoded.width(), event.width);
+            assert_eq!(decoded.height(), event.height);
+            covered_pixels += u64::from(event.width) * u64::from(event.height);
+        }
+        assert_eq!(
+            covered_pixels,
+            u64::from(session.width) * u64::from(session.height)
+        );
+    }
+
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn prefers_qualified_ffmpeg_tile_grid_over_slower_wic() {
+        if crate::ffmpeg_heif::capability().is_err() {
+            return;
+        }
+        let fixture =
+            Path::new(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/DSC00449.HIF");
+        let service = HeifDecodeService::default();
+        let session = service.begin(&fixture, 1, true, true).unwrap();
+        assert_eq!(session.backend, HeifBackendKind::FfmpegSoftware);
+        assert_eq!(session.acceleration, AccelerationKind::Software);
     }
 
     #[cfg(target_os = "macos")]

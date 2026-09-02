@@ -16,6 +16,44 @@ end-to-end regression harness that enforces these budgets is described in
 
 ## Verification Log
 
+- 2026-09-03: Direct Windows process/GPU-engine sampling of Sony Imaging Edge
+  Viewer while switching among three 7008x4672 Sony HEIF 4:2:2 files found a
+  CPU decode path on the reference workstation. `Viewer.exe` loaded Sony's
+  private `sonyhevd.dll` plus D3D11, but image switches drove about 254-318%
+  process CPU while the only attributable GPU activity was 0.08-0.10% on the
+  3D engine. No Video Decode, Video Processing, or Compute engine activity was
+  recorded. D3D11 is therefore used for presentation on this configuration,
+  not as evidence of HEVC hardware decode. Matching Sony's interaction latency
+  should prioritize independent camera previews, parallel tile decode, cache
+  reuse, and avoiding full-frame RGBA intermediates; GPU decode remains an
+  optional, fixture-qualified backend rather than a requirement.
+- 2026-09-02: Windows HEIF progressive preview now uses a sufficiently large
+  independent camera-rendered stream through FFmpeg before falling back to a
+  full libheif decode. Three cold, packaged-app E2E runs of `DSC00449.HIF`
+  measured 542 ms median to paint the 512 px preview (524 ms minimum), down
+  from a 2.74 second decoder median and effectively matching the recorded
+  537 ms macOS median for the same fixture. With the full-resolution session
+  starting in parallel (and yielding to the preview through the decode gate),
+  a later three-run cold check measured 563 ms median and 597 ms p95. The
+  isolated release preview decoder measured 345 ms median with a warm
+  executable and 451 ms on its first invocation.
+  The 4096 compatibility path and full-resolution tile publication remain
+  slower than macOS and are tracked separately; the interactive first-preview
+  budget is now met on the reference Windows machine.
+- 2026-09-02: Windows full-resolution HEIF no longer uses FFmpeg's slow
+  `xstack` filter. FFmpeg decodes and color-converts the six source tiles in
+  parallel, crops, rotates, and sharpens them independently, and now delivers
+  the six source-grid components as high-quality JPEG tiles. This avoids a
+  131 MB assembled RGBA frame and 35 raw WebView2 transfers. Five isolated
+  release runs of `DSC00449.HIF` measured 643 ms median to the first tile and
+  671 ms for all tiles, down from 2.15 and 2.54 seconds respectively and below
+  the recorded 756 ms macOS all-tile result. The final three-run packaged-app
+  E2E check measured 1098 ms median to first paint and 1146 ms to all tiles
+  (702 ms backend median), down from 1206/2027 ms for the raw-tile path. An
+  earlier three-run set reached 1018/1061 ms, showing some process-start
+  variance. End-to-end is still above the recorded 505/756 ms macOS result,
+  but full-image completion is now about 44% faster than the prior Windows
+  implementation.
 - 2026-09-02: A paired 100% display check opened the byte-identical
   `DSC02948.ARW` fixture in Sony Imaging Edge Viewer and OxyViewer. After
   viewport registration, Sony's sampled crop averaged RGB

@@ -1,7 +1,7 @@
 //! Minimal end-to-end benchmark for HEIF thumbnail, loupe, and full tile display.
 //!
 //! Run from the workspace root:
-//! `cargo run --release -p oxy-media --bin heif_display_bench -- tests/fixtures/DSC00449.HIF 5`
+//! `cargo run --release -p oxy-media --bin heif_display_bench -- tests/fixtures/DSC00449.HIF 5 all`
 
 use oxy_media::{HeifDecodeService, heif_preview};
 use std::{
@@ -20,11 +20,19 @@ fn main() -> Result<(), Box<dyn Error>> {
         .nth(2)
         .and_then(|value| value.parse::<usize>().ok())
         .unwrap_or(3);
+    let mode = env::args().nth(3).unwrap_or_else(|| "all".into());
 
-    println!("file={} runs={runs}", path.display());
-    benchmark_preview(&path, 512, runs)?;
-    benchmark_preview(&path, 4_096, runs)?;
-    benchmark_tiles(&path, runs)?;
+    println!("file={} runs={runs} mode={mode}", path.display());
+    if mode == "all" || mode == "preview" {
+        benchmark_preview(&path, 512, runs)?;
+        benchmark_preview(&path, 4_096, runs)?;
+    }
+    if mode == "all" || mode == "full" {
+        benchmark_tiles(&path, runs)?;
+    }
+    if !matches!(mode.as_str(), "all" | "preview" | "full") {
+        return Err(format!("unknown mode {mode:?}; expected all, preview, or full").into());
+    }
     Ok(())
 }
 

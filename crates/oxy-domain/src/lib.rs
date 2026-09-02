@@ -245,6 +245,7 @@ pub struct HeifDecodeSession {
     pub width: u32,
     pub height: u32,
     pub tile_size: u32,
+    pub expected_tiles: u32,
     pub backend: HeifBackendKind,
     pub acceleration: AccelerationKind,
     pub status: HeifDecodeStatus,
@@ -259,6 +260,8 @@ pub struct HeifTileReady {
     pub y: u32,
     pub width: u32,
     pub height: u32,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub encoding: Option<String>,
     pub url: String,
 }
 
