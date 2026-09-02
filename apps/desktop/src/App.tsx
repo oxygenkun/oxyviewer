@@ -11,6 +11,7 @@ import { Toolbar } from "./components/Toolbar";
 import {
   addLibraryRoot,
   chooseFolder,
+  enrichAssetMetadata,
   isTauri,
   listAssets,
   listLibraryRoots,
@@ -99,10 +100,31 @@ export function App({ perfScenario }: { perfScenario?: PerfScenario }) {
     enabled: Boolean(filtersActive && activeSession && currentPath),
     staleTime: Infinity,
   });
-  const assets = useMemo(
+  const cheapAssets = useMemo(
     () => assetsQuery.data?.pages.flatMap((page) => page.items) ?? [],
     [assetsQuery.data],
   );
+  const metadataQuery = useQuery({
+    queryKey: [
+      "asset-metadata",
+      activeSession?.id,
+      currentPath,
+      cheapAssets.map((asset) => [asset.path, asset.modifiedAtMs]),
+    ],
+    queryFn: () => enrichAssetMetadata(cheapAssets.map((asset) => asset.path)),
+    enabled: cheapAssets.length > 0 && !minimumRating && !colorLabel,
+    staleTime: Infinity,
+  });
+  const assets = useMemo(() => {
+    if (!metadataQuery.data) return cheapAssets;
+    const metadataByPath = new Map(metadataQuery.data.map((asset) => [asset.path, asset]));
+    return cheapAssets.map((asset) => {
+      const enriched = metadataByPath.get(asset.path);
+      return enriched
+        ? { ...asset, rating: enriched.rating, colorLabel: enriched.colorLabel }
+        : asset;
+    });
+  }, [cheapAssets, metadataQuery.data]);
   const preloadCandidates = useMemo(() => {
     const visibleIds = new Set(assets.map((asset) => asset.id));
     return preloadAssetsQuery.data?.pages
@@ -192,12 +214,14 @@ export function App({ perfScenario }: { perfScenario?: PerfScenario }) {
     try {
       await Promise.all([
         queryClient.cancelQueries({ queryKey: ["assets", activeSession.id, currentPath] }),
+        queryClient.cancelQueries({ queryKey: ["asset-metadata", activeSession.id, currentPath] }),
         queryClient.cancelQueries({ queryKey: ["preload-assets", activeSession.id, currentPath] }),
         queryClient.cancelQueries({ queryKey: ["directories", activeSession.id, currentPath] }),
       ]);
       await refreshDirectory(activeSession.id, currentPath);
       await Promise.all([
         queryClient.invalidateQueries({ queryKey: ["assets", activeSession.id, currentPath] }),
+        queryClient.invalidateQueries({ queryKey: ["asset-metadata", activeSession.id, currentPath] }),
         queryClient.invalidateQueries({ queryKey: ["preload-assets", activeSession.id, currentPath] }),
         queryClient.invalidateQueries({ queryKey: ["directories", activeSession.id, currentPath] }),
       ]);

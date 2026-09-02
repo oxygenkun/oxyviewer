@@ -29,6 +29,7 @@ export function Inspector({ asset, selectedCount, selectedPaths, t }: InspectorP
       await Promise.all([
         queryClient.invalidateQueries({ queryKey: ["asset-details"] }),
         queryClient.invalidateQueries({ queryKey: ["assets"] }),
+        queryClient.invalidateQueries({ queryKey: ["asset-metadata"] }),
       ]);
     },
   });
@@ -77,7 +78,9 @@ export function Inspector({ asset, selectedCount, selectedPaths, t }: InspectorP
                   key={label}
                   className={currentColor?.toLowerCase() === label.toLowerCase() ? "is-active" : ""}
                   style={{ "--label-color": `var(--label-${label.toLowerCase()})` } as React.CSSProperties}
-                  onClick={() => patch.mutate({ colorLabel: currentColor === label ? null : label })}
+                  onClick={() => patch.mutate({
+                    colorLabel: currentColor?.toLowerCase() === label.toLowerCase() ? null : label,
+                  })}
                   disabled={patch.isPending || details.isLoading}
                   title={t(label.toLowerCase() as MessageKey)}
                 />

@@ -110,6 +110,24 @@ async fn get_asset_details(
 }
 
 #[tauri::command]
+async fn enrich_asset_metadata(
+    paths: Vec<PathBuf>,
+    state: State<'_, AppState>,
+) -> Result<Vec<AssetSummary>, String> {
+    let files = state.files.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        let mut assets = paths
+            .iter()
+            .map(|path| files.get_asset(path).map_err(|error| error.to_string()))
+            .collect::<Result<Vec<_>, _>>()?;
+        oxy_metadata::enrich_summaries(&mut assets).map_err(|error| error.to_string())?;
+        Ok(assets)
+    })
+    .await
+    .map_err(|error| error.to_string())?
+}
+
+#[tauri::command]
 async fn get_preview(
     path: PathBuf,
     level: RenderLevel,
@@ -354,6 +372,7 @@ pub fn run() {
             list_directories,
             refresh_directory,
             get_asset_details,
+            enrich_asset_metadata,
             get_preview,
             patch_metadata,
             execute_file_operation,

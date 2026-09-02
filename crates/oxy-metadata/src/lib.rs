@@ -138,11 +138,18 @@ fn read_embedded_batch(
         }
         let rows: Vec<Value> = serde_json::from_slice(&output.stdout)
             .map_err(|error| MetadataError::Read(error.to_string()))?;
-        for row in rows {
+        for (index, row) in rows.into_iter().enumerate() {
             let Some(source) = row.get("SourceFile").and_then(Value::as_str) else {
                 continue;
             };
-            result.insert(PathBuf::from(source), metadata_from_json(&row));
+            let metadata = metadata_from_json(&row);
+            result.insert(PathBuf::from(source), metadata.clone());
+            // ExifTool renders Windows paths with forward slashes. Keep the
+            // original input spelling as an alias so Unicode drive paths and
+            // separator normalization cannot make the metadata lookup miss.
+            if let Some(path) = paths.get(index) {
+                result.insert(path.clone(), metadata);
+            }
         }
     }
     Ok(result)
@@ -154,7 +161,7 @@ fn metadata_from_json(row: &Value) -> EditableMetadata {
             .get("Rating")
             .and_then(|value| value.as_u64().or_else(|| value.as_str()?.parse().ok()))
             .and_then(|value| u8::try_from(value).ok()),
-        color_label: string_value(row.get("Label")),
+        color_label: string_value(row.get("Label")).map(normalize_color_label),
         title: string_value(row.get("Title")),
         description: string_value(row.get("Description")),
         creator: string_value(row.get("Creator")),
@@ -167,6 +174,13 @@ fn metadata_from_json(row: &Value) -> EditableMetadata {
             value => string_value(value).into_iter().collect(),
         },
     }
+}
+
+fn normalize_color_label(value: String) -> String {
+    ["Red", "Yellow", "Green", "Blue", "Purple"]
+        .into_iter()
+        .find(|label| label.eq_ignore_ascii_case(&value))
+        .map_or(value, str::to_owned)
 }
 
 fn string_value(value: Option<&Value>) -> Option<String> {
@@ -526,6 +540,18 @@ fn escape_xml(value: &str) -> String {
 mod tests {
     use super::*;
     use tempfile::tempdir;
+
+    #[test]
+    fn parses_and_normalizes_hif_rating_and_color_label() {
+        let metadata = metadata_from_json(&serde_json::json!({
+            "SourceFile": "D:/photos/DSC04979.HIF",
+            "Rating": 1,
+            "Label": "red"
+        }));
+
+        assert_eq!(metadata.rating, Some(1));
+        assert_eq!(metadata.color_label.as_deref(), Some("Red"));
+    }
 
     #[test]
     fn rotates_focus_location_and_exact_frame_size() {

@@ -174,6 +174,11 @@ export async function getAssetDetails(asset: AssetSummary): Promise<AssetDetails
   return invoke<AssetDetails>("get_asset_details", { path: asset.path });
 }
 
+export async function enrichAssetMetadata(paths: string[]): Promise<AssetSummary[]> {
+  if (!isTauri()) return demoAssets.filter((asset) => paths.includes(asset.path));
+  return invoke<AssetSummary[]>("enrich_asset_metadata", { paths });
+}
+
 export async function patchMetadata(paths: string[], patch: MetadataPatch): Promise<string> {
   if (!isTauri()) {
     for (const asset of demoAssets.filter((asset) => paths.includes(asset.path))) {

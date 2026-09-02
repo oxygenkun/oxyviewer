@@ -121,8 +121,8 @@ preview cache 位于 Tauri `app_cache_dir()/previews`。它满足：
 查找 `exiftool`，也可用 `OXY_EXIFTOOL_PATH` 指定；正式发行版仍需捆绑 worker。
 
 `patch_metadata` 在 blocking worker 中处理多选路径，完成后使对应目录摘要缓存失效，并刷新
-详情与列表查询。普通目录打开仍使用廉价分页；只有启用 rating/color 筛选时才批量读取整个
-当前目录的元数据，然后进行过滤和分页。
+详情与列表查询。普通目录打开仍先使用廉价分页，首屏返回后再异步批量补全已加载分页的
+rating/color；只有启用 rating/color 筛选时才批量读取整个当前目录的元数据，然后进行过滤和分页。
 
 ## 8. 文件操作
 
