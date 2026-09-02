@@ -1,21 +1,322 @@
 use fpexif::{ExifParser, data_types::ExifValue};
 use oxy_domain::{AssetKind, EditableMetadata, FocusInfo, FocusRegion};
 use oxy_fs::sidecar_path;
+use serde_json::Value;
 use std::{
+    collections::HashMap,
+    ffi::OsString,
     fs,
     io::Write,
     path::{Path, PathBuf},
+    process::{Command, Output},
 };
 use thiserror::Error;
 
 #[derive(Debug, Error)]
 pub enum MetadataError {
-    #[error("embedded metadata writes require the bundled ExifTool worker")]
+    #[error("ExifTool was not found; install it or set OXY_EXIFTOOL_PATH")]
     EmbeddedWorkerUnavailable,
+    #[error("invalid rating {0}; expected 0 through 5")]
+    InvalidRating(u8),
     #[error("metadata read failed: {0}")]
     Read(String),
     #[error(transparent)]
     Io(#[from] std::io::Error),
+}
+
+/// Reads editable metadata. RAW files use their adjacent XMP sidecar; formats
+/// with embedded XMP are read through ExifTool.
+pub fn read_metadata(path: &Path, kind: AssetKind) -> Result<EditableMetadata, MetadataError> {
+    if kind == AssetKind::Raw {
+        return read_raw_sidecar(path);
+    }
+    let mut values = read_embedded_batch(std::slice::from_ref(&path.to_path_buf()))?;
+    Ok(values.remove(path).unwrap_or_default())
+}
+
+/// Enriches summaries in-place. A single ExifTool process is used per chunk so
+/// metadata filtering does not spawn a worker for every JPEG/HEIF file.
+pub fn enrich_summaries(assets: &mut [oxy_domain::AssetSummary]) -> Result<(), MetadataError> {
+    let embedded = assets
+        .iter()
+        .filter(|asset| asset.kind != AssetKind::Raw)
+        .map(|asset| asset.path.clone())
+        .collect::<Vec<_>>();
+    let embedded_values = read_embedded_batch(&embedded)?;
+    for asset in assets {
+        let metadata = if asset.kind == AssetKind::Raw {
+            read_raw_sidecar(&asset.path)?
+        } else {
+            embedded_values
+                .get(&asset.path)
+                .cloned()
+                .unwrap_or_default()
+        };
+        asset.rating = metadata.rating;
+        asset.color_label = metadata.color_label;
+    }
+    Ok(())
+}
+
+pub fn patch_metadata(
+    path: &Path,
+    kind: AssetKind,
+    patch: &oxy_domain::MetadataPatch,
+) -> Result<PathBuf, MetadataError> {
+    if let Some(Some(rating)) = patch.rating
+        && rating > 5
+    {
+        return Err(MetadataError::InvalidRating(rating));
+    }
+    match kind {
+        AssetKind::Raw => patch_raw_sidecar(path, patch),
+        _ => patch_embedded(path, patch),
+    }
+}
+
+fn read_raw_sidecar(raw_path: &Path) -> Result<EditableMetadata, MetadataError> {
+    let path = sidecar_path(raw_path);
+    if !path.is_file() {
+        return Ok(EditableMetadata::default());
+    }
+    let xml = fs::read_to_string(path)?;
+    Ok(EditableMetadata {
+        rating: xmp_value(&xml, "Rating").and_then(|value| value.parse().ok()),
+        color_label: xmp_value(&xml, "Label").filter(|value| !value.is_empty()),
+        ..EditableMetadata::default()
+    })
+}
+
+fn xmp_value(xml: &str, name: &str) -> Option<String> {
+    let attribute = format!("xmp:{name}=\"");
+    if let Some(start) = xml.find(&attribute) {
+        let value = &xml[start + attribute.len()..];
+        return value.find('"').map(|end| unescape_xml(&value[..end]));
+    }
+    let open = format!("<xmp:{name}>");
+    let close = format!("</xmp:{name}>");
+    let start = xml.find(&open)? + open.len();
+    let end = xml[start..].find(&close)? + start;
+    Some(unescape_xml(xml[start..end].trim()))
+}
+
+fn unescape_xml(value: &str) -> String {
+    value
+        .replace("&quot;", "\"")
+        .replace("&apos;", "'")
+        .replace("&lt;", "<")
+        .replace("&gt;", ">")
+        .replace("&amp;", "&")
+}
+
+fn read_embedded_batch(
+    paths: &[PathBuf],
+) -> Result<HashMap<PathBuf, EditableMetadata>, MetadataError> {
+    let mut result = HashMap::new();
+    for paths in paths.chunks(64) {
+        if paths.is_empty() {
+            continue;
+        }
+        let mut command = exiftool_command();
+        command.args([
+            "-json",
+            "-n",
+            "-XMP:Rating",
+            "-XMP:Label",
+            "-XMP:Title",
+            "-XMP:Description",
+            "-XMP:Creator",
+            "-XMP:Copyright",
+            "-XMP:Subject",
+        ]);
+        command.args(paths);
+        let output = exiftool_output(&mut command)?;
+        if !output.status.success() {
+            return Err(MetadataError::Read(
+                String::from_utf8_lossy(&output.stderr).trim().to_owned(),
+            ));
+        }
+        let rows: Vec<Value> = serde_json::from_slice(&output.stdout)
+            .map_err(|error| MetadataError::Read(error.to_string()))?;
+        for row in rows {
+            let Some(source) = row.get("SourceFile").and_then(Value::as_str) else {
+                continue;
+            };
+            result.insert(PathBuf::from(source), metadata_from_json(&row));
+        }
+    }
+    Ok(result)
+}
+
+fn metadata_from_json(row: &Value) -> EditableMetadata {
+    EditableMetadata {
+        rating: row
+            .get("Rating")
+            .and_then(|value| value.as_u64().or_else(|| value.as_str()?.parse().ok()))
+            .and_then(|value| u8::try_from(value).ok()),
+        color_label: string_value(row.get("Label")),
+        title: string_value(row.get("Title")),
+        description: string_value(row.get("Description")),
+        creator: string_value(row.get("Creator")),
+        copyright: string_value(row.get("Copyright")),
+        keywords: match row.get("Subject") {
+            Some(Value::Array(values)) => values
+                .iter()
+                .filter_map(|value| string_value(Some(value)))
+                .collect(),
+            value => string_value(value).into_iter().collect(),
+        },
+    }
+}
+
+fn string_value(value: Option<&Value>) -> Option<String> {
+    match value? {
+        Value::String(value) if !value.is_empty() => Some(value.clone()),
+        Value::Array(values) => values.first().and_then(|value| string_value(Some(value))),
+        _ => None,
+    }
+}
+
+fn patch_embedded(
+    path: &Path,
+    patch: &oxy_domain::MetadataPatch,
+) -> Result<PathBuf, MetadataError> {
+    let mut command = exiftool_command();
+    command.args(["-overwrite_original", "-P"]);
+    add_patch_args(&mut command, patch);
+    command.arg(path);
+    let output = exiftool_output(&mut command)?;
+    if !output.status.success() {
+        return Err(MetadataError::Read(
+            String::from_utf8_lossy(&output.stderr).trim().to_owned(),
+        ));
+    }
+    Ok(path.to_path_buf())
+}
+
+fn add_patch_args(command: &mut Command, patch: &oxy_domain::MetadataPatch) {
+    if let Some(value) = patch.rating {
+        command.arg(format!(
+            "-XMP:Rating={}",
+            value.map_or_else(String::new, |value| value.to_string())
+        ));
+    }
+    if let Some(value) = &patch.color_label {
+        command.arg(format!(
+            "-XMP:Label={}",
+            value.as_deref().unwrap_or_default()
+        ));
+    }
+}
+
+fn exiftool_command() -> Command {
+    let executable =
+        std::env::var_os("OXY_EXIFTOOL_PATH").unwrap_or_else(|| OsString::from("exiftool"));
+    let mut command = Command::new(executable);
+    command.env("LC_ALL", "C").env("LANG", "C");
+    command
+}
+
+fn exiftool_output(command: &mut Command) -> Result<Output, MetadataError> {
+    command.output().map_err(|error| {
+        if error.kind() == std::io::ErrorKind::NotFound {
+            MetadataError::EmbeddedWorkerUnavailable
+        } else {
+            MetadataError::Io(error)
+        }
+    })
+}
+
+fn patch_raw_sidecar(
+    raw_path: &Path,
+    patch: &oxy_domain::MetadataPatch,
+) -> Result<PathBuf, MetadataError> {
+    let destination = sidecar_path(raw_path);
+    let mut xml = if destination.is_file() {
+        fs::read_to_string(&destination)?
+    } else {
+        serialize_xmp(&EditableMetadata::default())
+    };
+    if let Some(value) = patch.rating {
+        xml = set_xmp_attribute(
+            &xml,
+            "Rating",
+            value.map(|value| value.to_string()).as_deref(),
+        )?;
+    }
+    if let Some(value) = &patch.color_label {
+        xml = set_xmp_attribute(&xml, "Label", value.as_deref())?;
+    }
+    let mut file = fs::OpenOptions::new()
+        .create(true)
+        .truncate(true)
+        .write(true)
+        .open(&destination)?;
+    file.write_all(xml.as_bytes())?;
+    file.sync_all()?;
+    Ok(destination)
+}
+
+fn set_xmp_attribute(xml: &str, name: &str, value: Option<&str>) -> Result<String, MetadataError> {
+    let start = xml
+        .find("<rdf:Description")
+        .ok_or_else(|| MetadataError::Read("XMP has no rdf:Description element".into()))?;
+    let end = xml[start..]
+        .find('>')
+        .map(|offset| start + offset)
+        .ok_or_else(|| MetadataError::Read("XMP rdf:Description is not terminated".into()))?;
+    let mut opening = xml[start..end].to_owned();
+    let needle = format!(" xmp:{name}=\"");
+    if let Some(attribute_start) = opening.find(&needle) {
+        let value_start = attribute_start + needle.len();
+        let value_end = opening[value_start..]
+            .find('"')
+            .map(|offset| value_start + offset)
+            .ok_or_else(|| MetadataError::Read(format!("invalid xmp:{name} attribute")))?;
+        opening.replace_range(attribute_start..=value_end, "");
+        if let Some(value) = value {
+            insert_description_attribute(&mut opening, name, value);
+        }
+        return Ok(format!("{}{}{}", &xml[..start], opening, &xml[end..]));
+    }
+
+    let element_open = format!("<xmp:{name}>");
+    let element_close = format!("</xmp:{name}>");
+    if let Some(element_start) = xml.find(&element_open)
+        && let Some(relative_end) = xml[element_start + element_open.len()..].find(&element_close)
+    {
+        let content_start = element_start + element_open.len();
+        let element_end = content_start + relative_end + element_close.len();
+        let replacement = value
+            .map(|value| format!("{element_open}{}{element_close}", escape_xml(value)))
+            .unwrap_or_default();
+        return Ok(format!(
+            "{}{}{}",
+            &xml[..element_start],
+            replacement,
+            &xml[element_end..]
+        ));
+    }
+
+    if let Some(value) = value {
+        insert_description_attribute(&mut opening, name, value);
+    }
+    Ok(format!("{}{}{}", &xml[..start], opening, &xml[end..]))
+}
+
+fn insert_description_attribute(opening: &mut String, name: &str, value: &str) {
+    let self_closing_insertion = opening
+        .trim_end()
+        .strip_suffix('/')
+        .map(|without_slash| without_slash.len());
+    let insertion = self_closing_insertion.unwrap_or(opening.len());
+    let trailing_space = if self_closing_insertion.is_some() {
+        " "
+    } else {
+        ""
+    };
+    let attribute = format!(" xmp:{name}=\"{}\"{trailing_space}", escape_xml(value));
+    opening.insert_str(insertion, &attribute);
 }
 
 /// Reads Sony's shooting focus location from any container supported by
@@ -267,5 +568,75 @@ mod tests {
         assert!(xml.contains("xmp:Rating=\"4\""));
         assert!(xml.contains("Light &amp; shadow"));
         assert!(xml.contains("<rdf:li>travel</rdf:li>"));
+    }
+
+    #[test]
+    fn patches_and_reads_raw_rating_and_label_without_losing_other_xmp() {
+        let directory = tempdir().unwrap();
+        let raw = directory.path().join("photo.arw");
+        fs::File::create(&raw).unwrap();
+        fs::write(
+            sidecar_path(&raw),
+            r#"<x:xmpmeta xmlns:x="adobe:ns:meta/"><rdf:RDF xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#"><rdf:Description xmlns:xmp="http://ns.adobe.com/xap/1.0/" xmlns:custom="urn:test" xmp:Rating="2" xmp:Label="Red" custom:Keep="yes" /></rdf:RDF></x:xmpmeta>"#,
+        )
+        .unwrap();
+
+        patch_raw_sidecar(
+            &raw,
+            &oxy_domain::MetadataPatch {
+                rating: Some(Some(5)),
+                color_label: Some(Some("Blue & Cyan".into())),
+                ..oxy_domain::MetadataPatch::default()
+            },
+        )
+        .unwrap();
+
+        let metadata = read_raw_sidecar(&raw).unwrap();
+        assert_eq!(metadata.rating, Some(5));
+        assert_eq!(metadata.color_label.as_deref(), Some("Blue & Cyan"));
+        let xml = fs::read_to_string(sidecar_path(&raw)).unwrap();
+        assert!(xml.contains("custom:Keep=\"yes\""));
+        assert!(xml.contains("xmp:Label=\"Blue &amp; Cyan\""));
+        assert!(xml.contains("xmp:Label=\"Blue &amp; Cyan\" />"));
+    }
+
+    #[test]
+    fn clearing_raw_fields_removes_their_attributes() {
+        let directory = tempdir().unwrap();
+        let raw = directory.path().join("photo.nef");
+        fs::File::create(&raw).unwrap();
+        write_raw_sidecar(
+            &raw,
+            &EditableMetadata {
+                rating: Some(3),
+                color_label: Some("Yellow".into()),
+                ..EditableMetadata::default()
+            },
+        )
+        .unwrap();
+
+        patch_raw_sidecar(
+            &raw,
+            &oxy_domain::MetadataPatch {
+                rating: Some(None),
+                color_label: Some(None),
+                ..oxy_domain::MetadataPatch::default()
+            },
+        )
+        .unwrap();
+
+        let metadata = read_raw_sidecar(&raw).unwrap();
+        assert_eq!(metadata.rating, None);
+        assert_eq!(metadata.color_label, None);
+    }
+
+    #[test]
+    fn patches_element_style_raw_xmp_values() {
+        let xml = r#"<rdf:Description xmlns:rdf="urn:rdf" xmlns:xmp="urn:xmp"><xmp:Rating>1</xmp:Rating><xmp:Label>Red</xmp:Label></rdf:Description>"#;
+        let xml = set_xmp_attribute(xml, "Rating", Some("4")).unwrap();
+        let xml = set_xmp_attribute(&xml, "Label", None).unwrap();
+
+        assert!(xml.contains("<xmp:Rating>4</xmp:Rating>"));
+        assert!(!xml.contains("xmp:Label"));
     }
 }

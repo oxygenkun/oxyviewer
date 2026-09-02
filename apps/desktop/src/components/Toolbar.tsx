@@ -8,7 +8,9 @@ import {
   PanelLeftOpen,
   PanelRightClose,
   PanelRightOpen,
+  Palette,
   Search,
+  Star,
   SlidersHorizontal,
   X,
 } from "lucide-react";
@@ -32,6 +34,7 @@ export function Toolbar({ total, t }: ToolbarProps) {
   const {
     view, setView, search, setSearch, kind, setKind, sort, setSort, direction,
     toggleDirection, inspectorOpen, toggleInspector, leftPanelOpen, toggleLeftPanel,
+    minimumRating, setMinimumRating, colorLabel, setColorLabel,
   } = useWorkspaceStore();
 
   return (
@@ -83,6 +86,28 @@ export function Toolbar({ total, t }: ToolbarProps) {
           ))}
         </div>
         <div className="filterbar__sort">
+          <Star size={13} />
+          <select
+            value={minimumRating ?? ""}
+            onChange={(event) => setMinimumRating(event.target.value ? Number(event.target.value) : undefined)}
+            aria-label={t("ratingFilter")}
+          >
+            <option value="">{t("anyRating")}</option>
+            {[1, 2, 3, 4, 5].map((rating) => (
+              <option key={rating} value={rating}>{rating}★+</option>
+            ))}
+          </select>
+          <Palette size={13} />
+          <select
+            value={colorLabel ?? ""}
+            onChange={(event) => setColorLabel(event.target.value || undefined)}
+            aria-label={t("colorFilter")}
+          >
+            <option value="">{t("anyColor")}</option>
+            {["Red", "Yellow", "Green", "Blue", "Purple"].map((label) => (
+              <option key={label} value={label}>{t(label.toLowerCase() as MessageKey)}</option>
+            ))}
+          </select>
           <SlidersHorizontal size={14} />
           <select value={sort} onChange={(event) => setSort(event.target.value as AssetSort)}>
             <option value="name">{t("sortName")}</option>

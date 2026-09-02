@@ -79,6 +79,18 @@ impl FsCatalog {
         Ok(page_assets(&assets, query, cursor.unwrap_or(0)))
     }
 
+    /// Returns the cheap, non-recursive summaries before paging. Metadata-aware
+    /// callers use this only when a metadata filter explicitly requires a full
+    /// directory pass.
+    pub fn list_asset_candidates(
+        &self,
+        session_id: &str,
+        directory: Option<&Path>,
+    ) -> Result<Vec<AssetSummary>, FsError> {
+        let directory = self.resolve_session_directory(session_id, directory)?;
+        Ok(self.cached_assets(&directory)?.as_ref().clone())
+    }
+
     pub fn list_directories(
         &self,
         session_id: &str,
@@ -98,6 +110,11 @@ impl FsCatalog {
         self.asset_cache.write().remove(&directory);
         self.directory_cache.write().remove(&directory);
         Ok(())
+    }
+
+    pub fn invalidate_directory(&self, directory: &Path) {
+        self.asset_cache.write().remove(directory);
+        self.directory_cache.write().remove(directory);
     }
 
     pub fn get_asset(&self, path: impl AsRef<Path>) -> Result<AssetSummary, FsError> {
@@ -221,7 +238,11 @@ fn scan_assets(root: &Path) -> Result<Vec<AssetSummary>, FsError> {
     Ok(assets)
 }
 
-fn page_assets(assets: &[AssetSummary], query: &AssetQuery, offset: usize) -> Page<AssetSummary> {
+pub fn page_assets(
+    assets: &[AssetSummary],
+    query: &AssetQuery,
+    offset: usize,
+) -> Page<AssetSummary> {
     let search = query.search.as_deref().map(str::to_lowercase);
     let mut items = Vec::new();
     for summary in assets {
@@ -232,6 +253,20 @@ fn page_assets(assets: &[AssetSummary], query: &AssetQuery, offset: usize) -> Pa
             .as_ref()
             .is_some_and(|needle| !summary.name.to_lowercase().contains(needle))
         {
+            continue;
+        }
+        if query
+            .minimum_rating
+            .is_some_and(|minimum| summary.rating.unwrap_or_default() < minimum)
+        {
+            continue;
+        }
+        if query.color_label.as_ref().is_some_and(|label| {
+            summary
+                .color_label
+                .as_deref()
+                .is_none_or(|value| !value.eq_ignore_ascii_case(label))
+        }) {
             continue;
         }
         items.push(summary.clone());
@@ -306,6 +341,8 @@ fn summary_for_path(path: &Path) -> Result<Option<AssetSummary>, FsError> {
         size_bytes: metadata.len(),
         modified_at_ms: metadata.modified().map(epoch_ms).unwrap_or_default(),
         has_sidecar: sidecar_path(path).is_file(),
+        rating: None,
+        color_label: None,
     }))
 }
 
@@ -563,6 +600,28 @@ mod tests {
         assert_eq!(first.total, 2);
         assert_eq!(first.next_cursor, Some(1));
         assert_eq!(first.items.len(), 1);
+    }
+
+    #[test]
+    fn filters_enriched_summaries_by_minimum_rating_and_color() {
+        let directory = tempdir().unwrap();
+        for name in ["a.jpg", "b.jpg", "c.jpg"] {
+            File::create(directory.path().join(name)).unwrap();
+        }
+        let mut assets = scan_assets(directory.path()).unwrap();
+        assets[0].rating = Some(5);
+        assets[0].color_label = Some("Blue".into());
+        assets[1].rating = Some(4);
+        assets[1].color_label = Some("Red".into());
+        let query = AssetQuery {
+            minimum_rating: Some(4),
+            color_label: Some("blue".into()),
+            ..AssetQuery::default()
+        };
+
+        let page = page_assets(&assets, &query, 0);
+        assert_eq!(page.total, 1);
+        assert_eq!(page.items[0].name, "a.jpg");
     }
 
     #[test]

@@ -27,6 +27,8 @@ export interface AssetSummary {
   sizeBytes: number;
   modifiedAtMs: number;
   hasSidecar: boolean;
+  rating?: number;
+  colorLabel?: string;
 }
 
 export interface EditableMetadata {
@@ -37,6 +39,11 @@ export interface EditableMetadata {
   creator?: string;
   copyright?: string;
   keywords: string[];
+}
+
+export interface MetadataPatch {
+  rating?: number | null;
+  colorLabel?: string | null;
 }
 
 export interface FocusRegion {
@@ -62,7 +69,7 @@ export interface AssetDetails {
 }
 
 export type PreviewMode = "thumbnail" | "loupePreview" | "fullDetail";
-export type PreviewPriority = "nearby" | "visible" | "loupe";
+export type PreviewPriority = "preload" | "nearby" | "visible" | "loupe";
 export type PreviewKind = "embedded" | "developed" | "decoded" | "system" | "original";
 export type PreviewStage = "thumb512" | "loupe4096" | "full";
 
@@ -91,6 +98,8 @@ export interface PreviewResult {
 export interface AssetQuery {
   search?: string;
   kind?: AssetKind;
+  minimumRating?: number;
+  colorLabel?: string;
   sort: AssetSort;
   direction: SortDirection;
   pageSize: number;

@@ -23,6 +23,8 @@ export function priorityWeight(priority: PreviewPriority): number {
       return 1;
     case "nearby":
       return 0;
+    case "preload":
+      return -1;
   }
 }
 

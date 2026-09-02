@@ -43,7 +43,7 @@ function names(requests: Iterable<TrackedPreview>) {
 
 function printState() {
   const active = [...loading.values()];
-  const visible = active.filter((request) => request.priority !== "nearby");
+  const visible = active.filter((request) => request.priority === "visible" || request.priority === "loupe");
   console.debug("[OxyPreview][STATE]", {
     waiting: names(waiting.values()),
     loading: names(active),

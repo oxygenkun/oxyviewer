@@ -10,6 +10,7 @@ import type {
   HeifCapabilities,
   HeifDecodeSession,
   HeifDiagnostics,
+  MetadataPatch,
   Page,
   PerfScenario,
   PreviewMode,
@@ -58,6 +59,8 @@ const demoAssets: AssetSummary[] = demoNames.map(([name, kind, sizeBytes], index
   sizeBytes,
   modifiedAtMs: Date.now() - index * 3_600_000,
   hasSidecar: kind === "raw" && index % 3 !== 1,
+  rating: index % 6 || undefined,
+  colorLabel: ["Red", "Yellow", "Green", "Blue", "Purple"][index % 7],
 }));
 
 export const isTauri = () => "__TAURI_INTERNALS__" in window;
@@ -94,6 +97,8 @@ export async function listAssets(
     const filtered = [...demoAssets]
       .filter((asset) => asset.path.slice(0, asset.path.lastIndexOf("/")) === directory)
       .filter((asset) => !query.kind || asset.kind === query.kind)
+      .filter((asset) => !query.minimumRating || (asset.rating ?? 0) >= query.minimumRating)
+      .filter((asset) => !query.colorLabel || asset.colorLabel === query.colorLabel)
       .filter((asset) => !needle || asset.name.toLowerCase().includes(needle))
       .sort((left, right) => {
         const multiplier = query.direction === "ascending" ? 1 : -1;
@@ -147,8 +152,8 @@ export async function getAssetDetails(asset: AssetSummary): Promise<AssetDetails
       width: 6_240,
       height: 4_160,
       metadata: {
-        rating: Number(asset.id.at(-1) ?? 0) % 6,
-        colorLabel: asset.kind === "raw" ? "Amber" : undefined,
+        rating: asset.rating,
+        colorLabel: asset.colorLabel,
         creator: "OxyViewer Demo",
         copyright: "Personal archive",
         keywords: ["field-notes", asset.kind],
@@ -167,6 +172,17 @@ export async function getAssetDetails(asset: AssetSummary): Promise<AssetDetails
     };
   }
   return invoke<AssetDetails>("get_asset_details", { path: asset.path });
+}
+
+export async function patchMetadata(paths: string[], patch: MetadataPatch): Promise<string> {
+  if (!isTauri()) {
+    for (const asset of demoAssets.filter((asset) => paths.includes(asset.path))) {
+      if ("rating" in patch) asset.rating = patch.rating ?? undefined;
+      if ("colorLabel" in patch) asset.colorLabel = patch.colorLabel ?? undefined;
+    }
+    return "demo-metadata-job";
+  }
+  return invoke<string>("patch_metadata", { paths, patch });
 }
 
 const demoRoots = new Set<string>();
@@ -251,6 +267,59 @@ export async function generatedPreview(
     else debug?.fail(error);
     throw error;
   }
+}
+
+/**
+ * Warms both the backend preview cache and the webview image cache. Filtered
+ * results use the dedicated lowest queue priority so ordinary overscan can
+ * always jump ahead of this work.
+ */
+export async function preloadAssetThumbnail(
+  asset: AssetSummary,
+  signal?: AbortSignal,
+): Promise<void> {
+  if (!isTauri()) return;
+  const directSource = previewUrl(asset);
+  if (directSource) {
+    await previewQueue.enqueue(
+      priorityWeight("preload"),
+      signal,
+      () => preloadBrowserImage(directSource, signal),
+    );
+    return;
+  }
+  const result = await generatedPreview(asset, "thumbnail", 512, signal, "preload");
+  if (result) await preloadBrowserImage(result.url, signal);
+}
+
+function preloadBrowserImage(url: string, signal?: AbortSignal): Promise<void> {
+  return new Promise((resolve, reject) => {
+    if (signal?.aborted) {
+      reject(signal.reason ?? new DOMException("Aborted", "AbortError"));
+      return;
+    }
+    const image = new Image();
+    const cleanup = () => {
+      image.onload = null;
+      image.onerror = null;
+      signal?.removeEventListener("abort", abort);
+    };
+    const abort = () => {
+      image.src = "";
+      cleanup();
+      reject(signal?.reason ?? new DOMException("Aborted", "AbortError"));
+    };
+    image.onload = () => {
+      cleanup();
+      resolve();
+    };
+    image.onerror = () => {
+      cleanup();
+      reject(new Error(`failed to preload ${url}`));
+    };
+    signal?.addEventListener("abort", abort, { once: true });
+    image.src = url;
+  });
 }
 
 export async function startHeifDecode(

@@ -137,12 +137,17 @@ end-to-end regression harness that enforces these budgets is described in
   RGB decode path; high-bit-depth color-managed processing remains isolated to
   the later full-detail stage. An experimental all-tile path was removed
   because it decoded every tile sequentially and did not reduce HEVC work.
-- 2026-06-13: HEIF decode work is now globally single-flight with three
+- 2026-06-13: HEIF decode work is now globally single-flight with interactive
   priorities: the current loupe image first, visible grid/filmstrip thumbnails
   second, and nearby overscan thumbnails last. Grid and filmstrip HEIF
   thumbnails also use a cancellable priority queue, so requests that have not
   started are discarded or reprioritized as visibility changes instead of
   continuing after navigation.
+- 2026-09-03: Active list filters no longer stop same-directory cache warming.
+  A separate cheap, unfiltered paged query supplies hidden candidates to a
+  sequential `preload` lane. It submits only one item at a time below nearby
+  overscan priority, so loupe, visible, and nearby requests continue to jump
+  ahead while non-matching images eventually warm in the background.
 - 2026-06-14: libheif preview decoding now uses size-based thread limits. Grid
   thumbnails use one codec/library thread, while larger progressive previews
   receive modestly higher limits, preventing background browsing from
@@ -235,7 +240,7 @@ display. Remaining improvements should be adopted in this order:
 - 2026-06-15: Unified the preview pipeline across RAW/HEIF/TIFF (ADR 0005).
   Every format now flows through a single `oxy_media::preview` dispatcher and
   a shared two-tier scheduler: the frontend `previewQueue` orders pending
-  requests `loupe > visible > nearby` (three-level weights via
+  requests `loupe > visible > nearby > preload` (four-level weights via
   `priorityWeight`) and drops requests that scroll out of view before they
   start; the backend `DecodeGate` (generalized from `HeifDecodeGate`) applies
   the same ordering to waiters but never preempts a running decode. RAW

@@ -13,6 +13,11 @@
   --accent: #d8ff68;
   --accent-dim: #9caf4f;
   --blue: #8fc9ff;
+  --label-red: #e45b5b;
+  --label-yellow: #e5c757;
+  --label-green: #65bd72;
+  --label-blue: #579ee5;
+  --label-purple: #aa72d6;
   --radius: 7px;
 }
 
@@ -428,6 +433,7 @@ body {
   white-space: nowrap;
 }
 .asset-card__meta { display: flex; align-items: center; gap: 5px; margin: 0 2px; color: var(--faint); font: 8px ui-monospace, monospace; }
+.asset-color-label { width: 7px; height: 7px; border-radius: 50%; }
 .asset-card__meta i { width: 4px; height: 4px; border-radius: 50%; background: var(--accent); }
 .thumbnail {
   position: relative;
@@ -900,7 +906,15 @@ body {
 .inspector-section { padding: 12px 2px; border-top: 1px solid var(--line); }
 .inspector-section h3 { margin: 0 0 12px; color: #747b81; font-size: 8px; letter-spacing: 1.4px; text-transform: uppercase; }
 .inspector-section label { display: block; margin: 10px 0 6px; color: var(--faint); font-size: 8px; }
-.rating { display: flex; gap: 4px; color: var(--accent); }
+.rating { display: flex; gap: 2px; color: var(--accent); }
+.rating button { display: grid; place-items: center; padding: 2px; border-radius: 3px; color: inherit; background: transparent; }
+.rating button:hover { background: #2a3026; }
+.rating button:disabled { cursor: wait; opacity: .55; }
+.color-labels { display: flex; align-items: center; gap: 7px; }
+.color-labels > button:not(.color-labels__clear) { width: 14px; height: 14px; padding: 0; border: 2px solid #171a1d; border-radius: 50%; background: var(--label-color); box-shadow: 0 0 0 1px #3a4043; }
+.color-labels > button.is-active { box-shadow: 0 0 0 2px #d6d8d2; }
+.color-labels__clear { display: grid; place-items: center; padding: 2px; color: var(--faint); background: transparent; }
+.metadata-error { display: block; margin-top: 8px; color: #ffb3a8; font-size: 8px; line-height: 1.4; }
 .tags { display: flex; flex-wrap: wrap; gap: 4px; }
 .tags span { display: flex; align-items: center; gap: 3px; padding: 3px 5px; border: 1px solid #31373c; border-radius: 3px; color: #a8adb0; background: #171a1d; font-size: 8px; }
 .tags em { color: var(--faint); font-size: 9px; }

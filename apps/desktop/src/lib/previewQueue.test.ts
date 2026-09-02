@@ -2,9 +2,10 @@ import { describe, expect, it, vi } from "vitest";
 import { SerialTaskQueue, priorityWeight } from "./previewQueue";
 
 describe("priorityWeight", () => {
-  it("maps loupe above visible above nearby", () => {
+  it("maps loupe above visible above nearby above filtered preload", () => {
     expect(priorityWeight("loupe")).toBeGreaterThan(priorityWeight("visible"));
     expect(priorityWeight("visible")).toBeGreaterThan(priorityWeight("nearby"));
+    expect(priorityWeight("nearby")).toBeGreaterThan(priorityWeight("preload"));
   });
 });
 
@@ -44,7 +45,7 @@ describe("serial preview task queue", () => {
     expect(run).not.toHaveBeenCalled();
   });
 
-  it("runs higher priority queued work first across three tiers", async () => {
+  it("runs higher priority queued work first across four tiers", async () => {
     // Unified queue: a loupe request arriving last still wins, then visible,
     // then nearby — regardless of which format/stage produced the request.
     const queue = new SerialTaskQueue();
@@ -53,6 +54,9 @@ describe("serial preview task queue", () => {
       release = resolve;
     }));
     const order: string[] = [];
+    const preload = queue.enqueue(priorityWeight("preload"), undefined, async () => {
+      order.push("preload");
+    });
     const nearby = queue.enqueue(priorityWeight("nearby"), undefined, async () => {
       order.push("nearby");
     });
@@ -64,7 +68,7 @@ describe("serial preview task queue", () => {
     });
 
     release();
-    await Promise.all([first, nearby, visible, loupe]);
-    expect(order).toEqual(["loupe", "visible", "nearby"]);
+    await Promise.all([first, preload, nearby, visible, loupe]);
+    expect(order).toEqual(["loupe", "visible", "nearby", "preload"]);
   });
 });

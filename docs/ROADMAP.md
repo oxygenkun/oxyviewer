@@ -110,9 +110,9 @@ files return a concrete LibRaw and fallback error instead of failing silently.
 ## Phase 3: Metadata Workflow
 
 - [x] Sony ARW/JPEG/HEIF shooting-focus overlay with persisted and temporary controls
-- [~] Metadata contracts, RAW sidecar policy, and ExifTool worker boundary
+- [x] Rating/color contracts, RAW sidecar policy, list filters, and ExifTool worker boundary
 - [ ] Bundle persistent ExifTool worker
-- [ ] Read/write round trips, debounced writes, conflicts, and batch editing
+- [~] Rating/color read/write round trips and batch editing; debouncing and conflict handling remain
 
 ## Phase 4: Library and File Management
 

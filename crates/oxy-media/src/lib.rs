@@ -592,6 +592,7 @@ pub fn original(path: PathBuf) -> Result<PreviewResult, MediaError> {
 pub fn decode_priority_for(priority: oxy_domain::PreviewPriority) -> DecodePriority {
     use oxy_domain::PreviewPriority;
     match priority {
+        PreviewPriority::Preload => DecodePriority::Background,
         PreviewPriority::Nearby => DecodePriority::Background,
         PreviewPriority::Visible => DecodePriority::Visible,
         PreviewPriority::Loupe => DecodePriority::Foreground,

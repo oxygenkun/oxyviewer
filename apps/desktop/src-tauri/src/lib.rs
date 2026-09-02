@@ -1,7 +1,7 @@
 use oxy_domain::{
-    AssetDetails, AssetKind, AssetQuery, AssetSummary, DirectorySummary, EditableMetadata,
-    FileOperation, FileOperationResult, FolderSession, HeifCapabilities, HeifDecodeSession,
-    HeifDecodeStatus, HeifDiagnostics, JobId, JobPriority, Page, PerfScenario, PreviewMode,
+    AssetDetails, AssetKind, AssetQuery, AssetSummary, DirectorySummary, FileOperation,
+    FileOperationResult, FolderSession, HeifCapabilities, HeifDecodeSession, HeifDecodeStatus,
+    HeifDiagnostics, JobId, JobPriority, MetadataPatch, Page, PerfScenario, PreviewMode,
     PreviewPriority, PreviewResult,
 };
 use oxy_fs::FsCatalog;
@@ -36,9 +36,17 @@ async fn list_assets(
 ) -> Result<Page<AssetSummary>, String> {
     let files = state.files.clone();
     tauri::async_runtime::spawn_blocking(move || {
-        files
-            .list_assets(&session_id, directory.as_deref(), &query, cursor)
-            .map_err(|error| error.to_string())
+        if query.minimum_rating.is_some() || query.color_label.is_some() {
+            let mut assets = files
+                .list_asset_candidates(&session_id, directory.as_deref())
+                .map_err(|error| error.to_string())?;
+            oxy_metadata::enrich_summaries(&mut assets).map_err(|error| error.to_string())?;
+            Ok(oxy_fs::page_assets(&assets, &query, cursor.unwrap_or(0)))
+        } else {
+            files
+                .list_assets(&session_id, directory.as_deref(), &query, cursor)
+                .map_err(|error| error.to_string())
+        }
     })
     .await
     .map_err(|error| error.to_string())?
@@ -80,6 +88,7 @@ async fn get_asset_details(
     let files = state.files.clone();
     tauri::async_runtime::spawn_blocking(move || {
         let asset = files.get_asset(&path).map_err(|error| error.to_string())?;
+        let kind = asset.kind;
         let dimensions = oxy_media::dimensions(&path).ok();
         let display_dimensions = dimensions.map(|value| (value.width, value.height));
         let focus_info = oxy_metadata::read_focus_info(&path, display_dimensions)
@@ -90,7 +99,8 @@ async fn get_asset_details(
             asset,
             width: dimensions.map(|value| value.width),
             height: dimensions.map(|value| value.height),
-            metadata: Default::default(),
+            metadata: oxy_metadata::read_metadata(&path, kind)
+                .map_err(|error| error.to_string())?,
             sidecar_path,
             focus_info,
         })
@@ -134,22 +144,30 @@ fn execute_file_operation(operation: FileOperation) -> Result<FileOperationResul
 }
 
 #[tauri::command]
-fn patch_metadata(
+async fn patch_metadata(
     paths: Vec<PathBuf>,
-    metadata: EditableMetadata,
+    patch: MetadataPatch,
     state: State<'_, AppState>,
 ) -> Result<JobId, String> {
     let ticket = state.jobs.register(JobPriority::SelectedMetadata);
-    for path in paths {
-        let asset = state
-            .files
-            .get_asset(&path)
-            .map_err(|error| error.to_string())?;
-        oxy_metadata::write_metadata(&path, asset.kind, &metadata)
-            .map_err(|error| error.to_string())?;
-    }
-    state.jobs.finish(&ticket.id);
-    Ok(ticket.id)
+    let job_id = ticket.id.clone();
+    let files = state.files.clone();
+    let result = tauri::async_runtime::spawn_blocking(move || {
+        for path in paths {
+            let asset = files.get_asset(&path).map_err(|error| error.to_string())?;
+            oxy_metadata::patch_metadata(&path, asset.kind, &patch)
+                .map_err(|error| error.to_string())?;
+            if let Some(parent) = path.parent() {
+                files.invalidate_directory(parent);
+            }
+        }
+        Ok::<_, String>(())
+    })
+    .await
+    .map_err(|error| error.to_string());
+    state.jobs.finish(&job_id);
+    result??;
+    Ok(job_id)
 }
 
 #[tauri::command]

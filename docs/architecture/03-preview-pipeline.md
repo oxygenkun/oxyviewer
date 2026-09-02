@@ -82,11 +82,17 @@ HEIF 不在 `<img>` 链里请求 4096 或 full，因为它的 full 由 Canvas ti
 loupe  = 2   当前单图查看
 visible = 1  真正位于视口内
 nearby  = 0  overscan 预加载
+preload = -1 过滤后未显示的同目录图片
 ```
 
 队列每次从 pending 中选最高权重，只允许一个 `invoke` 在途。`AbortSignal` 若在任务开始前已
 取消，任务直接丢弃。React Query key 包含 priority；项目从 nearby 变为 visible 时会建立新的
 高优先级请求，旧 pending 请求被取消。
+
+开启搜索、格式、评级或颜色过滤时，另一个无过滤的廉价分页查询会继续枚举当前目录。未出现在
+可见结果中的图片由 `BackgroundPreviewPreloader` 串行提交，每次只放入一个 `preload`
+请求；追加下一页、改变过滤或图片重新可见时会取消尚未开始的旧请求。这样过滤不再终止缓存
+预热，同时不会一次把整个目录塞进 preview queue。
 
 ```mermaid
 flowchart LR
@@ -113,6 +119,7 @@ Rust `DecodeGate` 有三档优先级：
 | `loupe` | `Foreground` | 可越过所有未开始任务 |
 | `visible` | `Visible` | 等待 foreground，不等 background |
 | `nearby` | `Background` | 等待 foreground 和 visible |
+| `preload` | `Background` | 与 nearby 共用后端 background 档；前端保证它最后提交 |
 
 gate 只允许一个参与统一 gate 的 decode 活跃。高优先级可以插队等待者，但**不能抢占已经运行
 的 decode**。permit 离开作用域时由 Rust `Drop` 自动释放并通知等待者。

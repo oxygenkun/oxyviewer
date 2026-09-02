@@ -1,6 +1,6 @@
-import { useQuery } from "@tanstack/react-query";
-import { Circle, FileCog, Image, Star, Tag } from "lucide-react";
-import { getAssetDetails } from "../lib/api";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { Circle, FileCog, Image, Star, Tag, X } from "lucide-react";
+import { getAssetDetails, patchMetadata } from "../lib/api";
 import type { MessageKey } from "../lib/i18n";
 import type { AssetSummary } from "../types";
 import { formatBytes } from "./AssetBrowser";
@@ -9,15 +9,31 @@ import { Thumbnail } from "./Thumbnail";
 interface InspectorProps {
   asset?: AssetSummary;
   selectedCount: number;
+  selectedPaths: string[];
   t: (key: MessageKey) => string;
 }
 
-export function Inspector({ asset, selectedCount, t }: InspectorProps) {
+const colorLabels = ["Red", "Yellow", "Green", "Blue", "Purple"] as const;
+
+export function Inspector({ asset, selectedCount, selectedPaths, t }: InspectorProps) {
+  const queryClient = useQueryClient();
   const details = useQuery({
     queryKey: ["asset-details", asset?.id],
     queryFn: () => getAssetDetails(asset!),
     enabled: Boolean(asset),
   });
+  const patch = useMutation({
+    mutationFn: (value: { rating?: number | null; colorLabel?: string | null }) =>
+      patchMetadata(selectedPaths.length ? selectedPaths : [asset!.path], value),
+    onSuccess: async () => {
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: ["asset-details"] }),
+        queryClient.invalidateQueries({ queryKey: ["assets"] }),
+      ]);
+    },
+  });
+  const currentRating = details.data?.metadata.rating;
+  const currentColor = details.data?.metadata.colorLabel;
 
   return (
     <aside className="inspector">
@@ -39,15 +55,43 @@ export function Inspector({ asset, selectedCount, t }: InspectorProps) {
           </div>
           <InspectorSection title={t("metadata")}>
             <label>{t("rating")}</label>
-            <div className="rating">
+            <div className="rating" aria-label={t("rating")}>
               {[1, 2, 3, 4, 5].map((rating) => (
-                <Star
+                <button
                   key={rating}
-                  size={15}
-                  fill={(details.data?.metadata.rating ?? 0) >= rating ? "currentColor" : "none"}
-                />
+                  onClick={() => patch.mutate({ rating: currentRating === rating ? null : rating })}
+                  disabled={patch.isPending || details.isLoading}
+                  title={`${rating} / 5`}
+                >
+                  <Star
+                    size={15}
+                    fill={(currentRating ?? 0) >= rating ? "currentColor" : "none"}
+                  />
+                </button>
               ))}
             </div>
+            <label>{t("colorLabel")}</label>
+            <div className="color-labels" aria-label={t("colorLabel")}>
+              {colorLabels.map((label) => (
+                <button
+                  key={label}
+                  className={currentColor?.toLowerCase() === label.toLowerCase() ? "is-active" : ""}
+                  style={{ "--label-color": `var(--label-${label.toLowerCase()})` } as React.CSSProperties}
+                  onClick={() => patch.mutate({ colorLabel: currentColor === label ? null : label })}
+                  disabled={patch.isPending || details.isLoading}
+                  title={t(label.toLowerCase() as MessageKey)}
+                />
+              ))}
+              <button
+                className="color-labels__clear"
+                onClick={() => patch.mutate({ colorLabel: null })}
+                disabled={patch.isPending || !currentColor}
+                title={t("clearColor")}
+              ><X size={11} /></button>
+            </div>
+            {patch.isError || details.isError ? (
+              <small className="metadata-error">{String(patch.error ?? details.error)}</small>
+            ) : null}
             <label>{t("keywords")}</label>
             <div className="tags">
               {(details.data?.metadata.keywords ?? []).map((keyword) => (

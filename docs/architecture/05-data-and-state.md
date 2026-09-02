@@ -113,21 +113,16 @@ preview cache 位于 Tauri `app_cache_dir()/previews`。它满足：
 
 ## 7. XMP sidecar：用户数据，不是缓存
 
-`oxy-metadata` 当前只允许 RAW 写元数据。`write_raw_sidecar`：
+`oxy-metadata` 对 RAW 的 rating/color 读写使用同名 XMP sidecar；更新时只替换
+`rdf:Description` 上对应的 `xmp:Rating` / `xmp:Label` 属性，保留其他 XMP 字段。首次写入时
+创建最小 Adobe 风格 XMP。JPEG/HEIF/HIF 则通过 ExifTool 更新容器内嵌 XMP。
 
-1. 取 RAW 同路径、扩展名改为 `.xmp`；
-2. 把 rating、label、title、description、creator、copyright、keywords 序列化为 XML；
-3. XML 特殊字符转义；
-4. 写入 `.xmp.oxy-tmp`；
-5. `sync_all`；
-6. rename 到最终 `.xmp`。
+这是一项持久用户写入。它与 preview cache 不同，不能随意删除。内嵌写入当前从 `PATH`
+查找 `exiftool`，也可用 `OXY_EXIFTOOL_PATH` 指定；正式发行版仍需捆绑 worker。
 
-这是一项持久用户写入。它与 preview cache 不同，不能随意删除。非 RAW 当前返回
-`EmbeddedWorkerUnavailable`，因为嵌入式元数据写入需要未来的 ExifTool worker。
-
-`patch_metadata` 现在同步遍历 paths 并在 command 线程执行写入；虽然注册了 JobTicket，但未
-真正把循环派发到后台 worker，错误时也可能在 `finish` 前提前返回。扩展批量元数据时应改进
-作业清理和取消语义。
+`patch_metadata` 在 blocking worker 中处理多选路径，完成后使对应目录摘要缓存失效，并刷新
+详情与列表查询。普通目录打开仍使用廉价分页；只有启用 rating/color 筛选时才批量读取整个
+当前目录的元数据，然后进行过滤和分页。
 
 ## 8. 文件操作
 

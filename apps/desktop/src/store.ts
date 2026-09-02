@@ -26,6 +26,8 @@ interface WorkspaceState {
   focusAreasVisible: boolean;
   search: string;
   kind?: AssetKind;
+  minimumRating?: number;
+  colorLabel?: string;
   sort: AssetSort;
   direction: SortDirection;
   setView: (view: ViewMode) => void;
@@ -43,6 +45,8 @@ interface WorkspaceState {
   setFocusAreasVisible: (visible: boolean) => void;
   setSearch: (search: string) => void;
   setKind: (kind?: AssetKind) => void;
+  setMinimumRating: (rating?: number) => void;
+  setColorLabel: (label?: string) => void;
   setSort: (sort: AssetSort) => void;
   toggleDirection: () => void;
 }
@@ -88,6 +92,8 @@ export const useWorkspaceStore = create<WorkspaceState>((set) => ({
   },
   setSearch: (search) => set({ search }),
   setKind: (kind) => set({ kind }),
+  setMinimumRating: (minimumRating) => set({ minimumRating }),
+  setColorLabel: (colorLabel) => set({ colorLabel }),
   setSort: (sort) => set({ sort }),
   toggleDirection: () =>
     set((state) => ({

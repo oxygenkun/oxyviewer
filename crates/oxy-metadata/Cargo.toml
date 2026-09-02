@@ -9,6 +9,7 @@ version.workspace = true
 fpexif.workspace = true
 oxy-domain = { path = "../oxy-domain" }
 oxy-fs = { path = "../oxy-fs" }
+serde_json.workspace = true
 thiserror.workspace = true
 
 [dev-dependencies]

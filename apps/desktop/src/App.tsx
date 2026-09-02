@@ -2,6 +2,7 @@ import { useInfiniteQuery, useQuery, useQueryClient } from "@tanstack/react-quer
 import { Aperture, CircleAlert, FolderPlus, RectangleHorizontal, RectangleVertical } from "lucide-react";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { AssetBrowser } from "./components/AssetBrowser";
+import { BackgroundPreviewPreloader } from "./components/BackgroundPreviewPreloader";
 import { Inspector } from "./components/Inspector";
 import { PerfHarness } from "./components/PerfHarness";
 import { SettingsPanel } from "./components/SettingsPanel";
@@ -41,7 +42,7 @@ export function App({ perfScenario }: { perfScenario?: PerfScenario }) {
   const queryClient = useQueryClient();
   const {
     view, gridPreference, activeId, selectedIds, inspectorOpen, leftPanelOpen, settingsOpen, locale,
-    search, kind, sort, direction, clearSelection, setGridPreference, toggleSettings,
+    search, kind, minimumRating, colorLabel, sort, direction, clearSelection, setGridPreference, toggleSettings,
   } = useWorkspaceStore();
   const t = useCallback((key: Parameters<typeof translate>[1]) => translate(locale, key), [locale]);
 
@@ -64,10 +65,18 @@ export function App({ perfScenario }: { perfScenario?: PerfScenario }) {
   const query = useMemo<AssetQuery>(() => ({
     search: search || undefined,
     kind,
+    minimumRating,
+    colorLabel,
     sort,
     direction,
     pageSize: 250,
-  }), [direction, kind, search, sort]);
+  }), [colorLabel, direction, kind, minimumRating, search, sort]);
+  const filtersActive = Boolean(search || kind || minimumRating || colorLabel);
+  const preloadQuery = useMemo<AssetQuery>(() => ({
+    sort: "name",
+    direction: "ascending",
+    pageSize: 250,
+  }), []);
 
   const assetsQuery = useInfiniteQuery({
     queryKey: ["assets", activeSession?.id, currentPath, query],
@@ -77,12 +86,42 @@ export function App({ perfScenario }: { perfScenario?: PerfScenario }) {
     enabled: Boolean(activeSession && currentPath),
     staleTime: Infinity,
   });
+  const preloadAssetsQuery = useInfiniteQuery({
+    queryKey: ["preload-assets", activeSession?.id, currentPath],
+    queryFn: ({ pageParam }) => listAssets(
+      activeSession!.id,
+      currentPath!,
+      preloadQuery,
+      pageParam,
+    ),
+    initialPageParam: 0,
+    getNextPageParam: (page) => page.nextCursor,
+    enabled: Boolean(filtersActive && activeSession && currentPath),
+    staleTime: Infinity,
+  });
   const assets = useMemo(
     () => assetsQuery.data?.pages.flatMap((page) => page.items) ?? [],
     [assetsQuery.data],
   );
+  const preloadCandidates = useMemo(() => {
+    const visibleIds = new Set(assets.map((asset) => asset.id));
+    return preloadAssetsQuery.data?.pages
+      .flatMap((page) => page.items)
+      .filter((asset) => !visibleIds.has(asset.id)) ?? [];
+  }, [assets, preloadAssetsQuery.data]);
   const total = assetsQuery.data?.pages[0]?.total ?? 0;
   const activeAsset = assets.find((asset) => asset.id === activeId);
+
+  useEffect(() => {
+    if (preloadAssetsQuery.hasNextPage && !preloadAssetsQuery.isFetchingNextPage) {
+      void preloadAssetsQuery.fetchNextPage();
+    }
+  }, [
+    preloadAssetsQuery.data?.pages.length,
+    preloadAssetsQuery.fetchNextPage,
+    preloadAssetsQuery.hasNextPage,
+    preloadAssetsQuery.isFetchingNextPage,
+  ]);
 
   const dismissOnboarding = useCallback(() => {
     completeFolderOnboarding();
@@ -153,11 +192,13 @@ export function App({ perfScenario }: { perfScenario?: PerfScenario }) {
     try {
       await Promise.all([
         queryClient.cancelQueries({ queryKey: ["assets", activeSession.id, currentPath] }),
+        queryClient.cancelQueries({ queryKey: ["preload-assets", activeSession.id, currentPath] }),
         queryClient.cancelQueries({ queryKey: ["directories", activeSession.id, currentPath] }),
       ]);
       await refreshDirectory(activeSession.id, currentPath);
       await Promise.all([
         queryClient.invalidateQueries({ queryKey: ["assets", activeSession.id, currentPath] }),
+        queryClient.invalidateQueries({ queryKey: ["preload-assets", activeSession.id, currentPath] }),
         queryClient.invalidateQueries({ queryKey: ["directories", activeSession.id, currentPath] }),
       ]);
     } catch (cause) {
@@ -240,7 +281,18 @@ export function App({ perfScenario }: { perfScenario?: PerfScenario }) {
           <span>{selectedIds.length} {t("selected")}</span>
         </footer>
       </section>
-      <Inspector asset={activeAsset} selectedCount={selectedIds.length} t={t} />
+      <Inspector
+        asset={activeAsset}
+        selectedPaths={assets.filter((asset) => selectedIds.includes(asset.id)).map((asset) => asset.path)}
+        selectedCount={selectedIds.length}
+        t={t}
+      />
+      {filtersActive && assetsQuery.isSuccess && activeSession && currentPath ? (
+        <BackgroundPreviewPreloader
+          key={`${activeSession.id}:${currentPath}`}
+          assets={preloadCandidates}
+        />
+      ) : null}
       {error || foldersQuery.isError ? (
         <button className="error-toast" onClick={() => setError(undefined)}>
           <CircleAlert size={16} />{error ?? String(foldersQuery.error)}<span>×</span>

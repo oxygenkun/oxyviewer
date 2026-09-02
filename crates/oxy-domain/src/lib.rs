@@ -44,6 +44,10 @@ pub struct AssetSummary {
     pub size_bytes: u64,
     pub modified_at_ms: u64,
     pub has_sidecar: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub rating: Option<u8>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub color_label: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq, Eq)]
@@ -105,6 +109,7 @@ pub enum PreviewMode {
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub enum PreviewPriority {
+    Preload,
     Nearby,
     Visible,
     Loupe,
@@ -295,6 +300,8 @@ pub struct HeifStatusEvent {
 pub struct AssetQuery {
     pub search: Option<String>,
     pub kind: Option<AssetKind>,
+    pub minimum_rating: Option<u8>,
+    pub color_label: Option<String>,
     pub sort: AssetSort,
     pub direction: SortDirection,
     pub page_size: Option<usize>,

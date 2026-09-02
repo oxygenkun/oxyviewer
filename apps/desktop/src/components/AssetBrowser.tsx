@@ -43,6 +43,14 @@ const AssetCard = memo(function AssetCard({
       <span className="asset-card__name">{asset.name}</span>
       <span className="asset-card__meta">
         {asset.extension}
+        {asset.rating ? <span title={`${asset.rating} / 5`}>{asset.rating}★</span> : null}
+        {asset.colorLabel ? (
+          <b
+            className="asset-color-label"
+            style={{ background: `var(--label-${asset.colorLabel.toLowerCase()})` }}
+            title={asset.colorLabel}
+          />
+        ) : null}
         {asset.hasSidecar ? <i title="XMP sidecar" /> : null}
       </span>
     </button>
