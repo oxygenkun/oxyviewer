@@ -75,6 +75,18 @@ impl Library {
         Ok(())
     }
 
+    pub fn remove_root(&self, path: &Path) -> Result<(), LibraryError> {
+        // Stored roots are canonical, but removal must also work after a folder
+        // has been moved or disconnected. In that case the exact persisted path
+        // is still safe to remove.
+        let path = path.canonicalize().unwrap_or_else(|_| path.to_path_buf());
+        self.connection.lock().execute(
+            "DELETE FROM library_roots WHERE path = ?1",
+            params![path.to_string_lossy()],
+        )?;
+        Ok(())
+    }
+
     pub fn roots(&self) -> Result<Vec<PathBuf>, LibraryError> {
         let connection = self.connection.lock();
         let mut statement =
@@ -99,6 +111,24 @@ mod tests {
         assert_eq!(
             library.roots().unwrap(),
             vec![root.path().canonicalize().unwrap()]
+        );
+    }
+
+    #[test]
+    fn stores_parent_and_child_as_independent_roots_and_removes_one() {
+        let library = Library::in_memory().unwrap();
+        let parent = tempdir().unwrap();
+        let child = parent.path().join("child");
+        std::fs::create_dir(&child).unwrap();
+
+        library.add_root(parent.path()).unwrap();
+        library.add_root(&child).unwrap();
+        assert_eq!(library.roots().unwrap().len(), 2);
+
+        library.remove_root(&child).unwrap();
+        assert_eq!(
+            library.roots().unwrap(),
+            vec![parent.path().canonicalize().unwrap()]
         );
     }
 }

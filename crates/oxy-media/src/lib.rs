@@ -652,9 +652,13 @@ pub fn preview(
 }
 
 fn preview_cache_key(path: &Path, backend: &str, max_size: u32) -> Result<String, MediaError> {
-    let metadata = fs::metadata(path)?;
+    // Key previews by physical file identity rather than by the library root
+    // used to reach it. Parent/child roots (and symlink aliases) therefore
+    // converge on one cache entry for the same source image.
+    let canonical_path = path.canonicalize()?;
+    let metadata = fs::metadata(&canonical_path)?;
     let mut hasher = DefaultHasher::new();
-    path.hash(&mut hasher);
+    canonical_path.hash(&mut hasher);
     metadata.len().hash(&mut hasher);
     metadata.modified().ok().hash(&mut hasher);
     backend.hash(&mut hasher);
@@ -937,6 +941,23 @@ mod tests {
 
         assert_ne!(first, different_backend);
         assert_ne!(first, different_size);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn cache_key_is_shared_across_paths_to_the_same_file() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("image.jpg");
+        let alias = directory.path().join("image-alias.jpg");
+        RgbImage::from_pixel(4, 3, Rgb([10, 20, 30]))
+            .save(&path)
+            .unwrap();
+        std::os::unix::fs::symlink(&path, &alias).unwrap();
+
+        assert_eq!(
+            preview_cache_key(&path, "jpeg", 512).unwrap(),
+            preview_cache_key(&alias, "jpeg", 512).unwrap()
+        );
     }
 
     #[test]

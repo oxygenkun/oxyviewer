@@ -53,6 +53,33 @@ performance gate has not yet been measured.
 - [ ] Validate LibRaw builds and RAW preview behavior in Windows and Linux CI
 - [~] Add full priority scheduling and request cancellation — unified two-tier scheduler (frontend `previewQueue` + backend `DecodeGate`) landed in ADR 0005; cooperative mid-decode cancellation is still outstanding
 
+### Milestone RAW-2: macOS Native Full-Size Rendering
+
+- [ ] Benchmark Core Image `CIRAWFilter` on the RAW fixture matrix for cold
+  full-size rendering, peak memory, output dimensions, orientation, color, and
+  100% detail before selecting it as a production backend
+- [ ] Add a macOS-only Core Image adapter in `oxy-media`; keep Tauri commands
+  thin, perform rendering off the UI/async thread, reuse a bounded `CIContext`,
+  and avoid unnecessary full-frame copies between Core Image and Rust
+- [ ] Preserve the existing fast path: use the near-full-size embedded JPEG
+  when it covers at least 90% of the RAW dimensions; otherwise prefer Core
+  Image for macOS full-detail rendering and fall back to LibRaw development
+- [ ] Keep Windows and Linux on the bundled LibRaw backend; Core Image must not
+  become a requirement for 512/4096 previews or reduce portable RAW coverage
+- [ ] Define the macOS output contract for EXIF orientation, working/output
+  color spaces, ICC data, SDR tone mapping, and the current 8-bit JPEG cache
+- [ ] Give Core Image its own cache/backend version and report the selected
+  backend, decoder version, timing, and fallback reason through preview
+  diagnostics
+- [ ] Keep the 4096 preview visible if Core Image initialization or rendering
+  fails, then verify automatic LibRaw fallback with fixture-backed tests
+
+**Gate:** on supported macOS versions, Core Image full-detail rendering is used
+only after the embedded-preview fast path, meets the measured fidelity and
+resource budgets, and falls back to LibRaw without blanking or delaying the
+already-visible loupe preview. Other platforms and unsupported macOS RAW files
+retain the existing portable behavior.
+
 ### Milestone HEIF-1: Full-detail and Color-managed Display
 
 - [x] Decode the primary image through libheif after progressive previews

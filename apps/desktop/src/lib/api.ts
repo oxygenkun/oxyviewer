@@ -150,13 +150,26 @@ export async function getAssetDetails(asset: AssetSummary): Promise<AssetDetails
   return invoke<AssetDetails>("get_asset_details", { path: asset.path });
 }
 
+const demoRoots = new Set<string>();
+
 export async function addLibraryRoot(path: string): Promise<string[]> {
-  if (!isTauri()) return [path];
+  if (!isTauri()) {
+    demoRoots.add(path);
+    return [...demoRoots];
+  }
   return invoke<string[]>("add_library_root", { path });
 }
 
+export async function removeLibraryRoot(path: string): Promise<string[]> {
+  if (!isTauri()) {
+    demoRoots.delete(path);
+    return [...demoRoots];
+  }
+  return invoke<string[]>("remove_library_root", { path });
+}
+
 export async function listLibraryRoots(): Promise<string[]> {
-  if (!isTauri()) return [];
+  if (!isTauri()) return [...demoRoots];
   return invoke<string[]>("list_library_roots");
 }
 

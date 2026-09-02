@@ -1,8 +1,7 @@
 import { useInfiniteQuery, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Aperture, CircleAlert, FolderOpen, RectangleHorizontal, RectangleVertical } from "lucide-react";
-import { useCallback, useMemo, useState } from "react";
+import { Aperture, CircleAlert, FolderPlus, RectangleHorizontal, RectangleVertical } from "lucide-react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { AssetBrowser } from "./components/AssetBrowser";
-import { EmptyState } from "./components/EmptyState";
 import { Inspector } from "./components/Inspector";
 import { SettingsPanel } from "./components/SettingsPanel";
 import { Sidebar } from "./components/Sidebar";
@@ -15,22 +14,48 @@ import {
   listLibraryRoots,
   openFolder,
   refreshDirectory,
+  removeLibraryRoot,
 } from "./lib/api";
 import { translate } from "./lib/i18n";
+import {
+  completeFolderOnboarding,
+  hasSeenFolderOnboarding,
+  loadWorkspace,
+  saveWorkspace,
+} from "./lib/workspacePersistence";
 import { useWorkspaceStore } from "./store";
 import type { AssetQuery, FolderSession } from "./types";
 
+async function restoreFolders(): Promise<FolderSession[]> {
+  const roots = await listLibraryRoots();
+  const restored = await Promise.allSettled(roots.map((root) => openFolder(root)));
+  return restored.flatMap((result) => result.status === "fulfilled" ? [result.value] : []);
+}
+
 export function App() {
-  const [session, setSession] = useState<FolderSession>();
-  const [currentPath, setCurrentPath] = useState<string>();
+  const [workspace, setWorkspace] = useState(loadWorkspace);
+  const [showOnboarding, setShowOnboarding] = useState(() => !hasSeenFolderOnboarding());
   const [error, setError] = useState<string>();
   const [isRefreshing, setIsRefreshing] = useState(false);
   const queryClient = useQueryClient();
   const {
     view, gridPreference, activeId, selectedIds, inspectorOpen, leftPanelOpen, settingsOpen, locale,
-    search, kind, sort, direction, clearSelection, setGridPreference, setLocale, toggleSettings,
+    search, kind, sort, direction, clearSelection, setGridPreference, toggleSettings,
   } = useWorkspaceStore();
   const t = useCallback((key: Parameters<typeof translate>[1]) => translate(locale, key), [locale]);
+
+  const foldersQuery = useQuery({
+    queryKey: ["open-folders"],
+    queryFn: restoreFolders,
+    staleTime: Infinity,
+  });
+  const sessions = foldersQuery.data ?? [];
+  const activeSession = sessions.find((item) => item.rootPath === workspace.activeRoot) ?? sessions[0];
+  const currentPath = activeSession
+    ? workspace.currentDirectories[activeSession.rootPath] ?? activeSession.rootPath
+    : undefined;
+
+  useEffect(() => saveWorkspace(workspace), [workspace]);
 
   const query = useMemo<AssetQuery>(() => ({
     search: search || undefined,
@@ -41,11 +66,11 @@ export function App() {
   }), [direction, kind, search, sort]);
 
   const assetsQuery = useInfiniteQuery({
-    queryKey: ["assets", session?.id, currentPath, query],
-    queryFn: ({ pageParam }) => listAssets(session!.id, currentPath!, query, pageParam),
+    queryKey: ["assets", activeSession?.id, currentPath, query],
+    queryFn: ({ pageParam }) => listAssets(activeSession!.id, currentPath!, query, pageParam),
     initialPageParam: 0,
     getNextPageParam: (page) => page.nextCursor,
-    enabled: Boolean(session && currentPath),
+    enabled: Boolean(activeSession && currentPath),
     staleTime: Infinity,
   });
   const assets = useMemo(
@@ -55,10 +80,10 @@ export function App() {
   const total = assetsQuery.data?.pages[0]?.total ?? 0;
   const activeAsset = assets.find((asset) => asset.id === activeId);
 
-  const libraryQuery = useQuery({
-    queryKey: ["library-roots"],
-    queryFn: listLibraryRoots,
-  });
+  const dismissOnboarding = useCallback(() => {
+    completeFolderOnboarding();
+    setShowOnboarding(false);
+  }, []);
 
   const handleOpen = useCallback(async () => {
     setError(undefined);
@@ -66,82 +91,109 @@ export function App() {
       const path = await chooseFolder();
       if (!path) return;
       const opened = await openFolder(path);
+      await addLibraryRoot(opened.rootPath);
       clearSelection();
-      setSession(opened);
-      setCurrentPath(opened.rootPath);
+      queryClient.setQueryData<FolderSession[]>(["open-folders"], (current = []) => {
+        const existing = current.find((item) => item.rootPath === opened.rootPath);
+        return existing ? current : [...current, opened];
+      });
+      setWorkspace((current) => ({
+        activeRoot: opened.rootPath,
+        currentDirectories: {
+          ...current.currentDirectories,
+          [opened.rootPath]: current.currentDirectories[opened.rootPath] ?? opened.rootPath,
+        },
+      }));
+      dismissOnboarding();
     } catch (cause) {
       setError(String(cause));
     }
+  }, [clearSelection, dismissOnboarding, queryClient]);
+
+  const handleNavigate = useCallback((session: FolderSession, path: string) => {
+    clearSelection();
+    setWorkspace((current) => ({
+      activeRoot: session.rootPath,
+      currentDirectories: { ...current.currentDirectories, [session.rootPath]: path },
+    }));
   }, [clearSelection]);
 
-  const handleNavigate = useCallback((path: string) => {
-    clearSelection();
-    setCurrentPath(path);
-  }, [clearSelection]);
+  const handleRemove = useCallback(async (session: FolderSession) => {
+    setError(undefined);
+    try {
+      const roots = await removeLibraryRoot(session.rootPath);
+      clearSelection();
+      queryClient.setQueryData<FolderSession[]>(["open-folders"], (current = []) =>
+        current.filter((item) => roots.includes(item.rootPath)),
+      );
+      setWorkspace((current) => {
+        const currentDirectories = { ...current.currentDirectories };
+        delete currentDirectories[session.rootPath];
+        const activeRoot = current.activeRoot === session.rootPath
+          ? roots[0]
+          : current.activeRoot;
+        return { activeRoot, currentDirectories };
+      });
+    } catch (cause) {
+      setError(String(cause));
+    }
+  }, [clearSelection, queryClient]);
 
   const handleRefresh = useCallback(async () => {
-    if (!session || !currentPath || isRefreshing) return;
+    if (!activeSession || !currentPath || isRefreshing) return;
     setError(undefined);
     setIsRefreshing(true);
     try {
       await Promise.all([
-        queryClient.cancelQueries({ queryKey: ["assets", session.id, currentPath] }),
-        queryClient.cancelQueries({ queryKey: ["directories", session.id, currentPath] }),
+        queryClient.cancelQueries({ queryKey: ["assets", activeSession.id, currentPath] }),
+        queryClient.cancelQueries({ queryKey: ["directories", activeSession.id, currentPath] }),
       ]);
-      await refreshDirectory(session.id, currentPath);
+      await refreshDirectory(activeSession.id, currentPath);
       await Promise.all([
-        queryClient.invalidateQueries({ queryKey: ["assets", session.id, currentPath] }),
-        queryClient.invalidateQueries({ queryKey: ["directories", session.id, currentPath] }),
+        queryClient.invalidateQueries({ queryKey: ["assets", activeSession.id, currentPath] }),
+        queryClient.invalidateQueries({ queryKey: ["directories", activeSession.id, currentPath] }),
       ]);
     } catch (cause) {
       setError(String(cause));
     } finally {
       setIsRefreshing(false);
     }
-  }, [currentPath, isRefreshing, queryClient, session]);
-
-  const handleAddLibrary = useCallback(async () => {
-    if (!session) return;
-    try {
-      await addLibraryRoot(session.rootPath);
-      await queryClient.invalidateQueries({ queryKey: ["library-roots"] });
-    } catch (cause) {
-      setError(String(cause));
-    }
-  }, [queryClient, session]);
-
-  if (!session) {
-    return (
-      <div className="app-shell app-shell--empty">
-        <EmptyState onOpen={handleOpen} t={t} />
-        <div className="window-brand"><Aperture size={15} /> OXYVIEWER</div>
-        {!isTauri() ? <span className="demo-pill">{t("demoHint")}</span> : null}
-      </div>
-    );
-  }
+  }, [activeSession, currentPath, isRefreshing, queryClient]);
 
   return (
     <div
       className={`app-shell ${leftPanelOpen ? "" : "sidebar-collapsed"} ${inspectorOpen ? "" : "inspector-collapsed"}`}
     >
       <Sidebar
-        session={session}
-        currentPath={currentPath ?? session.rootPath}
-        libraryRoots={libraryQuery.data ?? []}
+        sessions={sessions}
+        activeSession={activeSession}
+        currentPath={currentPath}
+        showOnboarding={showOnboarding && sessions.length === 0 && !foldersQuery.isLoading}
         onOpen={handleOpen}
         onNavigate={handleNavigate}
+        onRemove={handleRemove}
         onRefresh={handleRefresh}
         isRefreshing={isRefreshing}
-        onAddLibrary={handleAddLibrary}
+        onDismissOnboarding={dismissOnboarding}
         onSettings={toggleSettings}
         t={t}
       />
       <section className="workspace">
         <Toolbar total={total} t={t} />
-        {assetsQuery.isLoading ? (
-          <div className="workspace-loading"><Aperture size={24} /> Scanning {session.displayName}…</div>
+        {!activeSession ? (
+          <div className="workspace-empty">
+            <FolderPlus size={29} strokeWidth={1.4} />
+            <strong>{foldersQuery.isLoading ? t("restoringFolders") : t("noFolderTitle")}</strong>
+            <span>{foldersQuery.isLoading ? t("restoringFoldersBody") : t("noFolderBody")}</span>
+          </div>
+        ) : assetsQuery.isLoading ? (
+          <div className="workspace-loading"><Aperture size={24} /> {t("scanningFolder")} {activeSession.displayName}…</div>
         ) : assetsQuery.isError ? (
-          <div className="workspace-error"><CircleAlert size={24} /><strong>{String(assetsQuery.error)}</strong><button onClick={handleOpen}><FolderOpen size={15} />{t("openFolder")}</button></div>
+          <div className="workspace-error">
+            <CircleAlert size={24} />
+            <strong>{String(assetsQuery.error)}</strong>
+            <button onClick={handleOpen}><FolderPlus size={15} />{t("openFolder")}</button>
+          </div>
         ) : (
           <AssetBrowser
             assets={assets}
@@ -155,7 +207,7 @@ export function App() {
         )}
         <footer className="statusbar">
           <span title={currentPath}><i className="status-dot" /> {
-            currentPath?.split(/[\\/]/).filter(Boolean).at(-1) ?? session.displayName
+            currentPath?.split(/[\\/]/).filter(Boolean).at(-1) ?? t("noFolderOpen")
           }</span>
           <span>{assets.length.toLocaleString()} / {total.toLocaleString()} {t("photos")}</span>
           {view === "grid" ? (
@@ -182,7 +234,12 @@ export function App() {
         </footer>
       </section>
       <Inspector asset={activeAsset} selectedCount={selectedIds.length} t={t} />
-      {error ? <button className="error-toast" onClick={() => setError(undefined)}><CircleAlert size={16} />{error}<span>×</span></button> : null}
+      {error || foldersQuery.isError ? (
+        <button className="error-toast" onClick={() => setError(undefined)}>
+          <CircleAlert size={16} />{error ?? String(foldersQuery.error)}<span>×</span>
+        </button>
+      ) : null}
+      {!isTauri() ? <span className="demo-pill">{t("demoHint")}</span> : null}
       {settingsOpen ? <SettingsPanel t={t} /> : null}
     </div>
   );

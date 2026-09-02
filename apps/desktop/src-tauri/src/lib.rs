@@ -152,6 +152,15 @@ fn add_library_root(path: PathBuf, state: State<'_, AppState>) -> Result<Vec<Pat
 }
 
 #[tauri::command]
+fn remove_library_root(path: PathBuf, state: State<'_, AppState>) -> Result<Vec<PathBuf>, String> {
+    state
+        .library
+        .remove_root(&path)
+        .map_err(|error| error.to_string())?;
+    state.library.roots().map_err(|error| error.to_string())
+}
+
+#[tauri::command]
 fn list_library_roots(state: State<'_, AppState>) -> Result<Vec<PathBuf>, String> {
     state.library.roots().map_err(|error| error.to_string())
 }
@@ -305,6 +314,7 @@ pub fn run() {
             patch_metadata,
             execute_file_operation,
             add_library_root,
+            remove_library_root,
             list_library_roots,
             cancel_job,
             get_heif_capabilities,
