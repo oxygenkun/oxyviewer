@@ -194,7 +194,7 @@ flowchart TD
     query --> page["Page of AssetSummary"]
     asset["AssetSummary"] --> details["AssetDetails"]
     asset --> preview["PreviewResult"]
-    preview --> stage["PreviewStage"]
+    preview --> level["RenderLevel"]
     asset --> heifSession["HeifDecodeSession"]
     heifSession --> tile["HeifTileReady"]
     heifSession --> status["HeifStatusEvent"]

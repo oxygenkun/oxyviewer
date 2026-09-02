@@ -1,9 +1,10 @@
 # 03：统一预览流水线
 
-本章解释照片怎样从“一个文件摘要”变成屏幕上的缩略图、4096 px 预览或全分辨率图。
+本章解释照片怎样从“一个文件摘要”变成屏幕上的 thumbnail、preview 或 full 表示。
 这是 OxyViewer 最性能敏感的路径，也是格式差异最多的部分。
 
-设计决策详见 [ADR 0005](../adr/0005-unified-preview-pipeline.md)。
+统一调度见 [ADR 0005](../adr/0005-unified-preview-pipeline.md)，语义等级图见
+[ADR 0006](../adr/0006-semantic-render-level-graph.md)。
 
 ## 1. 为什么需要预览，而不是总显示原文件
 
@@ -17,17 +18,19 @@ HEVC 解码器或操作系统预览服务。即使原文件可解码，也不应
 3. 让当前放大镜和可见缩略图优先；
 4. 把昂贵结果写入可重建缓存。
 
-## 2. 格式与阶段矩阵
+## 2. 语义等级与格式/平台矩阵
 
-| 格式 | 网格/列表 | 放大镜渐进阶段 | 全分辨率 |
+| Windows 格式 | `thumbnail` | `preview` | `full` |
 | --- | --- | --- | --- |
-| JPEG/PNG/WebP | 原文件 URL | 原文件 URL | WebView 直接显示 |
-| RAW | 512 JPEG | 4096 → full（可复用同一内嵌 JPEG） | 近全尺寸内嵌 JPEG；不足时 LibRaw full development |
-| HEIF/HIF | 512 JPEG | 512 JPEG 临时底图 | 独立 HEIF tile session |
-| TIFF | 系统 512 预览 | 系统 512 → 4096 预览 | 当前没有独立 full stage |
+| JPEG/PNG/WebP | 原文件 URL | 原文件 URL | 原文件 URL |
+| RAW | LibRaw 512 | LibRaw 4096 | 近全尺寸内嵌 JPEG；不足时 full development |
+| HEIF/HIF | 内嵌 160×120 JPEG | 复用同一内嵌 JPEG | 独立 HEIF tile session |
+| TIFF | 系统 512 | 系统 512 | 系统 4096（当前最佳可用表示） |
 
-前端 `previewStages(kind, large)` 决定渐进请求序列。后端 `needs_decode(kind)` 决定是直接返回
-原文件还是进入统一 dispatcher。两者表达不同问题，新增格式时需要一起核对。
+交互图不随格式改变：网格/列表只进入 `thumbnail`；放大镜固定执行 `preview → full`。
+前端 `renderPlan(kind, surface, platform)` 把等级映射到 renderer 类；后端
+`render_method_for(kind, level, platform)` 再选择实际解码器和尺寸。多个等级可以指向同一产物。
+例如 Sony HIF 的 `preview` 是 `thumbnail` 的显式别名，而不是一个 160 px 特判。
 
 ## 3. 端到端调用链
 
@@ -42,7 +45,7 @@ sequenceDiagram
     participant Decoder
     participant Cache
 
-    Thumbnail->>ReactQuery: 请求当前 stage
+    Thumbnail->>ReactQuery: 请求当前 render level
     ReactQuery->>PreviewQueue: enqueue priority + signal
     PreviewQueue->>TauriCommand: invoke get_preview
     TauriCommand->>MediaDispatcher: spawn_blocking preview
@@ -52,26 +55,26 @@ sequenceDiagram
     DecodeGate->>Decoder: 允许一个待解码任务运行
     Decoder->>Cache: 原子写入结果
     Cache-->>Thumbnail: 返回文件 URL 与尺寸
-    Thumbnail->>ReactQuery: 前一 stage 可见后请求下一 stage
+    Thumbnail->>ReactQuery: 前一 level 可见后请求下一 level
 ```
 
 实际缓存命中时会跳过 gate 和 decoder。JPEG/PNG/WebP 直接路径还会跳过整条生成流水线。
 
-## 4. 前端阶段升级
+## 4. 前端等级升级
 
-`Thumbnail` 组件使用多个 React Query：
+`Thumbnail` 组件只解释固定等级图：
 
-1. 网格/列表使用 512 stage；
-2. 大图模式下，RAW 直接启用 4096 stage，TIFF 仍从 512 升级到 4096；HEIF 跳过该 stage；
-3. RAW 在首个大图预览成功或失败后启用 full stage；若 full 返回同一路径，前端直接将其提升为 full-ready；
+1. 网格/列表请求 `thumbnail`；
+2. 放大镜先请求并保留 `preview`，再启动 `full`；
+3. renderer profile 决定等级是原图、生成图、tile session，还是另一个等级的复用；
 4. 组件选择当前最高可用且未加载失败的 URL；
-5. 新 stage 图片真正完成浏览器加载后才取代低清图。
+5. 新等级图片真正完成浏览器加载后才取代现有图。
 
 这避免“高清请求已返回 URL，但文件尚未解码进浏览器”时让画面闪空。RAW full 失败也会继续
 保留渐进预览，而不是让放大镜不可用。
 
-HEIF 不在 `<img>` 链里请求 4096 或 full，因为它的 full 由 Canvas tile session 负责。512 JPEG
-保留在 Canvas 下方作为临时占位，直到瓦片逐步覆盖。这样不会让一个重复的全图解码和 JPEG
+Windows HEIF 的 `preview` renderer 复用 `thumbnail` 的 160×120 JPEG，`full` 则由 Canvas tile
+session 负责。该 JPEG 保留在 Canvas 下方，直到瓦片逐步覆盖。这样不会让重复的全图解码和 JPEG
 编码占住串行 preview queue，阻塞屏内缩略图。
 
 ## 5. 第一层调度：前端 `previewQueue`
@@ -86,8 +89,9 @@ preload = -1 过滤后未显示的同目录图片
 ```
 
 队列每次从 pending 中选最高权重，只允许一个 `invoke` 在途。`AbortSignal` 若在任务开始前已
-取消，任务直接丢弃。React Query key 包含 priority；项目从 nearby 变为 visible 时会建立新的
-高优先级请求，旧 pending 请求被取消。
+取消，任务直接丢弃。React Query key 只描述产物身份，不包含 priority；同一产物从 sidebar
+进入 loupe 时通过 `raisePriority` 原地提升 pending task，并把提升后的 priority 传给后端。
+这既避免重复解码，也保留 `loupe > visible > nearby > preload` 的调度顺序。
 
 开启搜索、格式、评级或颜色过滤时，另一个无过滤的廉价分页查询会继续枚举当前目录。未出现在
 可见结果中的图片由 `BackgroundPreviewPreloader` 串行提交，每次只放入一个 `preload`
@@ -135,22 +139,21 @@ RAW full development 是例外。它可能耗时数十秒，使用独立 `RAW_FU
 Tauri `get_preview` 的逻辑是：
 
 1. 通过 `oxy-fs` 取得 asset kind；
-2. 可直接显示则 `oxy_media::original(path)`；
-3. 需要解码则限制 `maxSize` 在 128～8192；
-4. 映射 priority；
-5. 在线程池调用 `oxy_media::preview(...)`。
+2. 接收 `RenderLevel` 和 priority；
+3. 映射 priority；
+4. 在线程池调用 `oxy_media::preview(...)`。
 
-`oxy_media::preview` 再根据 `(kind, mode)` 分派：
+`oxy_media::preview` 根据 `(platform, kind, level)` 查表分派。IPC 不接收像素尺寸：
 
 ```mermaid
 flowchart TD
-    request["preview kind + mode"] --> kind{AssetKind}
-    kind -->|RAW fullDetail| rawFull["raw_full"]
-    kind -->|RAW preview| rawPreview["raw_preview_with_priority"]
-    kind -->|HEIF fullDetail| heifFull["heif_full"]
-    kind -->|HEIF preview| heifPreview["heif_preview_with_priority"]
-    kind -->|TIFF| systemPreview["system_preview"]
-    kind -->|未来需解码格式| systemPreview
+    request["platform + kind + RenderLevel"] --> policy["render_method_for"]
+    policy -->|RAW Full| rawFull["raw_full"]
+    policy -->|RAW Thumbnail/Preview| rawPreview["raw_preview_with_priority + policy size"]
+    policy -->|HEIF Full| heifFull["heif_full / tile session"]
+    policy -->|HEIF Thumbnail/Preview| heifPreview["heif_preview_with_priority + policy size"]
+    policy -->|TIFF| systemPreview["system_preview + policy size"]
+    policy -->|JPEG/PNG/WebP| original["original"]
     rawPreview --> rawFallback{LibRaw 失败?}
     rawFallback -->|是| systemPreview
     heifFull --> heifFallback{full 失败?}
@@ -167,14 +170,15 @@ flowchart TD
 RAW 由 vendored LibRaw 0.22.1 处理。预览优先尝试内嵌预览：相机通常已经在 RAW 容器里存了
 JPEG，读取它远比 demosaic 原始感光数据快。若内嵌预览不适用，才执行 half-size development。
 
-网格使用 512 stage。放大镜直接请求 4096 stage，因为 Sony ARW 常见的近全尺寸内嵌 JPEG
-可以在数毫秒内直接复制；先把它解码、缩放并重编码成 512 反而更慢。4096 stage 保留合适的
+RAW `thumbnail` 映射 512，`preview` 映射 4096。放大镜直接从 `preview` 开始，因为 Sony ARW
+常见的近全尺寸内嵌 JPEG 可以在数毫秒内直接复制；先把它解码、缩放并重编码成 512 反而更慢。
+4096 产物保留合适的
 内嵌 JPEG，避免无意义的解码、缩放、重编码。最终结果进入 JPEG 缓存，macOS Quick Look 是
 兼容性 fallback。
 
 ### 8.2 full
 
-full stage 先检查内嵌 JPEG 是否覆盖 RAW 源尺寸的至少 90%。满足时直接复用 4096 缓存，提供
+`full` 等级先检查内嵌 JPEG 是否覆盖 RAW 源尺寸的至少 90%。满足时直接复用 `preview` 缓存，提供
 接近即时的 1:1 查看，也避免后台显影抢占 CPU、拖慢缩放和平移。只有内嵌预览明显不足时，
 才对传感器数据执行完整开发、应用适度 sharpening 并生成高质量 JPEG；该 fallback 不属于冷
 预览 800 ms 预算，UI 会一直保留 4096 图。
@@ -195,12 +199,16 @@ JPEG/完整 RAW 自然尺寸映射坐标，
 
 ## 9. HEIF 预览路径
 
-HEIF preview 优先尝试容器内 thumbnail，接受尺寸不足的内嵌图作为快速第一阶段。需要解码
+HEIF preview 优先尝试容器内 thumbnail，接受尺寸不足的内嵌图作为快速第一阶段。Windows Sony
+HIF 会直接读取前 2 MiB 内的 160×120 MJPEG item，注入正确 EXIF orientation 后原样写入缓存，
+不进入 HEVC gate，也不进行像素重编码。需要解码
 primary image 时，可使用 macOS ImageIO、FFmpeg 或 libheif 等后端，并限制线程数避免后台
 缩略图吃满 CPU。
 
-本章所说的 HEIF 512 JPEG 与全分辨率 tile session 是两条配合路径：前者提供快速临时底图，
-后者提供放大检查。macOS 的预览 JPEG 使用 ImageIO 编码；解码 permit 在 primary image 解码完成
+HEIF `preview` 与全分辨率 tile session 是两条配合路径：前者提供持久底图，后者提供放大检查。
+当前各平台都将 Sony HIF 的 `thumbnail` 与 `preview` 映射到 160×120 产物；平台策略以后可以在
+有独立 fixture 基准证据时分化。
+macOS 的预览 JPEG 使用 ImageIO 编码；解码 permit 在 primary image 解码完成
 后立即释放，JPEG 编码与缓存同步不继续阻塞下一项解码。下一章专门解释 session。
 
 ## 10. 缓存键与原子写入
@@ -211,7 +219,7 @@ primary image 时，可使用 macOS ImageIO、FFmpeg 或 libheif 等后端，并
 - 文件大小；
 - 修改时间；
 - backend/cache version；
-- `maxSize`。
+- 由 `(platform, kind, RenderLevel)` 策略解析出的实际尺寸。
 
 源文件修改或解码算法版本升级都会形成新键。旧文件可能暂时留在 cache 目录，但不会被误用。
 
@@ -242,7 +250,7 @@ RAW/HEIF 的 JPEG 和部分 byte-cache 写入先在目标目录创建临时文�
 
 ## 12. 诊断与性能
 
-`PreviewResult` 包含 URL、类型、宽高，并可带 stage 与 diagnostics。性能判断需要区分：
+`PreviewResult` 包含 URL、类型、宽高，并可带 `renderLevel` 与 diagnostics。性能判断需要区分：
 
 - cold decode；
 - warm cache hit；
@@ -259,6 +267,7 @@ RAW/HEIF 的 JPEG 和部分 byte-cache 写入先在目标目录创建临时文�
 - visible 请求是否能中断正在运行的 nearby decode？
 - React Query 取消一个已开始的 invoke 后，Rust 一定停止吗？
 - 为什么 HEIF full 不属于 `<img>` 的第三个 query？
+- 为什么 160×120 不能成为交互状态判断条件？
 - 缓存键为什么包含版本和修改时间？
 - 原子写入避免了哪一类缓存损坏？
 

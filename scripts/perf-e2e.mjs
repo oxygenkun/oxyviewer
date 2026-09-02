@@ -260,10 +260,10 @@ function computeMetrics(report, selectName) {
     if (loaded.length > 0) {
       metrics.firstPreviewMs = Math.min(...loaded.map((mark) => mark.t)) - select;
     }
-    for (const [stage, metric] of [["thumb512", "thumb512Ms"], ["loupe4096", "loupe4096Ms"], ["full", "fullDetailMs"]]) {
+    for (const [level, metric] of [["thumbnail", "thumbnailMs"], ["preview", "previewMs"], ["full", "fullMs"]]) {
       const mark = report.marks.find((entry) =>
         entry.name === "image:loaded"
-        && entry.detail?.stage === stage
+        && entry.detail?.stage === level
         && entry.detail?.assetName === selectName
       );
       if (mark) metrics[metric] = mark.t - select;
@@ -272,20 +272,19 @@ function computeMetrics(report, selectName) {
     if (firstTile !== undefined) metrics.heifFirstTileMs = firstTile - select;
     const allTiles = markTime(report, "heif:all-tiles-painted", "assetName", selectName);
     if (allTiles !== undefined) metrics.heifAllTilesMs = allTiles - select;
-    // Backend arrival of the 4096 stage, independent of which layer paints it
-    // (the full-detail stage can supersede the 4096 <img> before it loads).
-    const loupe4096Result = report.marks.find((mark) =>
+    // Backend arrival of the semantic preview level, independent of which
+    // concrete dimensions the platform/format policy selected.
+    const previewResult = report.marks.find((mark) =>
       mark.name === "preview:result"
       && mark.detail?.assetName === selectName
-      && mark.detail?.mode === "loupePreview"
-      && String(mark.detail?.maxSize) === "4096"
+      && mark.detail?.level === "preview"
     );
-    if (loupe4096Result) metrics.loupe4096ResultMs = loupe4096Result.t - select;
+    if (previewResult) metrics.previewResultMs = previewResult.t - select;
   }
   // Backend-reported durations (recorded only, no absolute budgets).
   for (const mark of report.marks) {
     if (mark.name === "preview:result" && mark.detail?.diagnostics?.totalMs !== undefined) {
-      metrics[`backend:${String(mark.detail.mode)}@${String(mark.detail.maxSize ?? "full")}Ms`] =
+      metrics[`backend:${String(mark.detail.level)}Ms`] =
         mark.detail.diagnostics.totalMs;
     }
     if (mark.name === "heif:backend-complete" && mark.detail?.diagnostics?.totalMs !== undefined) {

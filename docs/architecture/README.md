@@ -37,7 +37,7 @@
 | 文件夹会话 | `crates/oxy-fs/src/lib.rs` | `apps/desktop/src/lib/api.ts` |
 | Command 注册 | `apps/desktop/src-tauri/src/lib.rs` | `invoke(...)` wrappers in `api.ts` |
 | 分页请求 | `FsCatalog::list_assets` | `useInfiniteQuery` in `App.tsx` |
-| 预览阶段 | `oxy_media::preview` | `previewStages` |
+| 渲染等级 | `render_method_for` / `oxy_media::preview` | `renderPlan` |
 | 预览优先级 | `DecodeGate` | `previewQueue` |
 | HEIF 会话 | `HeifDecodeService` | `HeifTileCanvas` |
 | UI 服务端状态 | 不适用 | React Query |

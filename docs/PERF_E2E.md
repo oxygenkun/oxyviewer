@@ -60,7 +60,7 @@ runner 汇总 N 次运行 → median/p95 → 绝对预算 + 基线回归判定 �
 | `harness:first-page-painted` | PerfHarness | 首屏数据提交后双 rAF，近似"开始渲染" |
 | `harness:select` | PerfHarness | 选中目标图片（冷/热预览计时起点） |
 | `preview:queued` / `preview:result` | api.generatedPreview | 预览请求入队 / 后端返回（含 `diagnostics`） |
-| `image:loaded` | Thumbnail.onLoad | 某一级预览图解码上屏（detail 含 `stage`） |
+| `image:loaded` | Thumbnail.onLoad | 某一语义等级上屏（detail 含 `stage` / `renderLevel`） |
 | `heif:decode-requested` / `heif:session-ready` | api / HeifTileCanvas | HEIF 全分辨率 tile 会话 |
 | `heif:first-tile-painted` / `heif:all-tiles-painted` | HeifTileCanvas | 首 tile / 全部 tile 上屏 |
 | `heif:backend-*` | HeifTileCanvas | 后端状态事件（含 decode/tile 诊断） |
@@ -72,8 +72,8 @@ Runner 由 mark 对计算出命名指标，`scenarios.json` 的 `budgets` 引用
 | --- | --- |
 | `firstPageMs` | `harness:first-page-painted` − `folder:open-requested` |
 | `firstPreviewMs` | 目标资产首个 `image:loaded` − `harness:select` |
-| `loupe4096Ms` | `image:loaded`（stage=loupe4096）− `harness:select` |
-| `fullDetailMs` | `image:loaded`（stage=full）− `harness:select`（仅记录，不计入 800 ms 预算） |
+| `previewMs` | `image:loaded`（stage=preview）− `harness:select` |
+| `fullMs` | `image:loaded`（stage=full）− `harness:select`（仅记录，不计入 800 ms 预算） |
 | `heifFirstTileMs` / `heifAllTilesMs` | 对应 mark − `harness:select` |
 | `backendDecodeMs` 等 | 取自 `preview:result` / `heif:backend-*` 的 diagnostics，仅记录 |
 
@@ -89,7 +89,7 @@ Runner 由 mark 对计算出命名指标，`scenarios.json` 的 `budgets` 引用
 | `cold-preview-jpeg` | 合成 JPEG | 冷 | firstPreviewMs ≤ 800（走 asset 直读路径） |
 | `warm-loupe-arw` / `warm-loupe-hif` | 同上 | 热（连续第二次，不清缓存） | firstPreviewMs ≤ 150 |
 | `loupe-tiles-hif` | HIF | 热启动后进入 loupe | tile 指标记录 + 基线回归 |
-| `loupe-full-arw` | ARW | 同上（awaitFull） | fullDetailMs 仅记录（全幅显影是秒级，单列预算） |
+| `loupe-full-arw` | ARW | 同上（awaitFull） | fullMs 仅记录（全幅显影是秒级，单列预算） |
 
 扩展新格式（CR3/NEF/DNG/TIFF/HEIC…）：把可分发夹具放入 `test/fixtures/media`
 或 `tests/fixtures`，在 `scenarios.json` 增加一条 `file` 型场景即可，无需改

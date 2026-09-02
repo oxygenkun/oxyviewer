@@ -68,10 +68,9 @@ export interface AssetDetails {
   focusInfo?: FocusInfo;
 }
 
-export type PreviewMode = "thumbnail" | "loupePreview" | "fullDetail";
+export type RenderLevel = "thumbnail" | "preview" | "full";
 export type PreviewPriority = "preload" | "nearby" | "visible" | "loupe";
 export type PreviewKind = "embedded" | "developed" | "decoded" | "system" | "original";
-export type PreviewStage = "thumb512" | "loupe4096" | "full";
 
 export interface PreviewDiagnostics {
   backend?: string;
@@ -91,7 +90,7 @@ export interface PreviewResult {
   width: number;
   height: number;
   kind: PreviewKind;
-  stage?: PreviewStage;
+  renderLevel?: RenderLevel;
   diagnostics?: PreviewDiagnostics;
 }
 

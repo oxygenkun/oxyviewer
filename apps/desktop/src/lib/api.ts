@@ -13,9 +13,9 @@ import type {
   MetadataPatch,
   Page,
   PerfScenario,
-  PreviewMode,
   PreviewPriority,
   PreviewResult,
+  RenderLevel,
 } from "../types";
 import { previewQueue, priorityWeight } from "./previewQueue";
 import { perfMark } from "./perfProbe";
@@ -217,8 +217,7 @@ export function previewUrl(asset: AssetSummary): string | undefined {
 
 export async function generatedPreview(
   asset: AssetSummary,
-  mode: PreviewMode,
-  maxSize?: number,
+  level: RenderLevel,
   signal?: AbortSignal,
   priority: PreviewPriority = "visible",
 ): Promise<PreviewResult | undefined> {
@@ -226,38 +225,45 @@ export async function generatedPreview(
   const debug = __OXY_DEBUG__
     ? beginPreviewDebug({
         assetName: asset.name,
-        stage: `${mode}${maxSize ? `@${maxSize}` : ""}`,
+        stage: level,
         priority,
       })
     : undefined;
-  const request = () => {
+  let submittedPriority = priority;
+  const request = (effectiveWeight: number) => {
+    const effectivePriority = previewPriorityForWeight(effectiveWeight);
+    submittedPriority = effectivePriority;
+    debug?.updatePriority(effectivePriority);
     debug?.start();
-    perfMark("preview:queued", { assetName: asset.name, mode, maxSize, priority });
+    perfMark("preview:queued", { assetName: asset.name, level, priority: effectivePriority });
     return invoke<Omit<PreviewResult, "url">>("get_preview", {
       path: asset.path,
-      mode,
-      maxSize,
-      priority,
+      level,
+      priority: effectivePriority,
     });
   };
   try {
-    const result = await previewQueue.enqueue(priorityWeight(priority), signal, request);
+    const result = await previewQueue.enqueue(
+      priorityWeight(priority),
+      signal,
+      request,
+      generatedPreviewTaskKey(asset, level),
+    );
     perfMark("preview:result", {
       assetName: asset.name,
-      mode,
-      maxSize,
-      priority,
+      level,
+      priority: submittedPriority,
       width: result.width,
       height: result.height,
       kind: result.kind,
-      stage: result.stage,
+      renderLevel: result.renderLevel,
       diagnostics: result.diagnostics,
     });
     debug?.mark("backend-result", {
       width: result.width,
       height: result.height,
       kind: result.kind,
-      stage: result.stage,
+      renderLevel: result.renderLevel,
       diagnostics: result.diagnostics,
     });
     debug?.complete({ diagnostics: result.diagnostics });
@@ -267,6 +273,28 @@ export async function generatedPreview(
     else debug?.fail(error);
     throw error;
   }
+}
+
+function generatedPreviewTaskKey(asset: AssetSummary, level: RenderLevel): string {
+  return `${asset.id}:${asset.modifiedAtMs}:${level}`;
+}
+
+function previewPriorityForWeight(weight: number): PreviewPriority {
+  if (weight >= priorityWeight("loupe")) return "loupe";
+  if (weight >= priorityWeight("visible")) return "visible";
+  if (weight >= priorityWeight("nearby")) return "nearby";
+  return "preload";
+}
+
+export function raiseGeneratedPreviewPriority(
+  asset: AssetSummary,
+  level: RenderLevel,
+  priority: PreviewPriority,
+): boolean {
+  return previewQueue.raisePriority(
+    generatedPreviewTaskKey(asset, level),
+    priorityWeight(priority),
+  );
 }
 
 /**
@@ -288,7 +316,7 @@ export async function preloadAssetThumbnail(
     );
     return;
   }
-  const result = await generatedPreview(asset, "thumbnail", 512, signal, "preload");
+  const result = await generatedPreview(asset, "thumbnail", signal, "preload");
   if (result) await preloadBrowserImage(result.url, signal);
 }
 

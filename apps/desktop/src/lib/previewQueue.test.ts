@@ -71,4 +71,28 @@ describe("serial preview task queue", () => {
     await Promise.all([first, preload, nearby, visible, loupe]);
     expect(order).toEqual(["loupe", "visible", "nearby", "preload"]);
   });
+
+  it("promotes the same pending artifact without creating a second task", async () => {
+    const queue = new SerialTaskQueue();
+    let release!: () => void;
+    const first = queue.enqueue(0, undefined, () => new Promise<void>((resolve) => {
+      release = resolve;
+    }));
+    const order: string[] = [];
+    let effectivePriority = -1;
+    const shared = queue.enqueue(0, undefined, async (priority) => {
+      effectivePriority = priority;
+      order.push("shared");
+    }, "asset:thumbnail");
+    const visible = queue.enqueue(1, undefined, async () => {
+      order.push("visible");
+    });
+
+    expect(queue.raisePriority("asset:thumbnail", 2)).toBe(true);
+    release();
+    await Promise.all([first, shared, visible]);
+
+    expect(order).toEqual(["shared", "visible"]);
+    expect(effectivePriority).toBe(2);
+  });
 });

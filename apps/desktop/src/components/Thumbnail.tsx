@@ -1,12 +1,23 @@
 import { useQuery } from "@tanstack/react-query";
 import { useEffect, useMemo, useRef, useState } from "react";
-import { generatedPreview, isTauri, previewUrl } from "../lib/api";
+import {
+  generatedPreview,
+  isTauri,
+  previewUrl,
+  raiseGeneratedPreviewPriority,
+} from "../lib/api";
 import { perfMark } from "../lib/perfProbe";
-import { previewStages } from "../lib/preview";
+import { renderMethodKey, renderPlan, type RenderMethod } from "../lib/preview";
 import { beginPreviewDebug, type PreviewDebugHandle } from "../lib/previewDebug";
 import { nextProgressiveStage } from "../lib/progressiveImage";
 import { rawPreviewStatus, type RawPreviewStatus } from "../lib/rawPreview";
-import type { AssetKind, AssetSummary, PreviewPriority, PreviewResult } from "../types";
+import type {
+  AssetKind,
+  AssetSummary,
+  PreviewPriority,
+  PreviewResult,
+  RenderLevel,
+} from "../types";
 
 interface ThumbnailProps {
   asset: AssetSummary;
@@ -31,13 +42,15 @@ function hashSeed(value: string) {
 }
 
 /**
- * Formats whose loupe experience includes a full-resolution single-image stage
- * (developed by the backend into one JPEG). HEIF is intentionally excluded:
- * its full resolution is streamed as tiles by `HeifTileCanvas`, so the
- * progressive `<img>` chain keeps only a 512px placeholder for HEIF.
+ * Formats whose loupe experience reports full-resolution single-image status.
+ * HEIF full detail is owned by `HeifTileCanvas` instead.
  */
 function hasFullDetailStage(kind: AssetKind): boolean {
   return kind === "raw";
+}
+
+function generatedLevel(method: RenderMethod | undefined): RenderLevel | undefined {
+  return method?.type === "generatedImage" ? method.requestLevel : undefined;
 }
 
 export function Thumbnail({
@@ -53,58 +66,52 @@ export function Thumbnail({
   const [loaded, setLoaded] = useState<{ assetId: string; mode: "preview" | "full" }>();
   const [displayedImage, setDisplayedImage] = useState<DisplayedImage>();
   const imageDebug = useRef<{ source: string; handle: PreviewDebugHandle } | undefined>(undefined);
-  const directSource = useMemo(() => previewUrl(asset), [asset]);
-  const stages = previewStages(asset.kind, large);
-  // stages[0] is always the numeric thumbnail size (512) per previewStages.
-  const thumbnailSize = stages[0] as number;
-  const loupeSize = stages.length > 1 && stages[1] !== "full" ? (stages[1] as number) : undefined;
-  const hasFullStage = stages.includes("full");
-  const thumbnailPriority = large ? "loupe" : priority;
-  const thumbnailSource = useQuery({
-    queryKey: ["asset-preview", asset.id, asset.modifiedAtMs, thumbnailSize, thumbnailPriority],
+  const plan = useMemo(
+    () => renderPlan(asset.kind, large ? "loupe" : "thumbnail"),
+    [asset.kind, large],
+  );
+  const previewStep = plan[0];
+  const fullStep = plan.find((step) => step.level === "full");
+  const previewMethod = previewStep.method;
+  const fullMethod = fullStep?.method;
+  const previewLevel = generatedLevel(previewMethod);
+  const fullLevel = generatedLevel(fullMethod);
+  const previewMethodIdentity = renderMethodKey(previewMethod);
+  const fullMethodIdentity = fullMethod ? renderMethodKey(fullMethod) : undefined;
+  const distinctFullLevel = fullMethodIdentity !== previewMethodIdentity ? fullLevel : undefined;
+  const directSource = useMemo(
+    () => previewMethod.type === "originalImage" ? previewUrl(asset) : undefined,
+    [asset, previewMethod.type],
+  );
+  const requestPriority = large ? "loupe" : priority;
+  const previewQuery = useQuery({
+    queryKey: ["asset-render", asset.id, asset.modifiedAtMs, previewMethodIdentity],
     queryFn: ({ signal }) => generatedPreview(
       asset,
-      large ? "loupePreview" : "thumbnail",
-      thumbnailSize,
+      previewLevel ?? previewStep.level,
       signal,
-      thumbnailPriority,
+      requestPriority,
     ),
-    enabled: enabled && isTauri() && !directSource,
+    enabled: enabled && isTauri() && Boolean(previewLevel),
     staleTime: Infinity,
     retry: 0,
   });
-  const loupeSource = useQuery({
-    queryKey: ["asset-preview", asset.id, asset.modifiedAtMs, loupeSize ?? "loupe"],
-    queryFn: ({ signal }) => generatedPreview(
-      asset,
-      "loupePreview",
-      loupeSize ?? thumbnailSize,
-      signal,
-      "loupe",
-    ),
-    enabled: enabled && isTauri() && !directSource && Boolean(loupeSize && thumbnailSource.data),
-    staleTime: Infinity,
-    retry: 0,
-  });
-  const fullSource = useQuery({
-    queryKey: ["asset-preview", asset.id, asset.modifiedAtMs, "fullDetail"],
-    queryFn: ({ signal }) => generatedPreview(asset, "fullDetail", undefined, signal, "loupe"),
+  const fullQuery = useQuery({
+    queryKey: ["asset-render", asset.id, asset.modifiedAtMs, fullMethodIdentity ?? "no-full-image"],
+    queryFn: ({ signal }) => generatedPreview(asset, distinctFullLevel ?? "full", signal, "loupe"),
     enabled: enabled
       && isTauri()
-      && hasFullStage
       && large
-      && Boolean(loupeSize
-        ? loupeSource.data || loupeSource.isError
-        : thumbnailSource.data || thumbnailSource.isError),
+      && Boolean(distinctFullLevel)
+      && Boolean(previewQuery.data || previewQuery.isError || directSource),
     staleTime: Infinity,
     retry: 0,
   });
   const visibleImage = displayedImage?.assetId === asset.id ? displayedImage : undefined;
-  const previewSource = loupeSource.data ?? thumbnailSource.data;
+  const previewSource = previewQuery.data;
   const generatedSource = nextProgressiveStage(Boolean(visibleImage), [
-    thumbnailSource.data,
-    loupeSource.data,
-    !fullImageFailed ? fullSource.data : undefined,
+    previewSource,
+    !fullImageFailed ? fullQuery.data : undefined,
   ]);
   const source = directSource ?? generatedSource?.url;
   const pendingSource = source !== visibleImage?.source ? source : undefined;
@@ -127,7 +134,7 @@ export function Thumbnail({
         ? beginPreviewDebug({
             assetName: asset.name,
             stage: directSource ? "image-direct" : "image-decode",
-            priority: thumbnailPriority,
+            priority: requestPriority,
           })
         : undefined;
       if (!handle) return;
@@ -144,8 +151,14 @@ export function Thumbnail({
   }, [asset.name, directSource, failed, source]);
 
   useEffect(() => {
-    imageDebug.current?.handle.updatePriority(thumbnailPriority);
-  }, [thumbnailPriority]);
+    imageDebug.current?.handle.updatePriority(requestPriority);
+  }, [requestPriority]);
+
+  useEffect(() => {
+    if (previewLevel) {
+      raiseGeneratedPreviewPriority(asset, previewLevel, requestPriority);
+    }
+  }, [asset, previewLevel, requestPriority]);
 
   useEffect(() => {
     setLoaded(undefined);
@@ -159,12 +172,12 @@ export function Thumbnail({
     if (
       loaded?.assetId === asset.id
       && loaded.mode === "preview"
-      && fullSource.data?.path
-      && fullSource.data.path === previewSource?.path
+      && fullQuery.data?.path
+      && fullQuery.data.path === previewSource?.path
     ) {
       setLoaded({ assetId: asset.id, mode: "full" });
     }
-  }, [asset.id, fullSource.data?.path, loaded, previewSource?.path]);
+  }, [asset.id, fullQuery.data?.path, loaded, previewSource?.path]);
 
   useEffect(() => {
     // Report progressive status only for formats that run the full-detail
@@ -174,15 +187,15 @@ export function Thumbnail({
     onRawPreviewStatus(rawPreviewStatus({
       assetId: asset.id,
       loaded,
-      fullError: fullSource.isError || fullImageFailed,
-      fullSize: fullSource.data,
+      fullError: fullQuery.isError || fullImageFailed,
+      fullSize: fullQuery.data,
     }));
   }, [
     asset.id,
     asset.kind,
-    fullSource.data?.height,
-    fullSource.data?.width,
-    fullSource.isError,
+    fullQuery.data?.height,
+    fullQuery.data?.width,
+    fullQuery.isError,
     fullImageFailed,
     large,
     loaded,
@@ -190,20 +203,14 @@ export function Thumbnail({
   ]);
 
   const handleLoad = (size: { width: number; height: number }, result?: PreviewResult) => {
-    // Classify by which progressive query produced the result; the backend
-    // `stage` field is absent for cache hits and direct passthrough.
-    const probeStage = directSource
-      ? "direct"
-      : result && result === fullSource.data
-        ? "full"
-        : result && result === loupeSource.data
-          ? "loupe4096"
-          : "thumb512";
+    const loadedLevel = result && result === fullQuery.data
+      ? fullStep?.level ?? "full"
+      : previewStep.level;
     perfMark("image:loaded", {
       assetName: asset.name,
       large,
-      stage: probeStage,
-      mode: result === fullSource.data ? "full" : "preview",
+      stage: directSource ? "direct" : loadedLevel,
+      renderLevel: loadedLevel,
       width: size.width,
       height: size.height,
     });
@@ -216,7 +223,7 @@ export function Thumbnail({
         ? beginPreviewDebug({
             assetName: asset.name,
             stage: directSource ? "image-direct" : "image-decode",
-            priority: thumbnailPriority,
+            priority: requestPriority,
           })
         : undefined;
       debug?.start();
@@ -224,7 +231,7 @@ export function Thumbnail({
     }
     debug?.complete();
     if (hasFullDetailStage(asset.kind) && large && result) {
-      setLoaded({ assetId: asset.id, mode: result === fullSource.data ? "full" : "preview" });
+      setLoaded({ assetId: asset.id, mode: result === fullQuery.data ? "full" : "preview" });
     }
     if (source) setDisplayedImage({ assetId: asset.id, source });
     onImageLoad?.(size);
@@ -234,7 +241,7 @@ export function Thumbnail({
     perfMark("image:error", {
       assetName: asset.name,
       large,
-      stage: directSource ? "direct" : (result?.stage ?? "generated"),
+      stage: directSource ? "direct" : (result?.renderLevel ?? previewStep.level),
     });
     const currentDebug = imageDebug.current;
     let debug: PreviewDebugHandle | undefined;
@@ -244,14 +251,14 @@ export function Thumbnail({
         ? beginPreviewDebug({
             assetName: asset.name,
             stage: directSource ? "image-direct" : "image-decode",
-            priority: thumbnailPriority,
+            priority: requestPriority,
           })
         : undefined;
       debug?.start();
       if (debug) imageDebug.current = { source, handle: debug };
     }
     debug?.fail();
-    if (result && result === fullSource.data) {
+    if (result && result === fullQuery.data) {
       setFullImageFailed(true);
     } else {
       setFailed(true);

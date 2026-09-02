@@ -16,6 +16,25 @@ end-to-end regression harness that enforces these budgets is described in
 
 ## Verification Log
 
+- 2026-09-03: Sony HIF grid/list/filmstrip thumbnails now use the camera's
+  embedded 160x120 MJPEG item directly instead of requesting a rigid 512 px
+  preview and launching FFmpeg for the 1664x1088 HEVC auxiliary image. The
+  `SHIF`-gated fast path scans only the first 2 MiB, validates the JPEG, and
+  injects EXIF Orientation so WebView2 rotates the original compressed bytes
+  without pixel re-encoding. On Windows the `thumbnail` and loupe `preview`
+  levels both reuse this 160 px artifact; only full tiles begin when the image
+  is opened. Ten cold-cache
+  release runs of `DSC00449.HIF` measured 12.6 ms median and 10.5 ms minimum,
+  versus about 383 ms median for the former FFmpeg 512 px path. Because this
+  path runs before the HEVC decode gate, sidebar scrolling is no longer
+  serialized behind full-image work.
+- 2026-09-03: Replaced pixel-sized progressive UI stages with the semantic
+  `thumbnail → preview → full` render graph (ADR 0006). The IPC now carries a
+  `RenderLevel` only; `oxy-media` owns platform/format decoder and size policy.
+  Windows Sony HIF `thumbnail` and `preview` resolve to the same embedded
+  160×120 artifact and React Query cache key, while `full` remains the tile
+  session. A loupe can raise a shared pending thumbnail request to foreground
+  priority in place, preserving scheduler ordering without a duplicate decode.
 - 2026-09-03: Direct Windows process/GPU-engine sampling of Sony Imaging Edge
   Viewer while switching among three 7008x4672 Sony HEIF 4:2:2 files found a
   CPU decode path on the reference workstation. `Viewer.exe` loaded Sony's

@@ -20,8 +20,8 @@ interface PerfHarnessProps {
 const DEFAULT_TIMEOUT_MS = 30_000;
 
 /**
- * Await token syntax: `mark-name`, `mark-name@stage` (shorthand for
- * detail.stage), or `mark-name@key=value` matched on any detail field.
+ * Await token syntax: `mark-name`, `mark-name@level` (shorthand for the
+ * semantic detail.stage), or `mark-name@key=value` matched on any detail field.
  * Image marks are restricted to the selected asset's large loupe image.
  */
 function markSatisfied(token: string, scenario: PerfScenario): boolean {

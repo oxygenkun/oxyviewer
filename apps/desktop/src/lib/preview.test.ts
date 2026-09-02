@@ -1,28 +1,52 @@
 import { describe, expect, it } from "vitest";
-import { LOUPE_PREVIEW_SIZE, THUMBNAIL_PREVIEW_SIZE, previewStages } from "./preview";
+import { renderMethodKey, renderPlan, runtimeRenderPlatform } from "./preview";
 
-describe("preview stages", () => {
-  it("keeps grid thumbnails on the small preview path for every format", () => {
-    expect(previewStages("jpeg", false)).toEqual([THUMBNAIL_PREVIEW_SIZE]);
-    expect(previewStages("raw", false)).toEqual([THUMBNAIL_PREVIEW_SIZE]);
-    expect(previewStages("heif", false)).toEqual([THUMBNAIL_PREVIEW_SIZE]);
+describe("semantic render graph", () => {
+  it("keeps interaction levels independent from format and pixel size", () => {
+    expect(renderPlan("raw", "thumbnail", "windows").map((step) => step.level))
+      .toEqual(["thumbnail"]);
+    expect(renderPlan("raw", "loupe", "windows").map((step) => step.level))
+      .toEqual(["preview", "full"]);
+    expect(renderPlan("heif", "loupe", "windows").map((step) => step.level))
+      .toEqual(["preview", "full"]);
   });
 
-  it("keeps only a 512 placeholder for HEIF loupe while tiles provide full detail", () => {
-    expect(previewStages("heif", true)).toEqual([THUMBNAIL_PREVIEW_SIZE]);
+  it("maps Windows HEIF preview to the thumbnail artifact and full to tiles", () => {
+    const thumbnail = renderPlan("heif", "thumbnail", "windows")[0];
+    const [preview, full] = renderPlan("heif", "loupe", "windows");
+
+    expect(preview.method).toEqual({ type: "generatedImage", requestLevel: "thumbnail" });
+    expect(renderMethodKey(preview.method)).toBe(renderMethodKey(thumbnail.method));
+    expect(full.method).toEqual({ type: "heifTiles" });
   });
 
-  it("opens raw loupe at the direct embedded-preview stage, then full detail", () => {
-    expect(previewStages("raw", true)).toEqual([
-      LOUPE_PREVIEW_SIZE,
-      "full",
+  it("keeps the platform dimension without regressing the qualified HIF fast path", () => {
+    const [preview, full] = renderPlan("heif", "loupe", "macos");
+    expect(preview.method).toEqual({ type: "generatedImage", requestLevel: "thumbnail" });
+    expect(full.method).toEqual({ type: "heifTiles" });
+  });
+
+  it("maps RAW and TIFF levels without exposing concrete pixel sizes", () => {
+    expect(renderPlan("raw", "loupe", "windows").map((step) => step.method)).toEqual([
+      { type: "generatedImage", requestLevel: "preview" },
+      { type: "generatedImage", requestLevel: "full" },
+    ]);
+    expect(renderPlan("tiff", "loupe", "windows").map((step) => step.method)).toEqual([
+      { type: "generatedImage", requestLevel: "preview" },
+      { type: "generatedImage", requestLevel: "full" },
     ]);
   });
 
-  it("defaults future formats to the two-tier preview path", () => {
-    expect(previewStages("tiff", true)).toEqual([
-      THUMBNAIL_PREVIEW_SIZE,
-      LOUPE_PREVIEW_SIZE,
+  it("uses the original image for browser-native raster formats", () => {
+    expect(renderPlan("jpeg", "loupe", "windows").map((step) => step.method)).toEqual([
+      { type: "originalImage" },
+      { type: "originalImage" },
     ]);
+  });
+
+  it("detects the platform without making it part of interaction state", () => {
+    expect(runtimeRenderPlatform("Mozilla/5.0 (Windows NT 10.0; Win64; x64)")).toBe("windows");
+    expect(runtimeRenderPlatform("Mozilla/5.0 (Macintosh; Intel Mac OS X 14_0)")).toBe("macos");
+    expect(runtimeRenderPlatform("Mozilla/5.0 (X11; Linux x86_64)")).toBe("linux");
   });
 });

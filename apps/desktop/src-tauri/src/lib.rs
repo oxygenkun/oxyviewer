@@ -1,8 +1,8 @@
 use oxy_domain::{
     AssetDetails, AssetKind, AssetQuery, AssetSummary, DirectorySummary, FileOperation,
     FileOperationResult, FolderSession, HeifCapabilities, HeifDecodeSession, HeifDecodeStatus,
-    HeifDiagnostics, JobId, JobPriority, MetadataPatch, Page, PerfScenario, PreviewMode,
-    PreviewPriority, PreviewResult,
+    HeifDiagnostics, JobId, JobPriority, MetadataPatch, Page, PerfScenario, PreviewPriority,
+    PreviewResult, RenderLevel,
 };
 use oxy_fs::FsCatalog;
 use oxy_library::Library;
@@ -112,8 +112,7 @@ async fn get_asset_details(
 #[tauri::command]
 async fn get_preview(
     path: PathBuf,
-    mode: PreviewMode,
-    max_size: Option<u32>,
+    level: RenderLevel,
     priority: PreviewPriority,
     state: State<'_, AppState>,
 ) -> Result<PreviewResult, String> {
@@ -121,17 +120,11 @@ async fn get_preview(
         .files
         .get_asset(&path)
         .map_err(|error| error.to_string())?;
-    // Raster formats the web view renders directly are served as originals;
-    // every format that needs decoding funnels through the unified dispatcher.
-    if !oxy_media::needs_decode(asset.kind) {
-        return oxy_media::original(path).map_err(|error| error.to_string());
-    }
     let preview_dir = state.preview_dir.clone();
-    let max_size = max_size.unwrap_or(4_096).clamp(128, 8_192);
     let decode_priority = oxy_media::decode_priority_for(priority);
     let kind = asset.kind;
     tauri::async_runtime::spawn_blocking(move || {
-        oxy_media::preview(&path, &preview_dir, mode, max_size, decode_priority, kind)
+        oxy_media::preview(&path, &preview_dir, level, decode_priority, kind)
             .map_err(|error| error.to_string())
     })
     .await

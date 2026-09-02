@@ -4,7 +4,8 @@ Date: 2026-06-15
 
 ## Status
 
-Accepted
+Accepted. The size-based stage vocabulary and IPC signature in this ADR were
+refined by [ADR 0006](0006-semantic-render-level-graph.md).
 
 ## Context
 
@@ -45,8 +46,9 @@ Adopt a **two-tier unified pipeline** with these properties:
   covering every format and every stage. It sorts pending work by a three-level
   weight (`loupe=2 > visible=1 > nearby=0`) and drops requests whose
   `AbortSignal` fired before they start (i.e. requests that scrolled out of
-  view). React Query's query-key includes the priority, so a thumbnail that
-  flips `nearby → visible` starts a fresh, higher-priority fetch.
+  view). As refined by ADR 0006, React Query keys describe artifact identity;
+  a shared pending artifact is promoted in place when it becomes visible or
+  enters loupe.
 - **Backend tier (`DecodeGate`)**: the former `HeifDecodeGate`, generalized to
   all formats. `acquire_decode(priority)` orders waiters `Foreground >
   Visible > Background` but **never preempts a running decode** — higher
@@ -89,24 +91,23 @@ thread; the result is simply ignored.
 
 ### Single dispatcher
 
-`oxy_media::preview(path, cache_dir, mode, max_size, priority, kind)` is the
+`oxy_media::preview(path, cache_dir, level, priority, kind)` is the
 only entry point the Tauri layer calls for decodable formats. The per-format
 `match` block, priority mapping, and fallback chains now live in one place.
-Adding a new format means extending this function (and `previewStages` on the
-frontend), not touching the IPC boundary.
+Adding a new format means extending the semantic renderer profiles, not
+touching the IPC boundary.
 
 ### Shared domain vocabulary
 
-`PreviewStage` (`thumb512 | loupe4096 | full`) and `PreviewDiagnostics` are
-added to `oxy-domain` so the stage band and decode timing are expressed the
-same way on both sides. `PreviewResult` gained optional `stage` and
-`diagnostics` fields (skip-when-none, so existing callers are unaffected).
+ADR 0006 replaces the original size-named `PreviewStage` with `RenderLevel`
+(`thumbnail | preview | full`). `PreviewDiagnostics` remains shared, and
+`PreviewResult.renderLevel` reports semantics without encoding pixel size.
 
 ## Consequences
 
 - **Positive**: one scheduler, one cache format, one dispatcher, one frontend
   queue. Visible thumbnails of any format now outrank off-screen work on both
-  tiers. New formats plug in via a single match arm + a `previewStages` case.
+  tiers. New formats plug into the render-level policy tables.
 - **Positive**: cache reuse works across stages and formats; a developed full
   JPEG can satisfy a thumbnail request instantly.
 - **Negative**: 16-bit depth is lost for HEIF full resolution. Accepted as

@@ -100,10 +100,13 @@ pub struct AssetDetails {
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
-pub enum PreviewMode {
+pub enum RenderLevel {
+    /// Fastest representation used by grids, lists, and filmstrips.
     Thumbnail,
-    LoupePreview,
-    FullDetail,
+    /// Stable fit-to-window representation shown when entering loupe.
+    Preview,
+    /// Best representation available for pixel inspection.
+    Full,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
@@ -123,32 +126,6 @@ pub enum PreviewKind {
     Decoded,
     System,
     Original,
-}
-
-/// Semantic preview stage shared across formats. Replaces the magic numbers
-/// `512` / `4_096` and lets the frontend/backend agree on which band of the
-/// progressive pipeline a request belongs to.
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
-#[serde(rename_all = "camelCase")]
-pub enum PreviewStage {
-    /// Cheap thumbnail (~512 px) used for grid/list/filmstrip.
-    Thumb512,
-    /// Loupe preview (~4096 px) shown while full detail develops.
-    Loupe4096,
-    /// Full-resolution output. For HEIF this is served by the tile session;
-    /// for other formats it is a single full-resolution JPEG.
-    Full,
-}
-
-impl PreviewStage {
-    pub fn target_size(self) -> u32 {
-        match self {
-            PreviewStage::Thumb512 => 512,
-            PreviewStage::Loupe4096 => 4_096,
-            // 0 signals "no downscale" to the cache key / decoder.
-            PreviewStage::Full => 0,
-        }
-    }
 }
 
 /// Format-agnostic decode diagnostics. Generalizes `HeifDiagnostics` so any
@@ -184,10 +161,12 @@ pub struct PreviewResult {
     pub width: u32,
     pub height: u32,
     pub kind: PreviewKind,
-    /// Stage that produced this result, when known. `Original` results (direct
-    /// raster passthrough) leave this as `None`.
+    /// Semantic level this result fulfills. Pixel dimensions deliberately do
+    /// not define the level: a format/platform policy may use one artifact for
+    /// multiple levels (for example Sony HIF's 160 px JPEG for thumbnail and
+    /// preview on Windows).
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub stage: Option<PreviewStage>,
+    pub render_level: Option<RenderLevel>,
     /// Optional decode diagnostics. Populated by decoders that measure
     /// backend/timing; absent for cache hits and direct passthrough.
     #[serde(default, skip_serializing_if = "Option::is_none")]

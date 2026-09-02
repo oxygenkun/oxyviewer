@@ -1,32 +1,111 @@
-import type { AssetKind } from "../types";
+import type { AssetKind, RenderLevel } from "../types";
 
-export const THUMBNAIL_PREVIEW_SIZE = 512;
-export const LOUPE_PREVIEW_SIZE = 4_096;
+export type RenderPlatform = "windows" | "macos" | "linux" | "other";
+export type RenderSurface = "thumbnail" | "loupe";
+
+export type RenderMethod =
+  | { type: "originalImage" }
+  | { type: "generatedImage"; requestLevel: RenderLevel }
+  | { type: "heifTiles" };
+
+type ConfiguredRenderMethod = RenderMethod | { type: "reuse"; level: RenderLevel };
+type RenderProfile = Record<RenderLevel, ConfiguredRenderMethod>;
+
+export interface RenderStep {
+  /** Interaction semantics. Never infer this from the artifact's dimensions. */
+  level: RenderLevel;
+  /** Concrete renderer selected by the file-type/platform profile. */
+  method: RenderMethod;
+}
 
 /**
- * A preview stage in the progressive pipeline. Numeric stages carry the
- * `maxSize` sent to the backend; `"full"` requests a full-resolution decode
- * (mode `fullDetail`). Only formats whose full-resolution output is a single
- * image (RAW, future raster decoders) use the `"full"` stage — HEIF's full
- * resolution is streamed by `HeifTileCanvas`, so HEIF keeps only the 512px
- * placeholder here and skips the redundant 4096px JPEG upgrade.
+ * The interaction graph is deliberately format- and pixel-independent.
+ * A list/grid asks for thumbnail; loupe first establishes a persistent preview
+ * layer and then advances to full. Profiles below decide how each node is
+ * rendered and may map several nodes to the same artifact.
  */
-export type PreviewStageSize = number | "full";
+const SURFACE_LEVELS: Record<RenderSurface, readonly RenderLevel[]> = {
+  thumbnail: ["thumbnail"],
+  loupe: ["preview", "full"],
+};
 
-/**
- * Progressive stages for an asset, in increasing quality order.
- *
- * - Grid/list/filmstrip (non-loupe): always `[512]`.
- * - HEIF loupe: `[512]` — the tile canvas replaces the placeholder directly.
- * - RAW loupe: `[4096, "full"]` — Sony ARW usually exposes a near-full-size
- *   embedded JPEG faster than OxyViewer can resize it to 512px. The full stage
- *   reuses that image when suitable and develops sensor data only as fallback.
- * - Any future decodable format loupe: defaults to `[512, 4096]` until a
- *   full-resolution path is registered.
- */
-export function previewStages(kind: AssetKind, large: boolean): PreviewStageSize[] {
-  if (!large) return [THUMBNAIL_PREVIEW_SIZE];
-  if (kind === "heif") return [THUMBNAIL_PREVIEW_SIZE];
-  if (kind === "raw") return [LOUPE_PREVIEW_SIZE, "full"];
-  return [THUMBNAIL_PREVIEW_SIZE, LOUPE_PREVIEW_SIZE];
+const originalProfile: RenderProfile = {
+  thumbnail: { type: "originalImage" },
+  preview: { type: "originalImage" },
+  full: { type: "originalImage" },
+};
+
+const rawProfile: RenderProfile = {
+  thumbnail: { type: "generatedImage", requestLevel: "thumbnail" },
+  preview: { type: "generatedImage", requestLevel: "preview" },
+  full: { type: "generatedImage", requestLevel: "full" },
+};
+
+const tiffProfile: RenderProfile = {
+  thumbnail: { type: "generatedImage", requestLevel: "thumbnail" },
+  preview: { type: "generatedImage", requestLevel: "preview" },
+  full: { type: "generatedImage", requestLevel: "full" },
+};
+
+const heifProfile: RenderProfile = {
+  thumbnail: { type: "generatedImage", requestLevel: "thumbnail" },
+  // Sony HIF's 160x120 camera JPEG fulfills both semantic levels. Resolving
+  // this alias gives grid and loupe the exact same React Query cache identity.
+  preview: { type: "reuse", level: "thumbnail" },
+  full: { type: "heifTiles" },
+};
+
+// Keep platform as an explicit policy dimension even where the qualified
+// strategy is currently identical. A platform may diverge only after its
+// native path has its own fixture-backed performance and fidelity evidence.
+const heifProfiles: Record<RenderPlatform, RenderProfile> = {
+  windows: heifProfile,
+  macos: heifProfile,
+  linux: heifProfile,
+  other: heifProfile,
+};
+
+export function runtimeRenderPlatform(
+  userAgent = globalThis.navigator?.userAgent ?? "",
+): RenderPlatform {
+  if (/Windows/i.test(userAgent)) return "windows";
+  if (/Macintosh|Mac OS X/i.test(userAgent)) return "macos";
+  if (/Linux/i.test(userAgent)) return "linux";
+  return "other";
+}
+
+function renderProfile(kind: AssetKind, platform: RenderPlatform): RenderProfile {
+  if (kind === "raw") return rawProfile;
+  if (kind === "heif") return heifProfiles[platform];
+  if (kind === "tiff") return tiffProfile;
+  return originalProfile;
+}
+
+function resolveMethod(profile: RenderProfile, level: RenderLevel): RenderMethod {
+  const method = profile[level];
+  if (method.type !== "reuse") return method;
+  const reused = profile[method.level];
+  if (reused.type === "reuse") {
+    throw new Error(`render profile contains a reuse cycle at ${method.level}`);
+  }
+  return reused;
+}
+
+export function renderPlan(
+  kind: AssetKind,
+  surface: RenderSurface,
+  platform = runtimeRenderPlatform(),
+): RenderStep[] {
+  const profile = renderProfile(kind, platform);
+  return SURFACE_LEVELS[surface].map((level) => ({
+    level,
+    method: resolveMethod(profile, level),
+  }));
+}
+
+/** Stable artifact identity for query reuse; scheduling priority is not data identity. */
+export function renderMethodKey(method: RenderMethod): string {
+  return method.type === "generatedImage"
+    ? `${method.type}:${method.requestLevel}`
+    : method.type;
 }

@@ -1,0 +1,81 @@
+# ADR 0006: Semantic render-level graph
+
+Date: 2026-09-03
+
+## Status
+
+Accepted. This refines the stage vocabulary and dispatcher boundary introduced
+by ADR 0005.
+
+## Context
+
+The progressive UI used arrays containing concrete sizes such as `512` and
+`4096`. Array position and pixel value also decided whether an image was a
+thumbnail, a loupe placeholder, or full detail. Replacing Sony HIF's 512 px
+decode with its much faster embedded 160x120 JPEG therefore changed the
+interaction graph accidentally: the loupe no longer retained a base image
+while full tiles loaded.
+
+Pixel dimensions are an implementation choice of a decoder. They are not a
+stable interaction contract. The same artifact may legitimately fulfill more
+than one user-visible quality level, and the best mapping may differ by file
+type and operating system.
+
+## Decision
+
+Use three semantic render levels shared by Rust and TypeScript:
+
+| Level | Interaction guarantee |
+| --- | --- |
+| `thumbnail` | Fast representation for grid, list, and filmstrip scrolling |
+| `preview` | Persistent fit-to-window layer established when entering loupe |
+| `full` | Best available pixel-inspection representation |
+
+The interaction graph is fixed independently of formats:
+
+```text
+thumbnail surface: thumbnail
+loupe surface:     preview -> full
+```
+
+The frontend render profile maps every `(platform, asset kind, level)` to a
+renderer class: original image, generated image, HEIF tile session, or reuse of
+another level. `Thumbnail` consumes this plan and never infers behavior from
+width, height, a numeric request size, or an array index.
+
+The IPC command accepts `level`, not `mode + maxSize`. `oxy-media` owns the
+concrete native method and target size:
+
+| Windows mapping | `thumbnail` | `preview` | `full` |
+| --- | --- | --- | --- |
+| JPEG/PNG/WebP | original | original | original |
+| RAW | LibRaw 512 | LibRaw 4096 | embedded/full development |
+| Sony HIF/HEIF | embedded 160 | same embedded 160 | HEIF full/tile session |
+| TIFF | system 512 | system 512 | system 4096 |
+
+Other platforms can provide a different profile without changing the
+interaction graph. The currently qualified Sony HIF fast path uses the same
+160 artifact on every platform; a platform should diverge only after its
+native path has fixture-backed performance and fidelity evidence.
+
+React Query keys identify the resolved artifact method, not scheduling
+priority. Consequently HIF grid and loupe observers share the same
+`generatedImage:thumbnail` cache entry. If the shared request is still pending,
+the loupe raises that task's queue priority in place; it does not create a
+second decode. Running work remains non-preemptive.
+
+`PreviewResult.renderLevel` reports semantics. It deliberately does not encode
+pixel dimensions in an enum name.
+
+## Consequences
+
+- Changing a decoder from 512 px to 160x120, an embedded JPEG, a native GPU
+  surface, or another representation cannot remove a loupe layer.
+- Sony HIF keeps the 160x120 image painted below the tile canvas and
+  performs no redundant 512/4096 HEVC preview decode.
+- Cache identity, render progression, and queue priority are separate concerns.
+- Adding a format requires a frontend renderer profile and a backend native
+  method mapping, both expressed against the same three levels.
+- Old `PreviewMode`, `PreviewStage`, `thumb512`, `loupe4096`, and IPC `maxSize`
+  contracts are removed rather than kept as aliases that could reintroduce
+  size-dependent behavior.

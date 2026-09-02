@@ -69,11 +69,11 @@ sequenceDiagram
 
 ### 3.2 预览策略
 
-- `oxy_media::needs_decode` 判断 WebView 能否直显；
-- `oxy_media::preview` 增加唯一格式分支和 fallback；
+- 前端 `renderPlan` 为每个平台把三个语义等级映射到 renderer；
+- 后端 `render_method_for` 把 `(platform, kind, RenderLevel)` 映射到解码器与尺寸；
+- `oxy_media::preview` 接入格式分支和 fallback；
 - 为 decoder 定义 cache version；
-- 确定 512、4096、full 哪些 stage 合理；
-- 前端 `previewStages` 同步；
+- 确定 `thumbnail`、`preview`、`full` 各自的产物，必要时显式复用另一等级；
 - 决定 full 是单一文件还是类似 HEIF 的 tile/session；
 - 接入 `DecodeGate`，除非有充分理由使用独立 lane；
 - 支持更高质量缓存复用时，保证 backend tag 一致。

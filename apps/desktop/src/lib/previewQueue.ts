@@ -1,9 +1,10 @@
 import type { PreviewPriority } from "../types";
 
 type PendingTask<T> = {
+  key?: string;
   priority: number;
   signal?: AbortSignal;
-  run: () => Promise<T>;
+  run: (effectivePriority: number) => Promise<T>;
   resolve: (value: T) => void;
   reject: (reason: unknown) => void;
 };
@@ -32,9 +33,15 @@ export class SerialTaskQueue {
   private active = false;
   private pending: Array<PendingTask<unknown>> = [];
 
-  enqueue<T>(priority: number, signal: AbortSignal | undefined, run: () => Promise<T>): Promise<T> {
+  enqueue<T>(
+    priority: number,
+    signal: AbortSignal | undefined,
+    run: (effectivePriority: number) => Promise<T>,
+    key?: string,
+  ): Promise<T> {
     return new Promise<T>((resolve, reject) => {
       this.pending.push({
+        key,
         priority,
         signal,
         run,
@@ -44,6 +51,19 @@ export class SerialTaskQueue {
       this.pending.sort((left, right) => right.priority - left.priority);
       this.drain();
     });
+  }
+
+  /**
+   * Raise a still-pending artifact without changing its cache identity. This
+   * lets a loupe observer promote the same request a sidebar observer started.
+   * Running work remains non-preemptive by design.
+   */
+  raisePriority(key: string, priority: number): boolean {
+    const task = this.pending.find((candidate) => candidate.key === key);
+    if (!task || task.priority >= priority) return false;
+    task.priority = priority;
+    this.pending.sort((left, right) => right.priority - left.priority);
+    return true;
   }
 
   private drain() {
@@ -56,7 +76,7 @@ export class SerialTaskQueue {
       return;
     }
     this.active = true;
-    task.run()
+    task.run(task.priority)
       .then(task.resolve, task.reject)
       .finally(() => {
         this.active = false;
