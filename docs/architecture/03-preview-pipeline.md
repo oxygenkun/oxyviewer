@@ -172,6 +172,20 @@ full stage 先检查内嵌 JPEG 是否覆盖 RAW 源尺寸的至少 90%。满足
 才对传感器数据执行完整开发、应用适度 sharpening 并生成高质量 JPEG；该 fallback 不属于冷
 预览 800 ms 预算，UI 会一直保留 4096 图。
 
+### 8.3 Sony 拍摄对焦区域
+
+`get_asset_details` 在线程池中通过 `oxy-metadata` 与纯 Rust `fpexif` 读取 Sony MakerNote
+`FocusLocation`/`FocusFrameSize`。ARW、JPEG、HEIF/HIF 只要带有这些字段，都通过同一个
+`FocusInfo` 小型结构返回；图片字节仍不经过 IPC。EXIF 方向会先应用到坐标，HEIF 缺少 EXIF
+方向而显示尺寸明确交换横竖轴时使用 Sony 常见的顺时针方向。前端再用当前真正显示的
+JPEG/完整 RAW 自然尺寸映射坐标，
+而不是假设内嵌预览与 RAW 的长宽比相同：同长宽比直接缩放，已知完整 RAW 可在相机裁剪外
+扩展，否则使用保守的居中裁剪并隐藏落在裁剪外的点。对焦层位于 `.loupe__render` 内，因此
+适应窗口、放大和平移时都与图片保持一致。
+
+存在 `FocusFrameSize` 时显示精确实线框；仅有 `FocusLocation` 中心时显示带中心点的虚线
+估算框，避免把估算大小冒充相机记录。
+
 ## 9. HEIF 预览路径
 
 HEIF preview 优先尝试容器内 thumbnail，接受尺寸不足的内嵌图作为快速第一阶段。需要解码

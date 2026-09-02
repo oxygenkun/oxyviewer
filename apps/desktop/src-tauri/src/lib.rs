@@ -73,20 +73,30 @@ fn refresh_directory(
 }
 
 #[tauri::command]
-fn get_asset_details(path: PathBuf, state: State<'_, AppState>) -> Result<AssetDetails, String> {
-    let asset = state
-        .files
-        .get_asset(&path)
-        .map_err(|error| error.to_string())?;
-    let dimensions = oxy_media::dimensions(&path).ok();
-    let sidecar_path = asset.has_sidecar.then(|| oxy_fs::sidecar_path(&path));
-    Ok(AssetDetails {
-        asset,
-        width: dimensions.map(|value| value.width),
-        height: dimensions.map(|value| value.height),
-        metadata: Default::default(),
-        sidecar_path,
+async fn get_asset_details(
+    path: PathBuf,
+    state: State<'_, AppState>,
+) -> Result<AssetDetails, String> {
+    let files = state.files.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        let asset = files.get_asset(&path).map_err(|error| error.to_string())?;
+        let dimensions = oxy_media::dimensions(&path).ok();
+        let display_dimensions = dimensions.map(|value| (value.width, value.height));
+        let focus_info = oxy_metadata::read_focus_info(&path, display_dimensions)
+            .ok()
+            .flatten();
+        let sidecar_path = asset.has_sidecar.then(|| oxy_fs::sidecar_path(&path));
+        Ok(AssetDetails {
+            asset,
+            width: dimensions.map(|value| value.width),
+            height: dimensions.map(|value| value.height),
+            metadata: Default::default(),
+            sidecar_path,
+            focus_info,
+        })
     })
+    .await
+    .map_err(|error| error.to_string())?
 }
 
 #[tauri::command]

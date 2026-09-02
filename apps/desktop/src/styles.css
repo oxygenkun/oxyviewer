@@ -568,6 +568,31 @@ body {
   height: 100%;
   pointer-events: none;
 }
+.loupe__focus-overlay {
+  position: absolute;
+  z-index: 3;
+  inset: 0;
+  overflow: hidden;
+  pointer-events: none;
+}
+.loupe__focus-frame {
+  position: absolute;
+  box-sizing: border-box;
+  border: 1px solid #77df45;
+  filter: drop-shadow(0 0 2px rgb(0 0 0 / 90%));
+}
+.loupe__focus-frame.is-estimated { border-style: dashed; }
+.loupe__focus-frame b {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: 3px;
+  height: 3px;
+  border: 1px solid #77df45;
+  border-radius: 50%;
+  background: rgb(8 11 8 / 75%);
+  transform: translate(-50%, -50%);
+}
 .loupe__render .thumbnail {
   width: 100%;
   height: 100%;

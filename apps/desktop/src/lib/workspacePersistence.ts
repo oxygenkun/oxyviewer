@@ -1,5 +1,6 @@
 const WORKSPACE_KEY = "oxyviewer.workspace.v1";
 const ONBOARDING_KEY = "oxyviewer.folder-onboarding.v1";
+const FOCUS_AREAS_KEY = "oxyviewer.focus-areas-visible.v1";
 
 export interface WorkspaceSnapshot {
   activeRoot?: string;
@@ -51,4 +52,25 @@ export function hasSeenFolderOnboarding(storage: StorageLike = window.localStora
 
 export function completeFolderOnboarding(storage: StorageLike = window.localStorage): void {
   storage.setItem(ONBOARDING_KEY, "done");
+}
+
+export function loadFocusAreasVisible(storage?: StorageLike): boolean {
+  const resolved = storage ?? (typeof window === "undefined" ? undefined : window.localStorage);
+  if (!resolved) return false;
+  try {
+    return resolved.getItem(FOCUS_AREAS_KEY) === "true";
+  } catch {
+    return false;
+  }
+}
+
+export function saveFocusAreasVisible(visible: boolean, storage?: StorageLike): void {
+  const resolved = storage ?? (typeof window === "undefined" ? undefined : window.localStorage);
+  if (!resolved) return;
+  try {
+    resolved.setItem(FOCUS_AREAS_KEY, String(visible));
+  } catch {
+    // Preferences must never prevent the viewer from opening (private mode,
+    // disabled storage, or a full quota).
+  }
 }

@@ -145,6 +145,16 @@ export async function getAssetDetails(asset: AssetSummary): Promise<AssetDetails
         keywords: ["field-notes", asset.kind],
       },
       sidecarPath: asset.hasSidecar ? asset.path.replace(/\.[^.]+$/, ".xmp") : undefined,
+      focusInfo: ["raw", "heif", "jpeg"].includes(asset.kind) ? {
+        coordinateWidth: 6_240,
+        coordinateHeight: 4_160,
+        regions: [{
+          centerX: 1_400 + (Number(asset.id.replace("demo-", "")) % 4) * 1_150,
+          centerY: 1_350 + (Number(asset.id.replace("demo-", "")) % 3) * 620,
+          width: asset.kind === "raw" ? undefined : 240,
+          height: asset.kind === "raw" ? undefined : 240,
+        }],
+      } : undefined,
     };
   }
   return invoke<AssetDetails>("get_asset_details", { path: asset.path });

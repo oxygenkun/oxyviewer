@@ -39,12 +39,26 @@ export interface EditableMetadata {
   keywords: string[];
 }
 
+export interface FocusRegion {
+  centerX: number;
+  centerY: number;
+  width?: number;
+  height?: number;
+}
+
+export interface FocusInfo {
+  coordinateWidth: number;
+  coordinateHeight: number;
+  regions: FocusRegion[];
+}
+
 export interface AssetDetails {
   asset: AssetSummary;
   width?: number;
   height?: number;
   metadata: EditableMetadata;
   sidecarPath?: string;
+  focusInfo?: FocusInfo;
 }
 
 export type PreviewMode = "thumbnail" | "loupePreview" | "fullDetail";

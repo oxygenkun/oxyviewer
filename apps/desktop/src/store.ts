@@ -1,5 +1,6 @@
 import { create } from "zustand";
 import type { Locale } from "./lib/i18n";
+import { loadFocusAreasVisible, saveFocusAreasVisible } from "./lib/workspacePersistence";
 import type {
   AssetKind,
   AssetSort,
@@ -22,6 +23,7 @@ interface WorkspaceState {
   navigatorPosition: NavigatorPosition;
   hardwareAcceleration: boolean;
   displaySharpening: boolean;
+  focusAreasVisible: boolean;
   search: string;
   kind?: AssetKind;
   sort: AssetSort;
@@ -38,6 +40,7 @@ interface WorkspaceState {
   setNavigatorPosition: (position: NavigatorPosition) => void;
   setHardwareAcceleration: (enabled: boolean) => void;
   setDisplaySharpening: (enabled: boolean) => void;
+  setFocusAreasVisible: (visible: boolean) => void;
   setSearch: (search: string) => void;
   setKind: (kind?: AssetKind) => void;
   setSort: (sort: AssetSort) => void;
@@ -56,6 +59,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set) => ({
   navigatorPosition: "bottom-right",
   hardwareAcceleration: true,
   displaySharpening: true,
+  focusAreasVisible: loadFocusAreasVisible(),
   search: "",
   sort: "name",
   direction: "ascending",
@@ -78,6 +82,10 @@ export const useWorkspaceStore = create<WorkspaceState>((set) => ({
   setNavigatorPosition: (navigatorPosition) => set({ navigatorPosition }),
   setHardwareAcceleration: (hardwareAcceleration) => set({ hardwareAcceleration }),
   setDisplaySharpening: (displaySharpening) => set({ displaySharpening }),
+  setFocusAreasVisible: (focusAreasVisible) => {
+    saveFocusAreasVisible(focusAreasVisible);
+    set({ focusAreasVisible });
+  },
   setSearch: (search) => set({ search }),
   setKind: (kind) => set({ kind }),
   setSort: (sort) => set({ sort }),

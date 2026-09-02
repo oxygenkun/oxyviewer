@@ -1,5 +1,7 @@
 # OxyViewer
 
+> Warning: This is an experiment and exercise in fully AI-built Rust project
+
 OxyViewer is a local-first photo browser and organizer built with Rust, Tauri 2,
 and React. It opens folders immediately and builds useful caches in the
 background instead of requiring a blocking import.

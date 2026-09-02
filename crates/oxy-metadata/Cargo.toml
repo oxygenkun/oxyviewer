@@ -6,6 +6,7 @@ rust-version.workspace = true
 version.workspace = true
 
 [dependencies]
+fpexif.workspace = true
 oxy-domain = { path = "../oxy-domain" }
 oxy-fs = { path = "../oxy-fs" }
 thiserror.workspace = true

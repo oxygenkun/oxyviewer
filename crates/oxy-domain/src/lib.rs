@@ -60,12 +60,38 @@ pub struct EditableMetadata {
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
+pub struct FocusRegion {
+    /// Center point in the camera focus-coordinate space.
+    pub center_x: u32,
+    pub center_y: u32,
+    /// Exact focus-frame size when the camera provides it. Older Sony files
+    /// expose only the focus location, so these fields are optional.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub width: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub height: Option<u32>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct FocusInfo {
+    /// Dimensions of the coordinate space stored by the camera. They can
+    /// differ from an embedded RAW preview's dimensions and aspect ratio.
+    pub coordinate_width: u32,
+    pub coordinate_height: u32,
+    pub regions: Vec<FocusRegion>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
 pub struct AssetDetails {
     pub asset: AssetSummary,
     pub width: Option<u32>,
     pub height: Option<u32>,
     pub metadata: EditableMetadata,
     pub sidecar_path: Option<PathBuf>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub focus_info: Option<FocusInfo>,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]

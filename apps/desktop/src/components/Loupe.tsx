@@ -2,6 +2,7 @@ import {
   Check,
   Eye,
   EyeOff,
+  Focus,
   LocateFixed,
   Minus,
   Plus,
@@ -31,6 +32,7 @@ import {
   type Size,
 } from "../lib/loupe";
 import { getAssetDetails } from "../lib/api";
+import { mapFocusRegions } from "../lib/focusArea";
 import type { MessageKey } from "../lib/i18n";
 import type { RawPreviewStatus } from "../lib/rawPreview";
 import { useWorkspaceStore } from "../store";
@@ -78,8 +80,10 @@ export function Loupe({
   const navigatorPosition = useWorkspaceStore((state) => state.navigatorPosition);
   const hardwareAcceleration = useWorkspaceStore((state) => state.hardwareAcceleration);
   const displaySharpening = useWorkspaceStore((state) => state.displaySharpening);
+  const focusAreasVisible = useWorkspaceStore((state) => state.focusAreasVisible);
   const setNavigatorVisible = useWorkspaceStore((state) => state.setNavigatorVisible);
   const setNavigatorPosition = useWorkspaceStore((state) => state.setNavigatorPosition);
+  const setFocusAreasVisible = useWorkspaceStore((state) => state.setFocusAreasVisible);
   const active = assets.find((asset) => asset.id === activeId) ?? assets[0];
   const stageRef = useRef<HTMLDivElement>(null);
   const imageRef = useRef<HTMLDivElement>(null);
@@ -91,6 +95,7 @@ export function Loupe({
   const [offset, setOffset] = useState<Point>({ x: 0, y: 0 });
   const [dragging, setDragging] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [focusTemporarilyInverted, setFocusTemporarilyInverted] = useState(false);
   const [editingZoom, setEditingZoom] = useState(false);
   const [zoomInput, setZoomInput] = useState("");
   const [layoutVersion, setLayoutVersion] = useState(0);
@@ -116,6 +121,16 @@ export function Loupe({
   );
   const fittedImageSize = fitSize(stageContentSize, sourceSize);
   const navigatorImageSize = fitSize(NAVIGATOR_MAX_SIZE, sourceSize);
+  const currentNaturalSize = naturalSize?.assetId === active.id ? naturalSize.size : undefined;
+  const currentHeifSize = heifFullSize?.assetId === active.id ? heifFullSize.size : undefined;
+  const displayedNaturalSize = active.kind === "heif"
+    ? currentHeifSize ?? currentNaturalSize ?? metadataSize
+    : currentNaturalSize ?? metadataSize;
+  const mappedFocusRegions = useMemo(
+    () => mapFocusRegions(details.data?.focusInfo, displayedNaturalSize, metadataSize),
+    [details.data?.focusInfo, displayedNaturalSize, metadataSize],
+  );
+  const showFocusAreas = focusAreasVisible !== focusTemporarilyInverted;
 
   const getSizes = useCallback(() => ({
     stage: elementSize(stageRef.current),
@@ -150,6 +165,42 @@ export function Loupe({
     setRawPreviewStatus({ state: "loadingPreview" });
     setHeifStatus("probing");
   }, [active.id, resetZoom]);
+
+  useEffect(() => {
+    const editableTarget = (target: EventTarget | null) => (
+      target instanceof HTMLElement
+      && Boolean(target.closest("input, textarea, select, [contenteditable='true']"))
+    );
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Alt") {
+        if (!event.repeat) setFocusTemporarilyInverted(true);
+        return;
+      }
+      if (
+        event.key.toLowerCase() === "f"
+        && !event.repeat
+        && !event.altKey
+        && !event.ctrlKey
+        && !event.metaKey
+        && !editableTarget(event.target)
+      ) {
+        event.preventDefault();
+        setFocusAreasVisible(!focusAreasVisible);
+      }
+    };
+    const handleKeyUp = (event: KeyboardEvent) => {
+      if (event.key === "Alt") setFocusTemporarilyInverted(false);
+    };
+    const resetTemporaryState = () => setFocusTemporarilyInverted(false);
+    window.addEventListener("keydown", handleKeyDown);
+    window.addEventListener("keyup", handleKeyUp);
+    window.addEventListener("blur", resetTemporaryState);
+    return () => {
+      window.removeEventListener("keydown", handleKeyDown);
+      window.removeEventListener("keyup", handleKeyUp);
+      window.removeEventListener("blur", resetTemporaryState);
+    };
+  }, [focusAreasVisible, setFocusAreasVisible]);
 
   useLayoutEffect(() => {
     const stage = stageRef.current;
@@ -319,6 +370,22 @@ export function Loupe({
                 onStatus={setHeifStatus}
               />
             ) : null}
+            {showFocusAreas && mappedFocusRegions.length > 0 ? (
+              <div className="loupe__focus-overlay" aria-hidden="true">
+                {mappedFocusRegions.map((region, index) => (
+                  <i
+                    key={index}
+                    className={`loupe__focus-frame ${region.syntheticFrame ? "is-estimated" : ""}`}
+                    style={{
+                      left: `${region.left * 100}%`,
+                      top: `${region.top * 100}%`,
+                      width: `${region.width * 100}%`,
+                      height: `${region.height * 100}%`,
+                    }}
+                  ><b /></i>
+                ))}
+              </div>
+            ) : null}
           </div>
         </div>
         {navigatorVisible && zoom > 1.001 ? (
@@ -392,6 +459,15 @@ export function Loupe({
             <Plus size={14} />
           </button>
           <i />
+          <button
+            aria-keyshortcuts="F"
+            aria-pressed={showFocusAreas}
+            className={showFocusAreas ? "is-active" : ""}
+            onClick={() => setFocusAreasVisible(!focusAreasVisible)}
+            title={`${showFocusAreas ? t("hideFocusAreas") : t("showFocusAreas")} · ${t("focusShortcutHint")}`}
+          >
+            <Focus size={14} />
+          </button>
           <button
             className={navigatorVisible ? "is-active" : ""}
             onClick={() => setNavigatorVisible(!navigatorVisible)}
