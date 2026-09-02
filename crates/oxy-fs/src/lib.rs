@@ -171,17 +171,13 @@ pub fn list_directories(root: &Path) -> Result<Vec<DirectorySummary>, FsError> {
             else {
                 continue;
             };
-            let has_children = fs::read_dir(&path)
-                .map(|entries| {
-                    entries
-                        .filter_map(Result::ok)
-                        .any(|child| child.path().is_dir())
-                })
-                .unwrap_or(false);
             directories.push(DirectorySummary {
                 path,
                 name,
-                has_children,
+                // Do not probe this directory before returning the current level.
+                // The directory tree loads its children on expansion and replaces
+                // this optimistic value with the actual result.
+                has_children: true,
             });
             continue;
         }
@@ -467,7 +463,7 @@ mod tests {
     }
 
     #[test]
-    fn discovers_hif_files_and_child_directories() {
+    fn discovers_hif_files_and_lists_only_the_current_directory_level() {
         let directory = tempdir().unwrap();
         File::create(directory.path().join("canon.HIF")).unwrap();
         fs::create_dir(directory.path().join("Portraits")).unwrap();
@@ -480,8 +476,12 @@ mod tests {
         let children = list_directories(directory.path()).unwrap();
         assert_eq!(children.len(), 2);
         assert_eq!(children[0].name, "Portraits");
-        assert!(!children[0].has_children);
+        assert!(children[0].has_children);
         assert!(children[1].has_children);
+
+        let nested = list_directories(&children[1].path).unwrap();
+        assert_eq!(nested.len(), 1);
+        assert_eq!(nested[0].name, "Coast");
     }
 
     #[test]
