@@ -12,9 +12,8 @@ describe("preview stages", () => {
     expect(previewStages("heif", true)).toEqual([THUMBNAIL_PREVIEW_SIZE]);
   });
 
-  it("upgrades raw loupe through 512, 4096, then full detail", () => {
+  it("opens raw loupe at the direct embedded-preview stage, then full detail", () => {
     expect(previewStages("raw", true)).toEqual([
-      THUMBNAIL_PREVIEW_SIZE,
       LOUPE_PREVIEW_SIZE,
       "full",
     ]);

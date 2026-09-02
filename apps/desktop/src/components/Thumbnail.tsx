@@ -85,13 +85,14 @@ export function Thumbnail({
       && isTauri()
       && hasFullStage
       && large
-      && Boolean(loupeSource.data || loupeSource.isError),
+      && Boolean(loupeSize
+        ? loupeSource.data || loupeSource.isError
+        : thumbnailSource.data || thumbnailSource.isError),
     staleTime: Infinity,
     retry: 0,
   });
-  const generatedSource = (!fullImageFailed ? fullSource.data : undefined)
-    ?? loupeSource.data
-    ?? thumbnailSource.data;
+  const previewSource = loupeSource.data ?? thumbnailSource.data;
+  const generatedSource = (!fullImageFailed ? fullSource.data : undefined) ?? previewSource;
   const source = directSource ?? generatedSource?.url;
   const seed = hashSeed(asset.name);
   const style = {
@@ -136,6 +137,19 @@ export function Thumbnail({
     setLoaded(undefined);
     setFullImageFailed(false);
   }, [asset.id]);
+
+  useEffect(() => {
+    // The RAW full-detail endpoint can deliberately reuse the already-loaded
+    // embedded JPEG. No second image load event fires when the path is equal.
+    if (
+      loaded?.assetId === asset.id
+      && loaded.mode === "preview"
+      && fullSource.data?.path
+      && fullSource.data.path === previewSource?.path
+    ) {
+      setLoaded({ assetId: asset.id, mode: "full" });
+    }
+  }, [asset.id, fullSource.data?.path, loaded, previewSource?.path]);
 
   useEffect(() => {
     // Report progressive status only for formats that run the full-detail

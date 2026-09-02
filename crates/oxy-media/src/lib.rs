@@ -245,7 +245,7 @@ pub fn raw_preview_with_priority(
     }
     // Up-tier reuse: a larger cached RAW preview can satisfy this request
     // without re-decoding. Mirrors the HEIF path's behavior.
-    if let Some(result) = larger_cached_preview(path, cache_dir, LIBRAW_CACHE_VERSION, max_size)? {
+    if let Some(result) = larger_cached_raw_preview(path, cache_dir, max_size)? {
         return Ok(result);
     }
 
@@ -261,7 +261,7 @@ pub fn raw_preview_with_priority(
             return preview_result(destination, kind);
         }
     }
-    if let Some(result) = larger_cached_preview(path, cache_dir, LIBRAW_CACHE_VERSION, max_size)? {
+    if let Some(result) = larger_cached_raw_preview(path, cache_dir, max_size)? {
         return Ok(result);
     }
 
@@ -276,7 +276,7 @@ pub fn raw_preview_with_priority(
             return preview_result(destination, kind);
         }
     }
-    if let Some(result) = larger_cached_preview(path, cache_dir, LIBRAW_CACHE_VERSION, max_size)? {
+    if let Some(result) = larger_cached_raw_preview(path, cache_dir, max_size)? {
         return Ok(result);
     }
 
@@ -308,6 +308,29 @@ pub fn raw_full(path: &Path, cache_dir: &Path) -> Result<PreviewResult, MediaErr
         "{}.jpg",
         preview_cache_key(path, LIBRAW_FULL_CACHE_VERSION, 0)?
     ));
+
+    // Sony ARW files normally contain a camera-rendered JPEG at effectively
+    // the sensor's full resolution. Fast photo viewers use it for immediate
+    // 1:1 inspection. Reuse the loupe cache (or extract it in milliseconds)
+    // instead of demosaicing the frame while the user zooms and pans.
+    let source_size = raw_dimensions(path)?;
+    let embedded = raw_preview_with_priority(path, cache_dir, 4_096, DecodePriority::Foreground)?;
+    if embedded.kind == PreviewKind::Embedded
+        && covers_raw_source(
+            ImageDimensions {
+                width: embedded.width,
+                height: embedded.height,
+            },
+            source_size,
+        )
+    {
+        return Ok(embedded);
+    }
+
+    // Only consult an older developed cache when the embedded image cannot
+    // provide near-full detail. This ordering also upgrades existing installs:
+    // a large, slow-to-load full JPEG from an earlier version no longer masks
+    // the much smaller camera JPEG fast path.
     if destination.is_file() {
         return preview_result(destination, PreviewKind::Developed);
     }
@@ -326,6 +349,20 @@ pub fn raw_full(path: &Path, cache_dir: &Path) -> Result<PreviewResult, MediaErr
     let image = image.unsharpen(0.8, 2);
     write_jpeg_atomically(&image, &destination, 95)?;
     preview_result(destination, PreviewKind::Developed)
+}
+
+fn covers_raw_source(candidate: ImageDimensions, source: ImageDimensions) -> bool {
+    let mut candidate_edges = [candidate.width, candidate.height];
+    let mut source_edges = [source.width, source.height];
+    candidate_edges.sort_unstable();
+    source_edges.sort_unstable();
+
+    // Allow the small active-area/crop difference between LibRaw's dimensions
+    // and the camera JPEG. A genuinely reduced preview still falls through.
+    candidate_edges
+        .into_iter()
+        .zip(source_edges)
+        .all(|(candidate, source)| u64::from(candidate) * 100 >= u64::from(source) * 90)
 }
 
 pub fn heif_full(path: &Path, cache_dir: &Path) -> Result<PreviewResult, MediaError> {
@@ -488,6 +525,30 @@ fn larger_cached_preview(
         let candidate = cache_dir.join(format!("{key}.jpg"));
         if candidate.is_file() {
             return preview_result(candidate, PreviewKind::Decoded).map(Some);
+        }
+    }
+    Ok(None)
+}
+
+fn larger_cached_raw_preview(
+    path: &Path,
+    cache_dir: &Path,
+    max_size: u32,
+) -> Result<Option<PreviewResult>, MediaError> {
+    for candidate_size in PREVIEW_CACHE_SIZES
+        .iter()
+        .copied()
+        .filter(|&size| size > max_size)
+    {
+        let key = preview_cache_key(path, LIBRAW_CACHE_VERSION, candidate_size)?;
+        for (suffix, kind) in [
+            ("embedded.jpg", PreviewKind::Embedded),
+            ("developed.jpg", PreviewKind::Developed),
+        ] {
+            let candidate = cache_dir.join(format!("{key}.{suffix}"));
+            if candidate.is_file() {
+                return preview_result(candidate, kind).map(Some);
+            }
         }
     }
     Ok(None)
@@ -964,6 +1025,30 @@ mod tests {
     }
 
     #[test]
+    fn near_full_raw_preview_accepts_orientation_and_active_area_difference() {
+        assert!(covers_raw_source(
+            ImageDimensions {
+                width: 7_008,
+                height: 4_672,
+            },
+            ImageDimensions {
+                width: 4_688,
+                height: 7_028,
+            },
+        ));
+        assert!(!covers_raw_source(
+            ImageDimensions {
+                width: 1_616,
+                height: 1_080,
+            },
+            ImageDimensions {
+                width: 6_240,
+                height: 4_168,
+            },
+        ));
+    }
+
+    #[test]
     fn raw_preview_reports_embedded_and_development_failures() {
         let directory = tempfile::tempdir().unwrap();
         let path = directory.path().join("broken.arw");
@@ -1037,7 +1122,7 @@ mod tests {
 
     #[test]
     #[ignore = "requires OXY_RAW_FIXTURE to point to a camera RAW file"]
-    fn develops_full_resolution_raw_fixture() {
+    fn resolves_full_detail_raw_fixture() {
         let raw_path =
             fs::canonicalize(workspace_path(std::env::var_os("OXY_RAW_FIXTURE").unwrap())).unwrap();
         let directory = tempfile::tempdir().unwrap();
@@ -1046,8 +1131,17 @@ mod tests {
         let full = raw_full(&raw_path, directory.path()).unwrap();
 
         eprintln!("{}: full RAW={:?}", raw_path.display(), started.elapsed());
-        assert_eq!(full.kind, PreviewKind::Developed);
-        assert_eq!((full.width, full.height), (raw_size.width, raw_size.height));
+        assert!(
+            full.kind == PreviewKind::Developed
+                || (full.kind == PreviewKind::Embedded
+                    && covers_raw_source(
+                        ImageDimensions {
+                            width: full.width,
+                            height: full.height,
+                        },
+                        raw_size,
+                    ))
+        );
         assert!(full.path.is_file());
         assert_eq!(raw_full(&raw_path, directory.path()).unwrap(), full);
     }

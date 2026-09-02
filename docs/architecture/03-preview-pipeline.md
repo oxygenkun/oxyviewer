@@ -22,7 +22,7 @@ HEVC 解码器或操作系统预览服务。即使原文件可解码，也不应
 | 格式 | 网格/列表 | 放大镜渐进阶段 | 全分辨率 |
 | --- | --- | --- | --- |
 | JPEG/PNG/WebP | 原文件 URL | 原文件 URL | WebView 直接显示 |
-| RAW | 512 JPEG | 512 → 4096 → full JPEG | LibRaw full development |
+| RAW | 512 JPEG | 4096 → full（可复用同一内嵌 JPEG） | 近全尺寸内嵌 JPEG；不足时 LibRaw full development |
 | HEIF/HIF | 512 JPEG | 512 JPEG 临时底图 | 独立 HEIF tile session |
 | TIFF | 系统 512 预览 | 系统 512 → 4096 预览 | 当前没有独立 full stage |
 
@@ -61,9 +61,9 @@ sequenceDiagram
 
 `Thumbnail` 组件使用多个 React Query：
 
-1. 512 stage 首先启用；
-2. 大图模式下，RAW/TIFF 在 512 成功后启用 4096 stage；HEIF 跳过该 stage；
-3. RAW 在 4096 成功或失败后启用 full stage；
+1. 网格/列表使用 512 stage；
+2. 大图模式下，RAW 直接启用 4096 stage，TIFF 仍从 512 升级到 4096；HEIF 跳过该 stage；
+3. RAW 在首个大图预览成功或失败后启用 full stage；若 full 返回同一路径，前端直接将其提升为 full-ready；
 4. 组件选择当前最高可用且未加载失败的 URL；
 5. 新 stage 图片真正完成浏览器加载后才取代低清图。
 
@@ -160,14 +160,17 @@ flowchart TD
 RAW 由 vendored LibRaw 0.22.1 处理。预览优先尝试内嵌预览：相机通常已经在 RAW 容器里存了
 JPEG，读取它远比 demosaic 原始感光数据快。若内嵌预览不适用，才执行 half-size development。
 
-4096 stage 可保留合适的内嵌 JPEG，避免无意义的解码、缩放、重编码。最终结果进入 JPEG
-缓存，macOS Quick Look 是兼容性 fallback。
+网格使用 512 stage。放大镜直接请求 4096 stage，因为 Sony ARW 常见的近全尺寸内嵌 JPEG
+可以在数毫秒内直接复制；先把它解码、缩放并重编码成 512 反而更慢。4096 stage 保留合适的
+内嵌 JPEG，避免无意义的解码、缩放、重编码。最终结果进入 JPEG 缓存，macOS Quick Look 是
+兼容性 fallback。
 
 ### 8.2 full
 
-full stage 对传感器数据执行完整开发，应用适度 sharpening 并生成高质量 JPEG。它不属于冷
-预览 800 ms 预算；UI 必须一直保留 4096 图。当前参考 ARW 的历史测量约 23.75 秒，说明把它
-隔离出统一 gate 是必要的。
+full stage 先检查内嵌 JPEG 是否覆盖 RAW 源尺寸的至少 90%。满足时直接复用 4096 缓存，提供
+接近即时的 1:1 查看，也避免后台显影抢占 CPU、拖慢缩放和平移。只有内嵌预览明显不足时，
+才对传感器数据执行完整开发、应用适度 sharpening 并生成高质量 JPEG；该 fallback 不属于冷
+预览 800 ms 预算，UI 会一直保留 4096 图。
 
 ## 9. HEIF 预览路径
 
@@ -199,8 +202,10 @@ RAW/HEIF 的 JPEG 和部分 byte-cache 写入先在目标目录创建临时文�
 ### 10.1 更高质量缓存复用
 
 当请求 512 时，通用 `larger_cached_preview` 会检查是否已有同 backend tag 的 4096 缓存；若有，
-直接返回更大文件并由浏览器缩小显示。HEIF 还会显式检查自己的 full JPEG 并缩放复用。RAW full
-使用独立 cache version，当前不会自动满足 RAW 512/4096 请求。这个策略统称为 up-tier reuse。
+直接返回更大文件并由浏览器缩小显示。HEIF 还会显式检查自己的 full JPEG 并缩放复用。RAW 的
+512/4096 查询会复用更大的 `.embedded.jpg` 或 `.developed.jpg`；RAW full 在内嵌 JPEG 覆盖源尺寸
+至少 90% 时也直接返回该 4096 缓存。只有实际 LibRaw full development 才写入独立 cache version。
+这些策略统称为 up-tier reuse。
 
 ## 11. 取消的真实语义
 

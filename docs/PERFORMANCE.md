@@ -7,12 +7,30 @@ Reference budgets are measured on a local SSD with a release build.
 | First page from a 100k-file directory | Begin rendering within 300 ms |
 | Warm cached loupe preview | Under 150 ms |
 | Cold selected-image preview | Under 800 ms |
+| RAW 100% display fidelity | Same-file paired capture; mean RGB within 3/255 per channel and no visible detail loss |
 | Full-resolution RAW development | Measured separately; preview remains visible |
 | Search/filter response over loaded page | Under one animation frame |
 | Main-thread scroll work | No long task above 50 ms |
 
 ## Verification Log
 
+- 2026-09-02: A paired 100% display check opened the byte-identical
+  `DSC02948.ARW` fixture in Sony Imaging Edge Viewer and OxyViewer. After
+  viewport registration, Sony's sampled crop averaged RGB
+  `157.66 / 132.79 / 118.30`; OxyViewer's near-full embedded-JPEG path averaged
+  `158.52 / 134.48 / 120.68`. The per-channel mean difference stayed below
+  3/255 and luminance structure correlation was 0.952. The comparison also
+  caught a stale packaged app still serving an older 6240x4168 LibRaw-developed
+  cache; the current package reports and displays the camera-rendered
+  6192x4128 JPEG. Visual acceptance must therefore use the newly built app,
+  the same source bytes, 100% zoom in both viewers, and an aligned image region.
+- 2026-09-02: RAW loupe entry now requests the 4096 stage directly instead of
+  first decoding and re-encoding a 512 px image. The full-detail stage reuses
+  a camera-rendered embedded JPEG when both edges cover at least 90% of
+  LibRaw's source dimensions, avoiding a CPU-heavy full demosaic during zoom.
+  On the repository Sony fixtures, `DSC00529.ARW` exposed 7008x4672 in 13 ms
+  and `DSC02948.ARW` exposed 6192x4128 in 11 ms; the former unconditional full
+  development historically took 23.75 seconds.
 - 2026-09-02: HEIF loupe zoom now uses the full tile-session dimensions rather
   than the 512 px placeholder's natural size. A displayed 100% therefore maps
   one source pixel to one CSS pixel and 400% is a true four-times pixel zoom.

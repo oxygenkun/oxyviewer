@@ -18,14 +18,15 @@ export type PreviewStageSize = number | "full";
  *
  * - Grid/list/filmstrip (non-loupe): always `[512]`.
  * - HEIF loupe: `[512]` — the tile canvas replaces the placeholder directly.
- * - RAW loupe: `[512, 4096, "full"]` — three-tier upgrade ending in a
- *   full-resolution JPEG developed by LibRaw.
+ * - RAW loupe: `[4096, "full"]` — Sony ARW usually exposes a near-full-size
+ *   embedded JPEG faster than OxyViewer can resize it to 512px. The full stage
+ *   reuses that image when suitable and develops sensor data only as fallback.
  * - Any future decodable format loupe: defaults to `[512, 4096]` until a
  *   full-resolution path is registered.
  */
 export function previewStages(kind: AssetKind, large: boolean): PreviewStageSize[] {
   if (!large) return [THUMBNAIL_PREVIEW_SIZE];
   if (kind === "heif") return [THUMBNAIL_PREVIEW_SIZE];
-  if (kind === "raw") return [THUMBNAIL_PREVIEW_SIZE, LOUPE_PREVIEW_SIZE, "full"];
+  if (kind === "raw") return [LOUPE_PREVIEW_SIZE, "full"];
   return [THUMBNAIL_PREVIEW_SIZE, LOUPE_PREVIEW_SIZE];
 }
