@@ -1,7 +1,5 @@
 import {
   Check,
-  Eye,
-  EyeOff,
   Focus,
   LocateFixed,
   Minus,
@@ -23,7 +21,7 @@ import {
   fitSize,
   getNavigatorViewport,
   MAX_PIXEL_ZOOM_PERCENT,
-  panFromNavigatorPoint,
+  panByNavigatorDelta,
   pixelZoomPercent,
   resolveLoupeSourceSize,
   zoomAtPoint,
@@ -37,6 +35,7 @@ import type { MessageKey } from "../lib/i18n";
 import type { RawPreviewStatus } from "../lib/rawPreview";
 import { useWorkspaceStore } from "../store";
 import type { AssetSummary, HeifDecodeStatus, NavigatorPosition } from "../types";
+import { AssetMetadataBadges } from "./AssetMetadataBadges";
 import { HeifTileCanvas } from "./HeifTileCanvas";
 import { Thumbnail } from "./Thumbnail";
 
@@ -81,16 +80,21 @@ export function Loupe({
   const hardwareAcceleration = useWorkspaceStore((state) => state.hardwareAcceleration);
   const displaySharpening = useWorkspaceStore((state) => state.displaySharpening);
   const focusAreasVisible = useWorkspaceStore((state) => state.focusAreasVisible);
+  const loupeMetadataVisible = useWorkspaceStore((state) => state.loupeMetadataVisible);
+  const loupeControlsAutoHide = useWorkspaceStore((state) => state.loupeControlsAutoHide);
   const setNavigatorVisible = useWorkspaceStore((state) => state.setNavigatorVisible);
   const setNavigatorPosition = useWorkspaceStore((state) => state.setNavigatorPosition);
   const setFocusAreasVisible = useWorkspaceStore((state) => state.setFocusAreasVisible);
+  const setLoupeControlsAutoHide = useWorkspaceStore((state) => state.setLoupeControlsAutoHide);
   const active = assets.find((asset) => asset.id === activeId) ?? assets[0];
   const stageRef = useRef<HTMLDivElement>(null);
   const imageRef = useRef<HTMLDivElement>(null);
   const navigatorRef = useRef<HTMLDivElement>(null);
+  const settingsRef = useRef<HTMLDivElement>(null);
+  const settingsButtonRef = useRef<HTMLButtonElement>(null);
   const filmstripRef = useRef<HTMLDivElement>(null);
   const dragRef = useRef<{ pointerId: number; start: Point; offset: Point } | undefined>(undefined);
-  const navigatorDragRef = useRef<number | undefined>(undefined);
+  const navigatorDragRef = useRef<{ pointerId: number; last: Point } | undefined>(undefined);
   const [zoom, setZoom] = useState(1);
   const [offset, setOffset] = useState<Point>({ x: 0, y: 0 });
   const [dragging, setDragging] = useState(false);
@@ -98,6 +102,7 @@ export function Loupe({
   const [focusTemporarilyInverted, setFocusTemporarilyInverted] = useState(false);
   const [editingZoom, setEditingZoom] = useState(false);
   const [zoomInput, setZoomInput] = useState("");
+  const [hideControlsImmediately, setHideControlsImmediately] = useState(false);
   const [layoutVersion, setLayoutVersion] = useState(0);
   const [stageContentSize, setStageContentSize] = useState<Size>({ width: 0, height: 0 });
   const [naturalSize, setNaturalSize] = useState<{ assetId: string; size: Size } | undefined>(undefined);
@@ -165,6 +170,18 @@ export function Loupe({
     setRawPreviewStatus({ state: "loadingPreview" });
     setHeifStatus("probing");
   }, [active.id, resetZoom]);
+
+  useEffect(() => {
+    if (!settingsOpen) return;
+    const closeSettingsOutside = (event: PointerEvent) => {
+      const target = event.target;
+      if (!(target instanceof Node)) return;
+      if (settingsRef.current?.contains(target) || settingsButtonRef.current?.contains(target)) return;
+      setSettingsOpen(false);
+    };
+    document.addEventListener("pointerdown", closeSettingsOutside);
+    return () => document.removeEventListener("pointerdown", closeSettingsOutside);
+  }, [settingsOpen]);
 
   useEffect(() => {
     const editableTarget = (target: EventTarget | null) => (
@@ -263,14 +280,24 @@ export function Loupe({
     setDragging(false);
   }, []);
 
-  const panFromNavigatorEvent = useCallback((event: React.PointerEvent<HTMLDivElement>) => {
+  const dragNavigator = useCallback((event: React.PointerEvent<HTMLDivElement>) => {
+    const drag = navigatorDragRef.current;
     const rect = navigatorRef.current?.getBoundingClientRect();
-    if (!rect) return;
+    if (!drag || drag.pointerId !== event.pointerId || !rect) return;
+    const pointerDelta = {
+      x: event.clientX - drag.last.x,
+      y: event.clientY - drag.last.y,
+    };
+    drag.last = { x: event.clientX, y: event.clientY };
     const { stage, image } = getSizes();
-    setOffset(panFromNavigatorPoint({
-      x: Math.min(1, Math.max(0, (event.clientX - rect.left) / rect.width)),
-      y: Math.min(1, Math.max(0, (event.clientY - rect.top) / rect.height)),
-    }, zoom, stage, image));
+    setOffset((current) => panByNavigatorDelta(
+      current,
+      pointerDelta,
+      zoom,
+      stage,
+      image,
+      { width: rect.width, height: rect.height },
+    ));
   }, [getSizes, zoom]);
 
   const navigatorViewport = useMemo(() => {
@@ -315,6 +342,7 @@ export function Loupe({
         <div className="loupe__caption">
           <span>{active.name}</span>
           <small>{active.extension} · {formatBytes(active.sizeBytes)}</small>
+          {loupeMetadataVisible ? <AssetMetadataBadges asset={active} /> : null}
         </div>
         {active.kind === "raw" ? (
           <div className={`loupe__raw-status loupe__raw-status--${rawPreviewStatus.state}`}>
@@ -398,15 +426,16 @@ export function Loupe({
                 height: navigatorImageSize.height || undefined,
               }}
               onPointerDown={(event) => {
+                if (event.button !== 0) return;
                 event.currentTarget.setPointerCapture(event.pointerId);
-                navigatorDragRef.current = event.pointerId;
-                panFromNavigatorEvent(event);
+                navigatorDragRef.current = {
+                  pointerId: event.pointerId,
+                  last: { x: event.clientX, y: event.clientY },
+                };
               }}
-              onPointerMove={(event) => {
-                if (navigatorDragRef.current === event.pointerId) panFromNavigatorEvent(event);
-              }}
+              onPointerMove={dragNavigator}
               onPointerUp={(event) => {
-                if (navigatorDragRef.current === event.pointerId) navigatorDragRef.current = undefined;
+                if (navigatorDragRef.current?.pointerId === event.pointerId) navigatorDragRef.current = undefined;
               }}
               onPointerCancel={() => {
                 navigatorDragRef.current = undefined;
@@ -426,7 +455,14 @@ export function Loupe({
             <span><LocateFixed size={11} /> {zoomLabel}</span>
           </div>
         ) : null}
-        <div className="loupe__controls">
+        <div
+          className={`loupe__controls ${loupeControlsAutoHide ? "is-auto-hidden" : ""} ${hideControlsImmediately ? "is-hide-immediate" : ""} ${settingsOpen ? "is-settings-open" : ""}`}
+          onPointerEnter={() => setHideControlsImmediately(false)}
+          onPointerLeave={(event) => {
+            const opacity = Number.parseFloat(window.getComputedStyle(event.currentTarget).opacity);
+            setHideControlsImmediately(opacity < 0.999);
+          }}
+        >
           <button onClick={() => setZoomAroundPoint(zoom / 1.25, { x: 0, y: 0 })} title={t("zoomOut")}>
             <Minus size={14} />
           </button>
@@ -469,26 +505,28 @@ export function Loupe({
             <Focus size={14} />
           </button>
           <button
-            className={navigatorVisible ? "is-active" : ""}
-            onClick={() => setNavigatorVisible(!navigatorVisible)}
-            title={navigatorVisible ? t("hideNavigator") : t("showNavigator")}
-          >
-            {navigatorVisible ? <Eye size={14} /> : <EyeOff size={14} />}
-          </button>
-          <button
+            ref={settingsButtonRef}
             className={settingsOpen ? "is-active" : ""}
             onClick={() => setSettingsOpen((open) => !open)}
-            title={t("navigatorSettings")}
+            title={t("loupeSettings")}
           >
             <Settings2 size={14} />
           </button>
         </div>
         {settingsOpen ? (
-          <div className="loupe__settings">
+          <div className="loupe__settings" ref={settingsRef}>
             <header>
-              <span>{t("navigatorSettings")}</span>
+              <span>{t("loupeSettings")}</span>
               <small>{t("wheelZoomHint")}</small>
             </header>
+             <button
+              aria-pressed={loupeControlsAutoHide}
+              className="loupe__settings-toggle"
+              onClick={() => setLoupeControlsAutoHide(!loupeControlsAutoHide)}
+            >
+              <span>{t("autoHideToolbar")}</span>
+              <i className={loupeControlsAutoHide ? "is-on" : ""}><b /></i>
+            </button>
             <button className="loupe__settings-toggle" onClick={() => setNavigatorVisible(!navigatorVisible)}>
               <span>{t("showNavigator")}</span>
               <i className={navigatorVisible ? "is-on" : ""}><b /></i>
@@ -536,6 +574,7 @@ export function Loupe({
             asset={asset}
             onClick={() => select(asset.id)}
             root={filmstripRef}
+            showMetadata={loupeMetadataVisible}
           />
         ))}
         {isFetchingNextPage ? <span className="filmstrip__loading">Loading...</span> : null}
@@ -549,9 +588,10 @@ interface FilmstripItemProps {
   asset: AssetSummary;
   onClick: () => void;
   root: React.RefObject<HTMLDivElement | null>;
+  showMetadata: boolean;
 }
 
-function FilmstripItem({ active, asset, onClick, root }: FilmstripItemProps) {
+function FilmstripItem({ active, asset, onClick, root, showMetadata }: FilmstripItemProps) {
   const itemRef = useRef<HTMLButtonElement>(null);
   const [nearby, setNearby] = useState(active);
   const [visible, setVisible] = useState(active);
@@ -599,6 +639,11 @@ function FilmstripItem({ active, asset, onClick, root }: FilmstripItemProps) {
         enabled={nearby || active}
         priority={active ? "loupe" : visible ? "visible" : "nearby"}
       />
+      {showMetadata ? (
+        <span className="filmstrip__metadata">
+          <AssetMetadataBadges asset={asset} />
+        </span>
+      ) : null}
       <span className="filmstrip__name">{asset.name}</span>
     </button>
   );

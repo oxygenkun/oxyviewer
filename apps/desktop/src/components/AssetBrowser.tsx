@@ -4,6 +4,7 @@ import { memo, useEffect, useRef, useState } from "react";
 import type { MessageKey } from "../lib/i18n";
 import { useWorkspaceStore } from "../store";
 import type { AssetSummary, ViewMode } from "../types";
+import { AssetMetadataBadges } from "./AssetMetadataBadges";
 import { Loupe } from "./Loupe";
 import { Thumbnail } from "./Thumbnail";
 
@@ -23,6 +24,7 @@ interface AssetCardProps {
   selected: boolean;
   onSelect: (event: React.MouseEvent) => void;
   onOpen: () => void;
+  showMetadata: boolean;
 }
 
 const AssetCard = memo(function AssetCard({
@@ -31,6 +33,7 @@ const AssetCard = memo(function AssetCard({
   selected,
   onSelect,
   onOpen,
+  showMetadata,
 }: AssetCardProps) {
   return (
     <button
@@ -43,14 +46,7 @@ const AssetCard = memo(function AssetCard({
       <span className="asset-card__name">{asset.name}</span>
       <span className="asset-card__meta">
         {asset.extension}
-        {asset.rating ? <span title={`${asset.rating} / 5`}>{asset.rating}★</span> : null}
-        {asset.colorLabel ? (
-          <b
-            className="asset-color-label"
-            style={{ background: `var(--label-${asset.colorLabel.toLowerCase()})` }}
-            title={asset.colorLabel}
-          />
-        ) : null}
+        {showMetadata ? <AssetMetadataBadges asset={asset} /> : null}
         {asset.hasSidecar ? <i title="XMP sidecar" /> : null}
       </span>
     </button>
@@ -94,6 +90,7 @@ function VirtualGrid({
   const select = useWorkspaceStore((state) => state.select);
   const setView = useWorkspaceStore((state) => state.setView);
   const gridPreference = useWorkspaceStore((state) => state.gridPreference);
+  const gridMetadataVisible = useWorkspaceStore((state) => state.gridMetadataVisible);
   const portraitPriority = gridPreference === "portrait";
   const rowHeight = portraitPriority ? 274 : 194;
   const columns = Math.max(2, Math.floor(width / (portraitPriority ? 150 : 190)));
@@ -149,6 +146,7 @@ function VirtualGrid({
                   select(asset.id);
                   setView("loupe");
                 }}
+                showMetadata={gridMetadataVisible}
               />
             ))}
           </div>
@@ -164,6 +162,7 @@ function VirtualList({
   hasNextPage,
   isFetchingNextPage,
   fetchNextPage,
+  t,
 }: AssetBrowserProps) {
   const parentRef = useRef<HTMLDivElement>(null);
   const selectedIds = useWorkspaceStore((state) => state.selectedIds);
@@ -187,7 +186,7 @@ function VirtualList({
   return (
     <div className="asset-scroll asset-scroll--list" ref={parentRef}>
       <div className="list-header">
-        <span>Name</span><span>Type</span><span>Size</span><span>Modified</span>
+        <span>Name</span><span>{t("ratingAndTag")}</span><span>Type</span><span>Size</span><span>Modified</span>
       </div>
       <div className="virtual-list" style={{ height: virtualizer.getTotalSize() }}>
         {rows.map((row) => {
@@ -205,6 +204,7 @@ function VirtualList({
                 priority={isVisible(row.start, row.end, parentRef.current) ? "visible" : "nearby"}
               />
               <strong>{asset.name}</strong>
+              <AssetMetadataBadges asset={asset} />
               <span>{asset.extension}</span>
               <span>{formatBytes(asset.sizeBytes)}</span>
               <span>{new Date(asset.modifiedAtMs).toLocaleDateString()}</span>

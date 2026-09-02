@@ -20,6 +20,8 @@ pub enum MetadataError {
     EmbeddedWorkerUnavailable,
     #[error("invalid rating {0}; expected 0 through 5")]
     InvalidRating(u8),
+    #[error("Sony HIF supports only red, yellow, green, and blue color labels, not {0}")]
+    UnsupportedHifColorLabel(String),
     #[error("metadata read failed: {0}")]
     Read(String),
     #[error(transparent)]
@@ -163,7 +165,7 @@ fn metadata_from_json(row: &Value) -> EditableMetadata {
             .get("Rating")
             .and_then(|value| value.as_u64().or_else(|| value.as_str()?.parse().ok()))
             .and_then(|value| u8::try_from(value).ok()),
-        color_label: string_value(row.get("Label")).map(normalize_color_label),
+        color_label: string_value(row.get("Label")).and_then(normalize_color_label),
         title: string_value(row.get("Title")),
         description: string_value(row.get("Description")),
         creator: string_value(row.get("Creator")),
@@ -178,11 +180,15 @@ fn metadata_from_json(row: &Value) -> EditableMetadata {
     }
 }
 
-fn normalize_color_label(value: String) -> String {
+fn normalize_color_label(value: String) -> Option<String> {
+    if value.eq_ignore_ascii_case("none") {
+        return None;
+    }
     ["Red", "Yellow", "Green", "Blue", "Purple"]
         .into_iter()
         .find(|label| label.eq_ignore_ascii_case(&value))
-        .map_or(value, str::to_owned)
+        .map(str::to_owned)
+        .or(Some(value))
 }
 
 fn string_value(value: Option<&Value>) -> Option<String> {
@@ -199,7 +205,16 @@ fn patch_embedded(
 ) -> Result<PathBuf, MetadataError> {
     let mut command = exiftool_command();
     command.args(["-overwrite_original", "-P"]);
-    add_patch_args(&mut command, patch);
+    let sony_hif = path
+        .extension()
+        .and_then(|value| value.to_str())
+        .is_some_and(|value| value.eq_ignore_ascii_case("hif"));
+    if sony_hif {
+        // Imaging Edge Viewer expects its HIF rating fields in shorthand XMP
+        // and uses lowercase color names plus explicit zero/None sentinels.
+        command.args(["-api", "Compact=AllFormat"]);
+    }
+    add_patch_args(&mut command, patch, sony_hif)?;
     command.arg(path);
     let output = exiftool_output(&mut command)?;
     if !output.status.success() {
@@ -210,19 +225,36 @@ fn patch_embedded(
     Ok(path.to_path_buf())
 }
 
-fn add_patch_args(command: &mut Command, patch: &oxy_domain::MetadataPatch) {
+fn add_patch_args(
+    command: &mut Command,
+    patch: &oxy_domain::MetadataPatch,
+    sony_hif: bool,
+) -> Result<(), MetadataError> {
     if let Some(value) = patch.rating {
+        let empty = if sony_hif { "0" } else { "" };
         command.arg(format!(
             "-XMP:Rating={}",
-            value.map_or_else(String::new, |value| value.to_string())
+            value.map_or_else(|| empty.to_owned(), |value| value.to_string())
         ));
     }
     if let Some(value) = &patch.color_label {
-        command.arg(format!(
-            "-XMP:Label={}",
+        let value = if sony_hif {
+            match value.as_deref() {
+                None => "None",
+                Some(value) if value.eq_ignore_ascii_case("red") => "red",
+                Some(value) if value.eq_ignore_ascii_case("yellow") => "yellow",
+                Some(value) if value.eq_ignore_ascii_case("green") => "green",
+                Some(value) if value.eq_ignore_ascii_case("blue") => "blue",
+                Some(value) => {
+                    return Err(MetadataError::UnsupportedHifColorLabel(value.to_owned()));
+                }
+            }
+        } else {
             value.as_deref().unwrap_or_default()
-        ));
+        };
+        command.arg(format!("-XMP:Label={value}"));
     }
+    Ok(())
 }
 
 fn exiftool_command() -> Command {
@@ -558,6 +590,57 @@ mod tests {
 
         assert_eq!(metadata.rating, Some(1));
         assert_eq!(metadata.color_label.as_deref(), Some("Red"));
+    }
+
+    #[test]
+    fn treats_sony_hif_none_label_as_unlabeled() {
+        let metadata = metadata_from_json(&serde_json::json!({
+            "SourceFile": "D:/photos/DSC04979.HIF",
+            "Rating": 1,
+            "Label": "None"
+        }));
+
+        assert_eq!(metadata.rating, Some(1));
+        assert_eq!(metadata.color_label, None);
+    }
+
+    #[test]
+    fn builds_sony_viewer_compatible_hif_patch_arguments() {
+        let mut command = Command::new("exiftool");
+        add_patch_args(
+            &mut command,
+            &oxy_domain::MetadataPatch {
+                rating: Some(None),
+                color_label: Some(Some("Red".into())),
+                ..oxy_domain::MetadataPatch::default()
+            },
+            true,
+        )
+        .unwrap();
+        let args = command
+            .get_args()
+            .map(|value| value.to_string_lossy().into_owned())
+            .collect::<Vec<_>>();
+
+        assert_eq!(args, ["-XMP:Rating=0", "-XMP:Label=red"]);
+    }
+
+    #[test]
+    fn rejects_unsupported_sony_hif_color_label() {
+        let mut command = Command::new("exiftool");
+        let result = add_patch_args(
+            &mut command,
+            &oxy_domain::MetadataPatch {
+                color_label: Some(Some("Purple".into())),
+                ..oxy_domain::MetadataPatch::default()
+            },
+            true,
+        );
+
+        assert!(matches!(
+            result,
+            Err(MetadataError::UnsupportedHifColorLabel(_))
+        ));
     }
 
     #[test]

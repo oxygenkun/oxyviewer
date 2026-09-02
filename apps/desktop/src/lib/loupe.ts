@@ -113,3 +113,18 @@ export function panFromNavigatorPoint(
     y: (0.5 - normalizedPoint.y) * image.height * zoom,
   }, zoom, stage, image);
 }
+
+export function panByNavigatorDelta(
+  offset: Point,
+  pointerDelta: Point,
+  zoom: number,
+  stage: Size,
+  image: Size,
+  navigator: Size,
+): Point {
+  if (navigator.width <= 0 || navigator.height <= 0) return offset;
+  return clampPan({
+    x: offset.x - (pointerDelta.x / navigator.width) * image.width * zoom,
+    y: offset.y - (pointerDelta.y / navigator.height) * image.height * zoom,
+  }, zoom, stage, image);
+}

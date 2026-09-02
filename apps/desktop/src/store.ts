@@ -1,6 +1,13 @@
 import { create } from "zustand";
 import type { Locale } from "./lib/i18n";
-import { loadFocusAreasVisible, saveFocusAreasVisible } from "./lib/workspacePersistence";
+import {
+  loadFocusAreasVisible,
+  loadLoupeControlsAutoHide,
+  loadMetadataVisibility,
+  saveFocusAreasVisible,
+  saveLoupeControlsAutoHide,
+  saveMetadataVisibility,
+} from "./lib/workspacePersistence";
 import type {
   AssetKind,
   AssetSort,
@@ -24,6 +31,9 @@ interface WorkspaceState {
   hardwareAcceleration: boolean;
   displaySharpening: boolean;
   focusAreasVisible: boolean;
+  gridMetadataVisible: boolean;
+  loupeMetadataVisible: boolean;
+  loupeControlsAutoHide: boolean;
   search: string;
   kind?: AssetKind;
   minimumRating?: number;
@@ -43,6 +53,9 @@ interface WorkspaceState {
   setHardwareAcceleration: (enabled: boolean) => void;
   setDisplaySharpening: (enabled: boolean) => void;
   setFocusAreasVisible: (visible: boolean) => void;
+  setGridMetadataVisible: (visible: boolean) => void;
+  setLoupeMetadataVisible: (visible: boolean) => void;
+  setLoupeControlsAutoHide: (enabled: boolean) => void;
   setSearch: (search: string) => void;
   setKind: (kind?: AssetKind) => void;
   setMinimumRating: (rating?: number) => void;
@@ -64,6 +77,9 @@ export const useWorkspaceStore = create<WorkspaceState>((set) => ({
   hardwareAcceleration: true,
   displaySharpening: true,
   focusAreasVisible: loadFocusAreasVisible(),
+  gridMetadataVisible: loadMetadataVisibility("grid"),
+  loupeMetadataVisible: loadMetadataVisibility("loupe"),
+  loupeControlsAutoHide: loadLoupeControlsAutoHide(),
   search: "",
   sort: "name",
   direction: "ascending",
@@ -89,6 +105,18 @@ export const useWorkspaceStore = create<WorkspaceState>((set) => ({
   setFocusAreasVisible: (focusAreasVisible) => {
     saveFocusAreasVisible(focusAreasVisible);
     set({ focusAreasVisible });
+  },
+  setGridMetadataVisible: (gridMetadataVisible) => {
+    saveMetadataVisibility("grid", gridMetadataVisible);
+    set({ gridMetadataVisible });
+  },
+  setLoupeMetadataVisible: (loupeMetadataVisible) => {
+    saveMetadataVisibility("loupe", loupeMetadataVisible);
+    set({ loupeMetadataVisible });
+  },
+  setLoupeControlsAutoHide: (loupeControlsAutoHide) => {
+    saveLoupeControlsAutoHide(loupeControlsAutoHide);
+    set({ loupeControlsAutoHide });
   },
   setSearch: (search) => set({ search }),
   setKind: (kind) => set({ kind }),

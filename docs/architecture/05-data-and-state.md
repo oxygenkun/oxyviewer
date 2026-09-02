@@ -117,6 +117,10 @@ preview cache 位于 Tauri `app_cache_dir()/previews`。它满足：
 `rdf:Description` 上对应的 `xmp:Rating` / `xmp:Label` 属性，保留其他 XMP 字段。首次写入时
 创建最小 Adobe 风格 XMP。JPEG/HEIF/HIF 则通过 ExifTool 更新容器内嵌 XMP。
 
+Sony HIF 需要额外遵循 Imaging Edge Viewer 的写法：XMP 使用 compact shorthand，颜色值为
+小写 `red` / `yellow` / `green` / `blue`，清除值写作 `Rating=0` / `Label=None`。Sony Viewer
+没有紫色标签，因此 HIF 检查器只提供上述四种颜色；其他格式仍使用通用 Adobe 标签语义。
+
 这是一项持久用户写入。它与 preview cache 不同，不能随意删除。内嵌写入当前从 `PATH`
 查找 `exiftool`，也可用 `OXY_EXIFTOOL_PATH` 指定；正式发行版仍需捆绑 worker。
 

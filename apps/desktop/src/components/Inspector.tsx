@@ -1,8 +1,9 @@
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient, type InfiniteData } from "@tanstack/react-query";
 import { Circle, FileCog, Image, Star, Tag, X } from "lucide-react";
 import { getAssetDetails, patchMetadata } from "../lib/api";
 import type { MessageKey } from "../lib/i18n";
-import type { AssetSummary } from "../types";
+import { patchAssetDetails, patchAssetPages, patchAssetSummaries } from "../lib/metadataCache";
+import type { AssetDetails, AssetSummary, MetadataPatch, Page } from "../types";
 import { formatBytes } from "./AssetBrowser";
 import { Thumbnail } from "./Thumbnail";
 
@@ -14,6 +15,7 @@ interface InspectorProps {
 }
 
 const colorLabels = ["Red", "Yellow", "Green", "Blue", "Purple"] as const;
+const sonyHifColorLabels = colorLabels.filter((label) => label !== "Purple");
 
 export function Inspector({ asset, selectedCount, selectedPaths, t }: InspectorProps) {
   const queryClient = useQueryClient();
@@ -23,18 +25,48 @@ export function Inspector({ asset, selectedCount, selectedPaths, t }: InspectorP
     enabled: Boolean(asset),
   });
   const patch = useMutation({
-    mutationFn: (value: { rating?: number | null; colorLabel?: string | null }) =>
+    mutationFn: (value: MetadataPatch) =>
       patchMetadata(selectedPaths.length ? selectedPaths : [asset!.path], value),
-    onSuccess: async () => {
+    onMutate: async (value) => {
+      const paths = new Set(selectedPaths.length ? selectedPaths : [asset!.path]);
+      const filters = [
+        { queryKey: ["asset-details"] },
+        { queryKey: ["assets"] },
+        { queryKey: ["asset-metadata"] },
+        { queryKey: ["preload-assets"] },
+      ];
+      await Promise.all(filters.map((filter) => queryClient.cancelQueries(filter)));
+      const snapshots = filters.flatMap((filter) => queryClient.getQueriesData(filter));
+
+      queryClient.setQueriesData<AssetDetails>({ queryKey: ["asset-details"] }, (current) =>
+        patchAssetDetails(current, paths, value));
+      queryClient.setQueriesData<AssetSummary[]>({ queryKey: ["asset-metadata"] }, (current) =>
+        patchAssetSummaries(current, paths, value));
+      for (const queryKey of [["assets"], ["preload-assets"]] as const) {
+        queryClient.setQueriesData<InfiniteData<Page<AssetSummary>>>({ queryKey }, (current) =>
+          patchAssetPages(current, paths, value));
+      }
+      return { snapshots };
+    },
+    onError: (_error, _value, context) => {
+      for (const [queryKey, data] of context?.snapshots ?? []) {
+        queryClient.setQueryData(queryKey, data);
+      }
+    },
+    onSettled: async () => {
       await Promise.all([
         queryClient.invalidateQueries({ queryKey: ["asset-details"] }),
         queryClient.invalidateQueries({ queryKey: ["assets"] }),
         queryClient.invalidateQueries({ queryKey: ["asset-metadata"] }),
+        queryClient.invalidateQueries({ queryKey: ["preload-assets"] }),
       ]);
     },
   });
   const currentRating = details.data?.metadata.rating;
   const currentColor = details.data?.metadata.colorLabel;
+  const availableColorLabels = asset?.extension.toLowerCase() === "hif"
+    ? sonyHifColorLabels
+    : colorLabels;
 
   return (
     <aside className="inspector">
@@ -65,15 +97,15 @@ export function Inspector({ asset, selectedCount, selectedPaths, t }: InspectorP
                   title={`${rating} / 5`}
                 >
                   <Star
+                    className={(currentRating ?? 0) >= rating ? "is-filled" : undefined}
                     size={15}
-                    fill={(currentRating ?? 0) >= rating ? "currentColor" : "none"}
                   />
                 </button>
               ))}
             </div>
             <label>{t("colorLabel")}</label>
             <div className="color-labels" aria-label={t("colorLabel")}>
-              {colorLabels.map((label) => (
+              {availableColorLabels.map((label) => (
                 <button
                   key={label}
                   className={currentColor?.toLowerCase() === label.toLowerCase() ? "is-active" : ""}

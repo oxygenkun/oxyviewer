@@ -5,6 +5,7 @@ import {
   fitSize,
   getNavigatorViewport,
   MAX_PIXEL_ZOOM_PERCENT,
+  panByNavigatorDelta,
   panFromNavigatorPoint,
   pixelZoomPercent,
   resolveLoupeSourceSize,
@@ -67,5 +68,15 @@ describe("loupe geometry", () => {
       width: 800 / 1_400,
       height: 0.6,
     });
+  });
+
+  it("drags the navigator incrementally and discards movement into a boundary", () => {
+    const navigator = { width: 140, height: 100 };
+    const atRightEdge = { x: -300, y: 0 };
+
+    expect(panByNavigatorDelta(atRightEdge, { x: 20, y: 0 }, 2, stage, image, navigator))
+      .toEqual(atRightEdge);
+    expect(panByNavigatorDelta(atRightEdge, { x: -10, y: 0 }, 2, stage, image, navigator))
+      .toEqual({ x: -200, y: 0 });
   });
 });

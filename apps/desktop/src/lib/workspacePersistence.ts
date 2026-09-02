@@ -1,6 +1,11 @@
 const WORKSPACE_KEY = "oxyviewer.workspace.v1";
 const ONBOARDING_KEY = "oxyviewer.folder-onboarding.v1";
 const FOCUS_AREAS_KEY = "oxyviewer.focus-areas-visible.v1";
+const LOUPE_CONTROLS_AUTO_HIDE_KEY = "oxyviewer.loupe-controls-auto-hide.v1";
+const METADATA_VISIBILITY_KEYS = {
+  grid: "oxyviewer.grid-metadata-visible.v1",
+  loupe: "oxyviewer.loupe-metadata-visible.v1",
+} as const;
 
 export interface WorkspaceSnapshot {
   activeRoot?: string;
@@ -72,5 +77,52 @@ export function saveFocusAreasVisible(visible: boolean, storage?: StorageLike): 
   } catch {
     // Preferences must never prevent the viewer from opening (private mode,
     // disabled storage, or a full quota).
+  }
+}
+
+export function loadLoupeControlsAutoHide(storage?: StorageLike): boolean {
+  const resolved = storage ?? (typeof window === "undefined" ? undefined : window.localStorage);
+  if (!resolved) return false;
+  try {
+    return resolved.getItem(LOUPE_CONTROLS_AUTO_HIDE_KEY) === "true";
+  } catch {
+    return false;
+  }
+}
+
+export function saveLoupeControlsAutoHide(enabled: boolean, storage?: StorageLike): void {
+  const resolved = storage ?? (typeof window === "undefined" ? undefined : window.localStorage);
+  if (!resolved) return;
+  try {
+    resolved.setItem(LOUPE_CONTROLS_AUTO_HIDE_KEY, String(enabled));
+  } catch {
+    // Display preferences must never prevent the viewer from opening.
+  }
+}
+
+export function loadMetadataVisibility(
+  view: keyof typeof METADATA_VISIBILITY_KEYS,
+  storage?: StorageLike,
+): boolean {
+  const resolved = storage ?? (typeof window === "undefined" ? undefined : window.localStorage);
+  if (!resolved) return true;
+  try {
+    return resolved.getItem(METADATA_VISIBILITY_KEYS[view]) !== "false";
+  } catch {
+    return true;
+  }
+}
+
+export function saveMetadataVisibility(
+  view: keyof typeof METADATA_VISIBILITY_KEYS,
+  visible: boolean,
+  storage?: StorageLike,
+): void {
+  const resolved = storage ?? (typeof window === "undefined" ? undefined : window.localStorage);
+  if (!resolved) return;
+  try {
+    resolved.setItem(METADATA_VISIBILITY_KEYS[view], String(visible));
+  } catch {
+    // Display preferences must never prevent the viewer from opening.
   }
 }

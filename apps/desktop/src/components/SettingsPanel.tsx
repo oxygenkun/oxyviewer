@@ -16,11 +16,15 @@ const languages: { value: Locale; label: string }[] = [
 export function SettingsPanel({ t }: SettingsPanelProps) {
   const {
     displaySharpening,
+    gridMetadataVisible,
     hardwareAcceleration,
     locale,
+    loupeMetadataVisible,
     setDisplaySharpening,
+    setGridMetadataVisible,
     setHardwareAcceleration,
     setLocale,
+    setLoupeMetadataVisible,
     toggleSettings,
   } = useWorkspaceStore();
   const capabilities = useQuery({
@@ -52,6 +56,34 @@ export function SettingsPanel({ t }: SettingsPanelProps) {
               >
                 <span>{label}</span>
                 {locale === value ? <Check size={12} /> : null}
+              </button>
+            ))}
+          </div>
+        </div>
+
+        <div className="settings-panel__section">
+          <span className="settings-panel__label">{t("metadataDisplay")}</span>
+          <div className="settings-panel__options">
+            {[
+              {
+                enabled: gridMetadataVisible,
+                label: t("showGridMetadata"),
+                toggle: () => setGridMetadataVisible(!gridMetadataVisible),
+              },
+              {
+                enabled: loupeMetadataVisible,
+                label: t("showLoupeMetadata"),
+                toggle: () => setLoupeMetadataVisible(!loupeMetadataVisible),
+              },
+            ].map(({ enabled, label, toggle }) => (
+              <button
+                key={label}
+                aria-pressed={enabled}
+                className={`settings-panel__option ${enabled ? "is-active" : ""}`}
+                onClick={toggle}
+              >
+                <span>{label}</span>
+                {enabled ? <Check size={12} /> : null}
               </button>
             ))}
           </div>

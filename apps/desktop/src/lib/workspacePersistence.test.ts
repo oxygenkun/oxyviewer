@@ -1,8 +1,12 @@
 import { describe, expect, it } from "vitest";
 import {
   loadFocusAreasVisible,
+  loadLoupeControlsAutoHide,
+  loadMetadataVisibility,
   parseWorkspaceSnapshot,
   saveFocusAreasVisible,
+  saveLoupeControlsAutoHide,
+  saveMetadataVisibility,
 } from "./workspacePersistence";
 
 describe("workspace persistence", () => {
@@ -32,5 +36,31 @@ describe("workspace persistence", () => {
     expect(loadFocusAreasVisible(storage)).toBe(true);
     saveFocusAreasVisible(false, storage);
     expect(loadFocusAreasVisible(storage)).toBe(false);
+  });
+
+  it("persists independent grid and loupe metadata visibility", () => {
+    const values = new Map<string, string>();
+    const storage = {
+      getItem: (key: string) => values.get(key) ?? null,
+      setItem: (key: string, value: string) => { values.set(key, value); },
+    };
+    expect(loadMetadataVisibility("grid", storage)).toBe(true);
+    expect(loadMetadataVisibility("loupe", storage)).toBe(true);
+    saveMetadataVisibility("grid", false, storage);
+    expect(loadMetadataVisibility("grid", storage)).toBe(false);
+    expect(loadMetadataVisibility("loupe", storage)).toBe(true);
+  });
+
+  it("persists loupe toolbar auto-hide", () => {
+    const values = new Map<string, string>();
+    const storage = {
+      getItem: (key: string) => values.get(key) ?? null,
+      setItem: (key: string, value: string) => { values.set(key, value); },
+    };
+    expect(loadLoupeControlsAutoHide(storage)).toBe(false);
+    saveLoupeControlsAutoHide(true, storage);
+    expect(loadLoupeControlsAutoHide(storage)).toBe(true);
+    saveLoupeControlsAutoHide(false, storage);
+    expect(loadLoupeControlsAutoHide(storage)).toBe(false);
   });
 });
