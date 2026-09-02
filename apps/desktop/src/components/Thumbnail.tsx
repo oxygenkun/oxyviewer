@@ -4,6 +4,7 @@ import { generatedPreview, isTauri, previewUrl } from "../lib/api";
 import { perfMark } from "../lib/perfProbe";
 import { previewStages } from "../lib/preview";
 import { beginPreviewDebug, type PreviewDebugHandle } from "../lib/previewDebug";
+import { nextProgressiveStage } from "../lib/progressiveImage";
 import { rawPreviewStatus, type RawPreviewStatus } from "../lib/rawPreview";
 import type { AssetKind, AssetSummary, PreviewPriority, PreviewResult } from "../types";
 
@@ -14,6 +15,11 @@ interface ThumbnailProps {
   priority?: PreviewPriority;
   onImageLoad?: (size: { width: number; height: number }) => void;
   onRawPreviewStatus?: (status: RawPreviewStatus) => void;
+}
+
+interface DisplayedImage {
+  assetId: string;
+  source: string;
 }
 
 function hashSeed(value: string) {
@@ -45,6 +51,7 @@ export function Thumbnail({
   const [failed, setFailed] = useState(false);
   const [fullImageFailed, setFullImageFailed] = useState(false);
   const [loaded, setLoaded] = useState<{ assetId: string; mode: "preview" | "full" }>();
+  const [displayedImage, setDisplayedImage] = useState<DisplayedImage>();
   const imageDebug = useRef<{ source: string; handle: PreviewDebugHandle } | undefined>(undefined);
   const directSource = useMemo(() => previewUrl(asset), [asset]);
   const stages = previewStages(asset.kind, large);
@@ -92,9 +99,15 @@ export function Thumbnail({
     staleTime: Infinity,
     retry: 0,
   });
+  const visibleImage = displayedImage?.assetId === asset.id ? displayedImage : undefined;
   const previewSource = loupeSource.data ?? thumbnailSource.data;
-  const generatedSource = (!fullImageFailed ? fullSource.data : undefined) ?? previewSource;
+  const generatedSource = nextProgressiveStage(Boolean(visibleImage), [
+    thumbnailSource.data,
+    loupeSource.data,
+    !fullImageFailed ? fullSource.data : undefined,
+  ]);
   const source = directSource ?? generatedSource?.url;
+  const pendingSource = source !== visibleImage?.source ? source : undefined;
   const seed = hashSeed(asset.name);
   const style = {
     "--thumb-hue": `${seed}`,
@@ -136,6 +149,7 @@ export function Thumbnail({
 
   useEffect(() => {
     setLoaded(undefined);
+    setDisplayedImage(undefined);
     setFullImageFailed(false);
   }, [asset.id]);
 
@@ -212,6 +226,7 @@ export function Thumbnail({
     if (hasFullDetailStage(asset.kind) && large && result) {
       setLoaded({ assetId: asset.id, mode: result === fullSource.data ? "full" : "preview" });
     }
+    if (source) setDisplayedImage({ assetId: asset.id, source });
     onImageLoad?.(size);
   };
 
@@ -245,10 +260,25 @@ export function Thumbnail({
 
   return (
     <div className={`thumbnail ${large ? "thumbnail--large" : ""}`} style={style}>
-      {source && !failed ? (
+      {!visibleImage ? (
+        <div className="thumbnail__fallback" aria-hidden="true">
+          <span>{asset.extension}</span>
+          <i />
+        </div>
+      ) : null}
+      {visibleImage ? (
         <img
-          key={`${asset.id}:${source}`}
-          src={source}
+          key={`${asset.id}:${visibleImage.source}`}
+          src={visibleImage.source}
+          alt=""
+          draggable={false}
+        />
+      ) : null}
+      {pendingSource && !failed ? (
+        <img
+          className="thumbnail__pending-image"
+          key={`${asset.id}:${pendingSource}`}
+          src={pendingSource}
           alt=""
           draggable={false}
           onError={() => handleError(generatedSource)}
@@ -257,12 +287,7 @@ export function Thumbnail({
             height: event.currentTarget.naturalHeight,
           }, generatedSource)}
         />
-      ) : (
-        <div className="thumbnail__fallback" aria-hidden="true">
-          <span>{asset.extension}</span>
-          <i />
-        </div>
-      )}
+      ) : null}
       {asset.kind === "raw" ? <span className="thumbnail__badge">RAW</span> : null}
     </div>
   );

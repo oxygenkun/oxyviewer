@@ -449,6 +449,7 @@ body {
   object-fit: contain;
   object-position: center;
 }
+.thumbnail > img.thumbnail__pending-image { visibility: hidden; }
 .virtual-grid--portrait .thumbnail { height: 214px; }
 .thumbnail__fallback {
   position: absolute;
