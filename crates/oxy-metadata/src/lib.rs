@@ -2,6 +2,8 @@ use fpexif::{ExifParser, data_types::ExifValue};
 use oxy_domain::{AssetKind, EditableMetadata, FocusInfo, FocusRegion};
 use oxy_fs::sidecar_path;
 use serde_json::Value;
+#[cfg(target_os = "windows")]
+use std::os::windows::process::CommandExt;
 use std::{
     collections::HashMap,
     ffi::OsString,
@@ -227,6 +229,11 @@ fn exiftool_command() -> Command {
     let executable =
         std::env::var_os("OXY_EXIFTOOL_PATH").unwrap_or_else(|| OsString::from("exiftool"));
     let mut command = Command::new(executable);
+    // The packaged application uses the Windows GUI subsystem, but ExifTool is
+    // a console executable. Without this flag Windows briefly creates a console
+    // window whenever metadata is read or written.
+    #[cfg(target_os = "windows")]
+    command.creation_flags(0x0800_0000);
     command.env("LC_ALL", "C").env("LANG", "C");
     command
 }
