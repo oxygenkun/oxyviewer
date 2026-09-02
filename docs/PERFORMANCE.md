@@ -1,6 +1,8 @@
 # Performance Budgets
 
-Reference budgets are measured on a local SSD with a release build.
+Reference budgets are measured on a local SSD with a release build. The
+end-to-end regression harness that enforces these budgets is described in
+[PERF_E2E.md](PERF_E2E.md) and run via `pnpm perf:e2e`.
 
 | Interaction | Target |
 | --- | --- |
@@ -128,8 +130,11 @@ Reference budgets are measured on a local SSD with a release build.
   backend therefore cannot meet a one-second full-resolution target for this
   fixture; reaching it requires evaluating a faster or hardware-accelerated
   HEVC decoder such as libheif's FFmpeg decoder.
-- The generated 100k-entry directory benchmark is not yet recorded. Phase 1
-  must add it before its performance gate can be marked complete.
+- 2026-09-02: The first release run of the generated 100k-entry directory E2E
+  scenario measured about 18 ms for `open_folder`, but about 2.2 s before the
+  first 250-item page returned and about 2.3 s to the first-page paint. The
+  300 ms gate is intentionally failing until directory paging avoids this
+  synchronous scan.
 
 ## RAW Pipeline Findings
 

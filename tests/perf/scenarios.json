@@ -1,0 +1,88 @@
+{
+  "$comment": "E2E performance scenarios for scripts/perf-e2e.mjs. Budgets mirror docs/PERFORMANCE.md; see docs/PERF_E2E.md. Metrics without a budget are recorded and regression-checked against baseline.json.",
+  "regressionFactor": 1.2,
+  "scenarios": {
+    "folder-open-100k": {
+      "fixture": { "type": "synthetic", "format": "png", "count": 100000, "width": 64, "height": 64 },
+      "awaitMarks": ["harness:first-page-painted"],
+      "budgets": { "firstPageMs": 300 },
+      "runs": 3,
+      "coldCache": false,
+      "timeoutMs": 60000
+    },
+    "cold-preview-arw": {
+      "fixture": { "type": "file", "path": "test/fixtures/media/DSC00529.ARW" },
+      "selectName": "DSC00529.ARW",
+      "enterLoupe": true,
+      "awaitMarks": ["image:loaded", "preview:result@maxSize=4096"],
+      "budgets": { "firstPreviewMs": 800 },
+      "runs": 3,
+      "coldCache": true,
+      "timeoutMs": 60000
+    },
+    "cold-preview-hif": {
+      "fixture": { "type": "file", "path": "tests/fixtures/DSC00449.HIF" },
+      "selectName": "DSC00449.HIF",
+      "enterLoupe": true,
+      "awaitMarks": ["image:loaded", "heif:first-tile-painted"],
+      "budgets": { "firstPreviewMs": 800 },
+      "runs": 3,
+      "coldCache": true,
+      "timeoutMs": 60000
+    },
+    "cold-preview-jpeg": {
+      "fixture": { "type": "synthetic", "format": "jpeg", "count": 20, "width": 1600, "height": 1200 },
+      "selectName": "IMG_000010.jpg",
+      "enterLoupe": true,
+      "awaitMarks": ["image:loaded"],
+      "budgets": { "firstPreviewMs": 800 },
+      "runs": 3,
+      "coldCache": true,
+      "timeoutMs": 30000
+    },
+    "warm-loupe-arw": {
+      "fixture": { "type": "file", "path": "test/fixtures/media/DSC00529.ARW" },
+      "selectName": "DSC00529.ARW",
+      "enterLoupe": true,
+      "awaitMarks": ["image:loaded", "preview:result@maxSize=4096"],
+      "budgets": { "firstPreviewMs": 150 },
+      "runs": 3,
+      "coldCache": false,
+      "warmup": true,
+      "timeoutMs": 60000
+    },
+    "warm-loupe-hif": {
+      "fixture": { "type": "file", "path": "tests/fixtures/DSC00449.HIF" },
+      "selectName": "DSC00449.HIF",
+      "enterLoupe": true,
+      "awaitMarks": ["image:loaded"],
+      "budgets": { "firstPreviewMs": 150 },
+      "runs": 3,
+      "coldCache": false,
+      "warmup": true,
+      "timeoutMs": 60000
+    },
+    "loupe-tiles-hif": {
+      "fixture": { "type": "file", "path": "tests/fixtures/DSC00449.HIF" },
+      "selectName": "DSC00449.HIF",
+      "enterLoupe": true,
+      "awaitMarks": ["heif:all-tiles-painted"],
+      "budgets": {},
+      "runs": 3,
+      "coldCache": false,
+      "warmup": true,
+      "timeoutMs": 60000
+    },
+    "loupe-full-arw": {
+      "fixture": { "type": "file", "path": "test/fixtures/media/DSC00529.ARW" },
+      "selectName": "DSC00529.ARW",
+      "enterLoupe": true,
+      "awaitMarks": ["image:loaded@full"],
+      "budgets": {},
+      "runs": 1,
+      "coldCache": false,
+      "warmup": true,
+      "timeoutMs": 120000
+    }
+  }
+}

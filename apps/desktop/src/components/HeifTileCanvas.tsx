@@ -7,6 +7,7 @@ import {
   startHeifDecode,
 } from "../lib/api";
 import { expectedHeifTiles, HeifTileProgressTracker } from "../lib/heifTileProgress";
+import { perfMark, isPerfActive } from "../lib/perfProbe";
 import { beginPreviewDebug } from "../lib/previewDebug";
 import type {
   AssetSummary,
@@ -46,6 +47,9 @@ export function HeifTileCanvas({
         })
       : undefined;
     if (__OXY_DEBUG__) debug?.start();
+    // Progress tracking also runs when the E2E performance harness is active,
+    // so release builds still observe tile milestones (docs/PERF_E2E.md).
+    const track = __OXY_DEBUG__ || isPerfActive();
     let sessionId: string | undefined;
     let disposed = false;
     const unlisten: Array<() => void> = [];
@@ -61,7 +65,7 @@ export function HeifTileCanvas({
     let frontendDrawWorkMs = 0;
     let slowestTileMs = 0;
 
-    const detail = __OXY_DEBUG__
+    const detail = track
       ? () => ({
           ...(progress?.snapshot() ?? {}),
           frontendFetchWorkMs: Number(frontendFetchWorkMs.toFixed(1)),
@@ -73,9 +77,8 @@ export function HeifTileCanvas({
 
     const maybeComplete = () => {
       if (
-        !__OXY_DEBUG__
+        !track
         || disposed
-        || !debug
         || !backendComplete
         || !progress?.snapshot().allSettled
         || completionPaintFrame !== undefined
@@ -84,26 +87,27 @@ export function HeifTileCanvas({
         completionPaintFrame = undefined;
         if (disposed) return;
         const completed = detail?.() ?? {};
-        debug.mark("all-tiles-painted", completed);
+        perfMark("heif:all-tiles-painted", { assetName: asset.name, ...completed });
+        debug?.mark("all-tiles-painted", completed);
         if (progress?.snapshot().failed) {
-          debug.fail(new Error("one or more HEIF tiles failed to draw"), completed);
+          debug?.fail(new Error("one or more HEIF tiles failed to draw"), completed);
         } else {
-          debug.complete(completed);
+          debug?.complete(completed);
         }
       });
     };
 
     const drawTile = async (tile: HeifTileReady) => {
-      const tileStarted = __OXY_DEBUG__ ? performance.now() : 0;
+      const tileStarted = track ? performance.now() : 0;
       const fetchStarted = tileStarted;
       try {
         const response = await fetch(heifTileUrl(tile.url));
         if (!response.ok) throw new Error(`tile fetch returned ${response.status}`);
         if (disposed) return;
         const pixels = new Uint8ClampedArray(await response.arrayBuffer());
-        const fetchedAt = __OXY_DEBUG__ ? performance.now() : 0;
-        if (__OXY_DEBUG__) frontendFetchWorkMs += fetchedAt - fetchStarted;
-        if (__OXY_DEBUG__ && !firstTileFetched) {
+        const fetchedAt = track ? performance.now() : 0;
+        if (track) frontendFetchWorkMs += fetchedAt - fetchStarted;
+        if (track && !firstTileFetched) {
           firstTileFetched = true;
           debug?.mark("first-tile-fetched", {
             x: tile.x,
@@ -114,30 +118,33 @@ export function HeifTileCanvas({
         const context = canvasRef.current?.getContext("2d");
         if (!context) throw new Error("HEIF canvas 2D context is unavailable");
         if (disposed) return;
-        const drawStarted = __OXY_DEBUG__ ? performance.now() : 0;
+        const drawStarted = track ? performance.now() : 0;
         context.putImageData(
           new ImageData(pixels, tile.width, tile.height),
           tile.x,
           tile.y,
         );
-        const drawnAt = __OXY_DEBUG__ ? performance.now() : 0;
-        if (__OXY_DEBUG__) {
+        const drawnAt = track ? performance.now() : 0;
+        if (track) {
           frontendDrawWorkMs += drawnAt - drawStarted;
           slowestTileMs = Math.max(slowestTileMs, drawnAt - tileStarted);
         }
-        const settled = __OXY_DEBUG__ ? progress?.settle(tile, true) : undefined;
+        const settled = track ? progress?.settle(tile, true) : undefined;
         if (settled?.firstDrawn && firstPaintFrame === undefined) {
           firstPaintFrame = requestAnimationFrame(() => {
             firstPaintFrame = undefined;
-            if (!disposed && __OXY_DEBUG__) debug?.mark("first-tile-painted", detail?.());
+            if (disposed) return;
+            perfMark("heif:first-tile-painted", { assetName: asset.name, ...detail?.() });
+            if (__OXY_DEBUG__) debug?.mark("first-tile-painted", detail?.());
           });
         }
-        if (__OXY_DEBUG__ && settled?.snapshot.allSettled) {
+        if (track && settled?.snapshot.allSettled) {
           debug?.mark("all-tiles-drawn", detail?.());
         }
       } catch (error) {
-        if (__OXY_DEBUG__) {
+        if (track) {
           const settled = progress?.settle(tile, false);
+          perfMark("heif:tile-error", { assetName: asset.name, x: tile.x, y: tile.y });
           debug?.mark("tile-error", {
             x: tile.x,
             y: tile.y,
@@ -151,7 +158,7 @@ export function HeifTileCanvas({
     };
 
     const handleTile = (tile: HeifTileReady) => {
-      const received = __OXY_DEBUG__ ? progress?.receive(tile) : undefined;
+      const received = track ? progress?.receive(tile) : undefined;
       if (received && !received.accepted) return;
       if (received?.first) {
         if (__OXY_DEBUG__) debug?.mark("first-tile-ready", {
@@ -165,6 +172,10 @@ export function HeifTileCanvas({
 
     const handleStatus = (event: HeifStatusEvent) => {
       onStatus(event.status, event.diagnostics);
+      perfMark(`heif:backend-${event.status}`, {
+        assetName: asset.name,
+        diagnostics: event.diagnostics,
+      });
       if (__OXY_DEBUG__) {
         debug?.mark(`backend-${event.status}`, {
           message: event.message,
@@ -172,7 +183,7 @@ export function HeifTileCanvas({
         });
       }
       if (event.status === "complete") {
-        if (__OXY_DEBUG__) {
+        if (track) {
           backendComplete = true;
           backendDiagnostics = event.diagnostics;
           maybeComplete();
@@ -213,7 +224,7 @@ export function HeifTileCanvas({
         return;
       }
       sessionId = session.id;
-      progress = __OXY_DEBUG__ && debug
+      progress = track
         ? new HeifTileProgressTracker(
             expectedHeifTiles(session.width, session.height, session.tileSize),
           )

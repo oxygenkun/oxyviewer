@@ -3,6 +3,7 @@ import { Aperture, CircleAlert, FolderPlus, RectangleHorizontal, RectangleVertic
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { AssetBrowser } from "./components/AssetBrowser";
 import { Inspector } from "./components/Inspector";
+import { PerfHarness } from "./components/PerfHarness";
 import { SettingsPanel } from "./components/SettingsPanel";
 import { Sidebar } from "./components/Sidebar";
 import { Toolbar } from "./components/Toolbar";
@@ -24,7 +25,7 @@ import {
   saveWorkspace,
 } from "./lib/workspacePersistence";
 import { useWorkspaceStore } from "./store";
-import type { AssetQuery, FolderSession } from "./types";
+import type { AssetQuery, FolderSession, PerfScenario } from "./types";
 
 async function restoreFolders(): Promise<FolderSession[]> {
   const roots = await listLibraryRoots();
@@ -32,7 +33,7 @@ async function restoreFolders(): Promise<FolderSession[]> {
   return restored.flatMap((result) => result.status === "fulfilled" ? [result.value] : []);
 }
 
-export function App() {
+export function App({ perfScenario }: { perfScenario?: PerfScenario }) {
   const [workspace, setWorkspace] = useState(loadWorkspace);
   const [showOnboarding, setShowOnboarding] = useState(() => !hasSeenFolderOnboarding());
   const [error, setError] = useState<string>();
@@ -47,6 +48,9 @@ export function App() {
   const foldersQuery = useQuery({
     queryKey: ["open-folders"],
     queryFn: restoreFolders,
+    // The perf harness opens its scenario folder explicitly; restoring library
+    // roots would add noise from previously recorded runs.
+    enabled: !perfScenario,
     staleTime: Infinity,
   });
   const sessions = foldersQuery.data ?? [];
@@ -85,13 +89,11 @@ export function App() {
     setShowOnboarding(false);
   }, []);
 
-  const handleOpen = useCallback(async () => {
+  const openPath = useCallback(async (path: string) => {
     setError(undefined);
     try {
-      const path = await chooseFolder();
-      if (!path) return;
       const opened = await openFolder(path);
-      await addLibraryRoot(opened.rootPath);
+      if (!perfScenario) await addLibraryRoot(opened.rootPath);
       clearSelection();
       queryClient.setQueryData<FolderSession[]>(["open-folders"], (current = []) => {
         const existing = current.find((item) => item.rootPath === opened.rootPath);
@@ -108,7 +110,12 @@ export function App() {
     } catch (cause) {
       setError(String(cause));
     }
-  }, [clearSelection, dismissOnboarding, queryClient]);
+  }, [clearSelection, dismissOnboarding, perfScenario, queryClient]);
+
+  const handleOpen = useCallback(async () => {
+    const path = await chooseFolder();
+    if (path) await openPath(path);
+  }, [openPath]);
 
   const handleNavigate = useCallback((session: FolderSession, path: string) => {
     clearSelection();
@@ -241,6 +248,15 @@ export function App() {
       ) : null}
       {!isTauri() ? <span className="demo-pill">{t("demoHint")}</span> : null}
       {settingsOpen ? <SettingsPanel t={t} /> : null}
+      {perfScenario ? (
+        <PerfHarness
+          scenario={perfScenario}
+          session={activeSession}
+          assets={assets}
+          assetsLoading={assetsQuery.isLoading}
+          onOpenPath={openPath}
+        />
+      ) : null}
     </div>
   );
 }

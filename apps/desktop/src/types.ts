@@ -164,3 +164,25 @@ export interface HeifStatusEvent {
   diagnostics?: HeifDiagnostics;
   message?: string;
 }
+
+/**
+ * One automated performance scenario injected by the E2E runner through the
+ * `OXY_PERF_SCENARIO` environment variable. Mirrors `PerfScenario` in
+ * `oxy-domain`; see `docs/PERF_E2E.md`.
+ */
+export interface PerfScenario {
+  name: string;
+  folder: string;
+  selectName?: string;
+  enterLoupe?: boolean;
+  awaitMarks: string[];
+  timeoutMs?: number;
+  reportPath: string;
+}
+
+export interface PerfMark {
+  name: string;
+  /** Milliseconds relative to page load, from performance.now(). */
+  t: number;
+  detail?: Record<string, unknown>;
+}

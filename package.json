@@ -8,6 +8,7 @@
     "build": "pnpm --filter @oxyviewer/desktop build",
     "check": "pnpm --filter @oxyviewer/desktop check",
     "test": "pnpm --filter @oxyviewer/desktop test",
+    "perf:e2e": "node scripts/perf-e2e.mjs",
     "tauri": "pnpm --filter @oxyviewer/desktop tauri"
   }
 }

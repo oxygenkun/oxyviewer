@@ -1,8 +1,8 @@
 use oxy_domain::{
     AssetDetails, AssetKind, AssetQuery, AssetSummary, DirectorySummary, EditableMetadata,
     FileOperation, FileOperationResult, FolderSession, HeifCapabilities, HeifDecodeSession,
-    HeifDecodeStatus, HeifDiagnostics, JobId, JobPriority, Page, PreviewMode, PreviewPriority,
-    PreviewResult,
+    HeifDecodeStatus, HeifDiagnostics, JobId, JobPriority, Page, PerfScenario, PreviewMode,
+    PreviewPriority, PreviewResult,
 };
 use oxy_fs::FsCatalog;
 use oxy_library::Library;
@@ -256,6 +256,23 @@ fn cancel_heif_decode(session_id: String, state: State<'_, AppState>) -> bool {
     state.heif.cancel(&session_id)
 }
 
+/// Returns the performance scenario injected via `OXY_PERF_SCENARIO`, if any.
+/// Used only by the end-to-end performance harness (docs/PERF_E2E.md).
+#[tauri::command]
+fn get_perf_scenario() -> Option<PerfScenario> {
+    let raw = std::env::var("OXY_PERF_SCENARIO").ok()?;
+    serde_json::from_str(&raw).ok()
+}
+
+/// Writes the performance harness report JSON to a runner-owned path.
+#[tauri::command]
+fn write_perf_report(path: PathBuf, contents: String) -> Result<(), String> {
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent).map_err(|error| error.to_string())?;
+    }
+    std::fs::write(path, contents).map_err(|error| error.to_string())
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     let heif = Arc::new(oxy_media::HeifDecodeService::default());
@@ -330,7 +347,9 @@ pub fn run() {
             get_heif_capabilities,
             get_heif_diagnostics,
             start_heif_decode,
-            cancel_heif_decode
+            cancel_heif_decode,
+            get_perf_scenario,
+            write_perf_report
         ])
         .run(tauri::generate_context!())
         .expect("error while running OxyViewer");

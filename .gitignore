@@ -7,3 +7,7 @@ apps/desktop/src-tauri/gen/
 .DS_Store
 *.log
 test/fixtures/media/
+tests/perf/generated/
+tests/perf/.reports/
+
+tests/perf/.generated/

@@ -20,6 +20,7 @@ oxy-media = { path = "../../../crates/oxy-media" }
 oxy-metadata = { path = "../../../crates/oxy-metadata" }
 oxy-runtime = { path = "../../../crates/oxy-runtime" }
 serde.workspace = true
+serde_json.workspace = true
 tauri = { version = "2", features = ["protocol-asset"] }
 tauri-plugin-dialog = "2"
 tauri-plugin-log = "2"

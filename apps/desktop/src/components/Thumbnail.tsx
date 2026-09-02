@@ -1,6 +1,7 @@
 import { useQuery } from "@tanstack/react-query";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { generatedPreview, isTauri, previewUrl } from "../lib/api";
+import { perfMark } from "../lib/perfProbe";
 import { previewStages } from "../lib/preview";
 import { beginPreviewDebug, type PreviewDebugHandle } from "../lib/previewDebug";
 import { rawPreviewStatus, type RawPreviewStatus } from "../lib/rawPreview";
@@ -175,6 +176,23 @@ export function Thumbnail({
   ]);
 
   const handleLoad = (size: { width: number; height: number }, result?: PreviewResult) => {
+    // Classify by which progressive query produced the result; the backend
+    // `stage` field is absent for cache hits and direct passthrough.
+    const probeStage = directSource
+      ? "direct"
+      : result && result === fullSource.data
+        ? "full"
+        : result && result === loupeSource.data
+          ? "loupe4096"
+          : "thumb512";
+    perfMark("image:loaded", {
+      assetName: asset.name,
+      large,
+      stage: probeStage,
+      mode: result === fullSource.data ? "full" : "preview",
+      width: size.width,
+      height: size.height,
+    });
     const currentDebug = imageDebug.current;
     let debug: PreviewDebugHandle | undefined;
     if (currentDebug && currentDebug.source === source) debug = currentDebug.handle;
@@ -198,6 +216,11 @@ export function Thumbnail({
   };
 
   const handleError = (result?: PreviewResult) => {
+    perfMark("image:error", {
+      assetName: asset.name,
+      large,
+      stage: directSource ? "direct" : (result?.stage ?? "generated"),
+    });
     const currentDebug = imageDebug.current;
     let debug: PreviewDebugHandle | undefined;
     if (currentDebug && currentDebug.source === source) debug = currentDebug.handle;

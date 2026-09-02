@@ -11,11 +11,13 @@ import type {
   HeifDecodeSession,
   HeifDiagnostics,
   Page,
+  PerfScenario,
   PreviewMode,
   PreviewPriority,
   PreviewResult,
 } from "../types";
 import { previewQueue, priorityWeight } from "./previewQueue";
+import { perfMark } from "./perfProbe";
 import { beginPreviewDebug } from "./previewDebug";
 
 const demoNames: Array<[string, AssetKind, number]> = [
@@ -75,7 +77,10 @@ export async function openFolder(path: string): Promise<FolderSession> {
       openedAtMs: Date.now(),
     };
   }
-  return invoke<FolderSession>("open_folder", { path });
+  perfMark("folder:open-requested", { path });
+  const session = await invoke<FolderSession>("open_folder", { path });
+  perfMark("folder:open-returned", { sessionId: session.id });
+  return session;
 }
 
 export async function listAssets(
@@ -105,12 +110,16 @@ export async function listAssets(
       total: filtered.length,
     };
   }
-  return invoke<Page<AssetSummary>>("list_assets", {
+  const page = await invoke<Page<AssetSummary>>("list_assets", {
     sessionId,
     directory,
     query,
     cursor,
   });
+  if (!cursor) {
+    perfMark("assets:first-page-returned", { directory, total: page.total });
+  }
+  return page;
 }
 
 export async function listDirectories(
@@ -207,6 +216,7 @@ export async function generatedPreview(
     : undefined;
   const request = () => {
     debug?.start();
+    perfMark("preview:queued", { assetName: asset.name, mode, maxSize, priority });
     return invoke<Omit<PreviewResult, "url">>("get_preview", {
       path: asset.path,
       mode,
@@ -216,6 +226,17 @@ export async function generatedPreview(
   };
   try {
     const result = await previewQueue.enqueue(priorityWeight(priority), signal, request);
+    perfMark("preview:result", {
+      assetName: asset.name,
+      mode,
+      maxSize,
+      priority,
+      width: result.width,
+      height: result.height,
+      kind: result.kind,
+      stage: result.stage,
+      diagnostics: result.diagnostics,
+    });
     debug?.mark("backend-result", {
       width: result.width,
       height: result.height,
@@ -238,12 +259,15 @@ export async function startHeifDecode(
   hardwareAcceleration: boolean,
   displaySharpening: boolean,
 ): Promise<HeifDecodeSession> {
-  return invoke<HeifDecodeSession>("start_heif_decode", {
+  perfMark("heif:decode-requested", { path });
+  const session = await invoke<HeifDecodeSession>("start_heif_decode", {
     path,
     generation,
     hardwareAcceleration,
     displaySharpening,
   });
+  perfMark("heif:decode-session", { path, sessionId: session.id });
+  return session;
 }
 
 export async function cancelHeifDecode(sessionId: string): Promise<boolean> {
@@ -264,4 +288,19 @@ export function heifTileUrl(url: string): string {
   return navigator.userAgent.includes("Windows")
     ? url.replace("oxy-media://localhost", "http://oxy-media.localhost")
     : url;
+}
+
+/** Returns the E2E performance scenario injected by the runner, if any. */
+export async function getPerfScenario(): Promise<PerfScenario | undefined> {
+  if (!isTauri()) return undefined;
+  return (await invoke<PerfScenario | null>("get_perf_scenario")) ?? undefined;
+}
+
+/** Persists the performance report JSON via the backend. */
+export async function writePerfReport(path: string, report: unknown): Promise<void> {
+  if (!isTauri()) {
+    console.info("[OxyPerf] report", report);
+    return;
+  }
+  await invoke("write_perf_report", { path, contents: JSON.stringify(report, null, 2) });
 }
