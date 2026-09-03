@@ -16,7 +16,7 @@ use std::{
 
 #[cfg(target_os = "windows")]
 pub const DEFAULT_TILE_SIZE: u32 = 1_024;
-#[cfg(not(target_os = "windows"))]
+#[cfg(any(target_os = "macos", target_os = "linux"))]
 pub const DEFAULT_TILE_SIZE: u32 = 512;
 pub type TileSink = Box<dyn FnMut(HeifTileReady) + Send>;
 
@@ -102,9 +102,9 @@ impl HeifDecodeService {
         let use_platform = hardware_acceleration
             && platform.available
             && crate::apple_image_io::can_decode(path).is_ok();
-        #[cfg(not(any(target_os = "windows", target_os = "macos")))]
+        #[cfg(target_os = "linux")]
         let use_platform = hardware_acceleration && platform.available;
-        #[cfg(not(target_os = "windows"))]
+        #[cfg(any(target_os = "macos", target_os = "linux"))]
         let use_ffmpeg = !use_platform && crate::ffmpeg_heif::can_decode(path).is_ok();
         let fallback = hardware_acceleration && !use_platform;
         let backend = if use_platform {
@@ -122,7 +122,7 @@ impl HeifDecodeService {
         } else {
             tile_coordinates(size.width, size.height, DEFAULT_TILE_SIZE).len()
         } as u32;
-        #[cfg(not(target_os = "windows"))]
+        #[cfg(any(target_os = "macos", target_os = "linux"))]
         let expected_tiles =
             tile_coordinates(size.width, size.height, DEFAULT_TILE_SIZE).len() as u32;
         Ok(HeifDecodeSession {
@@ -252,7 +252,7 @@ impl HeifDecodeService {
         } else {
             false
         };
-        #[cfg(not(target_os = "macos"))]
+        #[cfg(any(target_os = "windows", target_os = "linux"))]
         let per_tile_sharpening = display_sharpening && backend != HeifBackendKind::FfmpegSoftware;
         for (x, y) in tile_coordinates(image.width(), image.height(), session.tile_size) {
             if cancelled.load(Ordering::Acquire) {
@@ -486,18 +486,10 @@ fn platform_capability() -> HeifCapabilities {
             detail: Some(error.to_string()),
         },
     };
-    #[cfg(not(any(target_os = "windows", target_os = "macos")))]
+    #[cfg(target_os = "linux")]
     {
-        #[cfg(target_os = "windows")]
-        let backend = HeifBackendKind::WindowsWic;
-        #[cfg(target_os = "macos")]
-        let backend = HeifBackendKind::AppleImageIo;
-        #[cfg(target_os = "linux")]
-        let backend = HeifBackendKind::LinuxVaapi;
-        #[cfg(not(any(target_os = "windows", target_os = "macos", target_os = "linux")))]
-        let backend = HeifBackendKind::LibheifSoftware;
         HeifCapabilities {
-            backend,
+            backend: HeifBackendKind::LinuxVaapi,
             acceleration: AccelerationKind::Hardware,
             available: false,
             detail: Some("native hardware adapter is not available in this build".into()),
@@ -660,7 +652,7 @@ fn fallback_reason(_path: &Path) -> String {
             .detail
             .unwrap_or_else(|| "Apple ImageIO is unavailable".into())
     }
-    #[cfg(not(any(target_os = "windows", target_os = "macos")))]
+    #[cfg(target_os = "linux")]
     {
         platform_capability()
             .detail
@@ -682,6 +674,21 @@ mod tests {
         assert_eq!(coordinates.len(), 6);
         assert!(coordinates[0].0 > 0);
         assert!(coordinates.contains(&(1_024, 512)));
+    }
+
+    #[test]
+    fn default_tiles_preserve_the_platform_progressive_policy() {
+        let coordinates = tile_coordinates(7_008, 4_672, DEFAULT_TILE_SIZE);
+        #[cfg(target_os = "windows")]
+        {
+            assert_eq!(DEFAULT_TILE_SIZE, 1_024);
+            assert_eq!(coordinates.len(), 35);
+        }
+        #[cfg(any(target_os = "macos", target_os = "linux"))]
+        {
+            assert_eq!(DEFAULT_TILE_SIZE, 512);
+            assert_eq!(coordinates.len(), 140);
+        }
     }
 
     #[test]
@@ -727,15 +734,27 @@ mod tests {
         assert_eq!(events.len(), session.expected_tiles as usize);
         let mut covered_pixels = 0_u64;
         for event in events {
+            #[cfg(target_os = "windows")]
             assert_eq!(event.encoding.as_deref(), Some("jpeg"));
+            #[cfg(any(target_os = "macos", target_os = "linux"))]
+            assert_eq!(event.encoding, None);
             assert!(event.x + event.width <= session.width);
             assert!(event.y + event.height <= session.height);
             let tile = service
                 .tile(&session.id, session.generation, event.x, event.y)
                 .unwrap();
-            let decoded = image::load_from_memory(tile.encoded_jpeg.as_deref().unwrap()).unwrap();
-            assert_eq!(decoded.width(), event.width);
-            assert_eq!(decoded.height(), event.height);
+            #[cfg(target_os = "windows")]
+            {
+                let decoded =
+                    image::load_from_memory(tile.encoded_jpeg.as_deref().unwrap()).unwrap();
+                assert_eq!(decoded.width(), event.width);
+                assert_eq!(decoded.height(), event.height);
+            }
+            #[cfg(any(target_os = "macos", target_os = "linux"))]
+            {
+                assert!(tile.encoded_jpeg.is_none());
+                assert_eq!(tile.rgba.len(), (event.width * event.height * 4) as usize);
+            }
             covered_pixels += u64::from(event.width) * u64::from(event.height);
         }
         assert_eq!(
@@ -773,6 +792,6 @@ mod tests {
         let mut tiles = 0;
         let diagnostics = service.decode(&session, fixture, |_| tiles += 1).unwrap();
         assert_eq!(diagnostics.backend, HeifBackendKind::AppleImageIo);
-        assert!(tiles > 100);
+        assert_eq!(tiles, session.expected_tiles);
     }
 }

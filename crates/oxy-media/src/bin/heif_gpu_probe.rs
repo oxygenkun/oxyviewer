@@ -24,7 +24,10 @@ fn main() -> Result<(), Box<dyn Error>> {
         .nth(1)
         .map(PathBuf::from)
         .unwrap_or_else(|| PathBuf::from("tests/fixtures/DSC00449.HIF"));
-    let sink = if cfg!(windows) { "NUL" } else { "/dev/null" };
+    #[cfg(target_os = "windows")]
+    let sink = "NUL";
+    #[cfg(any(target_os = "macos", target_os = "linux"))]
+    let sink = "/dev/null";
 
     require_command("ffmpeg")?;
     println!("file={}", path.display());

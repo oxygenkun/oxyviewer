@@ -1,7 +1,7 @@
 use image::{
     DynamicImage, ImageDecoder, ImageFormat, ImageReader, RgbImage, RgbaImage, imageops::FilterType,
 };
-#[cfg(unix)]
+#[cfg(any(target_os = "macos", target_os = "linux"))]
 use std::ffi::CString;
 use std::{
     ffi::{CStr, c_char, c_int, c_uint},
@@ -39,9 +39,9 @@ struct LibRawProcessedImage {
 unsafe extern "C" {
     fn libraw_init(flags: c_uint) -> *mut LibRawData;
     fn libraw_close(raw: *mut LibRawData);
-    #[cfg(unix)]
+    #[cfg(any(target_os = "macos", target_os = "linux"))]
     fn libraw_open_file(raw: *mut LibRawData, path: *const c_char) -> c_int;
-    #[cfg(windows)]
+    #[cfg(target_os = "windows")]
     fn libraw_open_wfile(raw: *mut LibRawData, path: *const u16) -> c_int;
     fn libraw_unpack(raw: *mut LibRawData) -> c_int;
     fn libraw_adjust_sizes_info_only(raw: *mut LibRawData) -> c_int;
@@ -145,7 +145,7 @@ impl Processor {
         Ok(processor)
     }
 
-    #[cfg(unix)]
+    #[cfg(any(target_os = "macos", target_os = "linux"))]
     fn open_path(&self, path: &Path) -> Result<(), String> {
         use std::os::unix::ffi::OsStrExt;
 
@@ -154,7 +154,7 @@ impl Processor {
         check(unsafe { libraw_open_file(self.inner, path.as_ptr()) })
     }
 
-    #[cfg(windows)]
+    #[cfg(target_os = "windows")]
     fn open_path(&self, path: &Path) -> Result<(), String> {
         use std::os::windows::ffi::OsStrExt;
 
@@ -164,11 +164,6 @@ impl Processor {
             .chain(std::iter::once(0))
             .collect::<Vec<_>>();
         check(unsafe { libraw_open_wfile(self.inner, path.as_ptr()) })
-    }
-
-    #[cfg(not(any(unix, windows)))]
-    fn open_path(&self, _path: &Path) -> Result<(), String> {
-        Err("platform path handling is not implemented".into())
     }
 }
 

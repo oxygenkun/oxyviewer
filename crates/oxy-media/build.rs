@@ -43,8 +43,11 @@ fn main() {
 }
 
 fn build_apple_image_io(manifest_dir: &Path) {
-    if env::var("CARGO_CFG_TARGET_OS").as_deref() != Ok("macos") {
-        return;
+    let target_os = env::var("CARGO_CFG_TARGET_OS").expect("Cargo must provide the target OS");
+    match target_os.as_str() {
+        "windows" | "linux" => return,
+        "macos" => {}
+        target_os => panic!("oxy-media does not support target OS {target_os}"),
     }
 
     let wrapper = manifest_dir.join("src/apple_image_io.c");

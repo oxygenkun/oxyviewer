@@ -79,15 +79,25 @@ fn benchmark_tiles(path: &Path, runs: usize) -> Result<(), Box<dyn Error>> {
         let session = service.begin(path, generation as u64, true, true)?;
         let started = Instant::now();
         let mut first = None;
-        let diagnostics = service.decode(&session, path.to_owned(), |_| {
+        let mut payload_bytes = 0_usize;
+        let diagnostics = service.decode(&session, path.to_owned(), |event| {
             first.get_or_insert_with(|| started.elapsed());
+            if let Some(tile) = service.tile(&event.session_id, event.generation, event.x, event.y)
+            {
+                payload_bytes += tile
+                    .encoded_jpeg
+                    .as_ref()
+                    .map_or(tile.rgba.len(), |jpeg| jpeg.len());
+            }
         })?;
         first_tile.push(first.unwrap_or_else(|| started.elapsed()));
         totals.push(started.elapsed());
         println!(
-            "  backend={:?} acceleration={:?} queue={}ms decode={}ms publish={}ms total={}ms",
+            "  backend={:?} acceleration={:?} tiles={} payload={:.1}MiB queue={}ms decode={}ms publish={}ms total={}ms",
             diagnostics.backend,
             diagnostics.acceleration,
+            session.expected_tiles,
+            payload_bytes as f64 / (1024.0 * 1024.0),
             diagnostics.queue_wait_ms,
             diagnostics.decode_ms,
             diagnostics.tile_publish_ms,

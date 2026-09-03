@@ -14,6 +14,10 @@ use std::{
 };
 
 const BACKEND: &str = "FFmpeg HEIF tile-grid";
+#[cfg(target_os = "windows")]
+const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+#[cfg(target_os = "windows")]
+const HIGH_PRIORITY_CLASS: u32 = 0x0000_0080;
 static CAPABILITY: LazyLock<Result<(), String>> =
     LazyLock::new(|| capability_probe().map_err(|error| error.to_string()));
 static GRID_CACHE: LazyLock<Mutex<HashMap<GridCacheKey, TileGrid>>> =
@@ -54,6 +58,7 @@ struct PreviewStream {
 }
 
 #[derive(Debug)]
+#[cfg_attr(any(target_os = "macos", target_os = "linux"), allow(dead_code))]
 pub struct EncodedTile {
     pub x: u32,
     pub y: u32,
@@ -80,6 +85,7 @@ pub fn can_decode(path: &Path) -> Result<(), MediaError> {
     cached_grid(path).map(|_| ())
 }
 
+#[cfg_attr(any(target_os = "macos", target_os = "linux"), allow(dead_code))]
 pub fn tile_count(path: &Path) -> Result<usize, MediaError> {
     cached_grid(path).map(|grid| grid.tiles.len())
 }
@@ -87,6 +93,7 @@ pub fn tile_count(path: &Path) -> Result<usize, MediaError> {
 /// Lets FFmpeg keep each HEVC grid component compressed for delivery to the
 /// WebView. Six high-quality JPEG tiles are much cheaper to cross the custom
 /// protocol boundary than 35 raw RGBA tiles (roughly 131 MB for the fixture).
+#[cfg_attr(any(target_os = "macos", target_os = "linux"), allow(dead_code))]
 pub fn decode_full_jpeg_tiles(
     path: &Path,
     display_size: ImageDimensions,
@@ -359,6 +366,7 @@ fn oriented_tile(grid: &TileGrid, tile: &Tile) -> Result<(String, u32, u32, u32,
 /// Sony HIF files commonly carry a medium-sized camera-rendered HEVC image in
 /// addition to the primary tile grid. Decoding that single stream avoids
 /// paying for all six full-resolution tiles just to paint the first frame.
+#[cfg_attr(any(target_os = "macos", target_os = "linux"), allow(dead_code))]
 pub fn decode_scaled_preview(path: &Path, max_size: u32) -> Result<DynamicImage, MediaError> {
     let grid = cached_grid(path)?;
     let stream = grid
@@ -425,11 +433,10 @@ fn command_supports(
 }
 
 fn resolve_command(name: &str) -> PathBuf {
-    let executable = if cfg!(windows) {
-        format!("{name}.exe")
-    } else {
-        name.to_owned()
-    };
+    #[cfg(target_os = "windows")]
+    let executable = format!("{name}.exe");
+    #[cfg(any(target_os = "macos", target_os = "linux"))]
+    let executable = name.to_owned();
     let mut candidates = Vec::new();
     if let Some(directory) = std::env::var_os("OXY_FFMPEG_DIR") {
         candidates.push(PathBuf::from(directory).join(&executable));
@@ -465,10 +472,17 @@ fn resolve_command(name: &str) -> PathBuf {
 }
 
 fn media_command(executable: &Path) -> Command {
-    let mut command = Command::new(executable);
     #[cfg(target_os = "windows")]
-    command.creation_flags(0x0800_0000 | 0x0000_0080);
-    command
+    {
+        let mut command = Command::new(executable);
+        command.creation_flags(CREATE_NO_WINDOW | HIGH_PRIORITY_CLASS);
+        command
+    }
+
+    #[cfg(any(target_os = "macos", target_os = "linux"))]
+    {
+        Command::new(executable)
+    }
 }
 
 fn probe_grid(path: &Path) -> Result<TileGrid, MediaError> {

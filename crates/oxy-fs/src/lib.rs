@@ -609,10 +609,18 @@ mod tests {
             File::create(directory.path().join(name)).unwrap();
         }
         let mut assets = scan_assets(directory.path()).unwrap();
-        assets[0].rating = Some(5);
-        assets[0].color_label = Some("Blue".into());
-        assets[1].rating = Some(4);
-        assets[1].color_label = Some("Red".into());
+        let a = assets
+            .iter_mut()
+            .find(|asset| asset.name == "a.jpg")
+            .unwrap();
+        a.rating = Some(5);
+        a.color_label = Some("Blue".into());
+        let b = assets
+            .iter_mut()
+            .find(|asset| asset.name == "b.jpg")
+            .unwrap();
+        b.rating = Some(4);
+        b.color_label = Some("Red".into());
         let query = AssetQuery {
             minimum_rating: Some(4),
             color_label: Some("blue".into()),

@@ -104,7 +104,7 @@ sequenceDiagram
 | `id` | 区分不同 session |
 | `generation` | 区分前端选择代次 |
 | `width`、`height` | 设置 Canvas 像素尺寸 |
-| `tileSize` | 当前固定为 512 |
+| `tileSize` | Windows fallback 为 1024；macOS 等平台为 512，以保留更快、更稳定的中心优先渐进绘制。Windows FFmpeg 源网格 JPEG 路径按容器网格发布，不受该 fallback 大小限制 |
 | `backend` | 实际计划使用的后端 |
 | `acceleration` | hardware/software/unknown |
 | `status` | decoding 或 compatibility fallback 等 |

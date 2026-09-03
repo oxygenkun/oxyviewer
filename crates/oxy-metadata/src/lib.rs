@@ -260,14 +260,24 @@ fn add_patch_args(
 fn exiftool_command() -> Command {
     let executable =
         std::env::var_os("OXY_EXIFTOOL_PATH").unwrap_or_else(|| OsString::from("exiftool"));
+    let mut command = platform_exiftool_command(executable);
+    command.env("LC_ALL", "C").env("LANG", "C");
+    command
+}
+
+#[cfg(target_os = "windows")]
+fn platform_exiftool_command(executable: OsString) -> Command {
     let mut command = Command::new(executable);
     // The packaged application uses the Windows GUI subsystem, but ExifTool is
     // a console executable. Without this flag Windows briefly creates a console
     // window whenever metadata is read or written.
-    #[cfg(target_os = "windows")]
     command.creation_flags(0x0800_0000);
-    command.env("LC_ALL", "C").env("LANG", "C");
     command
+}
+
+#[cfg(any(target_os = "macos", target_os = "linux"))]
+fn platform_exiftool_command(executable: OsString) -> Command {
+    Command::new(executable)
 }
 
 fn exiftool_output(command: &mut Command) -> Result<Output, MetadataError> {

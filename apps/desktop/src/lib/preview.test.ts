@@ -48,5 +48,8 @@ describe("semantic render graph", () => {
     expect(runtimeRenderPlatform("Mozilla/5.0 (Windows NT 10.0; Win64; x64)")).toBe("windows");
     expect(runtimeRenderPlatform("Mozilla/5.0 (Macintosh; Intel Mac OS X 14_0)")).toBe("macos");
     expect(runtimeRenderPlatform("Mozilla/5.0 (X11; Linux x86_64)")).toBe("linux");
+    expect(() => runtimeRenderPlatform("Mozilla/5.0 (FreeBSD)")).toThrow(
+      "unsupported render platform",
+    );
   });
 });

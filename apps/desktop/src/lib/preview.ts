@@ -1,6 +1,6 @@
 import type { AssetKind, RenderLevel } from "../types";
 
-export type RenderPlatform = "windows" | "macos" | "linux" | "other";
+export type RenderPlatform = "windows" | "macos" | "linux";
 export type RenderSurface = "thumbnail" | "loupe";
 
 export type RenderMethod =
@@ -62,7 +62,6 @@ const heifProfiles: Record<RenderPlatform, RenderProfile> = {
   windows: heifProfile,
   macos: heifProfile,
   linux: heifProfile,
-  other: heifProfile,
 };
 
 export function runtimeRenderPlatform(
@@ -71,7 +70,7 @@ export function runtimeRenderPlatform(
   if (/Windows/i.test(userAgent)) return "windows";
   if (/Macintosh|Mac OS X/i.test(userAgent)) return "macos";
   if (/Linux/i.test(userAgent)) return "linux";
-  return "other";
+  throw new Error(`unsupported render platform: ${userAgent || "unknown user agent"}`);
 }
 
 function renderProfile(kind: AssetKind, platform: RenderPlatform): RenderProfile {

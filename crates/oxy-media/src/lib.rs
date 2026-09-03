@@ -1,3 +1,6 @@
+#[cfg(not(any(target_os = "windows", target_os = "macos", target_os = "linux")))]
+compile_error!("oxy-media supports only Windows, macOS, and Linux");
+
 #[cfg(target_os = "macos")]
 mod apple_image_io;
 mod embedded_jpeg;
@@ -509,35 +512,45 @@ pub fn heif_preview_with_priority(
     Ok(result)
 }
 
+#[cfg(target_os = "macos")]
 fn decode_heif_preview(
     path: &Path,
     max_size: u32,
 ) -> Result<(DynamicImage, &'static str, Option<String>), MediaError> {
-    #[cfg(target_os = "macos")]
     let mut fallback_reason = None;
-    #[cfg(target_os = "macos")]
     if crate::apple_image_io::can_decode(path).is_ok() {
         match crate::apple_image_io::decode_rgba8(path, max_size) {
             Ok(image) => return Ok((image, "Apple ImageIO thumbnail", None)),
             Err(error) => fallback_reason = Some(error.to_string()),
         }
     }
-    #[cfg(target_os = "windows")]
+    let image = heif::decode_scaled(path, max_size)?;
+    Ok((image, "libheif scaled preview", fallback_reason))
+}
+
+#[cfg(target_os = "windows")]
+fn decode_heif_preview(
+    path: &Path,
+    max_size: u32,
+) -> Result<(DynamicImage, &'static str, Option<String>), MediaError> {
     let mut fallback_reason = None;
-    #[cfg(target_os = "windows")]
     if crate::ffmpeg_heif::can_decode(path).is_ok() {
         match crate::ffmpeg_heif::decode_scaled_preview(path, max_size) {
             Ok(image) => return Ok((image, "FFmpeg auxiliary preview", None)),
             Err(error) => fallback_reason = Some(error.to_string()),
         }
     }
-    #[cfg(not(any(target_os = "macos", target_os = "windows")))]
-    let fallback_reason = None;
     let image = heif::decode_scaled(path, max_size)?;
-    #[cfg(target_os = "macos")]
-    return Ok((image, "libheif scaled preview", fallback_reason));
-    #[cfg(not(target_os = "macos"))]
     Ok((image, "libheif scaled preview", fallback_reason))
+}
+
+#[cfg(target_os = "linux")]
+fn decode_heif_preview(
+    path: &Path,
+    max_size: u32,
+) -> Result<(DynamicImage, &'static str, Option<String>), MediaError> {
+    let image = heif::decode_scaled(path, max_size)?;
+    Ok((image, "libheif scaled preview", None))
 }
 
 fn duration_ms(started: Instant) -> u64 {
@@ -635,11 +648,11 @@ pub fn decode_priority_for(priority: oxy_domain::PreviewPriority) -> DecodePrior
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[allow(dead_code)]
 enum RenderPlatform {
     Windows,
     Macos,
     Linux,
-    Other,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -653,14 +666,17 @@ enum RenderMethod {
 }
 
 const fn current_render_platform() -> RenderPlatform {
-    if cfg!(target_os = "windows") {
+    #[cfg(target_os = "windows")]
+    {
         RenderPlatform::Windows
-    } else if cfg!(target_os = "macos") {
+    }
+    #[cfg(target_os = "macos")]
+    {
         RenderPlatform::Macos
-    } else if cfg!(target_os = "linux") {
+    }
+    #[cfg(target_os = "linux")]
+    {
         RenderPlatform::Linux
-    } else {
-        RenderPlatform::Other
     }
 }
 
@@ -783,7 +799,7 @@ fn write_jpeg_atomically_timed(
     let encode_started = Instant::now();
     #[cfg(target_os = "macos")]
     apple_image_io::write_jpeg(image, temporary.path(), quality)?;
-    #[cfg(not(target_os = "macos"))]
+    #[cfg(any(target_os = "windows", target_os = "linux"))]
     {
         let mut output = temporary.as_file();
         JpegEncoder::new_with_quality(&mut output, quality).encode_image(image)?;
@@ -895,7 +911,7 @@ fn generate_system_preview(
     }
 }
 
-#[cfg(not(target_os = "macos"))]
+#[cfg(any(target_os = "windows", target_os = "linux"))]
 fn generate_system_preview(
     _source: &Path,
     _destination: &Path,
@@ -956,11 +972,7 @@ mod tests {
 
     #[test]
     fn heif_fast_artifact_does_not_regress_on_other_platform_profiles() {
-        for platform in [
-            RenderPlatform::Macos,
-            RenderPlatform::Linux,
-            RenderPlatform::Other,
-        ] {
+        for platform in [RenderPlatform::Macos, RenderPlatform::Linux] {
             assert_eq!(
                 render_method_for(oxy_domain::AssetKind::Heif, RenderLevel::Preview, platform,),
                 RenderMethod::HeifPreview(160)
@@ -1132,7 +1144,7 @@ mod tests {
         assert_ne!(first, different_size);
     }
 
-    #[cfg(unix)]
+    #[cfg(any(target_os = "macos", target_os = "linux"))]
     #[test]
     fn cache_key_is_shared_across_paths_to_the_same_file() {
         let directory = tempfile::tempdir().unwrap();

@@ -16,6 +16,47 @@ end-to-end regression harness that enforces these budgets is described in
 
 ## Verification Log
 
+- 2026-09-03: A same-machine, same-fixture release E2E sweep tested macOS
+  ImageIO full-resolution HEIF publication at 512 / 1024 / 2048 / 4096 / 8192
+  px per RGBA tile, with ten measured runs per size after warmup. Median
+  first-tile times were 342.5 / 354 / 356.5 / 392.5 / 434 ms; p95 values were
+  356 / 385 / 403 / 406 / 502 ms. Median all-tile times were 446.5 / 444.5 /
+  430 / 451.5 / 434 ms; p95 values were 467 / 472 / 482 / 477 / 502 ms.
+  Backend-only medians improved monotonically from 412 ms at 512 px to 324.5
+  ms for the single 8192 px response, but protocol transfer and Canvas paint
+  erased that gain. Since selected-image responsiveness prioritizes the first
+  useful full-resolution region and stable tail latency, macOS retains 512 px
+  center-first tiles. Windows retains its separate 1024 px fallback and its
+  faster six-source-grid JPEG path. Larger macOS tiles are not a proven preview
+  acceleration for this fixture.
+- 2026-09-03: A follow-up macOS payload experiment compared the retained RGBA
+  transport with quality-90 JPEG tiles encoded directly to memory by ImageIO.
+  Ten release backend runs per variant found that 512 px RGBA published 124.9
+  MiB in 44.02 ms median, while JPEG reduced the payload to 0.6 MiB but raised
+  completion to 106.40 ms. JPEG at 1024 and 2048 px published about 0.5 MiB in
+  96.35 and 93.14 ms respectively; median first-tile times were 28.61 and
+  35.18 ms versus 26.26 ms for RGBA. A pure-Rust JPEG encoder was substantially
+  slower still. The existing RGBA E2E measurements leave only about 35 ms
+  between backend completion and all-tile paint, less than ImageIO JPEG's
+  roughly 49-62 ms added backend cost even before WebKit decodes the JPEGs.
+  JPEG therefore provides a major byte-volume reduction but is not retained as
+  the macOS default for this fixture. Attempts to rerun the packaged E2E with
+  the experimental encoder were blocked by the independent harness startup
+  issue where the WebKit content process terminated before writing a report.
+- 2026-09-03: A second follow-up tested the missing non-tiled case: ImageIO
+  decoded and sharpened the full `DSC00449.HIF`, encoded one quality-95 JPEG,
+  and published it as a single session payload. Across ten release backend
+  runs, the JPEG payload was about 0.5 MiB and total publication measured 81.05
+  ms median (79.89 ms minimum), including a temporary-file write and read
+  representative of a persistent cache. The same-machine 512 px RGBA control
+  published 140 tiles totaling 124.9 MiB in 45.35 ms median (42.65 ms minimum),
+  with first-tile availability at 27.26 ms median. One full JPEG therefore cuts
+  the payload by roughly 250x but adds about 36 ms before any full-resolution
+  pixels can be drawn. The packaged E2E again terminated its WebKit content
+  process during application startup, before HEIF decode, so browser fetch,
+  JPEG decode, and paint latency were not measured and must not be inferred
+  from these backend results. The experiment supports a warm persistent JPEG
+  cache, not replacing the cold progressive RGBA path.
 - 2026-09-03: Sony HIF grid/list/filmstrip thumbnails now use the camera's
   embedded 160x120 MJPEG item directly instead of requesting a rigid 512 px
   preview and launching FFmpeg for the 1664x1088 HEVC auxiliary image. The
