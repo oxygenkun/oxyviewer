@@ -93,11 +93,11 @@ impl MetadataFacade {
     pub fn read_document(
         &self,
         path: &Path,
-        kind: AssetKind,
+        _kind: AssetKind,
         display_dimensions: Option<(u32, u32)>,
     ) -> Result<MetadataDocument, MetadataError> {
         let mut document = NativeMetadataReader.read(path, display_dimensions)?;
-        if sidecar_path(path).is_file() || kind == AssetKind::Raw {
+        if sidecar_path(path).is_file() {
             document.editable = read_sidecar(path)?;
         }
         Ok(document)
@@ -220,7 +220,7 @@ fn summary_metadata_fingerprint(asset: &oxy_domain::AssetSummary) -> SummaryMeta
 }
 
 /// Reads editable metadata from an adjacent XMP sidecar first. Without a
-/// sidecar, RAW returns empty metadata and other formats try embedded XMP.
+/// sidecar, all supported formats, including RAW, try embedded XMP.
 pub fn read_metadata(path: &Path, kind: AssetKind) -> Result<EditableMetadata, MetadataError> {
     read_metadata_with_exiftool(path, kind, None)
 }
@@ -250,7 +250,7 @@ pub fn enrich_summaries_with_exiftool(
 ) -> Result<(), MetadataError> {
     let embedded = assets
         .iter()
-        .filter(|asset| asset.kind != AssetKind::Raw && !sidecar_path(&asset.path).is_file())
+        .filter(|asset| !sidecar_path(&asset.path).is_file())
         .map(|asset| asset.path.clone())
         .collect::<Vec<_>>();
     let embedded_values = match read_embedded_batch(&embedded, exiftool) {
@@ -259,7 +259,7 @@ pub fn enrich_summaries_with_exiftool(
         Err(error) => return Err(error),
     };
     for asset in assets {
-        let metadata = if asset.kind == AssetKind::Raw || sidecar_path(&asset.path).is_file() {
+        let metadata = if sidecar_path(&asset.path).is_file() {
             read_sidecar(&asset.path)?
         } else {
             embedded_values
@@ -792,6 +792,26 @@ mod tests {
     use super::*;
     use tempfile::tempdir;
 
+    fn minimal_raw_with_xmp(rating: u8, label: &str) -> Vec<u8> {
+        let xmp = format!(
+            r#"<x:xmpmeta xmlns:x="adobe:ns:meta/"><rdf:RDF xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#"><rdf:Description xmlns:xmp="http://ns.adobe.com/xap/1.0/" xmp:Rating="{rating}" xmp:Label="{label}" /></rdf:RDF></x:xmpmeta>"#
+        );
+        let xmp = xmp.as_bytes();
+        let xmp_offset = 8 + 2 + 12 + 4;
+        let mut bytes = Vec::with_capacity(xmp_offset + xmp.len());
+        bytes.extend_from_slice(b"II");
+        bytes.extend_from_slice(&42_u16.to_le_bytes());
+        bytes.extend_from_slice(&8_u32.to_le_bytes());
+        bytes.extend_from_slice(&1_u16.to_le_bytes());
+        bytes.extend_from_slice(&0x02bc_u16.to_le_bytes());
+        bytes.extend_from_slice(&1_u16.to_le_bytes());
+        bytes.extend_from_slice(&(xmp.len() as u32).to_le_bytes());
+        bytes.extend_from_slice(&(xmp_offset as u32).to_le_bytes());
+        bytes.extend_from_slice(&0_u32.to_le_bytes());
+        bytes.extend_from_slice(xmp);
+        bytes
+    }
+
     #[test]
     fn facade_switches_the_embedded_provider_without_affecting_its_contract() {
         let facade = MetadataFacade::default();
@@ -854,6 +874,52 @@ mod tests {
 
         shared_caller.invalidate_summary_directory(directory.path());
         assert!(facade.summary_cache.read().unwrap().is_empty());
+    }
+
+    #[test]
+    fn reads_embedded_raw_rating_and_label_without_a_sidecar() {
+        let directory = tempdir().unwrap();
+        let raw = directory.path().join("photo.ARW");
+        fs::write(&raw, minimal_raw_with_xmp(1, "red")).unwrap();
+
+        let metadata = MetadataFacade::default()
+            .read_metadata(&raw, AssetKind::Raw)
+            .unwrap();
+
+        assert_eq!(metadata.rating, Some(1));
+        assert_eq!(metadata.color_label.as_deref(), Some("Red"));
+    }
+
+    #[test]
+    fn enriches_raw_summary_from_embedded_xmp_without_a_sidecar() {
+        let directory = tempdir().unwrap();
+        let raw = directory.path().join("photo.ARW");
+        fs::write(&raw, minimal_raw_with_xmp(1, "red")).unwrap();
+        let mut assets =
+            oxy_fs::scan_directory(directory.path(), &oxy_domain::AssetQuery::default(), 0)
+                .unwrap()
+                .items;
+
+        MetadataFacade::default()
+            .enrich_summaries(&mut assets)
+            .unwrap();
+
+        assert_eq!(assets[0].rating, Some(1));
+        assert_eq!(assets[0].color_label.as_deref(), Some("Red"));
+    }
+
+    #[test]
+    #[ignore = "requires OXY_RAW_XMP_FIXTURE to point to a RAW with embedded rating/color"]
+    fn reads_external_raw_embedded_xmp_without_a_sidecar() {
+        let raw = std::env::var_os("OXY_RAW_XMP_FIXTURE")
+            .map(PathBuf::from)
+            .expect("OXY_RAW_XMP_FIXTURE is required");
+        let metadata = MetadataFacade::default()
+            .read_metadata(&raw, AssetKind::Raw)
+            .unwrap();
+
+        assert!(metadata.rating.is_some());
+        assert!(metadata.color_label.is_some());
     }
 
     #[test]

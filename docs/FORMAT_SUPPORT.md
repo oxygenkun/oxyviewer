@@ -4,7 +4,7 @@
 | --- | --- | --- | --- | --- |
 | JPEG/JPG | Implemented | Foundation implemented | Unified native EXIF/XMP/IPTC/ICC/MakerNote reader; sidecar-first editable metadata | XMP sidecar by default; optional embedded sync through ExifTool |
 | HEIF/HEIC/HIF | Implemented | Embedded preview followed by a direct ImageIO full JPEG on macOS or progressive full-resolution tiles on Windows/Linux; tile sessions also write a source-derived JPEG for subsequent warm loupe loads | Unified native reader; `libheif-rs` item-table XMP extraction; Sony shooting focus location/frame | XMP sidecar by default; optional embedded sync through ExifTool |
-| ARW/CR2/CR3/NEF/DNG/RAF/RW2/ORF | Implemented | Bundled LibRaw 0.22.2 embedded preview with half-size preview fallback, followed by full-resolution loupe development; macOS Quick Look final preview fallback | Unified native EXIF/XMP/IPTC/ICC/MakerNote reader; adjacent sidecar override | Adjacent XMP sidecar rating/color |
+| ARW/CR2/CR3/NEF/DNG/RAF/RW2/ORF | Implemented | Bundled LibRaw 0.22.2 embedded preview with half-size preview fallback, followed by full-resolution loupe development; macOS Quick Look final preview fallback | Unified native EXIF/XMP/IPTC/ICC/MakerNote reader; embedded XMP with adjacent sidecar override | Embedded XMP rating/color read; adjacent XMP sidecar write and override |
 | PNG/WebP/TIFF | Implemented as secondary formats | Foundation/Planned | Unified native EXIF/XMP/IPTC/ICC reader | Not in MVP |
 
 RAW support follows bundled LibRaw 0.22.2. The code builds LibRaw from the
