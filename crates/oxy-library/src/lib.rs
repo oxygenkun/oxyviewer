@@ -5,7 +5,8 @@ use oxy_domain::{
 use parking_lot::Mutex;
 use rusqlite::{Connection, OptionalExtension, Transaction, params};
 use std::{
-    collections::{HashSet, VecDeque},
+    cmp::Ordering,
+    collections::{BinaryHeap, HashSet},
     path::{Path, PathBuf},
 };
 use thiserror::Error;
@@ -27,6 +28,92 @@ pub struct Library {
     connection: Mutex<Connection>,
     indexing_roots: Mutex<HashSet<PathBuf>>,
     index_gate: Mutex<()>,
+}
+
+#[derive(Debug, Eq, PartialEq)]
+struct IndexQueueEntry {
+    depth: usize,
+    sequence: usize,
+    path: PathBuf,
+}
+
+impl Ord for IndexQueueEntry {
+    fn cmp(&self, other: &Self) -> Ordering {
+        // BinaryHeap pops the greatest item. A smaller depth represents a
+        // higher directory level and therefore a greater indexing priority.
+        other
+            .depth
+            .cmp(&self.depth)
+            .then_with(|| other.sequence.cmp(&self.sequence))
+            .then_with(|| self.path.cmp(&other.path))
+    }
+}
+
+impl PartialOrd for IndexQueueEntry {
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+struct DirectoryPriorityQueue {
+    root: PathBuf,
+    pending: BinaryHeap<IndexQueueEntry>,
+    visited: HashSet<PathBuf>,
+    next_sequence: usize,
+}
+
+impl DirectoryPriorityQueue {
+    fn new(root: PathBuf) -> Self {
+        let pending = BinaryHeap::from([IndexQueueEntry {
+            depth: 0,
+            sequence: 0,
+            path: root.clone(),
+        }]);
+        Self {
+            pending,
+            visited: HashSet::from([root.clone()]),
+            root,
+            next_sequence: 1,
+        }
+    }
+
+    fn pop_next(&mut self) -> Option<(PathBuf, usize)> {
+        self.pending.pop().map(|entry| (entry.path, entry.depth))
+    }
+
+    fn enqueue_children(
+        &mut self,
+        parent_depth: usize,
+        directories: Vec<DirectorySummary>,
+    ) -> Vec<DirectorySummary> {
+        let mut safe_directories = directories
+            .into_iter()
+            .filter_map(|mut child| {
+                let canonical = child.path.canonicalize().ok()?;
+                if !canonical.starts_with(&self.root) || !self.visited.insert(canonical.clone()) {
+                    return None;
+                }
+                child.path = canonical;
+                Some(child)
+            })
+            .collect::<Vec<_>>();
+        safe_directories.sort_unstable_by(|left, right| {
+            left.name
+                .to_ascii_lowercase()
+                .cmp(&right.name.to_ascii_lowercase())
+                .then_with(|| left.name.cmp(&right.name))
+                .then_with(|| left.path.cmp(&right.path))
+        });
+        for child in &safe_directories {
+            self.pending.push(IndexQueueEntry {
+                depth: parent_depth.saturating_add(1),
+                sequence: self.next_sequence,
+                path: child.path.clone(),
+            });
+            self.next_sequence = self.next_sequence.saturating_add(1);
+        }
+        safe_directories
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -433,12 +520,11 @@ impl Library {
 
     fn index_root_inner(&self, root: &Path) -> Result<IndexStats, LibraryError> {
         let scan_id = self.next_scan_id()?;
-        let mut queue = VecDeque::from([root.to_owned()]);
-        let mut visited = HashSet::from([root.to_owned()]);
+        let mut queue = DirectoryPriorityQueue::new(root.to_owned());
         let mut asset_count = 0;
         let mut directory_count = 0;
 
-        while let Some(directory) = queue.pop_front() {
+        while let Some((directory, depth)) = queue.pop_next() {
             if !self.contains_root(root)? {
                 return Ok(IndexStats {
                     asset_count,
@@ -449,18 +535,7 @@ impl Library {
             // unreadable. Publishing a partial scan as complete would turn a
             // transient permission or volume error into false deletions.
             let scan = oxy_fs::scan_index_directory(&directory)?;
-            let mut safe_directories = Vec::new();
-            for mut child in scan.directories {
-                let Ok(canonical) = child.path.canonicalize() else {
-                    continue;
-                };
-                if !canonical.starts_with(root) || !visited.insert(canonical.clone()) {
-                    continue;
-                }
-                child.path = canonical.clone();
-                queue.push_back(canonical);
-                safe_directories.push(child);
-            }
+            let safe_directories = queue.enqueue_children(depth, scan.directories);
             asset_count += scan.assets.len();
             directory_count += safe_directories.len();
             self.write_index_batch(root, &directory, scan_id, &scan.assets, &safe_directories)?;
@@ -707,6 +782,60 @@ mod tests {
             library.roots().unwrap(),
             vec![root.path().canonicalize().unwrap()]
         );
+    }
+
+    #[test]
+    fn directory_priority_queue_visits_all_siblings_before_descendants() {
+        let root = tempdir().unwrap();
+        for path in ["beta/deep", "alpha/deep"] {
+            std::fs::create_dir_all(root.path().join(path)).unwrap();
+        }
+        let canonical_root = root.path().canonicalize().unwrap();
+        let mut queue = DirectoryPriorityQueue::new(canonical_root.clone());
+        let mut order = Vec::new();
+
+        while let Some((directory, depth)) = queue.pop_next() {
+            order.push(directory.strip_prefix(&canonical_root).unwrap().to_owned());
+            let scan = oxy_fs::scan_index_directory(&directory).unwrap();
+            queue.enqueue_children(depth, scan.directories);
+        }
+
+        assert_eq!(
+            order,
+            ["", "alpha", "beta", "alpha/deep", "beta/deep"].map(PathBuf::from)
+        );
+    }
+
+    #[test]
+    fn higher_level_directory_preempts_an_earlier_deep_directory() {
+        let root = tempdir().unwrap();
+        let shallow = root.path().join("shallow");
+        let deep = root.path().join("parent").join("deep");
+        std::fs::create_dir_all(&shallow).unwrap();
+        std::fs::create_dir_all(&deep).unwrap();
+        let canonical_root = root.path().canonicalize().unwrap();
+        let mut queue = DirectoryPriorityQueue::new(canonical_root.clone());
+        queue.pop_next();
+
+        queue.enqueue_children(
+            1,
+            vec![DirectorySummary {
+                path: deep.canonicalize().unwrap(),
+                name: "deep".into(),
+                has_children: false,
+            }],
+        );
+        queue.enqueue_children(
+            0,
+            vec![DirectorySummary {
+                path: shallow.canonicalize().unwrap(),
+                name: "shallow".into(),
+                has_children: false,
+            }],
+        );
+
+        assert_eq!(queue.pop_next(), Some((shallow.canonicalize().unwrap(), 1)));
+        assert_eq!(queue.pop_next(), Some((deep.canonicalize().unwrap(), 2)));
     }
 
     #[test]

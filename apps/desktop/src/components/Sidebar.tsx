@@ -241,10 +241,6 @@ export function Sidebar({
     setSearch("");
     setDebouncedSearch("");
   };
-  const navigateFromSearch = (session: FolderSession, path: string) => {
-    onNavigate(session, path);
-    closeSearch();
-  };
   const waitingForDebounce = searchActive && search.trim() !== normalizedSearch;
   const searchLoading = waitingForDebounce || searchQueries.some((query) => query.isLoading);
   const indexing = normalizedSearch.length > 0 && searchQueries.some((query) => query.data === null);
@@ -253,7 +249,6 @@ export function Sidebar({
   return (
     <aside className="sidebar">
       <div className="sidebar__brand">
-        <span className="brand-glyph">OX</span>
         <div><strong>OxyViewer</strong><small>PHOTO DESK</small></div>
       </div>
 
@@ -330,7 +325,7 @@ export function Sidebar({
                       currentPath={activeSession?.rootPath === session.rootPath ? currentPath : undefined}
                       depth={0}
                       search={normalizedSearch}
-                      onNavigate={navigateFromSearch}
+                      onNavigate={onNavigate}
                     />
                   );
                 })}

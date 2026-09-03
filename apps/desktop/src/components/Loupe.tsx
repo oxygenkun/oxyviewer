@@ -404,13 +404,13 @@ export function Loupe({
                   <i
                     key={index}
                     className={`loupe__focus-frame ${region.syntheticFrame ? "is-estimated" : ""}`}
-                    style={{
-                      left: `${region.left * 100}%`,
-                      top: `${region.top * 100}%`,
-                      width: `${region.width * 100}%`,
-                      height: `${region.height * 100}%`,
-                    }}
-                  ><b /></i>
+                  style={{
+                    left: `${region.left * 100}%`,
+                    top: `${region.top * 100}%`,
+                    width: `${region.width * 100}%`,
+                    height: `${region.height * 100}%`,
+                  }}
+                  />
                 ))}
               </div>
             ) : null}

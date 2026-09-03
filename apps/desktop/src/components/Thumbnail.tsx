@@ -24,6 +24,7 @@ interface ThumbnailProps {
   enabled?: boolean;
   large?: boolean;
   priority?: PreviewPriority;
+  onContextMenu?: React.MouseEventHandler<HTMLDivElement>;
   onImageLoad?: (size: { width: number; height: number }) => void;
   onRawPreviewStatus?: (status: RawPreviewStatus) => void;
 }
@@ -58,6 +59,7 @@ export function Thumbnail({
   enabled = true,
   large = false,
   priority = "visible",
+  onContextMenu,
   onImageLoad,
   onRawPreviewStatus,
 }: ThumbnailProps) {
@@ -266,7 +268,11 @@ export function Thumbnail({
   };
 
   return (
-    <div className={`thumbnail ${large ? "thumbnail--large" : ""}`} style={style}>
+    <div
+      className={`thumbnail ${large ? "thumbnail--large" : ""}`}
+      style={style}
+      onContextMenu={onContextMenu}
+    >
       {!visibleImage ? (
         <div className="thumbnail__fallback" aria-hidden="true">
           <span>{asset.extension}</span>

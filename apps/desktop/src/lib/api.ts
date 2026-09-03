@@ -182,6 +182,18 @@ export async function refreshDirectory(sessionId: string, directory: string): Pr
   await invoke("refresh_directory", { sessionId, directory });
 }
 
+export async function trashAssets(paths: string[]): Promise<void> {
+  if (!isTauri()) {
+    for (let index = demoAssets.length - 1; index >= 0; index -= 1) {
+      if (paths.includes(demoAssets[index].path)) demoAssets.splice(index, 1);
+    }
+    return;
+  }
+  await invoke("execute_file_operation", {
+    operation: { type: "trash", paths },
+  });
+}
+
 export async function getAssetDetails(asset: AssetSummary): Promise<AssetDetails> {
   if (!isTauri()) {
     return {

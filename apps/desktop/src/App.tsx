@@ -19,6 +19,7 @@ import {
   onLibraryIndexUpdated,
   refreshDirectory,
   removeLibraryRoot,
+  trashAssets,
 } from "./lib/api";
 import { translate } from "./lib/i18n";
 import {
@@ -250,6 +251,18 @@ export function App({ perfScenario }: { perfScenario?: PerfScenario }) {
     }
   }, [activeSession, currentPath, isRefreshing, queryClient]);
 
+  const handleTrashAsset = useCallback(async (asset: typeof assets[number]) => {
+    setError(undefined);
+    try {
+      await trashAssets([asset.path]);
+      clearSelection();
+      queryClient.removeQueries({ queryKey: ["asset-render", asset.id] });
+      await handleRefresh();
+    } catch (cause) {
+      setError(String(cause));
+    }
+  }, [clearSelection, handleRefresh, queryClient]);
+
   return (
     <div
       className={`app-shell ${leftPanelOpen ? "" : "sidebar-collapsed"} ${inspectorOpen ? "" : "inspector-collapsed"}`}
@@ -292,6 +305,7 @@ export function App({ perfScenario }: { perfScenario?: PerfScenario }) {
             hasNextPage={assetsQuery.hasNextPage}
             isFetchingNextPage={assetsQuery.isFetchingNextPage}
             fetchNextPage={() => void assetsQuery.fetchNextPage()}
+            onTrashAsset={(asset) => void handleTrashAsset(asset)}
             t={t}
           />
         )}

@@ -5,6 +5,10 @@ import { App } from "./App";
 import { getPerfScenario } from "./lib/api";
 import "./styles.css";
 
+if (!__OXY_DEBUG__) {
+  document.addEventListener("contextmenu", (event) => event.preventDefault());
+}
+
 const queryClient = new QueryClient({
   defaultOptions: {
     queries: {
@@ -28,4 +32,3 @@ async function bootstrap() {
 }
 
 void bootstrap();
-

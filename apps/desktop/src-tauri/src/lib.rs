@@ -341,8 +341,12 @@ async fn clear_preview_cache(state: State<'_, AppState>) -> Result<CacheSettings
 }
 
 #[tauri::command]
-fn execute_file_operation(operation: FileOperation) -> Result<FileOperationResult, String> {
-    oxy_fs::execute_file_operation(&operation).map_err(|error| error.to_string())
+async fn execute_file_operation(operation: FileOperation) -> Result<FileOperationResult, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        oxy_fs::execute_file_operation(&operation).map_err(|error| error.to_string())
+    })
+    .await
+    .map_err(|error| error.to_string())?
 }
 
 #[tauri::command]

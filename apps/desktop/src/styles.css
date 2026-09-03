@@ -71,21 +71,8 @@ body {
 .sidebar__brand {
   display: flex;
   align-items: center;
-  gap: 9px;
   height: 44px;
   margin: 0 3px 17px;
-}
-.brand-glyph {
-  display: grid;
-  place-items: center;
-  width: 31px;
-  height: 31px;
-  border: 1px solid #4b5358;
-  border-radius: 50%;
-  color: var(--accent);
-  font-family: "Bodoni 72", Georgia, serif;
-  font-size: 10px;
-  letter-spacing: -.8px;
 }
 .sidebar__brand div { display: grid; gap: 2px; }
 .sidebar__brand strong { font-size: 13px; letter-spacing: .4px; }
@@ -176,6 +163,7 @@ body {
   text-align: left;
 }
 .tree-row__main span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.tree-row__main > svg { flex: 0 0 auto; }
 .tree-row__main i { width: 5px; height: 5px; margin-left: auto; border-radius: 50%; background: var(--accent); }
 .tree-row__remove {
   display: grid;
@@ -478,6 +466,34 @@ body {
 .asset-rating-badge b { font: inherit; }
 .asset-color-label { width: 7px; height: 7px; border-radius: 50%; }
 .asset-card__meta i { width: 4px; height: 4px; border-radius: 50%; background: var(--accent); }
+.asset-context-menu {
+  position: fixed;
+  z-index: 100;
+  width: 148px;
+  padding: 4px;
+  border: 1px solid #3b4146;
+  border-radius: 5px;
+  background: #1b1e21;
+  box-shadow: 0 12px 32px rgb(0 0 0 / 48%);
+}
+.asset-context-menu button {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 7px 8px;
+  border-radius: 3px;
+  color: #e9aaa5;
+  background: transparent;
+  font-size: 10px;
+  text-align: left;
+}
+.asset-context-menu button:hover,
+.asset-context-menu button:focus-visible {
+  color: #fff1ef;
+  background: #713630;
+  outline: none;
+}
 .thumbnail {
   position: relative;
   display: grid;
@@ -633,17 +649,6 @@ body {
   filter: drop-shadow(0 0 2px rgb(0 0 0 / 90%));
 }
 .loupe__focus-frame.is-estimated { border-style: dashed; }
-.loupe__focus-frame b {
-  position: absolute;
-  top: 50%;
-  left: 50%;
-  width: 3px;
-  height: 3px;
-  border: 1px solid #77df45;
-  border-radius: 50%;
-  background: rgb(8 11 8 / 75%);
-  transform: translate(-50%, -50%);
-}
 .loupe__render .thumbnail {
   width: 100%;
   height: 100%;

@@ -1,6 +1,7 @@
 import { useVirtualizer } from "@tanstack/react-virtual";
-import { FileImage } from "lucide-react";
-import { memo, useEffect, useRef, useState } from "react";
+import { FileImage, Trash2 } from "lucide-react";
+import { memo, useCallback, useEffect, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import type { MessageKey } from "../lib/i18n";
 import { useWorkspaceStore } from "../store";
 import type { AssetSummary, ViewMode } from "../types";
@@ -14,6 +15,7 @@ interface AssetBrowserProps {
   hasNextPage: boolean;
   isFetchingNextPage: boolean;
   fetchNextPage: () => void;
+  onTrashAsset: (asset: AssetSummary) => void;
   view: ViewMode;
   t: (key: MessageKey) => string;
 }
@@ -23,6 +25,7 @@ interface AssetCardProps {
   priority: "nearby" | "visible";
   selected: boolean;
   onSelect: (event: React.MouseEvent) => void;
+  onContextMenu: (event: React.MouseEvent) => void;
   onOpen: () => void;
   showMetadata: boolean;
 }
@@ -32,6 +35,7 @@ const AssetCard = memo(function AssetCard({
   priority,
   selected,
   onSelect,
+  onContextMenu,
   onOpen,
   showMetadata,
 }: AssetCardProps) {
@@ -42,7 +46,7 @@ const AssetCard = memo(function AssetCard({
       onDoubleClick={onOpen}
       title={asset.path}
     >
-      <Thumbnail asset={asset} priority={priority} />
+      <Thumbnail asset={asset} priority={priority} onContextMenu={onContextMenu} />
       <span className="asset-card__name">{asset.name}</span>
       <span className="asset-card__meta">
         {asset.extension}
@@ -54,17 +58,54 @@ const AssetCard = memo(function AssetCard({
 });
 
 export function AssetBrowser(props: AssetBrowserProps) {
+  const [contextMenu, setContextMenu] = useState<{
+    asset: AssetSummary;
+    x: number;
+    y: number;
+  }>();
+  const select = useWorkspaceStore((state) => state.select);
+  const showContextMenu = useCallback((event: React.MouseEvent, asset: AssetSummary) => {
+    event.preventDefault();
+    event.stopPropagation();
+    select(asset.id);
+    setContextMenu({
+      asset,
+      x: Math.max(8, Math.min(event.clientX, window.innerWidth - 156)),
+      y: Math.max(8, Math.min(event.clientY, window.innerHeight - 44)),
+    });
+  }, [select]);
+
+  useEffect(() => {
+    if (!contextMenu) return;
+    const dismiss = () => setContextMenu(undefined);
+    const dismissOnEscape = (event: KeyboardEvent) => {
+      if (event.key === "Escape") dismiss();
+    };
+    window.addEventListener("pointerdown", dismiss);
+    window.addEventListener("blur", dismiss);
+    window.addEventListener("resize", dismiss);
+    window.addEventListener("keydown", dismissOnEscape);
+    document.addEventListener("scroll", dismiss, true);
+    return () => {
+      window.removeEventListener("pointerdown", dismiss);
+      window.removeEventListener("blur", dismiss);
+      window.removeEventListener("resize", dismiss);
+      window.removeEventListener("keydown", dismissOnEscape);
+      document.removeEventListener("scroll", dismiss, true);
+    };
+  }, [contextMenu]);
+
+  let content;
   if (props.assets.length === 0) {
-    return (
+    content = (
       <div className="no-results">
         <FileImage size={31} strokeWidth={1.25} />
         <strong>{props.t("noResults")}</strong>
         <span>{props.t("noResultsBody")}</span>
       </div>
     );
-  }
-  if (props.view === "loupe") {
-    return (
+  } else if (props.view === "loupe") {
+    content = (
       <Loupe
         assets={props.assets}
         fetchNextPage={props.fetchNextPage}
@@ -73,9 +114,41 @@ export function AssetBrowser(props: AssetBrowserProps) {
         t={props.t}
       />
     );
+  } else if (props.view === "list") {
+    content = <VirtualList {...props} onAssetContextMenu={showContextMenu} />;
+  } else {
+    content = <VirtualGrid {...props} onAssetContextMenu={showContextMenu} />;
   }
-  if (props.view === "list") return <VirtualList {...props} />;
-  return <VirtualGrid {...props} />;
+
+  return (
+    <>
+      {content}
+      {contextMenu ? createPortal(
+        <div
+          className="asset-context-menu"
+          role="menu"
+          aria-label={contextMenu.asset.name}
+          style={{ left: contextMenu.x, top: contextMenu.y }}
+          onContextMenu={(event) => event.preventDefault()}
+          onPointerDown={(event) => event.stopPropagation()}
+        >
+          <button
+            autoFocus
+            role="menuitem"
+            onClick={() => {
+              const { asset } = contextMenu;
+              setContextMenu(undefined);
+              props.onTrashAsset(asset);
+            }}
+          >
+            <Trash2 size={13} />
+            {props.t("delete")}
+          </button>
+        </div>,
+        document.body,
+      ) : null}
+    </>
+  );
 }
 
 function VirtualGrid({
@@ -83,7 +156,10 @@ function VirtualGrid({
   hasNextPage,
   isFetchingNextPage,
   fetchNextPage,
-}: AssetBrowserProps) {
+  onAssetContextMenu,
+}: AssetBrowserProps & {
+  onAssetContextMenu: (event: React.MouseEvent, asset: AssetSummary) => void;
+}) {
   const parentRef = useRef<HTMLDivElement>(null);
   const [width, setWidth] = useState(900);
   const selectedIds = useWorkspaceStore((state) => state.selectedIds);
@@ -142,6 +218,7 @@ function VirtualGrid({
                 priority={isVisible(row.start, row.end, parentRef.current) ? "visible" : "nearby"}
                 selected={selectedIds.includes(asset.id)}
                 onSelect={(event) => select(asset.id, event.metaKey || event.ctrlKey)}
+                onContextMenu={(event) => onAssetContextMenu(event, asset)}
                 onOpen={() => {
                   select(asset.id);
                   setView("loupe");
@@ -163,7 +240,10 @@ function VirtualList({
   isFetchingNextPage,
   fetchNextPage,
   t,
-}: AssetBrowserProps) {
+  onAssetContextMenu,
+}: AssetBrowserProps & {
+  onAssetContextMenu: (event: React.MouseEvent, asset: AssetSummary) => void;
+}) {
   const parentRef = useRef<HTMLDivElement>(null);
   const selectedIds = useWorkspaceStore((state) => state.selectedIds);
   const select = useWorkspaceStore((state) => state.select);
@@ -202,6 +282,7 @@ function VirtualList({
               <Thumbnail
                 asset={asset}
                 priority={isVisible(row.start, row.end, parentRef.current) ? "visible" : "nearby"}
+                onContextMenu={(event) => onAssetContextMenu(event, asset)}
               />
               <strong>{asset.name}</strong>
               <AssetMetadataBadges asset={asset} />

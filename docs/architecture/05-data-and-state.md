@@ -103,7 +103,7 @@ erDiagram
 
 Mermaid 图没有画关系线，因为 cache schema 不用外键约束事实来源。只有用户明确添加的 canonical
 root 才会持久化和索引；同一路径可分别属于父、子两个显式 root，因此文件与目录以
-`(root_path, path)` 为复合身份。后台按目录短事务更新 `indexed_assets` / `indexed_directories`，
+`(root_path, path)` 为复合身份。后台使用目录优先队列扫描，目录深度越小（层次越高）权重越大，同层按稳定入队顺序处理，并按目录短事务更新 `indexed_assets` / `indexed_directories`，
 完整 generation 结束时清理旧行并重建 `indexed_asset_search`。普通目录分页、目录树和跨子目录
 图片名称搜索优先读取该缓存；侧栏目录名称搜索只读取已完成索引，并由每个命中项携带必要的
 祖先摘要供前端合并成结果树。首次索引未完成或 metadata-aware 图片过滤时回退 `oxy-fs`，但
