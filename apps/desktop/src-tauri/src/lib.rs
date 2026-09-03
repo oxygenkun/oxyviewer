@@ -476,6 +476,14 @@ pub fn run() {
         })
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_log::Builder::new().build())
+        .on_window_event(|window, event| {
+            if matches!(
+                event,
+                tauri::WindowEvent::CloseRequested { .. } | tauri::WindowEvent::Destroyed
+            ) {
+                window.app_handle().exit(0);
+            }
+        })
         .setup(move |app| {
             let data_dir = app.path().app_data_dir()?;
             let preview_dir = app.path().app_cache_dir()?.join("previews");

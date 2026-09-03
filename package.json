@@ -1,7 +1,7 @@
 {
   "name": "oxyviewer-workspace",
   "private": true,
-  "packageManager": "pnpm@10.30.3",
+  "packageManager": "pnpm@10.34.5",
   "scripts": {
     "icons": "node scripts/generate-icons.mjs && pnpm --filter @oxyviewer/desktop exec tauri icon src-tauri/icons/icon.png",
     "dev": "pnpm --filter @oxyviewer/desktop dev",
@@ -10,5 +10,10 @@
     "test": "pnpm --filter @oxyviewer/desktop test",
     "perf:e2e": "node scripts/perf-e2e.mjs",
     "tauri": "pnpm --filter @oxyviewer/desktop tauri"
+  },
+  "pnpm": {
+    "onlyBuiltDependencies": [
+      "esbuild"
+    ]
   }
 }

@@ -41,7 +41,7 @@ performance gate has not yet been measured.
 
 ### Milestone RAW-1: Reliable RAW Display
 
-- [x] Pin and vendor LibRaw 0.22.1 with a reproducible in-repository build
+- [x] Pin and vendor LibRaw 0.22.2 with a reproducible in-repository build
 - [x] Read RAW dimensions through LibRaw
 - [x] Extract the embedded RAW preview first
 - [x] Fall back to half-size LibRaw development when no usable preview exists

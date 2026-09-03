@@ -28,8 +28,8 @@ use std::{
 use tempfile::NamedTempFile;
 use thiserror::Error;
 
-const LIBRAW_CACHE_VERSION: &str = "libraw-0.22.1-v5";
-const LIBRAW_FULL_CACHE_VERSION: &str = "libraw-0.22.1-full-detail-v2";
+const LIBRAW_CACHE_VERSION: &str = "libraw-0.22.2-v5";
+const LIBRAW_FULL_CACHE_VERSION: &str = "libraw-0.22.2-full-detail-v2";
 // Bumped from `libheif-1.23-sdr-v1` (16-bit PNG) to an 8-bit sRGB JPEG with an
 // embedded ICC profile, unifying the cache format across every preview stage
 // and format. Old PNG caches are rebuildable and simply ignored.
@@ -1186,7 +1186,7 @@ mod tests {
         let directory = tempfile::tempdir().unwrap();
         let path = directory.path().join("image.arw");
         fs::write(&path, b"raw").unwrap();
-        let raw_tag = "libraw-0.22.1-v5";
+        let raw_tag = "libraw-0.22.2-v5";
         let key = preview_cache_key(&path, raw_tag, 4_096).unwrap();
         let cached = directory.path().join(format!("{key}.jpg"));
         write_jpeg_atomically(&DynamicImage::new_rgb8(48, 24), &cached, 90).unwrap();
