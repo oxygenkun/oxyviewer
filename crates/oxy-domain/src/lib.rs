@@ -73,6 +73,7 @@ pub struct EditableMetadata {
 #[serde(rename_all = "camelCase")]
 pub enum MetadataProvider {
     Sidecar,
+    Native,
     Exiftool,
 }
 
@@ -110,6 +111,25 @@ pub struct FocusInfo {
     pub regions: Vec<FocusRegion>,
 }
 
+/// Immutable camera and capture values read from the image's EXIF payload.
+/// Values are kept display-ready because EXIF permits multiple underlying
+/// representations for the same field (for example ISO and exposure time).
+#[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct CaptureMetadata {
+    pub aperture: Option<String>,
+    pub exposure_time: Option<String>,
+    pub focal_length: Option<String>,
+    pub iso: Option<String>,
+    pub exposure_compensation: Option<String>,
+    pub captured_at: Option<String>,
+    pub camera_make: Option<String>,
+    pub camera_model: Option<String>,
+    pub lens_make: Option<String>,
+    pub lens_model: Option<String>,
+    pub chroma_subsampling: Option<String>,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct AssetDetails {
@@ -119,6 +139,8 @@ pub struct AssetDetails {
     pub metadata: EditableMetadata,
     pub metadata_capability: MetadataCapability,
     pub sidecar_path: Option<PathBuf>,
+    #[serde(default)]
+    pub capture_metadata: CaptureMetadata,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub focus_info: Option<FocusInfo>,
 }

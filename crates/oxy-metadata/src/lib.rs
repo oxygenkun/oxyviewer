@@ -1,5 +1,4 @@
-use fpexif::{ExifParser, data_types::ExifValue};
-use oxy_domain::{AssetKind, EditableMetadata, FocusInfo, FocusRegion};
+use oxy_domain::{AssetKind, CaptureMetadata, EditableMetadata, FocusInfo, FocusRegion};
 use oxy_fs::sidecar_path;
 use serde_json::Value;
 #[cfg(target_os = "windows")]
@@ -14,6 +13,10 @@ use std::{
     sync::{Arc, RwLock},
 };
 use thiserror::Error;
+
+mod engine;
+
+pub use engine::{MetadataDocument, MetadataReader, NativeMetadataReader, RawMetadataTag};
 
 #[derive(Debug, Error)]
 pub enum MetadataError {
@@ -31,9 +34,9 @@ pub enum MetadataError {
     Io(#[from] std::io::Error),
 }
 
-/// Stable application boundary for metadata providers. Capture metadata and
-/// focus information stay in-process; this configured executable is consulted
-/// only for embedded XMP reads and writes.
+/// Stable application boundary for metadata providers. All reads stay
+/// in-process; the configured ExifTool executable is consulted only for an
+/// explicit embedded write or as a batch compatibility fallback.
 #[derive(Debug, Clone, Default)]
 pub struct MetadataFacade {
     exiftool: Arc<RwLock<Option<PathBuf>>>,
@@ -65,8 +68,22 @@ impl MetadataFacade {
         path: &Path,
         kind: AssetKind,
     ) -> Result<EditableMetadata, MetadataError> {
-        let executable = self.exiftool();
-        read_metadata_with_exiftool(path, kind, executable.as_deref())
+        Ok(self.read_document(path, kind, None)?.editable)
+    }
+
+    /// Reads all normalized and raw metadata through one format-neutral parse.
+    /// An adjacent sidecar overrides only the editable XMP projection.
+    pub fn read_document(
+        &self,
+        path: &Path,
+        kind: AssetKind,
+        display_dimensions: Option<(u32, u32)>,
+    ) -> Result<MetadataDocument, MetadataError> {
+        let mut document = NativeMetadataReader.read(path, display_dimensions)?;
+        if sidecar_path(path).is_file() || kind == AssetKind::Raw {
+            document.editable = read_sidecar(path)?;
+        }
+        Ok(document)
     }
 
     pub fn enrich_summaries(
@@ -112,18 +129,17 @@ pub fn read_metadata(path: &Path, kind: AssetKind) -> Result<EditableMetadata, M
     read_metadata_with_exiftool(path, kind, None)
 }
 
-/// Reads editable metadata using a facade-selected ExifTool executable for
-/// embedded formats. Passing `None` preserves environment/PATH discovery.
+/// Compatibility entry point retained for callers that previously selected an
+/// ExifTool executable. Reads now always use the native unified engine.
 pub fn read_metadata_with_exiftool(
     path: &Path,
     kind: AssetKind,
     exiftool: Option<&Path>,
 ) -> Result<EditableMetadata, MetadataError> {
-    if sidecar_path(path).is_file() || kind == AssetKind::Raw {
-        return read_sidecar(path);
-    }
-    let mut values = read_embedded_batch(std::slice::from_ref(&path.to_path_buf()), exiftool)?;
-    Ok(values.remove(path).unwrap_or_default())
+    let _ = exiftool;
+    Ok(MetadataFacade::default()
+        .read_document(path, kind, None)?
+        .editable)
 }
 
 /// Enriches summaries in-place. A single ExifTool process is used per chunk so
@@ -200,11 +216,13 @@ fn read_sidecar(asset_path: &Path) -> Result<EditableMetadata, MetadataError> {
     })
 }
 
-fn xmp_value(xml: &str, name: &str) -> Option<String> {
-    let attribute = format!("xmp:{name}=\"");
-    if let Some(start) = xml.find(&attribute) {
-        let value = &xml[start + attribute.len()..];
-        return value.find('"').map(|end| unescape_xml(&value[..end]));
+pub(crate) fn xmp_value(xml: &str, name: &str) -> Option<String> {
+    for quote in ['"', '\''] {
+        let attribute = format!("xmp:{name}={quote}");
+        if let Some(start) = xml.find(&attribute) {
+            let value = &xml[start + attribute.len()..];
+            return value.find(quote).map(|end| unescape_xml(&value[..end]));
+        }
     }
     let open = format!("<xmp:{name}>");
     let close = format!("</xmp:{name}>");
@@ -231,6 +249,18 @@ fn read_embedded_batch(
         if paths.is_empty() {
             continue;
         }
+        let mut exiftool_paths = Vec::with_capacity(paths.len());
+        for path in paths {
+            match NativeMetadataReader.read(path, None) {
+                Ok(document) => {
+                    result.insert(path.clone(), document.editable);
+                }
+                Err(_) => exiftool_paths.push(path),
+            }
+        }
+        if exiftool_paths.is_empty() {
+            continue;
+        }
         let mut command = exiftool_command(exiftool);
         command.args([
             "-json",
@@ -243,7 +273,7 @@ fn read_embedded_batch(
             "-XMP:Copyright",
             "-XMP:Subject",
         ]);
-        command.args(paths);
+        command.args(&exiftool_paths);
         let output = exiftool_output(&mut command)?;
         if !output.status.success() {
             return Err(MetadataError::Read(
@@ -261,12 +291,18 @@ fn read_embedded_batch(
             // ExifTool renders Windows paths with forward slashes. Keep the
             // original input spelling as an alias so Unicode drive paths and
             // separator normalization cannot make the metadata lookup miss.
-            if let Some(path) = paths.get(index) {
-                result.insert(path.clone(), metadata);
+            if let Some(path) = exiftool_paths.get(index) {
+                result.insert((*path).clone(), metadata);
             }
         }
     }
     Ok(result)
+}
+
+fn is_sony_hif(path: &Path) -> bool {
+    path.extension()
+        .and_then(|value| value.to_str())
+        .is_some_and(|value| value.eq_ignore_ascii_case("hif"))
 }
 
 fn metadata_from_json(row: &Value) -> EditableMetadata {
@@ -290,7 +326,7 @@ fn metadata_from_json(row: &Value) -> EditableMetadata {
     }
 }
 
-fn normalize_color_label(value: String) -> Option<String> {
+pub(crate) fn normalize_color_label(value: String) -> Option<String> {
     if value.eq_ignore_ascii_case("none") {
         return None;
     }
@@ -316,10 +352,7 @@ fn patch_embedded(
 ) -> Result<PathBuf, MetadataError> {
     let mut command = exiftool_command(exiftool);
     command.args(["-overwrite_original", "-P"]);
-    let sony_hif = path
-        .extension()
-        .and_then(|value| value.to_str())
-        .is_some_and(|value| value.eq_ignore_ascii_case("hif"));
+    let sony_hif = is_sony_hif(path);
     if sony_hif {
         // Imaging Edge Viewer expects its HIF rating fields in shorthand XMP
         // and uses lowercase color names plus explicit zero/None sentinels.
@@ -513,95 +546,33 @@ fn insert_description_attribute(opening: &mut String, name: &str, value: &str) {
     opening.insert_str(insertion, &attribute);
 }
 
-/// Reads Sony's shooting focus location from any container supported by
-/// fpexif (including ARW, JPEG, HEIF/HIF). Unsupported vendors and files that
-/// do not contain a valid FocusLocation return `Ok(None)`.
+/// Reads shooting focus information through the format-neutral native engine.
 pub fn read_focus_info(
     path: &Path,
     display_dimensions: Option<(u32, u32)>,
 ) -> Result<Option<FocusInfo>, MetadataError> {
-    let exif = ExifParser::new()
-        .strict(false)
-        .parse_file(path)
-        .map_err(|error| MetadataError::Read(error.to_string()))?;
-    let Some(maker_notes) = exif.get_maker_notes() else {
-        return Ok(None);
-    };
-    let Some(location) = maker_notes
-        .get(&0x2027)
-        .filter(|tag| tag.tag_name == Some("FocusLocation"))
-        .and_then(short_values)
-    else {
-        return Ok(None);
-    };
-    if location.len() < 4 {
-        return Ok(None);
-    }
-    let [width, height, center_x, center_y] = [
-        u32::from(location[0]),
-        u32::from(location[1]),
-        u32::from(location[2]),
-        u32::from(location[3]),
-    ];
-    if width == 0 || height == 0 || center_x > width || center_y > height {
-        return Ok(None);
-    }
-
-    let frame_size = maker_notes
-        .get(&0x2037)
-        .filter(|tag| tag.tag_name == Some("FocusFrameSize"))
-        .and_then(focus_frame_size);
-    let exif_orientation = exif
-        .get_tag_by_name("Orientation")
-        .and_then(|value| match value {
-            ExifValue::Short(values) => values.first().copied(),
-            _ => None,
-        });
-    let orientation = exif_orientation.unwrap_or_else(|| {
-        // HEIF commonly stores orientation as an item transform rather than an
-        // EXIF tag. If the display dimensions prove the axes are swapped, use
-        // Sony's usual clockwise portrait transform.
-        display_dimensions
-            .filter(|(display_width, display_height)| {
-                (width > height) != (display_width > display_height)
-            })
-            .map(|_| 6)
-            .unwrap_or(1)
-    });
-
-    Ok(Some(orient_focus_info(
-        width,
-        height,
-        center_x,
-        center_y,
-        frame_size,
-        orientation,
-    )))
+    Ok(NativeMetadataReader.read(path, display_dimensions)?.focus)
 }
 
-fn short_values(tag: &fpexif::makernotes::MakerNoteTag) -> Option<&[u16]> {
-    match tag.raw_value.as_ref().unwrap_or(&tag.value) {
-        ExifValue::Short(values) => Some(values),
-        _ => None,
+/// Reads immutable shooting values and focus data in one in-process,
+/// format-neutral parse. This does not depend on the optional ExifTool worker.
+pub fn read_capture_details(
+    path: &Path,
+    display_dimensions: Option<(u32, u32)>,
+) -> Result<(CaptureMetadata, Option<FocusInfo>), MetadataError> {
+    let document = NativeMetadataReader.read(path, display_dimensions)?;
+    Ok((document.capture, document.focus))
+}
+
+pub(crate) fn format_number(value: f64) -> String {
+    if (value - value.round()).abs() < 0.005 {
+        format!("{value:.0}")
+    } else {
+        format!("{value:.2}").trim_end_matches('0').to_owned()
     }
 }
 
-fn focus_frame_size(tag: &fpexif::makernotes::MakerNoteTag) -> Option<(u32, u32)> {
-    match tag.raw_value.as_ref().unwrap_or(&tag.value) {
-        ExifValue::Short(values) if values.len() >= 3 && values[2] != 0 => {
-            Some((u32::from(values[0]), u32::from(values[1])))
-        }
-        ExifValue::Ascii(value) => {
-            let (width, height) = value.split_once('x')?;
-            let width = width.trim().parse().ok()?;
-            let height = height.trim().parse().ok()?;
-            (width > 0 && height > 0).then_some((width, height))
-        }
-        _ => None,
-    }
-}
-
-fn orient_focus_info(
+pub(crate) fn orient_focus_info(
     width: u32,
     height: u32,
     x: u32,
@@ -797,6 +768,55 @@ mod tests {
     }
 
     #[test]
+    fn reads_sony_hif_xmp_without_exiftool() {
+        let directory = tempdir().unwrap();
+        let hif = directory.path().join("photo.HIF");
+        fs::write(
+            &hif,
+            br#"....ftypSHIF....application/rdf+xml....<x:xmpmeta xmlns:x='adobe:ns:meta/'><rdf:RDF><rdf:Description xmp:Rating='3' xmp:Label='red'/></rdf:RDF></x:xmpmeta>"#,
+        )
+        .unwrap();
+
+        let metadata = read_metadata_with_exiftool(
+            &hif,
+            AssetKind::Heif,
+            Some(Path::new("/missing/exiftool")),
+        )
+        .unwrap();
+
+        assert_eq!(metadata.rating, Some(3));
+        assert_eq!(metadata.color_label.as_deref(), Some("Red"));
+    }
+
+    #[test]
+    fn reads_repository_hif_embedded_rating_without_exiftool() {
+        let hif = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/DSC00449.HIF");
+        let metadata = read_metadata_with_exiftool(
+            &hif,
+            AssetKind::Heif,
+            Some(Path::new("/missing/exiftool")),
+        )
+        .unwrap();
+
+        assert_eq!(metadata.rating, Some(0));
+    }
+
+    #[test]
+    #[ignore = "requires OXY_HIF_XMP_FIXTURE to point to a Sony HIF with embedded rating/color"]
+    fn reads_external_hif_embedded_xmp_without_exiftool() {
+        let hif = PathBuf::from(std::env::var_os("OXY_HIF_XMP_FIXTURE").unwrap());
+        let metadata = read_metadata_with_exiftool(
+            &hif,
+            AssetKind::Heif,
+            Some(Path::new("/missing/exiftool")),
+        )
+        .unwrap();
+
+        assert!(metadata.rating.is_some() || metadata.color_label.is_some());
+        eprintln!("{}: {metadata:?}", hif.display());
+    }
+
+    #[test]
     fn builds_sony_viewer_compatible_hif_patch_arguments() {
         let mut command = Command::new("exiftool");
         add_patch_args(
@@ -849,9 +869,8 @@ mod tests {
     #[test]
     fn reads_and_orients_repository_sony_hif_focus_metadata() {
         let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/DSC00449.HIF");
-        let focus = read_focus_info(&path, Some((4_672, 7_008)))
-            .unwrap()
-            .expect("repository HIF fixture has Sony FocusLocation");
+        let (capture, focus) = read_capture_details(&path, Some((4_672, 7_008))).unwrap();
+        let focus = focus.expect("repository HIF fixture has Sony FocusLocation");
 
         assert_eq!(focus.coordinate_width, 4_672);
         assert_eq!(focus.coordinate_height, 7_008);
@@ -860,6 +879,20 @@ mod tests {
         assert_eq!(focus.regions[0].center_y, 1_489);
         assert_eq!(focus.regions[0].width, Some(154));
         assert_eq!(focus.regions[0].height, Some(153));
+        assert_eq!(capture.camera_make.as_deref(), Some("SONY"));
+        assert!(
+            capture
+                .aperture
+                .as_deref()
+                .is_some_and(|value| value.starts_with("f/"))
+        );
+        assert!(
+            capture
+                .focal_length
+                .as_deref()
+                .is_some_and(|value| value.ends_with(" mm"))
+        );
+        assert!(capture.captured_at.is_some());
     }
 
     #[test]
