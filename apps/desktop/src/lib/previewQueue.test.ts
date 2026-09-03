@@ -1,11 +1,20 @@
 import { describe, expect, it, vi } from "vitest";
-import { SerialTaskQueue, priorityWeight } from "./previewQueue";
+import { orderedPriorityWeight, SerialTaskQueue, priorityWeight } from "./previewQueue";
 
 describe("priorityWeight", () => {
   it("maps loupe above visible above nearby above filtered preload", () => {
     expect(priorityWeight("loupe")).toBeGreaterThan(priorityWeight("visible"));
     expect(priorityWeight("visible")).toBeGreaterThan(priorityWeight("nearby"));
     expect(priorityWeight("nearby")).toBeGreaterThan(priorityWeight("preload"));
+  });
+
+  it("keeps selection order inside a tier without crossing the next tier", () => {
+    expect(orderedPriorityWeight("visible", 0))
+      .toBeGreaterThan(orderedPriorityWeight("visible", 10));
+    expect(orderedPriorityWeight("nearby", 0))
+      .toBeGreaterThan(orderedPriorityWeight("preload", 0));
+    expect(orderedPriorityWeight("visible", 999_999))
+      .toBeGreaterThan(orderedPriorityWeight("nearby", 0));
   });
 });
 
@@ -70,6 +79,35 @@ describe("serial preview task queue", () => {
     release();
     await Promise.all([first, preload, nearby, visible, loupe]);
     expect(order).toEqual(["loupe", "visible", "nearby", "preload"]);
+  });
+
+  it("uses selection-centered order for work in the same tier", async () => {
+    const queue = new SerialTaskQueue();
+    let release!: () => void;
+    const first = queue.enqueue(0, undefined, () => new Promise<void>((resolve) => {
+      release = resolve;
+    }));
+    const order: string[] = [];
+    const left = queue.enqueue(orderedPriorityWeight("visible", 2), undefined, async () => {
+      order.push("left");
+    });
+    const remainingRight = queue.enqueue(
+      orderedPriorityWeight("visible", 3),
+      undefined,
+      async () => {
+        order.push("remaining-right");
+      },
+    );
+    const selected = queue.enqueue(orderedPriorityWeight("visible", 0), undefined, async () => {
+      order.push("selected");
+    });
+    const right = queue.enqueue(orderedPriorityWeight("visible", 1), undefined, async () => {
+      order.push("right");
+    });
+
+    release();
+    await Promise.all([first, left, remainingRight, selected, right]);
+    expect(order).toEqual(["selected", "right", "left", "remaining-right"]);
   });
 
   it("promotes the same pending artifact without creating a second task", async () => {

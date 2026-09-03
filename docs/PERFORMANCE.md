@@ -16,6 +16,14 @@ end-to-end regression harness that enforces these budgets is described in
 
 ## Verification Log
 
+- 2026-09-03: Loupe filmstrip visibility now drives a sequential frontend
+  warmup of the same first-stage render query used by the main image, followed
+  by explicit WebView image decode. Every frontend image queue shares one
+  selection-centered ordering: the active image, its nearest right neighbor,
+  nearest left neighbor, remaining images to the right, then remaining images
+  to the left. Full RAW/HEIF work
+  remains selection-driven, and a prepared image becomes the loupe's visible
+  layer immediately instead of flashing through the empty fallback.
 - 2026-09-03: Grid metadata enrichment and rating/color filtering now share a
   fingerprinted in-memory projection cache. Switching on a metadata filter
   reuses rating and color labels already parsed for visible assets and parses

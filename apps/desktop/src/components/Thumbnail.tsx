@@ -6,8 +6,18 @@ import {
   previewUrl,
   raiseGeneratedPreviewPriority,
 } from "../lib/api";
+import {
+  getBrowserImageSize,
+  isBrowserImageReady,
+  markBrowserImageReady,
+} from "../lib/browserImageCache";
 import { perfMark } from "../lib/perfProbe";
-import { renderMethodKey, renderPlan, type RenderMethod } from "../lib/preview";
+import {
+  assetRenderQueryKey,
+  renderMethodKey,
+  renderPlan,
+  type RenderMethod,
+} from "../lib/preview";
 import { beginPreviewDebug, type PreviewDebugHandle } from "../lib/previewDebug";
 import { nextProgressiveStage } from "../lib/progressiveImage";
 import { rawPreviewStatus, type RawPreviewStatus } from "../lib/rawPreview";
@@ -24,6 +34,7 @@ interface ThumbnailProps {
   enabled?: boolean;
   large?: boolean;
   priority?: PreviewPriority;
+  queueOrder?: number;
   onContextMenu?: React.MouseEventHandler<HTMLDivElement>;
   onImageLoad?: (size: { width: number; height: number }) => void;
   onRawPreviewStatus?: (status: RawPreviewStatus) => void;
@@ -59,6 +70,7 @@ export function Thumbnail({
   enabled = true,
   large = false,
   priority = "visible",
+  queueOrder = 0,
   onContextMenu,
   onImageLoad,
   onRawPreviewStatus,
@@ -87,20 +99,29 @@ export function Thumbnail({
   );
   const requestPriority = large ? "loupe" : priority;
   const previewQuery = useQuery({
-    queryKey: ["asset-render", asset.id, asset.modifiedAtMs, previewMethodIdentity],
+    queryKey: assetRenderQueryKey(asset, previewMethod),
     queryFn: ({ signal }) => generatedPreview(
       asset,
       previewLevel ?? previewStep.level,
       signal,
       requestPriority,
+      queueOrder,
     ),
     enabled: enabled && isTauri() && Boolean(previewLevel),
     staleTime: Infinity,
     retry: 0,
   });
   const fullQuery = useQuery({
-    queryKey: ["asset-render", asset.id, asset.modifiedAtMs, fullMethodIdentity ?? "no-full-image"],
-    queryFn: ({ signal }) => generatedPreview(asset, distinctFullLevel ?? "full", signal, "loupe"),
+    queryKey: fullMethod
+      ? assetRenderQueryKey(asset, fullMethod)
+      : ["asset-render", asset.id, asset.modifiedAtMs, "no-full-image"],
+    queryFn: ({ signal }) => generatedPreview(
+      asset,
+      distinctFullLevel ?? "full",
+      signal,
+      "loupe",
+      queueOrder,
+    ),
     enabled: enabled
       && isTauri()
       && large
@@ -109,8 +130,18 @@ export function Thumbnail({
     staleTime: Infinity,
     retry: 0,
   });
-  const visibleImage = displayedImage?.assetId === asset.id ? displayedImage : undefined;
   const previewSource = previewQuery.data;
+  const preparedSource = directSource && isBrowserImageReady(directSource)
+    ? directSource
+    : previewSource && isBrowserImageReady(previewSource.url)
+      ? previewSource.url
+      : undefined;
+  const preparedSize = preparedSource ? getBrowserImageSize(preparedSource) : undefined;
+  const visibleImage = displayedImage?.assetId === asset.id
+    ? displayedImage
+    : preparedSource
+      ? { assetId: asset.id, source: preparedSource }
+      : undefined;
   const generatedSource = nextProgressiveStage(Boolean(visibleImage), [
     previewSource,
     !fullImageFailed ? fullQuery.data : undefined,
@@ -158,15 +189,32 @@ export function Thumbnail({
 
   useEffect(() => {
     if (previewLevel) {
-      raiseGeneratedPreviewPriority(asset, previewLevel, requestPriority);
+      raiseGeneratedPreviewPriority(asset, previewLevel, requestPriority, queueOrder);
     }
-  }, [asset, previewLevel, requestPriority]);
+  }, [asset, previewLevel, queueOrder, requestPriority]);
 
   useEffect(() => {
     setLoaded(undefined);
     setDisplayedImage(undefined);
     setFullImageFailed(false);
   }, [asset.id]);
+
+  useEffect(() => {
+    if (!large || !preparedSize) return;
+    onImageLoad?.(preparedSize);
+    if (!hasFullDetailStage(asset.kind) || previewSource?.url !== preparedSource) return;
+    setLoaded((current) => current?.assetId === asset.id
+      ? current
+      : { assetId: asset.id, mode: "preview" });
+  }, [
+    asset.id,
+    asset.kind,
+    large,
+    onImageLoad,
+    preparedSize,
+    preparedSource,
+    previewSource?.url,
+  ]);
 
   useEffect(() => {
     // The RAW full-detail endpoint can deliberately reuse the already-loaded
@@ -231,6 +279,7 @@ export function Thumbnail({
       if (debug) imageDebug.current = { source, handle: debug };
     }
     debug?.complete();
+    if (source) markBrowserImageReady(source, size);
     if (hasFullDetailStage(asset.kind) && large && result) {
       setLoaded({ assetId: asset.id, mode: result === fullQuery.data ? "full" : "preview" });
     }

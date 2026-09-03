@@ -33,9 +33,11 @@ import { getAssetDetails } from "../lib/api";
 import { mapFocusRegions } from "../lib/focusArea";
 import type { MessageKey } from "../lib/i18n";
 import type { RawPreviewStatus } from "../lib/rawPreview";
+import { orderBySelectionPriority } from "../lib/selectionPriority";
 import { useWorkspaceStore } from "../store";
 import type { AssetSummary, HeifDecodeStatus, NavigatorPosition } from "../types";
 import { AssetMetadataBadges } from "./AssetMetadataBadges";
+import { FilmstripPreviewPreloader } from "./FilmstripPreviewPreloader";
 import { Thumbnail } from "./Thumbnail";
 
 interface LoupeProps {
@@ -105,6 +107,9 @@ export function Loupe({
   const [naturalSize, setNaturalSize] = useState<{ assetId: string; size: Size } | undefined>(undefined);
   const [rawPreviewStatus, setRawPreviewStatus] = useState<RawPreviewStatus>({ state: "loadingPreview" });
   const [heifStatus, setHeifStatus] = useState<HeifDecodeStatus>("probing");
+  const [visibleFilmstripIds, setVisibleFilmstripIds] = useState<ReadonlySet<string>>(
+    () => new Set(),
+  );
   const details = useQuery({
     queryKey: ["asset-details", active.id],
     queryFn: () => getAssetDetails(active),
@@ -159,6 +164,10 @@ export function Loupe({
         ? "failed"
         : "decoding");
   }, []);
+
+  const handleImageLoad = useCallback((size: Size) => {
+    setNaturalSize({ assetId: active.id, size });
+  }, [active.id]);
 
   useEffect(() => {
     resetZoom();
@@ -233,6 +242,49 @@ export function Loupe({
     observer.observe(image);
     return () => observer.disconnect();
   }, [getSizes, zoom]);
+
+  useEffect(() => {
+    const strip = filmstripRef.current;
+    if (!strip) return;
+    const items = Array.from(
+      strip.querySelectorAll<HTMLButtonElement>("button[data-filmstrip-asset-id]"),
+    );
+    if (typeof IntersectionObserver === "undefined") {
+      setVisibleFilmstripIds(new Set(items.map((item) => item.dataset.filmstripAssetId!)));
+      return;
+    }
+
+    const observer = new IntersectionObserver((entries) => {
+      setVisibleFilmstripIds((current) => {
+        const next = new Set(current);
+        for (const entry of entries) {
+          const id = (entry.target as HTMLButtonElement).dataset.filmstripAssetId;
+          if (!id) continue;
+          if (entry.isIntersecting) next.add(id);
+          else next.delete(id);
+        }
+        if (next.size === current.size && [...next].every((id) => current.has(id))) return current;
+        return next;
+      });
+    }, { root: strip });
+    items.forEach((item) => observer.observe(item));
+    return () => observer.disconnect();
+  }, [assets]);
+
+  const priorityOrderedAssets = useMemo(
+    () => orderBySelectionPriority(assets, active.id, (asset) => asset.id),
+    [active.id, assets],
+  );
+  const priorityRankById = useMemo(
+    () => new Map(priorityOrderedAssets.map((asset, index) => [asset.id, index])),
+    [priorityOrderedAssets],
+  );
+  const visibleFilmstripAssets = useMemo(
+    () => priorityOrderedAssets.filter(
+      (asset) => asset.id === active.id || visibleFilmstripIds.has(asset.id),
+    ),
+    [active.id, priorityOrderedAssets, visibleFilmstripIds],
+  );
 
   const handleWheel = useCallback((event: React.WheelEvent<HTMLDivElement>) => {
     if ((event.target as HTMLElement).closest(".loupe__controls, .loupe__navigator, .loupe__settings")) return;
@@ -325,6 +377,7 @@ export function Loupe({
 
   return (
     <div className="loupe">
+      <FilmstripPreviewPreloader assets={visibleFilmstripAssets} />
       <div
         className={`loupe__stage ${zoom > 1 ? "is-zoomed" : ""} ${dragging ? "is-dragging" : ""}`}
         ref={stageRef}
@@ -381,7 +434,7 @@ export function Loupe({
             <Thumbnail
               asset={active}
               large
-              onImageLoad={(size) => setNaturalSize({ assetId: active.id, size })}
+              onImageLoad={handleImageLoad}
               onRawPreviewStatus={active.kind === "heif"
                 ? handleHeifPreviewStatus
                 : setRawPreviewStatus}
@@ -561,6 +614,7 @@ export function Loupe({
             active={active.id === asset.id}
             asset={asset}
             onClick={() => select(asset.id)}
+            queueOrder={priorityRankById.get(asset.id) ?? assets.length}
             root={filmstripRef}
             showMetadata={loupeMetadataVisible}
           />
@@ -575,11 +629,19 @@ interface FilmstripItemProps {
   active: boolean;
   asset: AssetSummary;
   onClick: () => void;
+  queueOrder: number;
   root: React.RefObject<HTMLDivElement | null>;
   showMetadata: boolean;
 }
 
-function FilmstripItem({ active, asset, onClick, root, showMetadata }: FilmstripItemProps) {
+function FilmstripItem({
+  active,
+  asset,
+  onClick,
+  queueOrder,
+  root,
+  showMetadata,
+}: FilmstripItemProps) {
   const itemRef = useRef<HTMLButtonElement>(null);
   const [nearby, setNearby] = useState(active);
   const [visible, setVisible] = useState(active);
@@ -618,6 +680,7 @@ function FilmstripItem({ active, asset, onClick, root, showMetadata }: Filmstrip
   return (
     <button
       ref={itemRef}
+      data-filmstrip-asset-id={asset.id}
       className={active ? "is-active" : ""}
       onClick={onClick}
       title={asset.name}
@@ -626,6 +689,7 @@ function FilmstripItem({ active, asset, onClick, root, showMetadata }: Filmstrip
         asset={asset}
         enabled={nearby || active}
         priority={active ? "loupe" : visible ? "visible" : "nearby"}
+        queueOrder={queueOrder}
       />
       {showMetadata ? (
         <span className="filmstrip__metadata">

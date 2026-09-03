@@ -1,4 +1,4 @@
-import type { AssetKind, RenderLevel } from "../types";
+import type { AssetKind, AssetSummary, RenderLevel } from "../types";
 
 export type RenderPlatform = "windows" | "macos" | "linux";
 export type RenderSurface = "thumbnail" | "loupe";
@@ -106,4 +106,8 @@ export function renderMethodKey(method: RenderMethod): string {
   return method.type === "generatedImage"
     ? `${method.type}:${method.requestLevel}`
     : method.type;
+}
+
+export function assetRenderQueryKey(asset: AssetSummary, method: RenderMethod) {
+  return ["asset-render", asset.id, asset.modifiedAtMs, renderMethodKey(method)] as const;
 }

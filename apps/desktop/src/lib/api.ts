@@ -22,7 +22,8 @@ import type {
   PreviewResult,
   RenderLevel,
 } from "../types";
-import { previewQueue, priorityWeight } from "./previewQueue";
+import { preloadBrowserImage } from "./browserImageCache";
+import { orderedPriorityWeight, previewQueue, priorityWeight } from "./previewQueue";
 import { perfMark } from "./perfProbe";
 import { beginPreviewDebug } from "./previewDebug";
 
@@ -414,6 +415,7 @@ export async function generatedPreview(
   level: RenderLevel,
   signal?: AbortSignal,
   priority: PreviewPriority = "visible",
+  queueOrder = 0,
 ): Promise<PreviewResult | undefined> {
   if (!isTauri()) return undefined;
   const debug = __OXY_DEBUG__
@@ -438,7 +440,7 @@ export async function generatedPreview(
   };
   try {
     const result = await previewQueue.enqueue(
-      priorityWeight(priority),
+      orderedPriorityWeight(priority, queueOrder),
       signal,
       request,
       generatedPreviewTaskKey(asset, level),
@@ -474,9 +476,9 @@ function generatedPreviewTaskKey(asset: AssetSummary, level: RenderLevel): strin
 }
 
 function previewPriorityForWeight(weight: number): PreviewPriority {
-  if (weight >= priorityWeight("loupe")) return "loupe";
-  if (weight >= priorityWeight("visible")) return "visible";
-  if (weight >= priorityWeight("nearby")) return "nearby";
+  if (weight > priorityWeight("visible")) return "loupe";
+  if (weight > priorityWeight("nearby")) return "visible";
+  if (weight > priorityWeight("preload")) return "nearby";
   return "preload";
 }
 
@@ -484,10 +486,11 @@ export function raiseGeneratedPreviewPriority(
   asset: AssetSummary,
   level: RenderLevel,
   priority: PreviewPriority,
+  queueOrder = 0,
 ): boolean {
   return previewQueue.raisePriority(
     generatedPreviewTaskKey(asset, level),
-    priorityWeight(priority),
+    orderedPriorityWeight(priority, queueOrder),
   );
 }
 
@@ -512,36 +515,6 @@ export async function preloadAssetThumbnail(
   }
   const result = await generatedPreview(asset, "thumbnail", signal, "preload");
   if (result) await preloadBrowserImage(result.url, signal);
-}
-
-function preloadBrowserImage(url: string, signal?: AbortSignal): Promise<void> {
-  return new Promise((resolve, reject) => {
-    if (signal?.aborted) {
-      reject(signal.reason ?? new DOMException("Aborted", "AbortError"));
-      return;
-    }
-    const image = new Image();
-    const cleanup = () => {
-      image.onload = null;
-      image.onerror = null;
-      signal?.removeEventListener("abort", abort);
-    };
-    const abort = () => {
-      image.src = "";
-      cleanup();
-      reject(signal?.reason ?? new DOMException("Aborted", "AbortError"));
-    };
-    image.onload = () => {
-      cleanup();
-      resolve();
-    };
-    image.onerror = () => {
-      cleanup();
-      reject(new Error(`failed to preload ${url}`));
-    };
-    signal?.addEventListener("abort", abort, { once: true });
-    image.src = url;
-  });
 }
 
 export async function startHeifDecode(
