@@ -225,11 +225,11 @@ async fn get_asset_details(
 /// The native engine reads embedded metadata; sidecars override it. ExifTool
 /// remains an optional write capability for explicit embedded synchronization.
 fn metadata_for_details(
-    kind: AssetKind,
+    _kind: AssetKind,
     has_sidecar: bool,
     result: Result<EditableMetadata, oxy_metadata::MetadataError>,
 ) -> (EditableMetadata, MetadataCapability) {
-    let provider = if kind == AssetKind::Raw || has_sidecar {
+    let provider = if has_sidecar {
         MetadataProvider::Sidecar
     } else {
         MetadataProvider::Native

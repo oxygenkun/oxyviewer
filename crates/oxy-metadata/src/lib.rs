@@ -558,7 +558,11 @@ fn patch_sidecar(
     let mut xml = if destination.is_file() {
         fs::read_to_string(&destination)?
     } else {
-        serialize_xmp(&EditableMetadata::default())
+        let embedded = NativeMetadataReader
+            .read(asset_path, None)
+            .map(|document| document.editable)
+            .unwrap_or_default();
+        serialize_xmp(&embedded)
     };
     if let Some(value) = patch.rating {
         xml = set_xmp_attribute(
@@ -891,6 +895,30 @@ mod tests {
     }
 
     #[test]
+    fn first_raw_rating_edit_preserves_embedded_color_label_in_the_new_sidecar() {
+        let directory = tempdir().unwrap();
+        let raw = directory.path().join("photo.ARW");
+        fs::write(&raw, minimal_raw_with_xmp(1, "red")).unwrap();
+
+        MetadataFacade::default()
+            .patch_metadata(
+                &raw,
+                AssetKind::Raw,
+                &oxy_domain::MetadataPatch {
+                    rating: Some(Some(2)),
+                    ..oxy_domain::MetadataPatch::default()
+                },
+            )
+            .unwrap();
+        let metadata = MetadataFacade::default()
+            .read_metadata(&raw, AssetKind::Raw)
+            .unwrap();
+
+        assert_eq!(metadata.rating, Some(2));
+        assert_eq!(metadata.color_label.as_deref(), Some("Red"));
+    }
+
+    #[test]
     fn enriches_raw_summary_from_embedded_xmp_without_a_sidecar() {
         let directory = tempdir().unwrap();
         let raw = directory.path().join("photo.ARW");
@@ -920,6 +948,25 @@ mod tests {
 
         assert!(metadata.rating.is_some());
         assert!(metadata.color_label.is_some());
+
+        let directory = tempdir().unwrap();
+        let copy = directory.path().join("fixture.ARW");
+        fs::copy(raw, &copy).unwrap();
+        MetadataFacade::default()
+            .patch_metadata(
+                &copy,
+                AssetKind::Raw,
+                &oxy_domain::MetadataPatch {
+                    rating: Some(Some(2)),
+                    ..oxy_domain::MetadataPatch::default()
+                },
+            )
+            .unwrap();
+        let patched = MetadataFacade::default()
+            .read_metadata(&copy, AssetKind::Raw)
+            .unwrap();
+        assert_eq!(patched.rating, Some(2));
+        assert_eq!(patched.color_label, metadata.color_label);
     }
 
     #[test]
