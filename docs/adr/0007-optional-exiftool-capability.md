@@ -11,9 +11,9 @@ OxyViewer needs two different metadata capabilities:
 - immutable capture metadata and Sony shooting-focus MakerNotes;
 - editable XMP such as rating, label, title, and keywords.
 
-`fpexif` provides the first capability in-process and already reads the repository Sony HIF fixture.
-Version 0.0.3 does not parse or write general XMP, so it cannot safely replace ExifTool for embedded
-JPEG/HEIF/HIF metadata. ExifTool has much broader compatibility, but bundling it materially changes
+The application previously used `fpexif` for EXIF/MakerNotes and separate code paths for XMP.
+That split produced format-specific behavior and made metadata results depend on which caller asked.
+ExifTool has very broad compatibility, but bundling it materially changes
 the application size and introduces a separately updated executable/script payload.
 
 Measured against ExifTool 13.59 on 2026-09-03:
@@ -36,15 +36,19 @@ under the same terms as Perl itself.
 
 ## Decision
 
-Use one OxyViewer metadata facade with capability-driven providers:
+Use one OxyViewer metadata engine with capability-driven providers:
 
-1. `fpexif` is always present for EXIF and MakerNotes, including shooting focus.
+1. `oxy-metadata-parser`, an image-only OxyViewer fork of SiftX, is the single
+   in-process EXIF/XMP/IPTC/ICC/MakerNote reader. Its public integration surface
+   is owned by OxyViewer, and unknown tags are retained rather than discarded.
 2. XMP sidecars are the default read/write provider for every asset format. Normal edits never modify
    the image container.
-3. Read precedence is sidecar, then embedded XMP through ExifTool, then empty editable metadata. A
-   sidecar therefore explicitly overrides embedded values.
-4. ExifTool is used only when reading embedded XMP without a sidecar or when the user explicitly asks
-   to synchronize sidecar rating/color into a JPEG/HEIF/HIF container.
+3. Read precedence is sidecar, then native embedded metadata, then empty editable metadata.
+   HEIF/HIF/AVIF XMP items are extracted through `libheif-rs`; a bounded scan is
+   retained only for malformed containers rejected by libheif.
+4. A configured ExifTool may be used as a batch compatibility fallback after a
+   native parse error. Installation is requested only when the user explicitly
+   asks to synchronize sidecar rating/color into a JPEG/HEIF/HIF container.
 5. Missing embedded-XMP support never prevents sidecar edits, dimensions, previews, EXIF, or focus
    information from loading.
 

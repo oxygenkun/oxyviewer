@@ -185,7 +185,7 @@ RAW `thumbnail` 映射 512，`preview` 映射 4096。放大镜直接从 `preview
 
 ### 8.3 Sony 拍摄对焦区域
 
-`get_asset_details` 在线程池中通过 `oxy-metadata` 与纯 Rust `fpexif` 读取 Sony MakerNote
+`get_asset_details` 在线程池中通过 `oxy-metadata` 与项目内纯 Rust 统一解析器读取 Sony MakerNote
 `FocusLocation`/`FocusFrameSize`。ARW、JPEG、HEIF/HIF 只要带有这些字段，都通过同一个
 `FocusInfo` 小型结构返回；图片字节仍不经过 IPC。EXIF 方向会先应用到坐标，HEIF 缺少 EXIF
 方向而显示尺寸明确交换横竖轴时使用 Sony 常见的顺时针方向。前端再用当前真正显示的
@@ -197,12 +197,16 @@ JPEG/完整 RAW 自然尺寸映射坐标，
 存在 `FocusFrameSize` 时显示精确实线框；仅有 `FocusLocation` 中心时显示带中心点的虚线
 估算框，避免把估算大小冒充相机记录。
 
-拍摄对焦信息不依赖 ExifTool：后者只负责无 sidecar 时读取内嵌 XMP，以及用户明确发起的
+拍摄对焦信息和内嵌元信息读取都不依赖 ExifTool：后者只负责用户明确发起的
 “同步到文件内部”。默认评分/颜色编辑写 sidecar。若系统未安装这个可选 worker，
-`get_asset_details` 仍返回尺寸、空的可编辑元数据和已解析的 `FocusInfo`，避免 macOS 等环境中
-因附属能力缺失而让整个对焦层失效。仓库 Sony HIF fixture 同时覆盖 MakerNote 方向变换、
+`get_asset_details` 仍由原生引擎返回内嵌 XMP、拍摄参数和已解析的 `FocusInfo`。仓库 Sony HIF
+fixture 同时覆盖 MakerNote 方向变换、
 macOS ImageIO 竖拍尺寸映射和前端区域映射；CI 在三个桌面平台运行媒体、元数据和桌面桥接
 回归测试。
+
+同一次纯 Rust EXIF 解析还返回 `CaptureMetadata`，供检查器展示光圈、快门、焦距、ISO、曝光
+补偿、拍摄时间、机身/镜头和 EXIF 色度采样。缺失字段单独留空，不影响图片详情中的其他数据，
+也不会触发 ExifTool 安装或阻塞文件夹首屏。
 
 ## 9. HEIF 预览路径
 

@@ -135,8 +135,9 @@ preview cache 默认位于 Tauri `app_cache_dir()/previews`。用户可以在设
 
 `oxy-metadata` 对所有格式的 rating/color 默认读写同名 XMP sidecar；更新时只替换
 `rdf:Description` 上对应的 `xmp:Rating` / `xmp:Label` 属性，保留其他 XMP 字段。首次写入时
-创建最小 Adobe 风格 XMP。读取优先级为 sidecar、ExifTool 读取的内嵌 XMP、空值，因此存在
-sidecar 时它明确覆盖文件内部的旧值，且不启动 ExifTool。
+创建最小 Adobe 风格 XMP。读取优先级为 sidecar、内嵌 XMP、空值，因此存在 sidecar 时它明确
+覆盖文件内部的旧值。Sony HIF 的 rating/color 从文件头附近的有界 RDF/XMP item 直接读取，
+无需启动 ExifTool；其他容器的通用内嵌 XMP 仍通过 ExifTool 读取。
 
 Sony HIF 需要额外遵循 Imaging Edge Viewer 的写法：XMP 使用 compact shorthand，颜色值为
 小写 `red` / `yellow` / `green` / `blue`，清除值写作 `Rating=0` / `Label=None`。Sony Viewer

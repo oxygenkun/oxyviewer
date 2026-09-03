@@ -9,9 +9,9 @@ Native runtime components:
 | Component | Purpose | Intended integration |
 | --- | --- | --- |
 | LibRaw 0.22.1 | RAW preview extraction and decoding | Vendored unmodified source, statically linked under the CDDL-1.0 option; release legal review pending |
-| fpexif 0.0.3 | Pure-Rust EXIF/MakerNote reads for focus metadata | Statically linked under the MIT OR Apache-2.0 license |
+| OxyViewer metadata parser (SiftX fork at `fcf8e3d`) | Pure-Rust EXIF/XMP/IPTC/ICC/MakerNote reads | Modified image-only fork, statically linked under the MIT OR Apache-2.0 license; upstream notices retained |
 | libheif | HEIF/HEIC decoding | Dynamically linked, with codec licenses reviewed per platform |
-| ExifTool | Metadata read/write worker | Separate bundled process; Artistic/GPL terms reviewed before release |
+| ExifTool | Optional metadata compatibility/write worker | Separate process; Artistic/GPL terms reviewed before release |
 
 OxyViewer does not link Exiv2 because the product must retain the option of
 closed-source commercial distribution.

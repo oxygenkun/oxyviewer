@@ -2,10 +2,10 @@
 
 | Format | Discovery | Preview | Metadata read | Metadata write |
 | --- | --- | --- | --- | --- |
-| JPEG/JPG | Implemented | Foundation implemented | Sidecar-first XMP rating/color plus Sony shooting focus location/frame | XMP sidecar by default; optional embedded sync through ExifTool |
-| HEIF/HEIC/HIF | Implemented | 512/4096 px preview plus cancellable full-resolution RGBA8 tile session; Windows WIC and macOS ImageIO native decoders, dynamic FFmpeg software tile-grid backend, and libheif fallback; native hardware use remains pending GPU qualification | Sidecar-first XMP rating/color plus Sony shooting focus location/frame | XMP sidecar by default; optional embedded sync through ExifTool |
-| ARW/CR2/CR3/NEF/DNG/RAF/RW2/ORF | Implemented | Bundled LibRaw 0.22.2 embedded preview with half-size preview fallback, followed by full-resolution loupe development; macOS Quick Look final preview fallback | Adjacent XMP rating/color plus Sony shooting focus location/frame | Adjacent XMP sidecar rating/color |
-| PNG/WebP/TIFF | Implemented as secondary formats | Foundation/Planned | Read-only planned | Not in MVP |
+| JPEG/JPG | Implemented | Foundation implemented | Unified native EXIF/XMP/IPTC/ICC/MakerNote reader; sidecar-first editable metadata | XMP sidecar by default; optional embedded sync through ExifTool |
+| HEIF/HEIC/HIF | Implemented | 512/4096 px preview plus cancellable full-resolution RGBA8 tile session; Windows WIC and macOS ImageIO native decoders, dynamic FFmpeg software tile-grid backend, and libheif fallback; native hardware use remains pending GPU qualification | Unified native reader; `libheif-rs` item-table XMP extraction; Sony shooting focus location/frame | XMP sidecar by default; optional embedded sync through ExifTool |
+| ARW/CR2/CR3/NEF/DNG/RAF/RW2/ORF | Implemented | Bundled LibRaw 0.22.2 embedded preview with half-size preview fallback, followed by full-resolution loupe development; macOS Quick Look final preview fallback | Unified native EXIF/XMP/IPTC/ICC/MakerNote reader; adjacent sidecar override | Adjacent XMP sidecar rating/color |
+| PNG/WebP/TIFF | Implemented as secondary formats | Foundation/Planned | Unified native EXIF/XMP/IPTC/ICC reader | Not in MVP |
 
 RAW support follows bundled LibRaw 0.22.2. The code builds LibRaw from the
 vendored source and does not depend on a developer machine's system package.
@@ -13,10 +13,17 @@ The full format fixture matrix and Windows/Linux packaging validation remain
 part of milestone RAW-1.
 
 All formats write rating/color to adjacent XMP sidecars by default. A sidecar
-overrides embedded XMP when both exist. ExifTool is optional and is prompted for
-only when the user explicitly synchronizes into JPEG/HEIF/HIF; the desktop then
+overrides embedded XMP when both exist. Embedded reads use the in-process
+`oxy-metadata-parser` crate. A configured ExifTool can serve as a background
+compatibility fallback after a native parse error; installation is prompted
+only when the user explicitly synchronizes into JPEG/HEIF/HIF. The desktop then
 offers a pinned, checksum-verified managed download or an existing executable
 path. `OXY_EXIFTOOL_PATH` and `PATH` remain deployment/development fallbacks.
+
+The parser is an image-only fork of SiftX pinned at the provenance recorded in
+`crates/oxy-metadata-parser/UPSTREAM.md`. Its stable OxyViewer facade retains
+normalized fields, raw namespace/name/value tags, and diagnostics so new file
+formats and MakerNotes do not require frontend or IPC changes.
 
 For supported Sony ARW, JPEG, and HEIF/HIF files, the loupe can show the
 shooting focus location from MakerNote tag `FocusLocation` as a green frame
