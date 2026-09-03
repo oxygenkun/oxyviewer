@@ -350,6 +350,15 @@ async fn execute_file_operation(operation: FileOperation) -> Result<FileOperatio
 }
 
 #[tauri::command]
+async fn open_in_file_manager(path: PathBuf) -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        oxy_fs::open_in_file_manager(&path).map_err(|error| error.to_string())
+    })
+    .await
+    .map_err(|error| error.to_string())?
+}
+
+#[tauri::command]
 async fn patch_metadata(
     paths: Vec<PathBuf>,
     patch: MetadataPatch,
@@ -674,6 +683,7 @@ pub fn run() {
             configure_exiftool,
             install_exiftool,
             execute_file_operation,
+            open_in_file_manager,
             add_library_root,
             remove_library_root,
             list_library_roots,

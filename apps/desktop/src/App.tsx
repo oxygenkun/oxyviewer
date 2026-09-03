@@ -11,17 +11,20 @@ import { Toolbar } from "./components/Toolbar";
 import {
   addLibraryRoot,
   chooseFolder,
+  copyText,
   enrichAssetMetadata,
   isTauri,
   listAssets,
   listLibraryRoots,
   openFolder,
+  openInFileManager,
   onLibraryIndexUpdated,
   refreshDirectory,
   removeLibraryRoot,
   reorderLibraryRoots,
-  trashAssets,
+  trashPaths,
 } from "./lib/api";
+import { isSameOrDescendantPath, parentFolderPath, relativeFolderPath } from "./lib/folderPaths";
 import { translate } from "./lib/i18n";
 import {
   mergeVisibleFolderOrder,
@@ -305,7 +308,7 @@ export function App({ perfScenario }: { perfScenario?: PerfScenario }) {
   const handleTrashAsset = useCallback(async (asset: typeof assets[number]) => {
     setError(undefined);
     try {
-      await trashAssets([asset.path]);
+      await trashPaths([asset.path]);
       clearSelection();
       queryClient.removeQueries({ queryKey: ["asset-render", asset.id] });
       await handleRefresh();
@@ -313,6 +316,58 @@ export function App({ perfScenario }: { perfScenario?: PerfScenario }) {
       setError(String(cause));
     }
   }, [clearSelection, handleRefresh, queryClient]);
+
+  const handleTrashFolder = useCallback(async (session: FolderSession, path: string) => {
+    setError(undefined);
+    try {
+      await trashPaths([path]);
+      if (path === session.rootPath) {
+        await handleRemove(session);
+        return;
+      }
+
+      const parent = parentFolderPath(path);
+      clearSelection();
+      if (activeSession?.rootPath === session.rootPath && currentPath && isSameOrDescendantPath(path, currentPath)) {
+        setWorkspace((current) => ({
+          ...current,
+          currentDirectories: { ...current.currentDirectories, [session.rootPath]: parent },
+        }));
+      }
+      await refreshDirectory(session.id, parent);
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: ["assets", session.id] }),
+        queryClient.invalidateQueries({ queryKey: ["asset-metadata", session.id] }),
+        queryClient.invalidateQueries({ queryKey: ["preload-assets", session.id] }),
+        queryClient.invalidateQueries({ queryKey: ["directories", session.id] }),
+        queryClient.invalidateQueries({ queryKey: ["directory-search", session.id] }),
+      ]);
+    } catch (cause) {
+      setError(String(cause));
+    }
+  }, [activeSession?.rootPath, clearSelection, currentPath, handleRemove, queryClient]);
+
+  const handleCopyPath = useCallback(async (
+    rootPath: string,
+    path: string,
+    relative: boolean,
+  ) => {
+    setError(undefined);
+    try {
+      await copyText(relative ? relativeFolderPath(rootPath, path) : path);
+    } catch (cause) {
+      setError(String(cause));
+    }
+  }, []);
+
+  const handleOpenInFileManager = useCallback(async (path: string) => {
+    setError(undefined);
+    try {
+      await openInFileManager(path);
+    } catch (cause) {
+      setError(String(cause));
+    }
+  }, []);
 
   return (
     <div
@@ -326,6 +381,9 @@ export function App({ perfScenario }: { perfScenario?: PerfScenario }) {
         onOpen={handleOpen}
         onNavigate={handleNavigate}
         onRemove={handleRemove}
+        onTrashFolder={(session, path) => void handleTrashFolder(session, path)}
+        onCopyFolderPath={(session, path, relative) => void handleCopyPath(session.rootPath, path, relative)}
+        onOpenInFileManager={(path) => void handleOpenInFileManager(path)}
         onRefresh={handleRefresh}
         isRefreshing={isRefreshing}
         onDismissOnboarding={dismissOnboarding}
@@ -362,6 +420,8 @@ export function App({ perfScenario }: { perfScenario?: PerfScenario }) {
             isFetchingNextPage={assetsQuery.isFetchingNextPage}
             fetchNextPage={() => void assetsQuery.fetchNextPage()}
             onTrashAsset={(asset) => void handleTrashAsset(asset)}
+            onCopyAssetPath={(asset, relative) => void handleCopyPath(activeSession.rootPath, asset.path, relative)}
+            onOpenInFileManager={(path) => void handleOpenInFileManager(path)}
             t={t}
           />
         )}

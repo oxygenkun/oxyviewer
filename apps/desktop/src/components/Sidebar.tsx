@@ -3,6 +3,7 @@ import {
   Check,
   ChevronDown,
   ChevronRight,
+  Copy,
   Ellipsis,
   Folder,
   FolderOpen,
@@ -12,6 +13,7 @@ import {
   RefreshCw,
   Search,
   Settings,
+  Trash2,
   X,
 } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
@@ -24,7 +26,9 @@ import {
   type FolderSort,
 } from "../lib/folderOrdering";
 import type { MessageKey } from "../lib/i18n";
+import { platformFileManager } from "../lib/folderPaths";
 import type { DirectorySummary, FolderSession } from "../types";
+import { ConfirmTrashDialog } from "./ConfirmTrashDialog";
 
 interface SidebarProps {
   sessions: FolderSession[];
@@ -34,6 +38,9 @@ interface SidebarProps {
   onOpen: () => void;
   onNavigate: (session: FolderSession, path: string) => void;
   onRemove: (session: FolderSession) => void;
+  onTrashFolder: (session: FolderSession, path: string) => void;
+  onCopyFolderPath: (session: FolderSession, path: string, relative: boolean) => void;
+  onOpenInFileManager: (path: string) => void;
   onRefresh: () => void;
   isRefreshing: boolean;
   onDismissOnboarding: () => void;
@@ -52,6 +59,12 @@ const FOLDER_SORT_OPTIONS = [
   ["nameDescending", "folderSortNameDescending"],
 ] as const satisfies ReadonlyArray<readonly [FolderSort, MessageKey]>;
 
+const FILE_MANAGER_LABEL = {
+  finder: "openInFinder",
+  windowsExplorer: "openInWindowsExplorer",
+  generic: "openInFileManager",
+} as const satisfies Record<ReturnType<typeof platformFileManager>, MessageKey>;
+
 interface DirectoryNodeProps {
   session: FolderSession;
   entry: DirectorySummary;
@@ -59,6 +72,7 @@ interface DirectoryNodeProps {
   depth: number;
   initiallyExpanded?: boolean;
   onNavigate: (session: FolderSession, path: string) => void;
+  onContextMenu: (event: React.MouseEvent, session: FolderSession, entry: DirectorySummary) => void;
   onRemove?: (session: FolderSession) => void;
   removeLabel: string;
   dragLabel?: string;
@@ -73,6 +87,7 @@ function DirectoryNode({
   depth,
   initiallyExpanded = false,
   onNavigate,
+  onContextMenu,
   onRemove,
   removeLabel,
   dragLabel,
@@ -94,6 +109,7 @@ function DirectoryNode({
       <div
         className={`tree-row tree-row--directory ${isActive ? "tree-row--active" : ""}`}
         style={{ "--tree-indent": `${depth * 13}px` } as React.CSSProperties}
+        onContextMenu={(event) => onContextMenu(event, session, entry)}
       >
         {rootDraggable ? (
           <button
@@ -150,6 +166,7 @@ function DirectoryNode({
               currentPath={currentPath}
               depth={depth + 1}
               onNavigate={onNavigate}
+              onContextMenu={onContextMenu}
               removeLabel={removeLabel}
             />
           ))}
@@ -166,6 +183,7 @@ function SearchDirectoryNode({
   depth,
   search,
   onNavigate,
+  onContextMenu,
 }: {
   session: FolderSession;
   node: DirectorySearchTreeNode;
@@ -173,6 +191,7 @@ function SearchDirectoryNode({
   depth: number;
   search: string;
   onNavigate: (session: FolderSession, path: string) => void;
+  onContextMenu: (event: React.MouseEvent, session: FolderSession, entry: DirectorySummary) => void;
 }) {
   const [expanded, setExpanded] = useState(true);
   const hasChildren = node.children.length > 0;
@@ -183,6 +202,7 @@ function SearchDirectoryNode({
       <div
         className={`tree-row tree-row--directory tree-row--search ${isActive ? "tree-row--active" : ""} ${node.matched ? "tree-row--match" : ""}`}
         style={{ "--tree-indent": `${depth * 13}px` } as React.CSSProperties}
+        onContextMenu={(event) => onContextMenu(event, session, node.entry)}
       >
         <button
           className="tree-row__toggle"
@@ -213,6 +233,7 @@ function SearchDirectoryNode({
               depth={depth + 1}
               search={search}
               onNavigate={onNavigate}
+              onContextMenu={onContextMenu}
             />
           ))}
         </div>
@@ -243,6 +264,9 @@ export function Sidebar({
   onOpen,
   onNavigate,
   onRemove,
+  onTrashFolder,
+  onCopyFolderPath,
+  onOpenInFileManager,
   onRefresh,
   isRefreshing,
   onDismissOnboarding,
@@ -265,6 +289,16 @@ export function Sidebar({
   const [sortMenuOpen, setSortMenuOpen] = useState(false);
   const [sortSubmenuOpen, setSortSubmenuOpen] = useState(false);
   const [sortMenuPosition, setSortMenuPosition] = useState({ top: 0, left: 0 });
+  const [contextMenu, setContextMenu] = useState<{
+    session: FolderSession;
+    entry: DirectorySummary;
+    x: number;
+    y: number;
+  }>();
+  const [pendingTrash, setPendingTrash] = useState<{
+    session: FolderSession;
+    entry: DirectorySummary;
+  }>();
   const [draggedRoot, setDraggedRoot] = useState<string>();
   const [dropTargetRoot, setDropTargetRoot] = useState<string>();
   const [dropPlacement, setDropPlacement] = useState<FolderDropPlacement>();
@@ -324,6 +358,43 @@ export function Sidebar({
       document.removeEventListener("keydown", closeOnEscape);
     };
   }, [sortMenuOpen]);
+
+  const showFolderContextMenu = useCallback((
+    event: React.MouseEvent,
+    session: FolderSession,
+    entry: DirectorySummary,
+  ) => {
+    event.preventDefault();
+    event.stopPropagation();
+    setSortMenuOpen(false);
+    setSortSubmenuOpen(false);
+    setContextMenu({
+      session,
+      entry,
+      x: Math.max(8, Math.min(event.clientX, window.innerWidth - 224)),
+      y: Math.max(8, Math.min(event.clientY, window.innerHeight - 132)),
+    });
+  }, []);
+
+  useEffect(() => {
+    if (!contextMenu) return;
+    const dismiss = () => setContextMenu(undefined);
+    const dismissOnEscape = (event: KeyboardEvent) => {
+      if (event.key === "Escape") dismiss();
+    };
+    window.addEventListener("pointerdown", dismiss);
+    window.addEventListener("blur", dismiss);
+    window.addEventListener("resize", dismiss);
+    window.addEventListener("keydown", dismissOnEscape);
+    document.addEventListener("scroll", dismiss, true);
+    return () => {
+      window.removeEventListener("pointerdown", dismiss);
+      window.removeEventListener("blur", dismiss);
+      window.removeEventListener("resize", dismiss);
+      window.removeEventListener("keydown", dismissOnEscape);
+      document.removeEventListener("scroll", dismiss, true);
+    };
+  }, [contextMenu]);
 
   const closeSearch = () => {
     setSearchOpen(false);
@@ -601,6 +672,7 @@ export function Sidebar({
                       depth={0}
                       search={normalizedSearch}
                       onNavigate={onNavigate}
+                      onContextMenu={showFolderContextMenu}
                     />
                   );
                 })}
@@ -621,6 +693,7 @@ export function Sidebar({
               depth={0}
               initiallyExpanded={activeSession?.rootPath === session.rootPath}
               onNavigate={onNavigate}
+              onContextMenu={showFolderContextMenu}
               onRemove={onRemove}
               removeLabel={t("removeFolder")}
               dragLabel={t("dragFolderToReorder")}
@@ -667,6 +740,79 @@ export function Sidebar({
             <span>{dragPreview.name}</span>
           </div>,
           document.body,
+        ) : null}
+
+        {contextMenu ? createPortal(
+          <div
+            className="folder-context-menu"
+            role="menu"
+            aria-label={contextMenu.entry.name}
+            style={{ left: contextMenu.x, top: contextMenu.y }}
+            onContextMenu={(event) => event.preventDefault()}
+            onPointerDown={(event) => event.stopPropagation()}
+          >
+            <button
+              autoFocus
+              role="menuitem"
+              onClick={() => {
+                const { session, entry } = contextMenu;
+                setContextMenu(undefined);
+                onCopyFolderPath(session, entry.path, true);
+              }}
+            >
+              <Copy size={13} />
+              {t("copyRelativePath")}
+            </button>
+            <button
+              role="menuitem"
+              onClick={() => {
+                const { session, entry } = contextMenu;
+                setContextMenu(undefined);
+                onCopyFolderPath(session, entry.path, false);
+              }}
+            >
+              <Copy size={13} />
+              {t("copyAbsolutePath")}
+            </button>
+            <button
+              role="menuitem"
+              onClick={() => {
+                const { entry } = contextMenu;
+                setContextMenu(undefined);
+                onOpenInFileManager(entry.path);
+              }}
+            >
+              <FolderOpen size={13} />
+              {t(FILE_MANAGER_LABEL[platformFileManager()])}
+            </button>
+            <div className="folder-context-menu__separator" />
+            <button
+              className="folder-context-menu__danger"
+              role="menuitem"
+              onClick={() => {
+                const { session, entry } = contextMenu;
+                setContextMenu(undefined);
+                setPendingTrash({ session, entry });
+              }}
+            >
+              <Trash2 size={13} />
+              {t("trashFolder")}
+            </button>
+          </div>,
+          document.body,
+        ) : null}
+
+        {pendingTrash ? (
+          <ConfirmTrashDialog
+            itemName={pendingTrash.entry.name}
+            onCancel={() => setPendingTrash(undefined)}
+            onConfirm={() => {
+              const { session, entry } = pendingTrash;
+              setPendingTrash(undefined);
+              onTrashFolder(session, entry.path);
+            }}
+            t={t}
+          />
         ) : null}
 
         {sessions.length === 0 ? (

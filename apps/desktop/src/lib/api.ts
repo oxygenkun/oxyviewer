@@ -182,16 +182,45 @@ export async function refreshDirectory(sessionId: string, directory: string): Pr
   await invoke("refresh_directory", { sessionId, directory });
 }
 
-export async function trashAssets(paths: string[]): Promise<void> {
+export async function trashPaths(paths: string[]): Promise<void> {
   if (!isTauri()) {
     for (let index = demoAssets.length - 1; index >= 0; index -= 1) {
-      if (paths.includes(demoAssets[index].path)) demoAssets.splice(index, 1);
+      if (paths.some((path) => demoAssets[index].path === path || demoAssets[index].path.startsWith(`${path}/`))) {
+        demoAssets.splice(index, 1);
+      }
+    }
+    for (let index = demoDirectories.length - 1; index >= 0; index -= 1) {
+      if (paths.some((path) => demoDirectories[index].path === path || demoDirectories[index].path.startsWith(`${path}/`))) {
+        demoDirectories.splice(index, 1);
+      }
     }
     return;
   }
   await invoke("execute_file_operation", {
     operation: { type: "trash", paths },
   });
+}
+
+export async function copyText(text: string): Promise<void> {
+  if (navigator.clipboard?.writeText) {
+    await navigator.clipboard.writeText(text);
+    return;
+  }
+
+  const input = document.createElement("textarea");
+  input.value = text;
+  input.style.position = "fixed";
+  input.style.opacity = "0";
+  document.body.append(input);
+  input.select();
+  const copied = document.execCommand("copy");
+  input.remove();
+  if (!copied) throw new Error("Unable to copy path to the clipboard");
+}
+
+export async function openInFileManager(path: string): Promise<void> {
+  if (!isTauri()) return;
+  await invoke("open_in_file_manager", { path });
 }
 
 export async function getAssetDetails(asset: AssetSummary): Promise<AssetDetails> {

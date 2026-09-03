@@ -9,6 +9,7 @@ use std::{
     fs,
     hash::{Hash, Hasher},
     path::{Path, PathBuf},
+    process::Command,
     sync::Arc,
     time::{SystemTime, UNIX_EPOCH},
 };
@@ -370,6 +371,41 @@ pub fn execute_file_operation(operation: &FileOperation) -> Result<FileOperation
     }
 }
 
+pub fn open_in_file_manager(path: &Path) -> Result<(), FsError> {
+    if !path.exists() {
+        return Err(FsError::Io(std::io::Error::new(
+            std::io::ErrorKind::NotFound,
+            format!("path does not exist: {}", path.display()),
+        )));
+    }
+
+    #[cfg(target_os = "macos")]
+    if path.is_dir() {
+        Command::new("open").arg(path).spawn()?;
+    } else {
+        Command::new("open").arg("-R").arg(path).spawn()?;
+    }
+    #[cfg(target_os = "windows")]
+    if path.is_dir() {
+        Command::new("explorer.exe").arg(path).spawn()?;
+    } else {
+        Command::new("explorer.exe")
+            .arg("/select,")
+            .arg(path)
+            .spawn()?;
+    }
+    #[cfg(all(unix, not(target_os = "macos")))]
+    Command::new("xdg-open")
+        .arg(if path.is_dir() {
+            path
+        } else {
+            path.parent().unwrap_or(path)
+        })
+        .spawn()?;
+
+    Ok(())
+}
+
 pub fn sidecar_path(path: &Path) -> PathBuf {
     path.with_extension("xmp")
 }
@@ -475,10 +511,10 @@ fn transfer_assets(
 fn trash_assets(paths: &[PathBuf]) -> Result<FileOperationResult, FsError> {
     let mut affected_paths = Vec::new();
     for path in paths {
-        let sidecar = sidecar_path(path);
+        let sidecar = path.is_file().then(|| sidecar_path(path));
         trash::delete(path).map_err(|error| FsError::Trash(error.to_string()))?;
         affected_paths.push(path.clone());
-        if sidecar.exists() {
+        if let Some(sidecar) = sidecar.filter(|candidate| candidate.exists()) {
             trash::delete(&sidecar).map_err(|error| FsError::Trash(error.to_string()))?;
             affected_paths.push(sidecar);
         }

@@ -1,11 +1,13 @@
 import { useVirtualizer } from "@tanstack/react-virtual";
-import { FileImage, Trash2 } from "lucide-react";
+import { Copy, FileImage, FolderOpen, Trash2 } from "lucide-react";
 import { memo, useCallback, useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import type { MessageKey } from "../lib/i18n";
+import { platformFileManager } from "../lib/folderPaths";
 import { useWorkspaceStore } from "../store";
 import type { AssetSummary, ViewMode } from "../types";
 import { AssetMetadataBadges } from "./AssetMetadataBadges";
+import { ConfirmTrashDialog } from "./ConfirmTrashDialog";
 import { Loupe } from "./Loupe";
 import { Thumbnail } from "./Thumbnail";
 
@@ -16,6 +18,8 @@ interface AssetBrowserProps {
   isFetchingNextPage: boolean;
   fetchNextPage: () => void;
   onTrashAsset: (asset: AssetSummary) => void;
+  onCopyAssetPath: (asset: AssetSummary, relative: boolean) => void;
+  onOpenInFileManager: (path: string) => void;
   view: ViewMode;
   t: (key: MessageKey) => string;
 }
@@ -29,6 +33,12 @@ interface AssetCardProps {
   onOpen: () => void;
   showMetadata: boolean;
 }
+
+const FILE_MANAGER_LABEL = {
+  finder: "openInFinder",
+  windowsExplorer: "openInWindowsExplorer",
+  generic: "openInFileManager",
+} as const satisfies Record<ReturnType<typeof platformFileManager>, MessageKey>;
 
 const AssetCard = memo(function AssetCard({
   asset,
@@ -63,6 +73,7 @@ export function AssetBrowser(props: AssetBrowserProps) {
     x: number;
     y: number;
   }>();
+  const [pendingTrash, setPendingTrash] = useState<AssetSummary>();
   const select = useWorkspaceStore((state) => state.select);
   const showContextMenu = useCallback((event: React.MouseEvent, asset: AssetSummary) => {
     event.preventDefault();
@@ -70,8 +81,8 @@ export function AssetBrowser(props: AssetBrowserProps) {
     select(asset.id);
     setContextMenu({
       asset,
-      x: Math.max(8, Math.min(event.clientX, window.innerWidth - 156)),
-      y: Math.max(8, Math.min(event.clientY, window.innerHeight - 44)),
+      x: Math.max(8, Math.min(event.clientX, window.innerWidth - 224)),
+      y: Math.max(8, Math.min(event.clientY, window.innerHeight - 132)),
     });
   }, [select]);
 
@@ -138,7 +149,42 @@ export function AssetBrowser(props: AssetBrowserProps) {
             onClick={() => {
               const { asset } = contextMenu;
               setContextMenu(undefined);
-              props.onTrashAsset(asset);
+              props.onCopyAssetPath(asset, true);
+            }}
+          >
+            <Copy size={13} />
+            {props.t("copyRelativePath")}
+          </button>
+          <button
+            role="menuitem"
+            onClick={() => {
+              const { asset } = contextMenu;
+              setContextMenu(undefined);
+              props.onCopyAssetPath(asset, false);
+            }}
+          >
+            <Copy size={13} />
+            {props.t("copyAbsolutePath")}
+          </button>
+          <button
+            role="menuitem"
+            onClick={() => {
+              const { asset } = contextMenu;
+              setContextMenu(undefined);
+              props.onOpenInFileManager(asset.path);
+            }}
+          >
+            <FolderOpen size={13} />
+            {props.t(FILE_MANAGER_LABEL[platformFileManager()])}
+          </button>
+          <div className="asset-context-menu__separator" />
+          <button
+            className="asset-context-menu__danger"
+            role="menuitem"
+            onClick={() => {
+              const { asset } = contextMenu;
+              setContextMenu(undefined);
+              setPendingTrash(asset);
             }}
           >
             <Trash2 size={13} />
@@ -146,6 +192,18 @@ export function AssetBrowser(props: AssetBrowserProps) {
           </button>
         </div>,
         document.body,
+      ) : null}
+      {pendingTrash ? (
+        <ConfirmTrashDialog
+          itemName={pendingTrash.name}
+          onCancel={() => setPendingTrash(undefined)}
+          onConfirm={() => {
+            const asset = pendingTrash;
+            setPendingTrash(undefined);
+            props.onTrashAsset(asset);
+          }}
+          t={props.t}
+        />
       ) : null}
     </>
   );
