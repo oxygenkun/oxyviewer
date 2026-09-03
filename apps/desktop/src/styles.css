@@ -102,8 +102,74 @@ body {
   background: transparent;
 }
 .sidebar__heading-actions { display: flex; align-items: center; gap: 2px; }
+.folder-sort-control { position: relative; display: flex; }
+.sidebar__heading-actions > button,
+.folder-sort-control > button {
+  display: grid;
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  border-radius: 4px;
+  place-items: center;
+}
+.sidebar__heading-actions > button:hover,
+.folder-sort-control > button:hover { background: #292e32; }
+.folder-command-menu {
+  position: fixed;
+  z-index: 100;
+  width: max-content;
+  max-width: calc(100vw - 8px);
+  padding: 4px;
+  border: 1px solid #3a4046;
+  border-radius: 5px;
+  background: #1b1f22;
+  box-shadow: 0 4px 14px rgb(0 0 0 / 42%);
+}
+.folder-command-menu button {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 14px;
+  width: 100%;
+  min-width: max-content;
+  height: 25px;
+  align-items: center;
+  gap: 4px;
+  padding: 0 8px;
+  border-radius: 3px;
+  color: #b8bdc1;
+  background: transparent;
+  font-size: 10px;
+  font-weight: 400;
+  letter-spacing: 0;
+  text-align: left;
+  text-transform: none;
+}
+.folder-command-menu button.folder-command-menu__checkable {
+  grid-template-columns: 16px minmax(0, 1fr) 14px;
+  padding: 0 5px;
+}
+.folder-command-menu button:hover,
+.folder-command-menu button:focus-visible { color: var(--text); background: #292e32; }
+.folder-command-menu__label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.folder-command-menu__check { display: grid; place-items: center; }
+.folder-command-menu__separator { height: 1px; margin: 3px 5px; background: #343a3f; }
+.folder-command-submenu {
+  position: absolute;
+  top: -4px;
+  left: calc(100% + 3px);
+}
 .sidebar__heading-actions button:disabled { cursor: default; opacity: .55; }
 .sidebar__heading-actions button.is-active { color: var(--accent); background: #252b20; border-radius: 4px; }
+.folder-sort-control > button.folder-sort-control__trigger[aria-expanded="true"] {
+  color: var(--text);
+  background: #292e32;
+}
+.folder-sort-control > button.folder-sort-control__trigger:focus-visible {
+  outline-color: #596168;
+}
 .folder-search {
   display: flex;
   align-items: center;
@@ -149,6 +215,51 @@ body {
 }
 .tree-row__toggle:disabled { cursor: default; opacity: .28; }
 .tree-row__toggle span { width: 12px; }
+.tree-row__drag-handle {
+  display: grid;
+  flex: 0 0 15px;
+  width: 15px;
+  height: 26px;
+  padding: 0;
+  place-items: center;
+  color: #70777d;
+  background: transparent;
+  cursor: grab;
+  touch-action: none;
+}
+.tree-row__drag-handle:hover,
+.tree-row__drag-handle:focus-visible { color: #c4c8ca; }
+.tree-row__drag-handle:active { cursor: grabbing; }
+.tree-row__drag-handle svg { pointer-events: none; }
+.folder-root.is-dragging { opacity: .22; }
+.is-folder-dragging,
+.is-folder-dragging * { cursor: grabbing !important; user-select: none !important; }
+.folder-drag-preview {
+  position: fixed;
+  z-index: 200;
+  display: flex;
+  align-items: center;
+  gap: 0;
+  padding: 0 6px 0 3px;
+  overflow: hidden;
+  border: 1px solid #454d53;
+  border-radius: 5px;
+  color: #f1f1eb;
+  background: #22272b;
+  box-shadow: 0 7px 18px rgb(0 0 0 / 42%);
+  font-size: 11px;
+  pointer-events: none;
+}
+.folder-drag-preview > svg:first-child { flex: 0 0 15px; color: #a6adb1; }
+.folder-drag-preview__toggle { display: grid; flex: 0 0 19px; place-items: center; color: #777f84; }
+.folder-drag-preview > svg:nth-of-type(2) { flex: 0 0 auto; margin-right: 8px; }
+.folder-drag-preview > span:last-child { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.folder-root.is-drop-before > .directory-node > .tree-row {
+  box-shadow: inset 0 2px 0 var(--accent);
+}
+.folder-root.is-drop-after > .directory-node > .tree-row {
+  box-shadow: inset 0 -2px 0 var(--accent);
+}
 .tree-row__loader { animation: rotate 1.2s linear infinite; }
 .tree-row__main {
   display: flex;
@@ -270,7 +381,7 @@ body {
 .folder-coach__pointer {
   position: absolute;
   top: -5px;
-  right: 10px;
+  right: 35px;
   width: 9px;
   height: 9px;
   border-top: 1px solid #687748;

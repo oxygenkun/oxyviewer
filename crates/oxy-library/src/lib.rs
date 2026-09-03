@@ -22,12 +22,34 @@ pub enum LibraryError {
     Io(#[from] std::io::Error),
     #[error(transparent)]
     Filesystem(#[from] oxy_fs::FsError),
+    #[error("folder order must contain every library root exactly once")]
+    InvalidRootOrder,
 }
 
 pub struct Library {
     connection: Mutex<Connection>,
     indexing_roots: Mutex<HashSet<PathBuf>>,
     index_gate: Mutex<()>,
+}
+
+fn normalize_root_order(connection: &mut Connection) -> Result<(), rusqlite::Error> {
+    let paths = {
+        let mut statement = connection.prepare(
+            "SELECT path FROM library_roots
+             ORDER BY sort_order IS NULL, sort_order, added_at, path",
+        )?;
+        statement
+            .query_map([], |row| row.get::<_, String>(0))?
+            .collect::<Result<Vec<_>, _>>()?
+    };
+    let transaction = connection.transaction()?;
+    for (sort_order, path) in paths.iter().enumerate() {
+        transaction.execute(
+            "UPDATE library_roots SET sort_order = ?1 WHERE path = ?2",
+            params![sort_order as i64, path],
+        )?;
+    }
+    transaction.commit()
 }
 
 #[derive(Debug, Eq, PartialEq)]
@@ -127,13 +149,14 @@ impl Library {
         if let Some(parent) = path.parent() {
             std::fs::create_dir_all(parent)?;
         }
-        let connection = Connection::open(path)?;
+        let mut connection = Connection::open(path)?;
         connection.pragma_update(None, "journal_mode", "WAL")?;
         connection.execute_batch(
             "
             CREATE TABLE IF NOT EXISTS library_roots (
               path TEXT PRIMARY KEY NOT NULL,
-              added_at INTEGER NOT NULL DEFAULT (unixepoch())
+              added_at INTEGER NOT NULL DEFAULT (unixepoch()),
+              sort_order INTEGER
             );
             CREATE TABLE IF NOT EXISTS indexed_roots (
               root_path TEXT PRIMARY KEY NOT NULL,
@@ -182,6 +205,19 @@ impl Library {
             );
             ",
         )?;
+        let has_sort_order = connection
+            .prepare("PRAGMA table_info(library_roots)")?
+            .query_map([], |row| row.get::<_, String>(1))?
+            .collect::<Result<Vec<_>, _>>()?
+            .iter()
+            .any(|column| column == "sort_order");
+        if !has_sort_order {
+            connection.execute(
+                "ALTER TABLE library_roots ADD COLUMN sort_order INTEGER",
+                [],
+            )?;
+        }
+        normalize_root_order(&mut connection)?;
         Ok(Self {
             connection: Mutex::new(connection),
             indexing_roots: Mutex::new(HashSet::new()),
@@ -190,12 +226,13 @@ impl Library {
     }
 
     pub fn in_memory() -> Result<Self, LibraryError> {
-        let connection = Connection::open_in_memory()?;
+        let mut connection = Connection::open_in_memory()?;
         connection.execute_batch(
             "
             CREATE TABLE library_roots (
               path TEXT PRIMARY KEY NOT NULL,
-              added_at INTEGER NOT NULL DEFAULT (unixepoch())
+              added_at INTEGER NOT NULL DEFAULT (unixepoch()),
+              sort_order INTEGER
             );
             CREATE TABLE indexed_roots (
               root_path TEXT PRIMARY KEY NOT NULL,
@@ -243,6 +280,7 @@ impl Library {
             );
             ",
         )?;
+        normalize_root_order(&mut connection)?;
         Ok(Self {
             connection: Mutex::new(connection),
             indexing_roots: Mutex::new(HashSet::new()),
@@ -253,7 +291,8 @@ impl Library {
     pub fn add_root(&self, path: &Path) -> Result<(), LibraryError> {
         let canonical = path.canonicalize()?;
         self.connection.lock().execute(
-            "INSERT OR IGNORE INTO library_roots(path) VALUES (?1)",
+            "INSERT OR IGNORE INTO library_roots(path, sort_order)
+             VALUES (?1, (SELECT COALESCE(MAX(sort_order), -1) + 1 FROM library_roots))",
             params![canonical.to_string_lossy()],
         )?;
         Ok(())
@@ -290,12 +329,37 @@ impl Library {
 
     pub fn roots(&self) -> Result<Vec<PathBuf>, LibraryError> {
         let connection = self.connection.lock();
-        let mut statement =
-            connection.prepare("SELECT path FROM library_roots ORDER BY added_at, path")?;
+        let mut statement = connection
+            .prepare("SELECT path FROM library_roots ORDER BY sort_order, added_at, path")?;
         let paths = statement
             .query_map([], |row| row.get::<_, String>(0))?
             .collect::<Result<Vec<_>, _>>()?;
         Ok(paths.into_iter().map(PathBuf::from).collect())
+    }
+
+    pub fn reorder_roots(&self, paths: &[PathBuf]) -> Result<(), LibraryError> {
+        let mut connection = self.connection.lock();
+        let stored = connection
+            .prepare("SELECT path FROM library_roots")?
+            .query_map([], |row| row.get::<_, String>(0))?
+            .collect::<Result<HashSet<_>, _>>()?;
+        let requested = paths
+            .iter()
+            .map(|path| path.to_string_lossy().into_owned())
+            .collect::<HashSet<_>>();
+        if stored.len() != paths.len() || requested != stored {
+            return Err(LibraryError::InvalidRootOrder);
+        }
+
+        let transaction = connection.transaction()?;
+        for (sort_order, path) in paths.iter().enumerate() {
+            transaction.execute(
+                "UPDATE library_roots SET sort_order = ?1 WHERE path = ?2",
+                params![sort_order as i64, path.to_string_lossy()],
+            )?;
+        }
+        transaction.commit()?;
+        Ok(())
     }
 
     pub fn contains_root(&self, path: &Path) -> Result<bool, LibraryError> {
@@ -782,6 +846,79 @@ mod tests {
             library.roots().unwrap(),
             vec![root.path().canonicalize().unwrap()]
         );
+    }
+
+    #[test]
+    fn preserves_import_order_and_allows_explicit_reordering() {
+        let library = Library::in_memory().unwrap();
+        let first = tempdir().unwrap();
+        let second = tempdir().unwrap();
+        let third = tempdir().unwrap();
+        library.add_root(second.path()).unwrap();
+        library.add_root(first.path()).unwrap();
+        library.add_root(third.path()).unwrap();
+
+        let expected =
+            [third.path(), second.path(), first.path()].map(|path| path.canonicalize().unwrap());
+        library.reorder_roots(&expected).unwrap();
+        assert_eq!(library.roots().unwrap(), expected);
+    }
+
+    #[test]
+    fn rejects_incomplete_root_orders() {
+        let library = Library::in_memory().unwrap();
+        let first = tempdir().unwrap();
+        let second = tempdir().unwrap();
+        library.add_root(first.path()).unwrap();
+        library.add_root(second.path()).unwrap();
+
+        assert!(matches!(
+            library.reorder_roots(&[first.path().canonicalize().unwrap()]),
+            Err(LibraryError::InvalidRootOrder)
+        ));
+    }
+
+    #[test]
+    fn migrates_legacy_roots_and_persists_reordering() {
+        let directory = tempdir().unwrap();
+        let database = directory.path().join("library.sqlite");
+        let first = directory.path().join("first");
+        let second = directory.path().join("second");
+        std::fs::create_dir(&first).unwrap();
+        std::fs::create_dir(&second).unwrap();
+        {
+            let legacy = Connection::open(&database).unwrap();
+            legacy
+                .execute_batch(
+                    "CREATE TABLE library_roots (
+                       path TEXT PRIMARY KEY NOT NULL,
+                       added_at INTEGER NOT NULL DEFAULT (unixepoch())
+                     );",
+                )
+                .unwrap();
+            legacy
+                .execute(
+                    "INSERT INTO library_roots(path, added_at) VALUES (?1, 1)",
+                    params![first.to_string_lossy()],
+                )
+                .unwrap();
+            legacy
+                .execute(
+                    "INSERT INTO library_roots(path, added_at) VALUES (?1, 2)",
+                    params![second.to_string_lossy()],
+                )
+                .unwrap();
+        }
+
+        let library = Library::open(&database).unwrap();
+        assert_eq!(library.roots().unwrap(), [first.clone(), second.clone()]);
+        library
+            .reorder_roots(&[second.clone(), first.clone()])
+            .unwrap();
+        drop(library);
+
+        let reopened = Library::open(&database).unwrap();
+        assert_eq!(reopened.roots().unwrap(), [second, first]);
     }
 
     #[test]

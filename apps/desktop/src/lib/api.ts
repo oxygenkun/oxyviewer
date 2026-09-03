@@ -271,11 +271,11 @@ export async function chooseAndConfigureExiftool(): Promise<ExiftoolStatus | nul
   return invoke<ExiftoolStatus>("configure_exiftool", { path: selection });
 }
 
-const demoRoots = new Set<string>();
+const demoRoots: string[] = [];
 
 export async function addLibraryRoot(path: string): Promise<string[]> {
   if (!isTauri()) {
-    demoRoots.add(path);
+    if (!demoRoots.includes(path)) demoRoots.push(path);
     return [...demoRoots];
   }
   return invoke<string[]>("add_library_root", { path });
@@ -283,7 +283,8 @@ export async function addLibraryRoot(path: string): Promise<string[]> {
 
 export async function removeLibraryRoot(path: string): Promise<string[]> {
   if (!isTauri()) {
-    demoRoots.delete(path);
+    const index = demoRoots.indexOf(path);
+    if (index >= 0) demoRoots.splice(index, 1);
     return [...demoRoots];
   }
   return invoke<string[]>("remove_library_root", { path });
@@ -292,6 +293,17 @@ export async function removeLibraryRoot(path: string): Promise<string[]> {
 export async function listLibraryRoots(): Promise<string[]> {
   if (!isTauri()) return [...demoRoots];
   return invoke<string[]>("list_library_roots");
+}
+
+export async function reorderLibraryRoots(paths: string[]): Promise<string[]> {
+  if (!isTauri()) {
+    if (paths.length !== demoRoots.length || paths.some((path) => !demoRoots.includes(path))) {
+      throw new Error("Folder order must contain every library root exactly once");
+    }
+    demoRoots.splice(0, demoRoots.length, ...paths);
+    return [...demoRoots];
+  }
+  return invoke<string[]>("reorder_library_roots", { paths });
 }
 
 let demoCacheSettings: CacheSettings = {

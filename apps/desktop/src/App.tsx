@@ -19,9 +19,15 @@ import {
   onLibraryIndexUpdated,
   refreshDirectory,
   removeLibraryRoot,
+  reorderLibraryRoots,
   trashAssets,
 } from "./lib/api";
 import { translate } from "./lib/i18n";
+import {
+  mergeVisibleFolderOrder,
+  sortFolderSessions,
+  type FolderSort,
+} from "./lib/folderOrdering";
 import {
   completeFolderOnboarding,
   hasSeenFolderOnboarding,
@@ -58,7 +64,14 @@ export function App({ perfScenario }: { perfScenario?: PerfScenario }) {
     staleTime: Infinity,
   });
   const sessions = foldersQuery.data ?? [];
-  const activeSession = sessions.find((item) => item.rootPath === workspace.activeRoot) ?? sessions[0];
+  const folderSort = workspace.folderSort ?? "import";
+  const folderDragEnabled = workspace.folderDragEnabled ?? false;
+  const sortedSessions = useMemo(
+    () => sortFolderSessions(sessions, folderSort, locale),
+    [folderSort, locale, sessions],
+  );
+  const activeSession = sessions.find((item) => item.rootPath === workspace.activeRoot) ??
+    sortedSessions[0];
   const currentPath = activeSession
     ? workspace.currentDirectories[activeSession.rootPath] ?? activeSession.rootPath
     : undefined;
@@ -180,6 +193,7 @@ export function App({ perfScenario }: { perfScenario?: PerfScenario }) {
         return existing ? current : [...current, opened];
       });
       setWorkspace((current) => ({
+        ...current,
         activeRoot: opened.rootPath,
         currentDirectories: {
           ...current.currentDirectories,
@@ -200,6 +214,7 @@ export function App({ perfScenario }: { perfScenario?: PerfScenario }) {
   const handleNavigate = useCallback((session: FolderSession, path: string) => {
     clearSelection();
     setWorkspace((current) => ({
+      ...current,
       activeRoot: session.rootPath,
       currentDirectories: { ...current.currentDirectories, [session.rootPath]: path },
     }));
@@ -219,12 +234,48 @@ export function App({ perfScenario }: { perfScenario?: PerfScenario }) {
         const activeRoot = current.activeRoot === session.rootPath
           ? roots[0]
           : current.activeRoot;
-        return { activeRoot, currentDirectories };
+        return { ...current, activeRoot, currentDirectories };
       });
     } catch (cause) {
       setError(String(cause));
     }
   }, [clearSelection, queryClient]);
+
+  const handleFolderSortChange = useCallback((nextSort: FolderSort) => {
+    setWorkspace((current) => ({
+      ...current,
+      folderSort: nextSort,
+      folderDragEnabled: nextSort === "import" ? current.folderDragEnabled : false,
+    }));
+  }, []);
+
+  const handleFolderDragEnabledChange = useCallback((enabled: boolean) => {
+    setWorkspace((current) => ({
+      ...current,
+      folderDragEnabled: enabled,
+      folderSort: enabled ? "import" : current.folderSort,
+    }));
+  }, []);
+
+  const handleReorderFolders = useCallback(async (rootPaths: string[]) => {
+    setError(undefined);
+    const previous = queryClient.getQueryData<FolderSession[]>(["open-folders"]);
+    const byPath = new Map(previous?.map((session) => [session.rootPath, session]));
+    queryClient.setQueryData<FolderSession[]>(
+      ["open-folders"],
+      rootPaths.flatMap((path) => {
+        const session = byPath.get(path);
+        return session ? [session] : [];
+      }),
+    );
+    try {
+      const allRoots = await listLibraryRoots();
+      await reorderLibraryRoots(mergeVisibleFolderOrder(allRoots, rootPaths));
+    } catch (cause) {
+      queryClient.setQueryData(["open-folders"], previous);
+      setError(String(cause));
+    }
+  }, [queryClient]);
 
   const handleRefresh = useCallback(async () => {
     if (!activeSession || !currentPath || isRefreshing) return;
@@ -268,7 +319,7 @@ export function App({ perfScenario }: { perfScenario?: PerfScenario }) {
       className={`app-shell ${leftPanelOpen ? "" : "sidebar-collapsed"} ${inspectorOpen ? "" : "inspector-collapsed"}`}
     >
       <Sidebar
-        sessions={sessions}
+        sessions={sortedSessions}
         activeSession={activeSession}
         currentPath={currentPath}
         showOnboarding={showOnboarding && sessions.length === 0 && !foldersQuery.isLoading}
@@ -279,6 +330,11 @@ export function App({ perfScenario }: { perfScenario?: PerfScenario }) {
         isRefreshing={isRefreshing}
         onDismissOnboarding={dismissOnboarding}
         onSettings={toggleSettings}
+        folderSort={folderSort}
+        onFolderSortChange={handleFolderSortChange}
+        folderDragEnabled={folderDragEnabled}
+        onFolderDragEnabledChange={handleFolderDragEnabledChange}
+        onReorderFolders={(rootPaths) => void handleReorderFolders(rootPaths)}
         t={t}
       />
       <section className="workspace">

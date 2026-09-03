@@ -1,9 +1,12 @@
 import { useQueries, useQuery } from "@tanstack/react-query";
 import {
+  Check,
   ChevronDown,
   ChevronRight,
+  Ellipsis,
   Folder,
   FolderOpen,
+  GripVertical,
   LoaderCircle,
   Plus,
   RefreshCw,
@@ -11,9 +14,15 @@ import {
   Settings,
   X,
 } from "lucide-react";
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import { listDirectories, searchDirectories } from "../lib/api";
 import { buildDirectorySearchTree, type DirectorySearchTreeNode } from "../lib/directorySearchTree";
+import {
+  moveFolderRelative,
+  type FolderDropPlacement,
+  type FolderSort,
+} from "../lib/folderOrdering";
 import type { MessageKey } from "../lib/i18n";
 import type { DirectorySummary, FolderSession } from "../types";
 
@@ -29,8 +38,19 @@ interface SidebarProps {
   isRefreshing: boolean;
   onDismissOnboarding: () => void;
   onSettings: () => void;
+  folderSort: FolderSort;
+  onFolderSortChange: (sort: FolderSort) => void;
+  folderDragEnabled: boolean;
+  onFolderDragEnabledChange: (enabled: boolean) => void;
+  onReorderFolders: (rootPaths: string[]) => void;
   t: (key: MessageKey) => string;
 }
+
+const FOLDER_SORT_OPTIONS = [
+  ["import", "folderSortImport"],
+  ["nameAscending", "folderSortNameAscending"],
+  ["nameDescending", "folderSortNameDescending"],
+] as const satisfies ReadonlyArray<readonly [FolderSort, MessageKey]>;
 
 interface DirectoryNodeProps {
   session: FolderSession;
@@ -41,6 +61,9 @@ interface DirectoryNodeProps {
   onNavigate: (session: FolderSession, path: string) => void;
   onRemove?: (session: FolderSession) => void;
   removeLabel: string;
+  dragLabel?: string;
+  rootDraggable?: boolean;
+  onRootPointerDown?: React.PointerEventHandler<HTMLButtonElement>;
 }
 
 function DirectoryNode({
@@ -52,6 +75,9 @@ function DirectoryNode({
   onNavigate,
   onRemove,
   removeLabel,
+  dragLabel,
+  rootDraggable = false,
+  onRootPointerDown,
 }: DirectoryNodeProps) {
   const [expanded, setExpanded] = useState(initiallyExpanded);
   const children = useQuery({
@@ -69,6 +95,17 @@ function DirectoryNode({
         className={`tree-row tree-row--directory ${isActive ? "tree-row--active" : ""}`}
         style={{ "--tree-indent": `${depth * 13}px` } as React.CSSProperties}
       >
+        {rootDraggable ? (
+          <button
+            className="tree-row__drag-handle"
+            type="button"
+            title={dragLabel}
+            aria-label={dragLabel}
+            onPointerDown={onRootPointerDown}
+          >
+            <GripVertical size={13} />
+          </button>
+        ) : null}
         <button
           className="tree-row__toggle"
           disabled={!hasChildren && !children.isLoading}
@@ -210,12 +247,39 @@ export function Sidebar({
   isRefreshing,
   onDismissOnboarding,
   onSettings,
+  folderSort,
+  onFolderSortChange,
+  folderDragEnabled,
+  onFolderDragEnabledChange,
+  onReorderFolders,
   t,
 }: SidebarProps) {
   const [searchOpen, setSearchOpen] = useState(false);
   const [search, setSearch] = useState("");
   const [debouncedSearch, setDebouncedSearch] = useState("");
   const searchInputRef = useRef<HTMLInputElement>(null);
+  const sortMenuRef = useRef<HTMLDivElement>(null);
+  const sortMenuButtonRef = useRef<HTMLButtonElement>(null);
+  const sortPopoverRef = useRef<HTMLDivElement>(null);
+  const sortSubmenuButtonRef = useRef<HTMLButtonElement>(null);
+  const [sortMenuOpen, setSortMenuOpen] = useState(false);
+  const [sortSubmenuOpen, setSortSubmenuOpen] = useState(false);
+  const [sortMenuPosition, setSortMenuPosition] = useState({ top: 0, left: 0 });
+  const [draggedRoot, setDraggedRoot] = useState<string>();
+  const [dropTargetRoot, setDropTargetRoot] = useState<string>();
+  const [dropPlacement, setDropPlacement] = useState<FolderDropPlacement>();
+  const [dragOrder, setDragOrder] = useState<string[]>();
+  const [dragPreview, setDragPreview] = useState<{
+    left: number;
+    top: number;
+    width: number;
+    height: number;
+    pointerOffsetY: number;
+    name: string;
+  }>();
+  const draggedRootRef = useRef<string | undefined>(undefined);
+  const dragOrderRef = useRef<string[] | undefined>(undefined);
+  const dragPointerIdRef = useRef<number | undefined>(undefined);
   const normalizedSearch = debouncedSearch.trim();
   const searchActive = searchOpen && search.trim().length > 0;
   const searchQueries = useQueries({
@@ -236,6 +300,31 @@ export function Sidebar({
     if (searchOpen) searchInputRef.current?.focus();
   }, [searchOpen]);
 
+  useEffect(() => {
+    if (!sortMenuOpen) return;
+    sortPopoverRef.current?.querySelector<HTMLButtonElement>('[role="menuitem"]')?.focus();
+    const closeOnOutsidePress = (event: PointerEvent) => {
+      const target = event.target as Node;
+      if (!sortMenuRef.current?.contains(target) && !sortPopoverRef.current?.contains(target)) {
+        setSortMenuOpen(false);
+        setSortSubmenuOpen(false);
+      }
+    };
+    const closeOnEscape = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        setSortMenuOpen(false);
+        setSortSubmenuOpen(false);
+        sortMenuButtonRef.current?.focus();
+      }
+    };
+    document.addEventListener("pointerdown", closeOnOutsidePress);
+    document.addEventListener("keydown", closeOnEscape);
+    return () => {
+      document.removeEventListener("pointerdown", closeOnOutsidePress);
+      document.removeEventListener("keydown", closeOnEscape);
+    };
+  }, [sortMenuOpen]);
+
   const closeSearch = () => {
     setSearchOpen(false);
     setSearch("");
@@ -245,6 +334,80 @@ export function Sidebar({
   const searchLoading = waitingForDebounce || searchQueries.some((query) => query.isLoading);
   const indexing = normalizedSearch.length > 0 && searchQueries.some((query) => query.data === null);
   const resultCount = searchQueries.reduce((total, query) => total + (query.data?.length ?? 0), 0);
+  const displayedSessions = useMemo(() => {
+    if (!dragOrder) return sessions;
+    const sessionsByPath = new Map(sessions.map((session) => [session.rootPath, session]));
+    return dragOrder.flatMap((path) => {
+      const session = sessionsByPath.get(path);
+      return session ? [session] : [];
+    });
+  }, [dragOrder, sessions]);
+
+  const clearFolderDrag = useCallback(() => {
+    draggedRootRef.current = undefined;
+    dragOrderRef.current = undefined;
+    dragPointerIdRef.current = undefined;
+    setDraggedRoot(undefined);
+    setDropTargetRoot(undefined);
+    setDropPlacement(undefined);
+    setDragOrder(undefined);
+    setDragPreview(undefined);
+  }, []);
+
+  useEffect(() => {
+    if (!draggedRoot) return;
+    document.body.classList.add("is-folder-dragging");
+
+    const moveFolder = (event: PointerEvent) => {
+      if (event.pointerId !== dragPointerIdRef.current) return;
+      event.preventDefault();
+      setDragPreview((preview) => preview
+        ? { ...preview, top: event.clientY - preview.pointerOffsetY }
+        : preview);
+
+      const target = document
+        .elementFromPoint(event.clientX, event.clientY)
+        ?.closest<HTMLElement>(".folder-root");
+      const targetPath = target?.dataset.rootPath;
+      if (!targetPath || targetPath === draggedRoot) {
+        setDropTargetRoot(undefined);
+        setDropPlacement(undefined);
+        return;
+      }
+
+      const row = target.querySelector<HTMLElement>(":scope > .directory-node > .tree-row");
+      if (!row) return;
+      const bounds = row.getBoundingClientRect();
+      const placement = event.clientY < bounds.top + bounds.height / 2 ? "before" : "after";
+      const currentOrder = dragOrderRef.current ?? sessions.map((item) => item.rootPath);
+      const nextOrder = moveFolderRelative(currentOrder, draggedRoot, targetPath, placement);
+      if (nextOrder !== currentOrder) {
+        dragOrderRef.current = nextOrder;
+        setDragOrder(nextOrder);
+      }
+      setDropTargetRoot(targetPath);
+      setDropPlacement(placement);
+    };
+
+    const finishFolderDrag = (event: PointerEvent) => {
+      if (event.pointerId !== dragPointerIdRef.current) return;
+      const reordered = dragOrderRef.current;
+      if (reordered?.some((path, index) => path !== sessions[index]?.rootPath)) {
+        onReorderFolders(reordered);
+      }
+      clearFolderDrag();
+    };
+
+    window.addEventListener("pointermove", moveFolder, { passive: false });
+    window.addEventListener("pointerup", finishFolderDrag);
+    window.addEventListener("pointercancel", finishFolderDrag);
+    return () => {
+      document.body.classList.remove("is-folder-dragging");
+      window.removeEventListener("pointermove", moveFolder);
+      window.removeEventListener("pointerup", finishFolderDrag);
+      window.removeEventListener("pointercancel", finishFolderDrag);
+    };
+  }, [clearFolderDrag, draggedRoot, onReorderFolders, sessions]);
 
   return (
     <aside className="sidebar">
@@ -255,7 +418,7 @@ export function Sidebar({
       <div className={`sidebar__section sidebar__section--folders ${showOnboarding ? "is-guided" : ""}`}>
         <div className="sidebar__heading">
           <span>{t("folders")}</span>
-          <span className="sidebar__heading-actions">
+          <div className="sidebar__heading-actions">
             <button
               className={searchOpen ? "is-active" : undefined}
               title={t("searchFolders")}
@@ -276,8 +439,120 @@ export function Sidebar({
             <button className="sidebar__add-folder" title={t("openFolder")} onClick={onOpen}>
               <Plus size={14} />
             </button>
-          </span>
+            <div className="folder-sort-control" ref={sortMenuRef}>
+              <button
+                ref={sortMenuButtonRef}
+                className="folder-sort-control__trigger"
+                title={t("folderActions")}
+                aria-label={t("folderActions")}
+                aria-haspopup="menu"
+                aria-expanded={sortMenuOpen}
+                disabled={sessions.length === 0}
+                onClick={(event) => {
+                  const rect = event.currentTarget.getBoundingClientRect();
+                  const sidebarRight = event.currentTarget
+                    .closest(".sidebar")
+                    ?.getBoundingClientRect().right;
+                  setSortMenuPosition({
+                    top: rect.bottom + 4,
+                    left: (sidebarRight ?? rect.right) + 2,
+                  });
+                  setSortSubmenuOpen(false);
+                  setSortMenuOpen((open) => !open);
+                }}
+              >
+                <Ellipsis size={14} />
+              </button>
+            </div>
+          </div>
         </div>
+
+        {sortMenuOpen ? createPortal(
+          <div
+            ref={sortPopoverRef}
+            className="folder-command-menu"
+            role="menu"
+            aria-label={t("folderActions")}
+            style={sortMenuPosition}
+          >
+            <button
+              className="folder-command-menu__submenu-trigger"
+              ref={sortSubmenuButtonRef}
+              role="menuitem"
+              aria-haspopup="menu"
+              aria-expanded={sortSubmenuOpen}
+              onMouseEnter={() => setSortSubmenuOpen(true)}
+              onClick={() => setSortSubmenuOpen((open) => !open)}
+              onKeyDown={(event) => {
+                if (event.key === "ArrowRight") {
+                  setSortSubmenuOpen(true);
+                  requestAnimationFrame(() => {
+                    sortPopoverRef.current
+                      ?.querySelector<HTMLButtonElement>('[role="menuitemradio"]')
+                      ?.focus();
+                  });
+                }
+              }}
+            >
+              <span className="folder-command-menu__label">{t("folderSort")}</span>
+              <ChevronRight size={13} />
+            </button>
+            <div className="folder-command-menu__separator" />
+            <button
+              className="folder-command-menu__checkable"
+              role="menuitemcheckbox"
+              aria-checked={folderDragEnabled}
+              onMouseEnter={() => setSortSubmenuOpen(false)}
+              onClick={() => {
+                onFolderDragEnabledChange(!folderDragEnabled);
+                setSortMenuOpen(false);
+                setSortSubmenuOpen(false);
+                sortMenuButtonRef.current?.focus();
+              }}
+            >
+              <span className="folder-command-menu__check">
+                {folderDragEnabled ? <Check size={13} /> : null}
+              </span>
+              <span className="folder-command-menu__label">{t("enableFolderDrag")}</span>
+              <span />
+            </button>
+            {sortSubmenuOpen ? (
+              <div
+                className="folder-command-menu folder-command-submenu"
+                role="menu"
+                aria-label={t("folderSort")}
+                onKeyDown={(event) => {
+                  if (event.key === "ArrowLeft") {
+                    setSortSubmenuOpen(false);
+                    sortSubmenuButtonRef.current?.focus();
+                  }
+                }}
+              >
+                {FOLDER_SORT_OPTIONS.map(([value, label]) => (
+                  <button
+                    key={value}
+                    className="folder-command-menu__checkable"
+                    role="menuitemradio"
+                    aria-checked={folderSort === value}
+                    onClick={() => {
+                      onFolderSortChange(value);
+                      setSortMenuOpen(false);
+                      setSortSubmenuOpen(false);
+                      sortMenuButtonRef.current?.focus();
+                    }}
+                  >
+                    <span className="folder-command-menu__check">
+                      {folderSort === value ? <Check size={13} /> : null}
+                    </span>
+                    <span className="folder-command-menu__label">{t(label)}</span>
+                    <span />
+                  </button>
+                ))}
+              </div>
+            ) : null}
+          </div>,
+          document.body,
+        ) : null}
 
         {searchOpen ? (
           <label className="folder-search">
@@ -333,9 +608,13 @@ export function Sidebar({
               </>
             )}
           </div>
-        ) : sessions.map((session) => (
+        ) : displayedSessions.map((session) => (
+          <div
+            key={session.rootPath}
+            data-root-path={session.rootPath}
+            className={`folder-root ${draggedRoot === session.rootPath ? "is-dragging" : ""} ${dropTargetRoot === session.rootPath && dropPlacement ? `is-drop-${dropPlacement}` : ""}`}
+          >
             <DirectoryNode
-              key={session.rootPath}
               session={session}
               entry={{ path: session.rootPath, name: session.displayName, hasChildren: true }}
               currentPath={activeSession?.rootPath === session.rootPath ? currentPath : undefined}
@@ -344,8 +623,51 @@ export function Sidebar({
               onNavigate={onNavigate}
               onRemove={onRemove}
               removeLabel={t("removeFolder")}
+              dragLabel={t("dragFolderToReorder")}
+              rootDraggable={folderDragEnabled && folderSort === "import"}
+              onRootPointerDown={(event) => {
+                if (event.button !== 0 || !event.isPrimary) return;
+                event.preventDefault();
+                const initialOrder = sessions.map((item) => item.rootPath);
+                const row = event.currentTarget.closest<HTMLElement>(".tree-row");
+                if (!row) return;
+                const bounds = row.getBoundingClientRect();
+                draggedRootRef.current = session.rootPath;
+                dragOrderRef.current = initialOrder;
+                dragPointerIdRef.current = event.pointerId;
+                setDraggedRoot(session.rootPath);
+                setDragOrder(initialOrder);
+                setDragPreview({
+                  left: bounds.left,
+                  top: bounds.top,
+                  width: bounds.width,
+                  height: bounds.height,
+                  pointerOffsetY: event.clientY - bounds.top,
+                  name: session.displayName,
+                });
+              }}
             />
-          ))}
+          </div>
+        ))}
+
+        {dragPreview ? createPortal(
+          <div
+            className="folder-drag-preview"
+            style={{
+              left: dragPreview.left,
+              top: dragPreview.top,
+              width: dragPreview.width,
+              height: dragPreview.height,
+            }}
+            aria-hidden="true"
+          >
+            <GripVertical size={13} />
+            <span className="folder-drag-preview__toggle"><ChevronRight size={13} /></span>
+            <Folder size={15} />
+            <span>{dragPreview.name}</span>
+          </div>,
+          document.body,
+        ) : null}
 
         {sessions.length === 0 ? (
           <button className="sidebar__folder-prompt" onClick={onOpen}>

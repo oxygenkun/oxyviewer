@@ -13,9 +13,13 @@ describe("workspace persistence", () => {
   it("restores the active root and each root's last directory", () => {
     expect(parseWorkspaceSnapshot(JSON.stringify({
       activeRoot: "/photos",
+      folderSort: "nameDescending",
+      folderDragEnabled: true,
       currentDirectories: { "/photos": "/photos/2025", "/archive": "/archive" },
     }))).toEqual({
       activeRoot: "/photos",
+      folderSort: "nameDescending",
+      folderDragEnabled: true,
       currentDirectories: { "/photos": "/photos/2025", "/archive": "/archive" },
     });
   });

@@ -468,6 +468,18 @@ fn list_library_roots(state: State<'_, AppState>) -> Result<Vec<PathBuf>, String
 }
 
 #[tauri::command]
+fn reorder_library_roots(
+    paths: Vec<PathBuf>,
+    state: State<'_, AppState>,
+) -> Result<Vec<PathBuf>, String> {
+    state
+        .library
+        .reorder_roots(&paths)
+        .map_err(|error| error.to_string())?;
+    state.library.roots().map_err(|error| error.to_string())
+}
+
+#[tauri::command]
 fn cancel_job(job_id: String, state: State<'_, AppState>) -> bool {
     state.jobs.cancel(&job_id)
 }
@@ -665,6 +677,7 @@ pub fn run() {
             add_library_root,
             remove_library_root,
             list_library_roots,
+            reorder_library_roots,
             cancel_job,
             get_heif_capabilities,
             get_heif_diagnostics,

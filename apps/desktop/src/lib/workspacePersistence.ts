@@ -1,3 +1,5 @@
+import type { FolderSort } from "./folderOrdering";
+
 const WORKSPACE_KEY = "oxyviewer.workspace.v1";
 const ONBOARDING_KEY = "oxyviewer.folder-onboarding.v1";
 const FOCUS_AREAS_KEY = "oxyviewer.focus-areas-visible.v1";
@@ -10,6 +12,8 @@ const METADATA_VISIBILITY_KEYS = {
 export interface WorkspaceSnapshot {
   activeRoot?: string;
   currentDirectories: Record<string, string>;
+  folderSort?: FolderSort;
+  folderDragEnabled?: boolean;
 }
 
 interface StorageLike {
@@ -29,6 +33,11 @@ export function parseWorkspaceSnapshot(value: string | null): WorkspaceSnapshot 
     }
     return {
       activeRoot: typeof parsed.activeRoot === "string" ? parsed.activeRoot : undefined,
+      folderSort: parsed.folderSort === "import" || parsed.folderSort === "nameAscending" ||
+        parsed.folderSort === "nameDescending" ? parsed.folderSort : undefined,
+      folderDragEnabled: typeof parsed.folderDragEnabled === "boolean"
+        ? parsed.folderDragEnabled
+        : undefined,
       currentDirectories: Object.fromEntries(
         Object.entries(currentDirectories).filter(
           (entry): entry is [string, string] => typeof entry[1] === "string",
