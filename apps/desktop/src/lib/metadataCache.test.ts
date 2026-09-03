@@ -34,6 +34,7 @@ describe("metadata cache patches", () => {
         readable: true,
         writable: true,
       },
+      captureMetadata: {},
     };
     const patched = patchAssetDetails(details, paths, { rating: null, colorLabel: null });
     expect(patched?.asset.rating).toBeUndefined();

@@ -189,14 +189,16 @@ async fn get_asset_details(
         let kind = asset.kind;
         let dimensions = oxy_media::dimensions(&path).ok();
         let display_dimensions = dimensions.map(|value| (value.width, value.height));
-        let focus_info = oxy_metadata::read_focus_info(&path, display_dimensions)
-            .ok()
-            .flatten();
         let sidecar_path = asset.has_sidecar.then(|| oxy_fs::sidecar_path(&path));
+        let document = metadata_facade.read_document(&path, kind, display_dimensions);
+        let (capture_metadata, focus_info) = document
+            .as_ref()
+            .map(|document| (document.capture.clone(), document.focus.clone()))
+            .unwrap_or_default();
         let (metadata, metadata_capability) = metadata_for_details(
             kind,
             asset.has_sidecar,
-            metadata_facade.read_metadata(&path, kind),
+            document.map(|document| document.editable),
         );
         Ok(AssetDetails {
             asset,
@@ -205,6 +207,7 @@ async fn get_asset_details(
             metadata,
             metadata_capability,
             sidecar_path,
+            capture_metadata,
             focus_info,
         })
     })
@@ -212,9 +215,8 @@ async fn get_asset_details(
     .map_err(|error| error.to_string())?
 }
 
-/// ExifTool enriches editable embedded XMP, but it is not required to display
-/// dimensions or Sony shooting-focus metadata. Keep those details available
-/// in installations where the optional worker is absent.
+/// The native engine reads embedded metadata; sidecars override it. ExifTool
+/// remains an optional write capability for explicit embedded synchronization.
 fn metadata_for_details(
     kind: AssetKind,
     has_sidecar: bool,
@@ -223,7 +225,7 @@ fn metadata_for_details(
     let provider = if kind == AssetKind::Raw || has_sidecar {
         MetadataProvider::Sidecar
     } else {
-        MetadataProvider::Exiftool
+        MetadataProvider::Native
     };
     match result {
         Ok(metadata) => (
@@ -235,26 +237,15 @@ fn metadata_for_details(
                 detail: None,
             },
         ),
-        Err(error) => {
-            let setup_required = kind != AssetKind::Raw
-                && matches!(
-                    error,
-                    oxy_metadata::MetadataError::EmbeddedWorkerUnavailable
-                );
-            (
-                EditableMetadata::default(),
-                MetadataCapability {
-                    provider: if setup_required {
-                        MetadataProvider::Sidecar
-                    } else {
-                        provider
-                    },
-                    readable: false,
-                    writable: true,
-                    detail: Some(error.to_string()),
-                },
-            )
-        }
+        Err(error) => (
+            EditableMetadata::default(),
+            MetadataCapability {
+                provider,
+                readable: false,
+                writable: true,
+                detail: Some(error.to_string()),
+            },
+        ),
     }
 }
 
@@ -713,7 +704,7 @@ mod tests {
         );
 
         assert_eq!(metadata, EditableMetadata::default());
-        assert_eq!(capability.provider, MetadataProvider::Sidecar);
+        assert_eq!(capability.provider, MetadataProvider::Native);
         assert!(!capability.readable);
         assert!(capability.writable);
         assert!(capability.detail.is_some());

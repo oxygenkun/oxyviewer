@@ -116,6 +116,7 @@ export function Inspector({ asset, selectedCount, selectedPaths, t }: InspectorP
   const availableColorLabels = asset?.extension.toLowerCase() === "hif"
     ? sonyHifColorLabels
     : colorLabels;
+  const capture = details.data?.captureMetadata;
 
   return (
     <aside className="inspector">
@@ -135,6 +136,25 @@ export function Inspector({ asset, selectedCount, selectedPaths, t }: InspectorP
             <strong>{asset.name}</strong>
             <span>{asset.path}</span>
           </div>
+          <InspectorSection title={t("basicInfo")}>
+            <div className="capture-strip">
+              <CaptureValue label={t("aperture")} value={capture?.aperture} />
+              <CaptureValue label={t("shutterSpeed")} value={capture?.exposureTime} />
+              <CaptureValue label={t("focalLength")} value={capture?.focalLength} />
+              <CaptureValue label={t("iso")} value={capture?.iso ? `ISO ${capture.iso}` : undefined} />
+            </div>
+            <DataRow label={t("exposureCompensation")} value={capture?.exposureCompensation ?? "—"} />
+            <DataRow label={t("pixelDimensions")} value={
+              details.data?.width ? `${details.data.width} × ${details.data.height}` : "—"
+            } />
+            <DataRow label={t("chromaSubsampling")} value={capture?.chromaSubsampling ?? "—"} />
+            <DataRow label={t("capturedAt")} value={formatExifDate(capture?.capturedAt)} />
+            <DataRow label={t("modified")} value={new Date(asset.modifiedAtMs).toLocaleString()} />
+            <DataRow label={t("cameraMake")} value={capture?.cameraMake ?? "—"} />
+            <DataRow label={t("cameraModel")} value={capture?.cameraModel ?? "—"} />
+            <DataRow label={t("lensMake")} value={capture?.lensMake ?? "—"} />
+            <DataRow label={t("lensModel")} value={capture?.lensModel ?? "—"} />
+          </InspectorSection>
           <InspectorSection title={t("metadata")}>
             <label>{t("rating")}</label>
             <div className="rating" aria-label={t("rating")}>
@@ -201,11 +221,7 @@ export function Inspector({ asset, selectedCount, selectedPaths, t }: InspectorP
           </InspectorSection>
           <InspectorSection title={t("fileInfo")}>
             <DataRow label={t("format")} value={asset.extension} />
-            <DataRow label={t("dimensions")} value={
-              details.data?.width ? `${details.data.width} × ${details.data.height}` : "—"
-            } />
             <DataRow label={t("size")} value={formatBytes(asset.sizeBytes)} />
-            <DataRow label={t("modified")} value={new Date(asset.modifiedAtMs).toLocaleString()} />
             <DataRow
               label={t("sidecar")}
               value={details.data?.asset.hasSidecar ? "XMP" : "—"}
@@ -215,7 +231,8 @@ export function Inspector({ asset, selectedCount, selectedPaths, t }: InspectorP
               label={t("metadataSource")}
               value={details.data?.asset.hasSidecar
                 ? t("sidecarOverridesEmbedded")
-                : details.data?.metadataCapability.provider === "exiftool"
+                : details.data?.metadataCapability.provider === "native" ||
+                    details.data?.metadataCapability.provider === "exiftool"
                   ? t("embeddedMetadata")
                   : "—"}
             />
@@ -263,6 +280,20 @@ export function Inspector({ asset, selectedCount, selectedPaths, t }: InspectorP
       ) : null}
     </aside>
   );
+}
+
+function CaptureValue({ label, value }: { label: string; value?: string }) {
+  return (
+    <div className="capture-value">
+      <strong>{value ?? "—"}</strong>
+      <span>{label}</span>
+    </div>
+  );
+}
+
+function formatExifDate(value?: string): string {
+  if (!value) return "—";
+  return value.replace(/^(\d{4}):(\d{2}):(\d{2})/, "$1-$2-$3");
 }
 
 function InspectorSection({ title, children }: { title: string; children: React.ReactNode }) {

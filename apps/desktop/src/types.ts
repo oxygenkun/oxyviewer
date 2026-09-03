@@ -52,7 +52,7 @@ export interface MetadataPatch {
 }
 
 export interface MetadataCapability {
-  provider: "sidecar" | "exiftool";
+  provider: "sidecar" | "native" | "exiftool";
   readable: boolean;
   writable: boolean;
   detail?: string;
@@ -79,6 +79,20 @@ export interface FocusInfo {
   regions: FocusRegion[];
 }
 
+export interface CaptureMetadata {
+  aperture?: string;
+  exposureTime?: string;
+  focalLength?: string;
+  iso?: string;
+  exposureCompensation?: string;
+  capturedAt?: string;
+  cameraMake?: string;
+  cameraModel?: string;
+  lensMake?: string;
+  lensModel?: string;
+  chromaSubsampling?: string;
+}
+
 export interface AssetDetails {
   asset: AssetSummary;
   width?: number;
@@ -86,6 +100,7 @@ export interface AssetDetails {
   metadata: EditableMetadata;
   metadataCapability: MetadataCapability;
   sidecarPath?: string;
+  captureMetadata: CaptureMetadata;
   focusInfo?: FocusInfo;
 }
 
