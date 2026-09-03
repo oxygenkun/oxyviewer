@@ -1,10 +1,12 @@
+mod cache;
 mod exiftool;
 
 use oxy_domain::{
-    AssetDetails, AssetKind, AssetQuery, AssetSummary, DirectorySummary, EditableMetadata,
-    FileOperation, FileOperationResult, FolderSession, HeifCapabilities, HeifDecodeSession,
-    HeifDecodeStatus, HeifDiagnostics, JobId, JobPriority, MetadataCapability, MetadataPatch,
-    MetadataProvider, Page, PerfScenario, PreviewPriority, PreviewResult, RenderLevel,
+    AssetDetails, AssetKind, AssetQuery, AssetSummary, CacheSettings, CacheSettingsUpdate,
+    DirectorySummary, EditableMetadata, FileOperation, FileOperationResult, FolderSession,
+    HeifCapabilities, HeifDecodeSession, HeifDecodeStatus, HeifDiagnostics, JobId, JobPriority,
+    MetadataCapability, MetadataPatch, MetadataProvider, Page, PerfScenario, PreviewPriority,
+    PreviewResult, RenderLevel,
 };
 use oxy_fs::FsCatalog;
 use oxy_library::Library;
@@ -16,7 +18,7 @@ struct AppState {
     files: Arc<FsCatalog>,
     jobs: JobRegistry,
     library: Arc<Library>,
-    preview_dir: PathBuf,
+    cache: Arc<cache::CacheManager>,
     heif: Arc<oxy_media::HeifDecodeService>,
     metadata: oxy_metadata::MetadataFacade,
     metadata_provider: Arc<exiftool::ProviderManager>,
@@ -200,15 +202,54 @@ async fn get_preview(
         .files
         .get_asset(&path)
         .map_err(|error| error.to_string())?;
-    let preview_dir = state.preview_dir.clone();
+    let preview_dir = state.cache.preview_dir();
+    let cache = state.cache.clone();
     let decode_priority = oxy_media::decode_priority_for(priority);
     let kind = asset.kind;
-    tauri::async_runtime::spawn_blocking(move || {
+    let result = tauri::async_runtime::spawn_blocking(move || {
         oxy_media::preview(&path, &preview_dir, level, decode_priority, kind)
             .map_err(|error| error.to_string())
     })
     .await
-    .map_err(|error| error.to_string())?
+    .map_err(|error| error.to_string())??;
+    let protected_path = result.path.clone();
+    cache.mark_used(&protected_path);
+    if cache.try_start_prune() {
+        tauri::async_runtime::spawn_blocking(move || {
+            if let Err(error) = cache.prune_after_write(&protected_path) {
+                eprintln!("preview cache pruning failed: {error}");
+            }
+            cache.finish_prune();
+        });
+    }
+    Ok(result)
+}
+
+#[tauri::command]
+async fn get_cache_settings(state: State<'_, AppState>) -> Result<CacheSettings, String> {
+    let cache = state.cache.clone();
+    tauri::async_runtime::spawn_blocking(move || cache.settings())
+        .await
+        .map_err(|error| error.to_string())?
+}
+
+#[tauri::command]
+async fn update_cache_settings(
+    update: CacheSettingsUpdate,
+    state: State<'_, AppState>,
+) -> Result<CacheSettings, String> {
+    let cache = state.cache.clone();
+    tauri::async_runtime::spawn_blocking(move || cache.update(update))
+        .await
+        .map_err(|error| error.to_string())?
+}
+
+#[tauri::command]
+async fn clear_preview_cache(state: State<'_, AppState>) -> Result<CacheSettings, String> {
+    let cache = state.cache.clone();
+    tauri::async_runtime::spawn_blocking(move || cache.clear())
+        .await
+        .map_err(|error| error.to_string())?
 }
 
 #[tauri::command]
@@ -487,13 +528,17 @@ pub fn run() {
         .setup(move |app| {
             let data_dir = app.path().app_data_dir()?;
             let preview_dir = app.path().app_cache_dir()?.join("previews");
+            let cache = Arc::new(cache::CacheManager::load(
+                preview_dir,
+                data_dir.join("cache-settings.json"),
+            )?);
             let library = Library::open(&data_dir.join("oxyviewer.sqlite"))?;
             let metadata_provider = Arc::new(exiftool::ProviderManager::load(data_dir));
             app.manage(AppState {
                 files: Arc::new(FsCatalog::default()),
                 jobs: JobRegistry::default(),
                 library: Arc::new(library),
-                preview_dir,
+                cache,
                 heif: heif.clone(),
                 metadata: metadata_provider.facade(),
                 metadata_provider,
@@ -509,6 +554,9 @@ pub fn run() {
             get_asset_details,
             enrich_asset_metadata,
             get_preview,
+            get_cache_settings,
+            update_cache_settings,
+            clear_preview_cache,
             patch_metadata,
             sync_metadata_to_embedded,
             get_exiftool_status,

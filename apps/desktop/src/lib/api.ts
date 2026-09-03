@@ -5,6 +5,7 @@ import type {
   AssetKind,
   AssetQuery,
   AssetSummary,
+  CacheSettings,
   DirectorySummary,
   FolderSession,
   HeifCapabilities,
@@ -244,6 +245,60 @@ export async function removeLibraryRoot(path: string): Promise<string[]> {
 export async function listLibraryRoots(): Promise<string[]> {
   if (!isTauri()) return [...demoRoots];
   return invoke<string[]>("list_library_roots");
+}
+
+let demoCacheSettings: CacheSettings = {
+  location: "/demo/OxyViewer Cache/previews",
+  defaultLocation: "/demo/OxyViewer Cache/previews",
+  customParent: undefined,
+  isCustomLocation: false,
+  maxSizeBytes: 10 * 1024 ** 3,
+  usedSizeBytes: 2.4 * 1024 ** 3,
+};
+
+export async function getCacheSettings(): Promise<CacheSettings> {
+  if (!isTauri()) return demoCacheSettings;
+  return invoke<CacheSettings>("get_cache_settings");
+}
+
+export async function chooseCacheParent(): Promise<string | null> {
+  if (!isTauri()) return "/demo/Fast SSD";
+  const selection = await open({
+    directory: true,
+    multiple: false,
+    title: "Choose cache location",
+  });
+  return typeof selection === "string" ? selection : null;
+}
+
+export async function updateCacheSettings(
+  customParent: string | null,
+  maxSizeBytes: number,
+): Promise<CacheSettings> {
+  if (!isTauri()) {
+    demoCacheSettings = {
+      ...demoCacheSettings,
+      location: customParent
+        ? `${customParent}/OxyViewer Cache/previews`
+        : demoCacheSettings.defaultLocation,
+      customParent: customParent ?? undefined,
+      isCustomLocation: Boolean(customParent),
+      maxSizeBytes,
+      usedSizeBytes: Math.min(demoCacheSettings.usedSizeBytes, maxSizeBytes),
+    };
+    return demoCacheSettings;
+  }
+  return invoke<CacheSettings>("update_cache_settings", {
+    update: { customParent, maxSizeBytes },
+  });
+}
+
+export async function clearPreviewCache(): Promise<CacheSettings> {
+  if (!isTauri()) {
+    demoCacheSettings = { ...demoCacheSettings, usedSizeBytes: 0 };
+    return demoCacheSettings;
+  }
+  return invoke<CacheSettings>("clear_preview_cache");
 }
 
 export function previewUrl(asset: AssetSummary): string | undefined {

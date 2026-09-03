@@ -23,7 +23,7 @@ use std::{
     io::{BufReader, Write},
     path::{Path, PathBuf},
     sync::{Arc, Condvar, LazyLock, Mutex},
-    time::Instant,
+    time::{Instant, SystemTime},
 };
 use tempfile::NamedTempFile;
 use thiserror::Error;
@@ -200,6 +200,106 @@ pub enum MediaError {
     Io(#[from] std::io::Error),
     #[error(transparent)]
     Image(#[from] image::ImageError),
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct CacheUsage {
+    pub size_bytes: u64,
+    pub file_count: usize,
+}
+
+#[derive(Debug)]
+struct CacheEntry {
+    path: PathBuf,
+    size_bytes: u64,
+    modified: SystemTime,
+}
+
+/// Measures only regular files directly inside the app-owned preview folder.
+/// Preview artifacts are intentionally flat, so unrelated nested content is
+/// never traversed or counted.
+pub fn preview_cache_usage(cache_dir: &Path) -> Result<CacheUsage, MediaError> {
+    if !cache_dir.exists() {
+        return Ok(CacheUsage {
+            size_bytes: 0,
+            file_count: 0,
+        });
+    }
+    let entries = preview_cache_entries(cache_dir)?;
+    Ok(CacheUsage {
+        size_bytes: entries.iter().map(|entry| entry.size_bytes).sum(),
+        file_count: entries.len(),
+    })
+}
+
+/// Removes least-recently-modified preview artifacts until the configured
+/// budget is met. The artifact returned by the current request can be
+/// protected so pruning never races the webview's first read of that file.
+pub fn prune_preview_cache(
+    cache_dir: &Path,
+    max_size_bytes: u64,
+    protected_path: Option<&Path>,
+) -> Result<CacheUsage, MediaError> {
+    if !cache_dir.exists() {
+        return preview_cache_usage(cache_dir);
+    }
+    let mut entries = preview_cache_entries(cache_dir)?;
+    entries.sort_by_key(|entry| entry.modified);
+    let mut total = entries.iter().map(|entry| entry.size_bytes).sum::<u64>();
+    let mut file_count = entries.len();
+    for entry in entries {
+        if total <= max_size_bytes {
+            break;
+        }
+        if protected_path.is_some_and(|protected| protected == entry.path) {
+            continue;
+        }
+        match fs::remove_file(&entry.path) {
+            Ok(()) => {
+                total = total.saturating_sub(entry.size_bytes);
+                file_count = file_count.saturating_sub(1);
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(error) => return Err(error.into()),
+        }
+    }
+    Ok(CacheUsage {
+        size_bytes: total,
+        file_count,
+    })
+}
+
+/// Clears regular preview artifacts without recursively deleting the selected
+/// directory. This remains safe even if a future configuration is malformed.
+pub fn clear_preview_cache(cache_dir: &Path) -> Result<CacheUsage, MediaError> {
+    if !cache_dir.exists() {
+        return preview_cache_usage(cache_dir);
+    }
+    for entry in preview_cache_entries(cache_dir)? {
+        match fs::remove_file(entry.path) {
+            Ok(()) => {}
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(error) => return Err(error.into()),
+        }
+    }
+    preview_cache_usage(cache_dir)
+}
+
+fn preview_cache_entries(cache_dir: &Path) -> Result<Vec<CacheEntry>, MediaError> {
+    let mut entries = Vec::new();
+    for entry in fs::read_dir(cache_dir)? {
+        let entry = entry?;
+        let metadata = entry.metadata()?;
+        if !metadata.is_file() {
+            continue;
+        }
+        entries.push(CacheEntry {
+            path: entry.path(),
+            size_bytes: metadata.len(),
+            modified: metadata.modified().unwrap_or(SystemTime::UNIX_EPOCH),
+        });
+    }
+    Ok(entries)
 }
 
 pub fn dimensions(path: &Path) -> Result<ImageDimensions, MediaError> {
@@ -940,6 +1040,36 @@ mod tests {
                 .join("../..")
                 .join(path)
         }
+    }
+
+    #[test]
+    fn preview_cache_pruning_respects_budget_and_protected_artifact() {
+        let cache = tempfile::tempdir().unwrap();
+        let older = cache.path().join("older.jpg");
+        let protected = cache.path().join("current.jpg");
+        fs::write(&older, [1_u8; 4]).unwrap();
+        fs::write(&protected, [2_u8; 4]).unwrap();
+
+        let usage = prune_preview_cache(cache.path(), 4, Some(&protected)).unwrap();
+
+        assert_eq!(usage.size_bytes, 4);
+        assert_eq!(usage.file_count, 1);
+        assert!(!older.exists());
+        assert!(protected.exists());
+    }
+
+    #[test]
+    fn clearing_preview_cache_does_not_traverse_nested_directories() {
+        let cache = tempfile::tempdir().unwrap();
+        fs::write(cache.path().join("preview.jpg"), [1_u8; 4]).unwrap();
+        let nested = cache.path().join("unrelated");
+        fs::create_dir(&nested).unwrap();
+        fs::write(nested.join("keep.txt"), b"keep").unwrap();
+
+        let usage = clear_preview_cache(cache.path()).unwrap();
+
+        assert_eq!(usage.size_bytes, 0);
+        assert!(nested.join("keep.txt").exists());
     }
 
     #[test]

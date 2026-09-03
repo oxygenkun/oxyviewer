@@ -61,7 +61,7 @@ React Query 管理 loading/error/retry/cache/abort lifecycle，但它不是 Rust
 - `FsCatalog` 的 folder sessions 与内存目录快照；
 - `JobRegistry` 的作业取消 flags；
 - `Library` 的 SQLite connection；
-- preview cache directory；
+- `CacheManager`（当前 preview cache directory、容量策略和配置文件）；
 - `HeifDecodeService` 当前 session、tiles 和 diagnostics。
 
 这些状态只活在 Rust 进程内，除了明确写入 SQLite/文件的部分。关闭应用后 sessions、jobs、
@@ -100,16 +100,22 @@ SQLite connection 放在 `Mutex` 内，因为 `rusqlite::Connection` 的访问�
 
 ## 6. 预览缓存
 
-preview cache 位于 Tauri `app_cache_dir()/previews`。它满足：
+preview cache 默认位于 Tauri `app_cache_dir()/previews`。用户可以在设置中选择一个父目录；
+自定义缓存总是落到该目录下的 `OxyViewer Cache/previews`，不会把用户选择的目录本身当成可清空
+空间。缓存设置持久化在 app data 下的 `cache-settings.json`。它满足：
 
 - 删除不会损坏源照片；
 - 下次请求可重新生成；
 - key 包含源文件身份和 decoder version；
 - 先写临时文件再原子持久化；
 - 同 backend tag 的 4096 stage 可以满足 512 请求；HEIF 另有 full-cache 复用路径。
+- 容量上限为 1–500 GB，默认 10 GB；预览返回后在后台按最近使用时间清理最旧文件，同一时刻
+  最多运行一个清理任务；
+- 当前请求返回的 artifact 在当次清理中受保护，避免 WebView 首次读取与清理竞争；
+- “清空缓存”只删除专属 `previews` 目录第一层的普通文件，不递归跟随任意用户路径。
 
-缓存清理/容量上限目前不是完整功能。未来清理必须只作用于 app cache 目录，绝不能按未校验
-路径递归删除。
+切换缓存位置只影响后续请求，不自动搬迁或删除旧位置中的缓存。这样切换是快速且可恢复的，
+同时不会把目录迁移 I/O 放进照片浏览关键路径。旧位置可由用户切回后显式清空。
 
 ## 7. XMP sidecar：用户数据，不是缓存
 

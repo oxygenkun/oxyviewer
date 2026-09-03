@@ -243,6 +243,17 @@ RAW/HEIF 的 JPEG 和部分 byte-cache 写入先在目标目录创建临时文�
 至少 90% 时也直接返回该 4096 缓存。只有实际 LibRaw full development 才写入独立 cache version。
 这些策略统称为 up-tier reuse。
 
+### 10.2 容量策略与自定义位置
+
+Tauri `CacheManager` 为每个 preview 请求提供当前目录快照。默认目录来自平台
+`app_cache_dir()/previews`；自定义父目录会追加应用专属的 `OxyViewer Cache/previews`。位置和
+1–500 GB 容量上限写入 app data 配置，切换位置不迁移旧 artifact。
+
+preview 返回时会刷新命中文件的最近使用时间，并在后台触发 blocking 清理；同一时刻最多运行
+一个清理任务。清理按修改时间从旧到新删除，避免把目录统计和清理延迟算进首图返回。刚返回给
+WebView 的文件会在这轮清理中保留，容量小于单个 artifact 时允许暂时超限，而不是删除正在显示
+的结果。“清空缓存”同样只处理专属目录第一层的普通文件，不做任意路径的递归删除。
+
 ## 11. 取消的真实语义
 
 需要准确区分三件事：

@@ -110,6 +110,15 @@ export interface PreviewResult {
   diagnostics?: PreviewDiagnostics;
 }
 
+export interface CacheSettings {
+  location: string;
+  defaultLocation: string;
+  customParent?: string;
+  isCustomLocation: boolean;
+  maxSizeBytes: number;
+  usedSizeBytes: number;
+}
+
 export interface AssetQuery {
   search?: string;
   kind?: AssetKind;

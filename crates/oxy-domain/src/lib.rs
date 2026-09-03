@@ -191,6 +191,28 @@ pub struct PreviewResult {
     pub diagnostics: Option<PreviewDiagnostics>,
 }
 
+/// User-visible policy and current state for the rebuildable preview cache.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct CacheSettings {
+    /// The app-owned directory that contains preview artifacts.
+    pub location: PathBuf,
+    pub default_location: PathBuf,
+    pub custom_parent: Option<PathBuf>,
+    pub is_custom_location: bool,
+    pub max_size_bytes: u64,
+    pub used_size_bytes: u64,
+}
+
+/// Mutable cache preferences. `custom_parent = None` restores the platform
+/// default; custom parents always receive an app-owned child directory.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct CacheSettingsUpdate {
+    pub custom_parent: Option<PathBuf>,
+    pub max_size_bytes: u64,
+}
+
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub enum HeifBackendKind {
