@@ -44,6 +44,7 @@ Promise。当前 store 没有持久化 middleware，应用重启后恢复默认�
 React Query 保存通过 Tauri 或 demo API 得到的数据：
 
 - assets 的多页结果；
+- 普通目录子节点和按名称命中的目录搜索结果；
 - library roots；
 - asset details；
 - 各 stage preview result。
@@ -79,7 +80,9 @@ erDiagram
         integer added_at
     }
     ASSETS {
+        text root_path PK
         text path PK
+        text parent_path
         text name
         text kind
         integer modified_at_ms
@@ -88,12 +91,23 @@ erDiagram
     ASSET_SEARCH {
         text path
         text name
+        text directory
+    }
+    DIRECTORIES {
+        text root_path PK
+        text path PK
+        text parent_path
+        text name
     }
 ```
 
-Mermaid 图没有画关系线，因为当前 schema 没有外键，也没有代码维护 `assets` 与 FTS 表的同步
-关系。当前已完整使用的是 `library_roots`：只有用户明确添加的 canonical path 才持久化。
-`assets` 和 `asset_search` 为后续可重建索引打基础，完整索引流程尚未落地。
+Mermaid 图没有画关系线，因为 cache schema 不用外键约束事实来源。只有用户明确添加的 canonical
+root 才会持久化和索引；同一路径可分别属于父、子两个显式 root，因此文件与目录以
+`(root_path, path)` 为复合身份。后台按目录短事务更新 `indexed_assets` / `indexed_directories`，
+完整 generation 结束时清理旧行并重建 `indexed_asset_search`。普通目录分页、目录树和跨子目录
+图片名称搜索优先读取该缓存；侧栏目录名称搜索只读取已完成索引，并由每个命中项携带必要的
+祖先摘要供前端合并成结果树。首次索引未完成或 metadata-aware 图片过滤时回退 `oxy-fs`，但
+目录搜索不会触发递归磁盘回退。
 
 SQLite connection 放在 `Mutex` 内，因为 `rusqlite::Connection` 的访问需要串行化。WAL 改善
 读写并存和崩溃恢复，但不会自动使单个 connection 并发执行。
@@ -192,7 +206,7 @@ session/root policy 显式加入 command 契约并增加符号链接测试。
 | 原始照片 | 是 | 否 | 用户备份 |
 | XMP sidecar | 是 | 否 | 用户备份 |
 | 显式 library root | 用户配置 | 不应无故删除 | SQLite/配置恢复 |
-| SQLite asset rows | 否 | 是 | 重新索引 |
+| SQLite asset/directory/FTS rows | 否 | 是 | 后台重新索引显式根目录 |
 | 生成预览文件 | 否 | 是 | 重新解码 |
 | React Query cache | 否 | 是 | 重新 invoke |
 | Rust directory snapshot | 否 | 是 | 重新 `read_dir` |

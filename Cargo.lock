@@ -2393,6 +2393,7 @@ name = "oxy-library"
 version = "0.1.0"
 dependencies = [
  "oxy-domain",
+ "oxy-fs",
  "parking_lot",
  "rusqlite",
  "tempfile",

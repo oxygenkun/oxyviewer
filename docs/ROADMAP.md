@@ -20,6 +20,7 @@ build all pass. Cross-platform CI and signed installers remain release work.
 
 - [x] Native folder picker and paged non-recursive directory scan
 - [x] Grid/list/loupe workspace, search, type filters, and sort controls
+- [x] Inline folder-name search with ancestor-preserving tree results
 - [x] Multi-selection model and keyboard navigation
 - [x] Safe rename/copy/move/trash service contracts
 - [ ] Filesystem watcher and streamed `folder_delta` events
@@ -116,8 +117,8 @@ files return a concrete LibRaw and fallback error instead of failing silently.
 
 ## Phase 4: Library and File Management
 
-- [~] SQLite WAL library root and FTS schema foundation
-- [ ] Low-priority indexing, cross-folder filters, and live search results
+- [x] SQLite WAL library roots, rebuildable directory/file cache, and FTS schema
+- [~] Low-priority indexing, cross-folder filters, and live search results — serialized background indexing and live FTS refresh now cover every directory inside one loaded root; cross-root and metadata-aware indexed filters remain
 - [ ] Complete file-operation dialogs, undo journal, and recovery
 
 ## Phase 5: Release Hardening

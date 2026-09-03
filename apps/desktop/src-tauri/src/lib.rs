@@ -3,10 +3,10 @@ mod exiftool;
 
 use oxy_domain::{
     AssetDetails, AssetKind, AssetQuery, AssetSummary, CacheSettings, CacheSettingsUpdate,
-    DirectorySummary, EditableMetadata, FileOperation, FileOperationResult, FolderSession,
-    HeifCapabilities, HeifDecodeSession, HeifDecodeStatus, HeifDiagnostics, JobId, JobPriority,
-    MetadataCapability, MetadataPatch, MetadataProvider, Page, PerfScenario, PreviewPriority,
-    PreviewResult, RenderLevel,
+    DirectorySearchMatch, DirectorySummary, EditableMetadata, FileOperation, FileOperationResult,
+    FolderSession, HeifCapabilities, HeifDecodeSession, HeifDecodeStatus, HeifDiagnostics, JobId,
+    JobPriority, LibraryIndexUpdate, MetadataCapability, MetadataPatch, MetadataProvider, Page,
+    PerfScenario, PreviewPriority, PreviewResult, RenderLevel,
 };
 use oxy_fs::FsCatalog;
 use oxy_library::Library;
@@ -24,12 +24,43 @@ struct AppState {
     metadata_provider: Arc<exiftool::ProviderManager>,
 }
 
+const LIBRARY_INDEX_UPDATED_EVENT: &str = "library-index-updated";
+
+fn schedule_library_index(app: tauri::AppHandle, library: Arc<Library>, root: PathBuf) {
+    tauri::async_runtime::spawn_blocking(move || match library.index_root(&root) {
+        Ok(Some(stats)) => {
+            let _ = app.emit(
+                LIBRARY_INDEX_UPDATED_EVENT,
+                LibraryIndexUpdate {
+                    root_path: root,
+                    asset_count: stats.asset_count,
+                    directory_count: stats.directory_count,
+                },
+            );
+        }
+        Ok(None) => {}
+        Err(error) => eprintln!("library indexing failed for {}: {error}", root.display()),
+    });
+}
+
 #[tauri::command]
-fn open_folder(path: PathBuf, state: State<'_, AppState>) -> Result<FolderSession, String> {
-    state
+fn open_folder(
+    path: PathBuf,
+    app: tauri::AppHandle,
+    state: State<'_, AppState>,
+) -> Result<FolderSession, String> {
+    let session = state
         .files
         .open_folder(path)
-        .map_err(|error| error.to_string())
+        .map_err(|error| error.to_string())?;
+    if state
+        .library
+        .contains_root(&session.root_path)
+        .unwrap_or(false)
+    {
+        schedule_library_index(app, state.library.clone(), session.root_path.clone());
+    }
+    Ok(session)
 }
 
 #[tauri::command]
@@ -42,6 +73,7 @@ async fn list_assets(
 ) -> Result<Page<AssetSummary>, String> {
     let files = state.files.clone();
     let metadata = state.metadata.clone();
+    let library = state.library.clone();
     tauri::async_runtime::spawn_blocking(move || {
         if query.minimum_rating.is_some() || query.color_label.is_some() {
             let mut assets = files
@@ -52,6 +84,18 @@ async fn list_assets(
                 .map_err(|error| error.to_string())?;
             Ok(oxy_fs::page_assets(&assets, &query, cursor.unwrap_or(0)))
         } else {
+            let root = files
+                .session_root(&session_id)
+                .map_err(|error| error.to_string())?;
+            let resolved_directory = files
+                .session_directory(&session_id, directory.as_deref())
+                .map_err(|error| error.to_string())?;
+            if let Some(page) = library
+                .list_assets(&root, &resolved_directory, &query, cursor.unwrap_or(0))
+                .map_err(|error| error.to_string())?
+            {
+                return Ok(page);
+            }
             files
                 .list_assets(&session_id, directory.as_deref(), &query, cursor)
                 .map_err(|error| error.to_string())
@@ -68,9 +112,42 @@ async fn list_directories(
     state: State<'_, AppState>,
 ) -> Result<Vec<DirectorySummary>, String> {
     let files = state.files.clone();
+    let library = state.library.clone();
     tauri::async_runtime::spawn_blocking(move || {
+        let root = files
+            .session_root(&session_id)
+            .map_err(|error| error.to_string())?;
+        let resolved_directory = files
+            .session_directory(&session_id, directory.as_deref())
+            .map_err(|error| error.to_string())?;
+        if let Some(directories) = library
+            .list_directories(&root, &resolved_directory)
+            .map_err(|error| error.to_string())?
+        {
+            return Ok(directories);
+        }
         files
             .list_directories(&session_id, directory.as_deref())
+            .map_err(|error| error.to_string())
+    })
+    .await
+    .map_err(|error| error.to_string())?
+}
+
+#[tauri::command]
+async fn search_directories(
+    session_id: String,
+    search: String,
+    state: State<'_, AppState>,
+) -> Result<Option<Vec<DirectorySearchMatch>>, String> {
+    let files = state.files.clone();
+    let library = state.library.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        let root = files
+            .session_root(&session_id)
+            .map_err(|error| error.to_string())?;
+        library
+            .search_directories(&root, &search)
             .map_err(|error| error.to_string())
     })
     .await
@@ -81,12 +158,23 @@ async fn list_directories(
 fn refresh_directory(
     session_id: String,
     directory: Option<PathBuf>,
+    app: tauri::AppHandle,
     state: State<'_, AppState>,
 ) -> Result<(), String> {
+    let root = state
+        .files
+        .session_root(&session_id)
+        .map_err(|error| error.to_string())?;
     state
         .files
         .refresh_directory(&session_id, directory.as_deref())
-        .map_err(|error| error.to_string())
+        .map_err(|error| error.to_string())?;
+    state
+        .library
+        .invalidate_index(&root)
+        .map_err(|error| error.to_string())?;
+    schedule_library_index(app, state.library.clone(), root);
+    Ok(())
 }
 
 #[tauri::command]
@@ -347,11 +435,17 @@ async fn install_exiftool(state: State<'_, AppState>) -> Result<exiftool::Exifto
 }
 
 #[tauri::command]
-fn add_library_root(path: PathBuf, state: State<'_, AppState>) -> Result<Vec<PathBuf>, String> {
+fn add_library_root(
+    path: PathBuf,
+    app: tauri::AppHandle,
+    state: State<'_, AppState>,
+) -> Result<Vec<PathBuf>, String> {
+    let root = path.canonicalize().map_err(|error| error.to_string())?;
     state
         .library
-        .add_root(&path)
+        .add_root(&root)
         .map_err(|error| error.to_string())?;
+    schedule_library_index(app, state.library.clone(), root);
     state.library.roots().map_err(|error| error.to_string())
 }
 
@@ -550,6 +644,7 @@ pub fn run() {
             open_folder,
             list_assets,
             list_directories,
+            search_directories,
             refresh_directory,
             get_asset_details,
             enrich_asset_metadata,

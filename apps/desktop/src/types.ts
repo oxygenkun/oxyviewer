@@ -18,6 +18,11 @@ export interface DirectorySummary {
   hasChildren: boolean;
 }
 
+export interface DirectorySearchMatch {
+  directory: DirectorySummary;
+  ancestors: DirectorySummary[];
+}
+
 export interface AssetSummary {
   id: string;
   path: string;
@@ -133,6 +138,12 @@ export interface Page<T> {
   items: T[];
   nextCursor?: number;
   total: number;
+}
+
+export interface LibraryIndexUpdate {
+  rootPath: string;
+  assetCount: number;
+  directoryCount: number;
 }
 
 export type HeifBackendKind =

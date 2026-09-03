@@ -22,6 +22,13 @@ pub struct DirectorySummary {
     pub has_children: bool,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct DirectorySearchMatch {
+    pub directory: DirectorySummary,
+    pub ancestors: Vec<DirectorySummary>,
+}
+
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "lowercase")]
 pub enum AssetKind {
@@ -350,6 +357,14 @@ pub struct Page<T> {
     pub items: Vec<T>,
     pub next_cursor: Option<usize>,
     pub total: usize,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct LibraryIndexUpdate {
+    pub root_path: PathBuf,
+    pub asset_count: usize,
+    pub directory_count: usize,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]

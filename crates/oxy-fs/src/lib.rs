@@ -42,6 +42,14 @@ pub struct FsCatalog {
     directory_cache: RwLock<HashMap<PathBuf, Arc<Vec<DirectorySummary>>>>,
 }
 
+/// One cheap, non-recursive filesystem batch used by the background library
+/// indexer. It deliberately contains no decoded image or embedded metadata.
+#[derive(Debug)]
+pub struct DirectoryScan {
+    pub assets: Vec<AssetSummary>,
+    pub directories: Vec<DirectorySummary>,
+}
+
 impl FsCatalog {
     pub fn open_folder(&self, path: impl AsRef<Path>) -> Result<FolderSession, FsError> {
         let root_path = path.as_ref().canonicalize()?;
@@ -121,6 +129,22 @@ impl FsCatalog {
         summary_for_path(path.as_ref())?.ok_or(FsError::InvalidFileName)
     }
 
+    pub fn session_root(&self, session_id: &str) -> Result<PathBuf, FsError> {
+        self.sessions
+            .read()
+            .get(session_id)
+            .cloned()
+            .ok_or_else(|| FsError::SessionNotFound(session_id.to_owned()))
+    }
+
+    pub fn session_directory(
+        &self,
+        session_id: &str,
+        directory: Option<&Path>,
+    ) -> Result<PathBuf, FsError> {
+        self.resolve_session_directory(session_id, directory)
+    }
+
     fn resolve_session_directory(
         &self,
         session_id: &str,
@@ -167,6 +191,41 @@ impl FsCatalog {
             .or_insert_with(|| directories.clone())
             .clone())
     }
+}
+
+pub fn scan_index_directory(root: &Path) -> Result<DirectoryScan, FsError> {
+    if !root.is_dir() {
+        return Err(FsError::InvalidFolder(root.to_owned()));
+    }
+    let mut assets = Vec::new();
+    let mut directories = Vec::new();
+    for entry in fs::read_dir(root)? {
+        let entry = match entry {
+            Ok(entry) => entry,
+            Err(_) => continue,
+        };
+        let path = entry.path();
+        if path.is_dir() {
+            let Some(name) = path
+                .file_name()
+                .and_then(|value| value.to_str())
+                .map(str::to_owned)
+            else {
+                continue;
+            };
+            directories.push(DirectorySummary {
+                path,
+                name,
+                has_children: true,
+            });
+        } else if let Some(summary) = summary_for_path(&path)? {
+            assets.push(summary);
+        }
+    }
+    Ok(DirectoryScan {
+        assets,
+        directories,
+    })
 }
 
 pub fn list_directories(root: &Path) -> Result<Vec<DirectorySummary>, FsError> {
@@ -519,6 +578,22 @@ mod tests {
         let nested = list_directories(&children[1].path).unwrap();
         assert_eq!(nested.len(), 1);
         assert_eq!(nested[0].name, "Coast");
+    }
+
+    #[test]
+    fn index_scan_returns_one_cheap_directory_batch() {
+        let directory = tempdir().unwrap();
+        File::create(directory.path().join("root.jpg")).unwrap();
+        let child = directory.path().join("child");
+        fs::create_dir(&child).unwrap();
+        File::create(child.join("nested.jpg")).unwrap();
+
+        let scan = scan_index_directory(directory.path()).unwrap();
+
+        assert_eq!(scan.assets.len(), 1);
+        assert_eq!(scan.assets[0].name, "root.jpg");
+        assert_eq!(scan.directories.len(), 1);
+        assert_eq!(scan.directories[0].name, "child");
     }
 
     #[test]

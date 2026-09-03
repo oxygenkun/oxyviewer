@@ -16,6 +16,7 @@ import {
   listAssets,
   listLibraryRoots,
   openFolder,
+  onLibraryIndexUpdated,
   refreshDirectory,
   removeLibraryRoot,
 } from "./lib/api";
@@ -63,6 +64,23 @@ export function App({ perfScenario }: { perfScenario?: PerfScenario }) {
 
   useEffect(() => saveWorkspace(workspace), [workspace]);
 
+  useEffect(() => {
+    let unlisten: (() => void) | undefined;
+    let disposed = false;
+    void onLibraryIndexUpdated(() => {
+      void queryClient.invalidateQueries({ queryKey: ["assets"] });
+      void queryClient.invalidateQueries({ queryKey: ["directories"] });
+      void queryClient.invalidateQueries({ queryKey: ["directory-search"] });
+    }).then((dispose) => {
+      if (disposed) dispose();
+      else unlisten = dispose;
+    });
+    return () => {
+      disposed = true;
+      unlisten?.();
+    };
+  }, [queryClient]);
+
   const query = useMemo<AssetQuery>(() => ({
     search: search || undefined,
     kind,
@@ -72,7 +90,7 @@ export function App({ perfScenario }: { perfScenario?: PerfScenario }) {
     direction,
     pageSize: 250,
   }), [colorLabel, direction, kind, minimumRating, search, sort]);
-  const filtersActive = Boolean(search || kind || minimumRating || colorLabel);
+  const shouldPreloadFilteredAssets = Boolean(!search && (kind || minimumRating || colorLabel));
   const preloadQuery = useMemo<AssetQuery>(() => ({
     sort: "name",
     direction: "ascending",
@@ -97,7 +115,7 @@ export function App({ perfScenario }: { perfScenario?: PerfScenario }) {
     ),
     initialPageParam: 0,
     getNextPageParam: (page) => page.nextCursor,
-    enabled: Boolean(filtersActive && activeSession && currentPath),
+    enabled: Boolean(shouldPreloadFilteredAssets && activeSession && currentPath),
     staleTime: Infinity,
   });
   const cheapAssets = useMemo(
@@ -311,7 +329,7 @@ export function App({ perfScenario }: { perfScenario?: PerfScenario }) {
         selectedCount={selectedIds.length}
         t={t}
       />
-      {filtersActive && assetsQuery.isSuccess && activeSession && currentPath ? (
+      {shouldPreloadFilteredAssets && assetsQuery.isSuccess && activeSession && currentPath ? (
         <BackgroundPreviewPreloader
           key={`${activeSession.id}:${currentPath}`}
           assets={preloadCandidates}

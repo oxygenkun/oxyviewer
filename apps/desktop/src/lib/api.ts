@@ -1,4 +1,5 @@
 import { convertFileSrc, invoke } from "@tauri-apps/api/core";
+import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { open } from "@tauri-apps/plugin-dialog";
 import type {
   AssetDetails,
@@ -6,11 +7,13 @@ import type {
   AssetQuery,
   AssetSummary,
   CacheSettings,
+  DirectorySearchMatch,
   DirectorySummary,
   FolderSession,
   HeifCapabilities,
   HeifDecodeSession,
   HeifDiagnostics,
+  LibraryIndexUpdate,
   ExiftoolStatus,
   MetadataPatch,
   Page,
@@ -97,7 +100,7 @@ export async function listAssets(
   if (!isTauri()) {
     const needle = query.search?.toLowerCase();
     const filtered = [...demoAssets]
-      .filter((asset) => asset.path.slice(0, asset.path.lastIndexOf("/")) === directory)
+      .filter((asset) => needle || asset.path.slice(0, asset.path.lastIndexOf("/")) === directory)
       .filter((asset) => !query.kind || asset.kind === query.kind)
       .filter((asset) => !query.minimumRating || (asset.rating ?? 0) >= query.minimumRating)
       .filter((asset) => !query.colorLabel || asset.colorLabel === query.colorLabel)
@@ -129,6 +132,13 @@ export async function listAssets(
   return page;
 }
 
+export async function onLibraryIndexUpdated(
+  callback: (update: LibraryIndexUpdate) => void,
+): Promise<UnlistenFn> {
+  if (!isTauri()) return () => {};
+  return listen<LibraryIndexUpdate>("library-index-updated", (event) => callback(event.payload));
+}
+
 export async function listDirectories(
   sessionId: string,
   directory: string,
@@ -140,6 +150,31 @@ export async function listDirectories(
     });
   }
   return invoke<DirectorySummary[]>("list_directories", { sessionId, directory });
+}
+
+export async function searchDirectories(
+  sessionId: string,
+  search: string,
+): Promise<DirectorySearchMatch[] | null> {
+  if (!isTauri()) {
+    const needle = search.trim().toLocaleLowerCase();
+    if (!needle) return [];
+    return demoDirectories
+      .filter((entry) => entry.name.toLocaleLowerCase().includes(needle))
+      .map((directory) => {
+        const relativeParts = directory.path
+          .slice(demoRoot.length)
+          .split("/")
+          .filter(Boolean);
+        let ancestorPath = demoRoot;
+        const ancestors = relativeParts.slice(0, -1).map((name) => {
+          ancestorPath = `${ancestorPath}/${name}`;
+          return { path: ancestorPath, name, hasChildren: true };
+        });
+        return { directory, ancestors };
+      });
+  }
+  return invoke<DirectorySearchMatch[] | null>("search_directories", { sessionId, search });
 }
 
 export async function refreshDirectory(sessionId: string, directory: string): Promise<void> {
