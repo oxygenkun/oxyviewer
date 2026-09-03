@@ -19,10 +19,10 @@ import { useWorkspaceStore } from "../store";
 import type { AssetKind, AssetSort, ViewMode } from "../types";
 
 const kinds: Array<AssetKind | undefined> = [undefined, "raw", "jpeg", "heif"];
-const views: Array<[ViewMode, typeof Grid3X3]> = [
-  ["grid", Grid3X3],
-  ["list", List],
-  ["loupe", Columns3],
+const views: Array<[ViewMode, typeof Grid3X3, MessageKey]> = [
+  ["grid", Grid3X3, "viewGrid"],
+  ["list", List, "viewList"],
+  ["loupe", Columns3, "viewLoupe"],
 ];
 
 interface ToolbarProps {
@@ -57,13 +57,14 @@ export function Toolbar({ total, t }: ToolbarProps) {
           {search ? <button onClick={() => setSearch("")}><X size={13} /></button> : null}
           <kbd>⌘ K</kbd>
         </label>
-        <div className="segmented" aria-label="View mode">
-          {views.map(([mode, Icon]) => (
+        <div className="segmented" aria-label={t("viewMode")}>
+          {views.map(([mode, Icon, label]) => (
             <button
               key={mode}
               className={view === mode ? "is-active" : ""}
               onClick={() => setView(mode)}
-              title={mode}
+              title={t(label)}
+              aria-label={t(label)}
             >
               <Icon size={15} />
             </button>
