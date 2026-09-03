@@ -463,6 +463,7 @@ export function Loupe({
             />
             {heifUsesTiles ? (
               <HeifTileCanvas
+                key={active.id}
                 asset={active}
                 displaySharpening={displaySharpening}
                 hardwareAcceleration={hardwareAcceleration}

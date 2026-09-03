@@ -1,5 +1,5 @@
 import { useQuery } from "@tanstack/react-query";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import {
   generatedPreview,
   isTauri,
@@ -192,7 +192,7 @@ export function Thumbnail({
     setFullImageFailed(false);
   }, [asset.id]);
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     if (!large || !preparedSize) return;
     onImageLoad?.(preparedSize);
     if (!ownsFullDetailStage || previewSource?.url !== preparedSource) return;
