@@ -23,6 +23,7 @@ export async function preloadAssetLoupePreview(
     if (source) await preloadBrowserImage(source);
     return;
   }
+  if (previewMethod.type !== "generatedImage") return;
 
   const result = await queryClient.fetchQuery({
     queryKey: assetRenderQueryKey(asset, previewMethod),

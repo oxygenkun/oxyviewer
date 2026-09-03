@@ -16,6 +16,13 @@ end-to-end regression harness that enforces these budgets is described in
 
 ## Verification Log
 
+- 2026-09-04: Restored progressive HEIF loupe tiles on a Windows cold full-image
+  cache miss after the single full-JPEG display path regressed perceived loading
+  to about two seconds. The embedded JPEG remains visible immediately; the first
+  full decode paints tiles as they arrive and still writes the source-derived
+  JPEG for later warm loads. Three Windows release backend runs measured a
+  569 ms median first tile and 797 ms median completion. macOS retains its
+  separately qualified ImageIO source-to-full-JPEG path.
 - 2026-09-03: Loupe filmstrip visibility now drives a sequential frontend
   warmup of the same first-stage render query used by the main image, followed
   by explicit WebView image decode. Every frontend image queue shares one

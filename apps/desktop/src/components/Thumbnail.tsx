@@ -22,7 +22,6 @@ import { beginPreviewDebug, type PreviewDebugHandle } from "../lib/previewDebug"
 import { nextProgressiveStage } from "../lib/progressiveImage";
 import { rawPreviewStatus, type RawPreviewStatus } from "../lib/rawPreview";
 import type {
-  AssetKind,
   AssetSummary,
   PreviewPriority,
   PreviewResult,
@@ -51,14 +50,6 @@ function hashSeed(value: string) {
     seed = (seed * 31 + value.charCodeAt(index)) % 360;
   }
   return seed;
-}
-
-/**
- * Formats whose loupe experience reports full-resolution single-image status.
- * Both RAW and HEIF use the unified full-resolution JPEG stage.
- */
-function hasFullDetailStage(kind: AssetKind): boolean {
-  return kind === "raw" || kind === "heif";
 }
 
 function generatedLevel(method: RenderMethod | undefined): RenderLevel | undefined {
@@ -93,6 +84,8 @@ export function Thumbnail({
   const previewMethodIdentity = renderMethodKey(previewMethod);
   const fullMethodIdentity = fullMethod ? renderMethodKey(fullMethod) : undefined;
   const distinctFullLevel = fullMethodIdentity !== previewMethodIdentity ? fullLevel : undefined;
+  const ownsFullDetailStage = asset.kind === "raw"
+    || (asset.kind === "heif" && fullMethod?.type === "generatedImage");
   const directSource = useMemo(
     () => previewMethod.type === "originalImage" ? previewUrl(asset) : undefined,
     [asset, previewMethod.type],
@@ -202,7 +195,7 @@ export function Thumbnail({
   useEffect(() => {
     if (!large || !preparedSize) return;
     onImageLoad?.(preparedSize);
-    if (!hasFullDetailStage(asset.kind) || previewSource?.url !== preparedSource) return;
+    if (!ownsFullDetailStage || previewSource?.url !== preparedSource) return;
     setLoaded((current) => current?.assetId === asset.id
       ? current
       : { assetId: asset.id, mode: "preview" });
@@ -211,6 +204,7 @@ export function Thumbnail({
     asset.kind,
     large,
     onImageLoad,
+    ownsFullDetailStage,
     preparedSize,
     preparedSource,
     previewSource?.url,
@@ -230,9 +224,9 @@ export function Thumbnail({
   }, [asset.id, fullQuery.data?.path, loaded, previewSource?.path]);
 
   useEffect(() => {
-    // Report progressive status only for formats that run the full-detail
-    // stage here.
-    if (!onRawPreviewStatus || !large || !hasFullDetailStage(asset.kind)) return;
+    // Windows/Linux HEIF status is owned by the tile canvas. macOS HEIF and
+    // RAW own a file-backed full stage here.
+    if (!onRawPreviewStatus || !large || !ownsFullDetailStage) return;
     onRawPreviewStatus(rawPreviewStatus({
       assetId: asset.id,
       loaded,
@@ -249,6 +243,7 @@ export function Thumbnail({
     large,
     loaded,
     onRawPreviewStatus,
+    ownsFullDetailStage,
   ]);
 
   const handleLoad = (size: { width: number; height: number }, result?: PreviewResult) => {
@@ -280,7 +275,7 @@ export function Thumbnail({
     }
     debug?.complete();
     if (source) markBrowserImageReady(source, size);
-    if (hasFullDetailStage(asset.kind) && large && result) {
+    if (ownsFullDetailStage && large && result) {
       setLoaded({ assetId: asset.id, mode: result === fullQuery.data ? "full" : "preview" });
     }
     if (source) setDisplayedImage({ assetId: asset.id, source });

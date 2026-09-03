@@ -17,7 +17,7 @@ describe("semantic render graph", () => {
 
     expect(preview.method).toEqual({ type: "generatedImage", requestLevel: "thumbnail" });
     expect(renderMethodKey(preview.method)).toBe(renderMethodKey(thumbnail.method));
-    expect(full.method).toEqual({ type: "generatedImage", requestLevel: "full" });
+    expect(full.method).toEqual({ type: "heifTiles" });
   });
 
   it("keeps the platform dimension without regressing the qualified HIF fast path", () => {

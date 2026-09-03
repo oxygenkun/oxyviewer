@@ -218,11 +218,11 @@ flowchart LR
 
 ### 6.3 HEIF 全分辨率显示
 
-HEIF 在放大镜中先保留内嵌 JPEG 作为临时底图，再通过统一 preview pipeline 请求完整 JPEG。
-缓存未命中时由平台适配器直接从源 HEIF 转换并原子落盘；前端随后通过文件 URL 一次加载，
-不启动 Canvas session，也不发送 RGBA/JPEG tiles。再次进入同一照片时直接读取缓存文件。
+HEIF 在放大镜中先保留内嵌 JPEG 作为临时底图。完整 JPEG 缓存未命中时，macOS 通过 ImageIO
+直接生成完整 JPEG 并以文件 URL 加载；Windows/Linux 启动 Canvas session，用 full-resolution
+tiles 渐进覆盖底图，并在瓦片发布后异步写入完整 JPEG。再次进入同一照片时各平台都直接读取缓存。
 
-旧的分片方案及停用原因记录于 [04：HEIF 完整 JPEG 与旧瓦片协议](architecture/04-heif-tile-session.md) 和
+具体协议与缓存策略记录于 [04：HEIF 渐进瓦片与完整 JPEG 缓存](architecture/04-heif-tile-session.md) 和
 [ADR 0004](adr/0004-heif-full-resolution-sessions.md)。
 
 ## 7. 为什么这样设计

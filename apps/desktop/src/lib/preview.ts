@@ -5,7 +5,8 @@ export type RenderSurface = "thumbnail" | "loupe";
 
 export type RenderMethod =
   | { type: "originalImage" }
-  | { type: "generatedImage"; requestLevel: RenderLevel };
+  | { type: "generatedImage"; requestLevel: RenderLevel }
+  | { type: "heifTiles" };
 
 type ConfiguredRenderMethod = RenderMethod | { type: "reuse"; level: RenderLevel };
 type RenderProfile = Record<RenderLevel, ConfiguredRenderMethod>;
@@ -46,11 +47,18 @@ const tiffProfile: RenderProfile = {
   full: { type: "generatedImage", requestLevel: "full" },
 };
 
-const heifProfile: RenderProfile = {
+const heifTileProfile: RenderProfile = {
   thumbnail: { type: "generatedImage", requestLevel: "thumbnail" },
   // Sony HIF's 160x120 camera JPEG fulfills both semantic levels. Resolving
   // this alias gives grid and loupe the exact same React Query cache identity.
   preview: { type: "reuse", level: "thumbnail" },
+  full: { type: "heifTiles" },
+};
+
+const heifJpegProfile: RenderProfile = {
+  ...heifTileProfile,
+  // ImageIO can transcode the source HEIF directly to a full-resolution JPEG
+  // without transferring a full RGBA buffer through Rust or the WebView.
   full: { type: "generatedImage", requestLevel: "full" },
 };
 
@@ -58,9 +66,9 @@ const heifProfile: RenderProfile = {
 // strategy is currently identical. A platform may diverge only after its
 // native path has its own fixture-backed performance and fidelity evidence.
 const heifProfiles: Record<RenderPlatform, RenderProfile> = {
-  windows: heifProfile,
-  macos: heifProfile,
-  linux: heifProfile,
+  windows: heifTileProfile,
+  macos: heifJpegProfile,
+  linux: heifTileProfile,
 };
 
 export function runtimeRenderPlatform(

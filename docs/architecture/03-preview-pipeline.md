@@ -73,9 +73,10 @@ sequenceDiagram
 这避免“高清请求已返回 URL，但文件尚未解码进浏览器”时让画面闪空。RAW full 失败也会继续
 保留渐进预览，而不是让放大镜不可用。
 
-Windows HEIF 的 `preview` renderer 复用 `thumbnail` 的 160×120 JPEG，`full` 则请求一个
-源 HEIF 直接转换的完整 JPEG。该小 JPEG 保留到完整图加载成功。这样不会让重复的全图解码和 JPEG
-编码占住串行 preview queue，阻塞屏内缩略图。
+HEIF 的 `preview` renderer 复用 `thumbnail` 的 160×120 JPEG。macOS 的 `full` 通过 ImageIO
+直接生成完整 JPEG；Windows/Linux 的 `full` 由独立 tile session 渐进绘制，并在首次 session
+结束后写入完整 JPEG供下次 loupe 加载。Windows/Linux full 工作不进入串行 preview queue，
+因此不会阻塞屏内缩略图。
 
 ## 5. 第一层调度：前端 `previewQueue`
 

@@ -1,14 +1,10 @@
-# 04：HEIF 完整 JPEG 与旧瓦片协议
+# 04：HEIF 渐进瓦片与完整 JPEG 缓存
 
-当前 loupe 已停用 Canvas 分片传输。活动路径只有两级：先显示源文件内嵌的小 JPEG，再由
-统一 preview pipeline 将源 HEIF 直接转换为 quality 95 的完整 JPEG，并以文件 URL 一次加载。
-macOS 转换停留在 ImageIO 的 `CGImageSource → CGImageDestination` 内，不把约 125 MiB 的整幅
-RGBA 缓冲区传回 Rust 再压缩；Windows/Linux 使用 FFmpeg 从 HEIF tile grid 直接合成 JPEG。
-缓存命中时不再解码源 HEIF。
-
-`HeifDecodeService`、`HeifTileCanvas`、event 和 `oxy-media://` tile protocol 暂时保留为诊断与
-回退实现，但 `Loupe` 不再挂载 `HeifTileCanvas`，所以正常浏览不会启动 session 或传输任何 tile。
-下文记录的是已停用的旧协议，便于后续安全删除。
+当前 loupe 先显示源文件内嵌的小 JPEG。完整 JPEG 缓存未命中时，macOS 使用 ImageIO 直接
+把源 HEIF 转换为 quality 95 完整 JPEG；Windows/Linux 的 `HeifDecodeService` 和
+`HeifTileCanvas` 启动 full-resolution session，通过 event 传递 tile 元数据，并通过
+`oxy-media://` 读取 RGBA 或 JPEG tile。瓦片发布后再写入完整 JPEG。缓存命中时各平台都直接
+以文件 URL 加载，不再解码源 HEIF 或启动 session。
 
 架构决策见 [ADR 0004](../adr/0004-heif-full-resolution-sessions.md)。
 
@@ -18,7 +14,7 @@ RGBA 缓冲区传回 Rust 再压缩；Windows/Linux 使用 FFmpeg 从 HEIF tile 
 `<img>` 等一个全尺寸临时文件生成完再显示，用户会经历长时间无反馈；如果把 RGBA 像素塞进
 command JSON，又会发生 base64/数组序列化和多次复制。
 
-旧方案曾把问题拆开：
+Windows/Linux 活动方案把问题拆开：
 
 - preview JPEG：统一 preview pipeline 提供，快速、可缓存、作为临时底图；
 - full RGBA：一次有身份的后台 session 解码；
