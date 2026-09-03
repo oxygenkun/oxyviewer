@@ -137,6 +137,10 @@ export function Loupe({
   );
   const showFocusAreas = focusAreasVisible !== focusTemporarilyInverted;
 
+  useEffect(() => {
+    if (activeId !== active.id) select(active.id);
+  }, [active.id, activeId, select]);
+
   const getSizes = useCallback(() => ({
     stage: elementSize(stageRef.current),
     image: elementSize(imageRef.current),

@@ -1,7 +1,8 @@
 import { useVirtualizer } from "@tanstack/react-virtual";
 import { Copy, FileImage, FolderOpen, Trash2 } from "lucide-react";
-import { memo, useCallback, useEffect, useRef, useState } from "react";
+import { memo, useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
+import { activeAssetIndex, gridRowForAsset } from "../lib/assetViewPosition";
 import type { MessageKey } from "../lib/i18n";
 import { platformFileManager } from "../lib/folderPaths";
 import { useWorkspaceStore } from "../store";
@@ -220,6 +221,7 @@ function VirtualGrid({
 }) {
   const parentRef = useRef<HTMLDivElement>(null);
   const [width, setWidth] = useState(900);
+  const activeId = useWorkspaceStore((state) => state.activeId);
   const selectedIds = useWorkspaceStore((state) => state.selectedIds);
   const select = useWorkspaceStore((state) => state.select);
   const setView = useWorkspaceStore((state) => state.setView);
@@ -229,6 +231,11 @@ function VirtualGrid({
   const rowHeight = portraitPriority ? 274 : 194;
   const columns = Math.max(2, Math.floor(width / (portraitPriority ? 150 : 190)));
   const rowCount = Math.ceil(assets.length / columns);
+  const restoreActiveId = useRef(activeId).current;
+  const restoreAssetIndex = activeAssetIndex(assets, restoreActiveId);
+  const restoreRowIndex = restoreAssetIndex === undefined
+    ? undefined
+    : gridRowForAsset(restoreAssetIndex, columns);
   const virtualizer = useVirtualizer({
     count: rowCount,
     getScrollElement: () => parentRef.current,
@@ -247,6 +254,11 @@ function VirtualGrid({
   useEffect(() => {
     virtualizer.measure();
   }, [columns, rowHeight, virtualizer]);
+
+  useLayoutEffect(() => {
+    if (restoreRowIndex === undefined) return;
+    virtualizer.scrollToIndex(restoreRowIndex, { align: "center" });
+  }, [restoreRowIndex, virtualizer]);
 
   useEffect(() => {
     const last = rows.at(-1);
@@ -303,6 +315,7 @@ function VirtualList({
   onAssetContextMenu: (event: React.MouseEvent, asset: AssetSummary) => void;
 }) {
   const parentRef = useRef<HTMLDivElement>(null);
+  const activeId = useWorkspaceStore((state) => state.activeId);
   const selectedIds = useWorkspaceStore((state) => state.selectedIds);
   const select = useWorkspaceStore((state) => state.select);
   const setView = useWorkspaceStore((state) => state.setView);
@@ -313,6 +326,13 @@ function VirtualList({
     overscan: 8,
   });
   const rows = virtualizer.getVirtualItems();
+  const restoreActiveId = useRef(activeId).current;
+  const restoreAssetIndex = activeAssetIndex(assets, restoreActiveId);
+
+  useLayoutEffect(() => {
+    if (restoreAssetIndex === undefined) return;
+    virtualizer.scrollToIndex(restoreAssetIndex, { align: "center" });
+  }, [restoreAssetIndex, virtualizer]);
 
   useEffect(() => {
     const last = rows.at(-1);
