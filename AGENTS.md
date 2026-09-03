@@ -69,6 +69,33 @@ Use `pnpm icons` only when intentionally regenerating application icons.
 - Update relevant files in `docs` when changing architecture, format support,
   performance behavior, native dependencies, or roadmap status.
 
+## Commit Messages
+
+Follow [Conventional Commits 1.0.0](https://www.conventionalcommits.org/en/v1.0.0/):
+
+```text
+<type>[optional scope]: <one-sentence summary>
+
+- <optional implementation detail>
+- <optional implementation detail>
+
+[optional footer(s)]
+```
+
+- Always begin with a single-line summary in the form
+  `<type>[optional scope]: <description>`; keep it concise, specific, and in
+  the imperative mood.
+- Use `feat` for new behavior and `fix` for bug fixes. Other common types are
+  `docs`, `refactor`, `perf`, `test`, `build`, `ci`, and `chore`.
+- Add a lowercase scope when it makes the affected area clearer, for example
+  `feat(library): add persistent folder indexing`.
+- When the summary does not fully explain a non-trivial change, leave one blank
+  line and add a Markdown bullet list describing the important changes. Omit
+  the body for simple commits; do not repeat the summary in the list.
+- Mark breaking changes with `!` before the colon and/or a
+  `BREAKING CHANGE: <description>` footer.
+- Keep each commit focused on one coherent change.
+
 ## Verification
 
 Choose checks according to the change, then run the broad suite for shared or
