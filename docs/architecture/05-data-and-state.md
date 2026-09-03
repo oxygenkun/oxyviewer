@@ -113,18 +113,24 @@ preview cache 位于 Tauri `app_cache_dir()/previews`。它满足：
 
 ## 7. XMP sidecar：用户数据，不是缓存
 
-`oxy-metadata` 对 RAW 的 rating/color 读写使用同名 XMP sidecar；更新时只替换
+`oxy-metadata` 对所有格式的 rating/color 默认读写同名 XMP sidecar；更新时只替换
 `rdf:Description` 上对应的 `xmp:Rating` / `xmp:Label` 属性，保留其他 XMP 字段。首次写入时
-创建最小 Adobe 风格 XMP。JPEG/HEIF/HIF 则通过 ExifTool 更新容器内嵌 XMP。
+创建最小 Adobe 风格 XMP。读取优先级为 sidecar、ExifTool 读取的内嵌 XMP、空值，因此存在
+sidecar 时它明确覆盖文件内部的旧值，且不启动 ExifTool。
 
 Sony HIF 需要额外遵循 Imaging Edge Viewer 的写法：XMP 使用 compact shorthand，颜色值为
 小写 `red` / `yellow` / `green` / `blue`，清除值写作 `Rating=0` / `Label=None`。Sony Viewer
 没有紫色标签，因此 HIF 检查器只提供上述四种颜色；其他格式仍使用通用 Adobe 标签语义。
 
-这是一项持久用户写入。它与 preview cache 不同，不能随意删除。内嵌写入当前从 `PATH`
-查找 `exiftool`，也可用 `OXY_EXIFTOOL_PATH` 指定；正式发行版仍需捆绑 worker。
+sidecar 是持久用户数据，与 preview cache 不同，不能随意删除。只有用户主动选择“同步到
+文件内部”时才会写 JPEG/HEIF/HIF 容器，并按用户路径、应用数据目录中的版本化能力包、
+`OXY_EXIFTOOL_PATH`、`PATH` 顺序查找 ExifTool。能力缺失时才提示直接下载经过 SHA-256 校验
+的固定版本官方包，或指定并验证已有执行文件。核心安装包不捆绑 worker；体积、发现顺序及
+下载安全边界见
+[`ADR 0007`](../adr/0007-optional-exiftool-capability.md)。
 
-`patch_metadata` 在 blocking worker 中处理多选路径，完成后使对应目录摘要缓存失效，并刷新
+`patch_metadata` 在 blocking worker 中把多选编辑写入各自 sidecar；独立的
+`sync_metadata_to_embedded` 才调用 ExifTool。完成后使对应目录摘要缓存失效，并刷新
 详情与列表查询。普通目录打开仍先使用廉价分页，首屏返回后再异步批量补全已加载分页的
 rating/color；只有启用 rating/color 筛选时才批量读取整个当前目录的元数据，然后进行过滤和分页。
 

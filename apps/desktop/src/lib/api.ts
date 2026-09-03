@@ -10,6 +10,7 @@ import type {
   HeifCapabilities,
   HeifDecodeSession,
   HeifDiagnostics,
+  ExiftoolStatus,
   MetadataPatch,
   Page,
   PerfScenario,
@@ -158,6 +159,11 @@ export async function getAssetDetails(asset: AssetSummary): Promise<AssetDetails
         copyright: "Personal archive",
         keywords: ["field-notes", asset.kind],
       },
+      metadataCapability: {
+        provider: asset.kind === "raw" ? "sidecar" : "exiftool",
+        readable: true,
+        writable: true,
+      },
       sidecarPath: asset.hasSidecar ? asset.path.replace(/\.[^.]+$/, ".xmp") : undefined,
       focusInfo: ["raw", "heif", "jpeg"].includes(asset.kind) ? {
         coordinateWidth: 6_240,
@@ -184,10 +190,37 @@ export async function patchMetadata(paths: string[], patch: MetadataPatch): Prom
     for (const asset of demoAssets.filter((asset) => paths.includes(asset.path))) {
       if ("rating" in patch) asset.rating = patch.rating ?? undefined;
       if ("colorLabel" in patch) asset.colorLabel = patch.colorLabel ?? undefined;
+      asset.hasSidecar = true;
     }
     return "demo-metadata-job";
   }
   return invoke<string>("patch_metadata", { paths, patch });
+}
+
+export async function syncMetadataToEmbedded(paths: string[]): Promise<string> {
+  if (!isTauri()) return "demo-embedded-sync-job";
+  return invoke<string>("sync_metadata_to_embedded", { paths });
+}
+
+export async function getExiftoolStatus(): Promise<ExiftoolStatus> {
+  if (!isTauri()) return { available: true, source: "path", version: "demo" };
+  return invoke<ExiftoolStatus>("get_exiftool_status");
+}
+
+export async function installExiftool(): Promise<ExiftoolStatus> {
+  if (!isTauri()) return { available: true, source: "managed", version: "demo" };
+  return invoke<ExiftoolStatus>("install_exiftool");
+}
+
+export async function chooseAndConfigureExiftool(): Promise<ExiftoolStatus | null> {
+  if (!isTauri()) return { available: true, source: "user", version: "demo" };
+  const selection = await open({
+    directory: false,
+    multiple: false,
+    title: "Select ExifTool executable",
+  });
+  if (typeof selection !== "string") return null;
+  return invoke<ExiftoolStatus>("configure_exiftool", { path: selection });
 }
 
 const demoRoots = new Set<string>();

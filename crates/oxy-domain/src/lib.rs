@@ -62,6 +62,23 @@ pub struct EditableMetadata {
     pub keywords: Vec<String>,
 }
 
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub enum MetadataProvider {
+    Sidecar,
+    Exiftool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct MetadataCapability {
+    pub provider: MetadataProvider,
+    pub readable: bool,
+    pub writable: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub detail: Option<String>,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct FocusRegion {
@@ -93,6 +110,7 @@ pub struct AssetDetails {
     pub width: Option<u32>,
     pub height: Option<u32>,
     pub metadata: EditableMetadata,
+    pub metadata_capability: MetadataCapability,
     pub sidecar_path: Option<PathBuf>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub focus_info: Option<FocusInfo>,

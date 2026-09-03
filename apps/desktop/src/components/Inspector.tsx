@@ -1,8 +1,17 @@
 import { useMutation, useQuery, useQueryClient, type InfiniteData } from "@tanstack/react-query";
-import { Circle, FileCog, Image, Star, Tag, X } from "lucide-react";
-import { getAssetDetails, patchMetadata } from "../lib/api";
+import { useState } from "react";
+import { Circle, Download, FileCog, FolderSearch, Image, Star, Tag, X } from "lucide-react";
+import {
+  chooseAndConfigureExiftool,
+  getAssetDetails,
+  getExiftoolStatus,
+  installExiftool,
+  patchMetadata,
+  syncMetadataToEmbedded,
+} from "../lib/api";
 import type { MessageKey } from "../lib/i18n";
 import { patchAssetDetails, patchAssetPages, patchAssetSummaries } from "../lib/metadataCache";
+import { requiresExiftoolSetup } from "../lib/metadataProvider";
 import type { AssetDetails, AssetSummary, MetadataPatch, Page } from "../types";
 import { formatBytes } from "./AssetBrowser";
 import { Thumbnail } from "./Thumbnail";
@@ -19,6 +28,7 @@ const sonyHifColorLabels = colorLabels.filter((label) => label !== "Purple");
 
 export function Inspector({ asset, selectedCount, selectedPaths, t }: InspectorProps) {
   const queryClient = useQueryClient();
+  const [syncPending, setSyncPending] = useState(false);
   const details = useQuery({
     queryKey: ["asset-details", asset?.id],
     queryFn: () => getAssetDetails(asset!),
@@ -64,6 +74,45 @@ export function Inspector({ asset, selectedCount, selectedPaths, t }: InspectorP
   });
   const currentRating = details.data?.metadata.rating;
   const currentColor = details.data?.metadata.colorLabel;
+  const metadataPaths = selectedPaths.length ? selectedPaths : asset ? [asset.path] : [];
+  const syncEmbedded = useMutation({
+    mutationFn: () => syncMetadataToEmbedded(metadataPaths),
+    onSettled: async () => {
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: ["asset-details"] }),
+        queryClient.invalidateQueries({ queryKey: ["assets"] }),
+        queryClient.invalidateQueries({ queryKey: ["asset-metadata"] }),
+      ]);
+    },
+  });
+  const providerSetup = useMutation({
+    mutationFn: (source: "download" | "select") => source === "download"
+      ? installExiftool()
+      : chooseAndConfigureExiftool(),
+    onSuccess: async (status) => {
+      if (!status?.available || !syncPending) return;
+      setSyncPending(false);
+      await queryClient.invalidateQueries({ queryKey: ["asset-details", asset?.id] });
+      syncEmbedded.mutate();
+    },
+  });
+  const providerCheck = useMutation({
+    mutationFn: getExiftoolStatus,
+    onSuccess: (status) => {
+      if (asset && requiresExiftoolSetup(asset.kind, !status.available)) {
+        setSyncPending(true);
+        providerSetup.reset();
+      } else {
+        syncEmbedded.mutate();
+      }
+    },
+  });
+  const requestPatch = (value: MetadataPatch) => {
+    patch.mutate(value);
+  };
+  const requestEmbeddedSync = () => {
+    providerCheck.mutate();
+  };
   const availableColorLabels = asset?.extension.toLowerCase() === "hif"
     ? sonyHifColorLabels
     : colorLabels;
@@ -92,8 +141,8 @@ export function Inspector({ asset, selectedCount, selectedPaths, t }: InspectorP
               {[1, 2, 3, 4, 5].map((rating) => (
                 <button
                   key={rating}
-                  onClick={() => patch.mutate({ rating: currentRating === rating ? null : rating })}
-                  disabled={patch.isPending || details.isLoading}
+                  onClick={() => requestPatch({ rating: currentRating === rating ? null : rating })}
+                  disabled={patch.isPending || details.isLoading || providerSetup.isPending}
                   title={`${rating} / 5`}
                 >
                   <Star
@@ -110,22 +159,37 @@ export function Inspector({ asset, selectedCount, selectedPaths, t }: InspectorP
                   key={label}
                   className={currentColor?.toLowerCase() === label.toLowerCase() ? "is-active" : ""}
                   style={{ "--label-color": `var(--label-${label.toLowerCase()})` } as React.CSSProperties}
-                  onClick={() => patch.mutate({
+                  onClick={() => requestPatch({
                     colorLabel: currentColor?.toLowerCase() === label.toLowerCase() ? null : label,
                   })}
-                  disabled={patch.isPending || details.isLoading}
+                  disabled={patch.isPending || details.isLoading || providerSetup.isPending}
                   title={t(label.toLowerCase() as MessageKey)}
                 />
               ))}
               <button
                 className="color-labels__clear"
-                onClick={() => patch.mutate({ colorLabel: null })}
-                disabled={patch.isPending || !currentColor}
+                onClick={() => requestPatch({ colorLabel: null })}
+                disabled={patch.isPending || !currentColor || providerSetup.isPending}
                 title={t("clearColor")}
               ><X size={11} /></button>
             </div>
             {patch.isError || details.isError ? (
               <small className="metadata-error">{String(patch.error ?? details.error)}</small>
+            ) : null}
+            {asset.kind !== "raw" && details.data?.asset.hasSidecar ? (
+              <button
+                className="metadata-sync-button"
+                onClick={requestEmbeddedSync}
+                disabled={syncEmbedded.isPending || providerSetup.isPending || providerCheck.isPending}
+              >
+                {syncEmbedded.isPending ? t("syncingEmbeddedMetadata") : t("syncEmbeddedMetadata")}
+              </button>
+            ) : null}
+            {syncEmbedded.isError ? (
+              <small className="metadata-error">{String(syncEmbedded.error)}</small>
+            ) : null}
+            {providerCheck.isError ? (
+              <small className="metadata-error">{String(providerCheck.error)}</small>
             ) : null}
             <label>{t("keywords")}</label>
             <div className="tags">
@@ -142,10 +206,61 @@ export function Inspector({ asset, selectedCount, selectedPaths, t }: InspectorP
             } />
             <DataRow label={t("size")} value={formatBytes(asset.sizeBytes)} />
             <DataRow label={t("modified")} value={new Date(asset.modifiedAtMs).toLocaleString()} />
-            <DataRow label={t("sidecar")} value={asset.hasSidecar ? "XMP" : "—"} accent={asset.hasSidecar} />
+            <DataRow
+              label={t("sidecar")}
+              value={details.data?.asset.hasSidecar ? "XMP" : "—"}
+              accent={details.data?.asset.hasSidecar}
+            />
+            <DataRow
+              label={t("metadataSource")}
+              value={details.data?.asset.hasSidecar
+                ? t("sidecarOverridesEmbedded")
+                : details.data?.metadataCapability.provider === "exiftool"
+                  ? t("embeddedMetadata")
+                  : "—"}
+            />
           </InspectorSection>
         </div>
       )}
+      {syncPending ? (
+        <div className="metadata-provider-overlay" role="presentation">
+          <div
+            className="metadata-provider-dialog"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="exiftool-required-title"
+          >
+            <header>
+              <strong id="exiftool-required-title">{t("exiftoolRequiredTitle")}</strong>
+              <button
+                onClick={() => setSyncPending(false)}
+                disabled={providerSetup.isPending}
+                aria-label={t("cancel")}
+              ><X size={14} /></button>
+            </header>
+            <p>{t("exiftoolRequiredBody")}</p>
+            {providerSetup.isPending ? <small>{t("installingExiftool")}</small> : null}
+            {providerSetup.isError ? (
+              <small className="metadata-error">{String(providerSetup.error)}</small>
+            ) : null}
+            <div className="metadata-provider-dialog__actions">
+              <button
+                className="is-primary"
+                onClick={() => providerSetup.mutate("download")}
+                disabled={providerSetup.isPending}
+              ><Download size={13} />{t("downloadExiftool")}</button>
+              <button
+                onClick={() => providerSetup.mutate("select")}
+                disabled={providerSetup.isPending}
+              ><FolderSearch size={13} />{t("selectExiftool")}</button>
+              <button
+                onClick={() => setSyncPending(false)}
+                disabled={providerSetup.isPending}
+              >{t("cancel")}</button>
+            </div>
+          </div>
+        </div>
+      ) : null}
     </aside>
   );
 }
@@ -169,4 +284,3 @@ function DataRow({ label, value, accent = false }: { label: string; value: strin
     </div>
   );
 }
-

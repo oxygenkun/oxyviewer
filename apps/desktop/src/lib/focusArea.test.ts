@@ -61,4 +61,17 @@ describe("focus area mapping", () => {
     expect(region.height).toBeCloseTo(0.1);
     expect(region.syntheticFrame).toBe(false);
   });
+
+  it("maps the repository portrait HIF focus metadata onto macOS ImageIO dimensions", () => {
+    const [region] = mapFocusRegions({
+      coordinateWidth: 4_672,
+      coordinateHeight: 7_008,
+      regions: [{ centerX: 2_327, centerY: 1_489, width: 154, height: 153 }],
+    }, { width: 2_730, height: 4_095 }, { width: 4_672, height: 7_008 });
+
+    expect(region.left + region.width / 2).toBeCloseTo(2_327 / 4_672);
+    expect(region.top + region.height / 2).toBeCloseTo(1_489 / 7_008);
+    expect(region.syntheticFrame).toBe(false);
+  });
+
 });

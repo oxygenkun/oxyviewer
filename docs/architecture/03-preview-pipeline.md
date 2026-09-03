@@ -197,6 +197,13 @@ JPEG/完整 RAW 自然尺寸映射坐标，
 存在 `FocusFrameSize` 时显示精确实线框；仅有 `FocusLocation` 中心时显示带中心点的虚线
 估算框，避免把估算大小冒充相机记录。
 
+拍摄对焦信息不依赖 ExifTool：后者只负责无 sidecar 时读取内嵌 XMP，以及用户明确发起的
+“同步到文件内部”。默认评分/颜色编辑写 sidecar。若系统未安装这个可选 worker，
+`get_asset_details` 仍返回尺寸、空的可编辑元数据和已解析的 `FocusInfo`，避免 macOS 等环境中
+因附属能力缺失而让整个对焦层失效。仓库 Sony HIF fixture 同时覆盖 MakerNote 方向变换、
+macOS ImageIO 竖拍尺寸映射和前端区域映射；CI 在三个桌面平台运行媒体、元数据和桌面桥接
+回归测试。
+
 ## 9. HEIF 预览路径
 
 HEIF preview 优先尝试容器内 thumbnail，接受尺寸不足的内嵌图作为快速第一阶段。Windows Sony

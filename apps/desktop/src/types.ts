@@ -46,6 +46,21 @@ export interface MetadataPatch {
   colorLabel?: string | null;
 }
 
+export interface MetadataCapability {
+  provider: "sidecar" | "exiftool";
+  readable: boolean;
+  writable: boolean;
+  detail?: string;
+}
+
+export interface ExiftoolStatus {
+  available: boolean;
+  source?: "user" | "managed" | "configured" | "path";
+  version?: string;
+  executablePath?: string;
+  detail?: string;
+}
+
 export interface FocusRegion {
   centerX: number;
   centerY: number;
@@ -64,6 +79,7 @@ export interface AssetDetails {
   width?: number;
   height?: number;
   metadata: EditableMetadata;
+  metadataCapability: MetadataCapability;
   sidecarPath?: string;
   focusInfo?: FocusInfo;
 }

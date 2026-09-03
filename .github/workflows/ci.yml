@@ -39,6 +39,7 @@ jobs:
           cache: pnpm
       - run: pnpm install --frozen-lockfile
       - run: pnpm check
+      - run: pnpm test
       - run: pnpm build
 
   build:
@@ -83,6 +84,8 @@ jobs:
           node-version: 22
           cache: pnpm
       - run: pnpm install --frozen-lockfile
+      - name: Cross-platform HIF detail and media regression tests
+        run: cargo test -p oxy-media -p oxy-metadata -p oxyviewer
       - name: Build Tauri app
         if: runner.os == 'Linux'
         working-directory: apps/desktop

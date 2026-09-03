@@ -11,6 +11,7 @@ use std::{
     io::Write,
     path::{Path, PathBuf},
     process::{Command, Output},
+    sync::{Arc, RwLock},
 };
 use thiserror::Error;
 
@@ -22,34 +23,132 @@ pub enum MetadataError {
     InvalidRating(u8),
     #[error("Sony HIF supports only red, yellow, green, and blue color labels, not {0}")]
     UnsupportedHifColorLabel(String),
+    #[error("metadata sidecar was not found for {0}")]
+    SidecarUnavailable(PathBuf),
     #[error("metadata read failed: {0}")]
     Read(String),
     #[error(transparent)]
     Io(#[from] std::io::Error),
 }
 
-/// Reads editable metadata. RAW files use their adjacent XMP sidecar; formats
-/// with embedded XMP are read through ExifTool.
-pub fn read_metadata(path: &Path, kind: AssetKind) -> Result<EditableMetadata, MetadataError> {
-    if kind == AssetKind::Raw {
-        return read_raw_sidecar(path);
+/// Stable application boundary for metadata providers. Capture metadata and
+/// focus information stay in-process; this configured executable is consulted
+/// only for embedded XMP reads and writes.
+#[derive(Debug, Clone, Default)]
+pub struct MetadataFacade {
+    exiftool: Arc<RwLock<Option<PathBuf>>>,
+}
+
+impl MetadataFacade {
+    pub fn new(exiftool: Option<PathBuf>) -> Self {
+        Self {
+            exiftool: Arc::new(RwLock::new(exiftool)),
+        }
     }
-    let mut values = read_embedded_batch(std::slice::from_ref(&path.to_path_buf()))?;
+
+    pub fn set_exiftool(&self, executable: Option<PathBuf>) {
+        *self
+            .exiftool
+            .write()
+            .expect("metadata provider lock poisoned") = executable;
+    }
+
+    pub fn exiftool(&self) -> Option<PathBuf> {
+        self.exiftool
+            .read()
+            .expect("metadata provider lock poisoned")
+            .clone()
+    }
+
+    pub fn read_metadata(
+        &self,
+        path: &Path,
+        kind: AssetKind,
+    ) -> Result<EditableMetadata, MetadataError> {
+        let executable = self.exiftool();
+        read_metadata_with_exiftool(path, kind, executable.as_deref())
+    }
+
+    pub fn enrich_summaries(
+        &self,
+        assets: &mut [oxy_domain::AssetSummary],
+    ) -> Result<(), MetadataError> {
+        let executable = self.exiftool();
+        enrich_summaries_with_exiftool(assets, executable.as_deref())
+    }
+
+    pub fn patch_metadata(
+        &self,
+        path: &Path,
+        kind: AssetKind,
+        patch: &oxy_domain::MetadataPatch,
+    ) -> Result<PathBuf, MetadataError> {
+        patch_metadata_to_sidecar(path, kind, patch)
+    }
+
+    pub fn sync_metadata_to_embedded(&self, path: &Path) -> Result<PathBuf, MetadataError> {
+        if !sidecar_path(path).is_file() {
+            return Err(MetadataError::SidecarUnavailable(path.to_path_buf()));
+        }
+        let metadata = read_sidecar(path)?;
+        let patch = oxy_domain::MetadataPatch {
+            rating: Some(metadata.rating),
+            color_label: Some(metadata.color_label),
+            ..oxy_domain::MetadataPatch::default()
+        };
+        let executable = self.exiftool();
+        patch_embedded(path, &patch, executable.as_deref())
+    }
+
+    pub fn exiftool_version(&self) -> Result<String, MetadataError> {
+        let executable = self.exiftool();
+        probe_exiftool(executable.as_deref())
+    }
+}
+
+/// Reads editable metadata from an adjacent XMP sidecar first. Without a
+/// sidecar, RAW returns empty metadata and other formats try embedded XMP.
+pub fn read_metadata(path: &Path, kind: AssetKind) -> Result<EditableMetadata, MetadataError> {
+    read_metadata_with_exiftool(path, kind, None)
+}
+
+/// Reads editable metadata using a facade-selected ExifTool executable for
+/// embedded formats. Passing `None` preserves environment/PATH discovery.
+pub fn read_metadata_with_exiftool(
+    path: &Path,
+    kind: AssetKind,
+    exiftool: Option<&Path>,
+) -> Result<EditableMetadata, MetadataError> {
+    if sidecar_path(path).is_file() || kind == AssetKind::Raw {
+        return read_sidecar(path);
+    }
+    let mut values = read_embedded_batch(std::slice::from_ref(&path.to_path_buf()), exiftool)?;
     Ok(values.remove(path).unwrap_or_default())
 }
 
 /// Enriches summaries in-place. A single ExifTool process is used per chunk so
 /// metadata filtering does not spawn a worker for every JPEG/HEIF file.
 pub fn enrich_summaries(assets: &mut [oxy_domain::AssetSummary]) -> Result<(), MetadataError> {
+    enrich_summaries_with_exiftool(assets, None)
+}
+
+pub fn enrich_summaries_with_exiftool(
+    assets: &mut [oxy_domain::AssetSummary],
+    exiftool: Option<&Path>,
+) -> Result<(), MetadataError> {
     let embedded = assets
         .iter()
-        .filter(|asset| asset.kind != AssetKind::Raw)
+        .filter(|asset| asset.kind != AssetKind::Raw && !sidecar_path(&asset.path).is_file())
         .map(|asset| asset.path.clone())
         .collect::<Vec<_>>();
-    let embedded_values = read_embedded_batch(&embedded)?;
+    let embedded_values = match read_embedded_batch(&embedded, exiftool) {
+        Ok(values) => values,
+        Err(MetadataError::EmbeddedWorkerUnavailable) => HashMap::new(),
+        Err(error) => return Err(error),
+    };
     for asset in assets {
-        let metadata = if asset.kind == AssetKind::Raw {
-            read_raw_sidecar(&asset.path)?
+        let metadata = if asset.kind == AssetKind::Raw || sidecar_path(&asset.path).is_file() {
+            read_sidecar(&asset.path)?
         } else {
             embedded_values
                 .get(&asset.path)
@@ -67,19 +166,29 @@ pub fn patch_metadata(
     kind: AssetKind,
     patch: &oxy_domain::MetadataPatch,
 ) -> Result<PathBuf, MetadataError> {
+    patch_metadata_to_sidecar(path, kind, patch)
+}
+
+pub fn patch_metadata_to_sidecar(
+    path: &Path,
+    _kind: AssetKind,
+    patch: &oxy_domain::MetadataPatch,
+) -> Result<PathBuf, MetadataError> {
+    validate_patch(patch)?;
+    patch_sidecar(path, patch)
+}
+
+fn validate_patch(patch: &oxy_domain::MetadataPatch) -> Result<(), MetadataError> {
     if let Some(Some(rating)) = patch.rating
         && rating > 5
     {
         return Err(MetadataError::InvalidRating(rating));
     }
-    match kind {
-        AssetKind::Raw => patch_raw_sidecar(path, patch),
-        _ => patch_embedded(path, patch),
-    }
+    Ok(())
 }
 
-fn read_raw_sidecar(raw_path: &Path) -> Result<EditableMetadata, MetadataError> {
-    let path = sidecar_path(raw_path);
+fn read_sidecar(asset_path: &Path) -> Result<EditableMetadata, MetadataError> {
+    let path = sidecar_path(asset_path);
     if !path.is_file() {
         return Ok(EditableMetadata::default());
     }
@@ -115,13 +224,14 @@ fn unescape_xml(value: &str) -> String {
 
 fn read_embedded_batch(
     paths: &[PathBuf],
+    exiftool: Option<&Path>,
 ) -> Result<HashMap<PathBuf, EditableMetadata>, MetadataError> {
     let mut result = HashMap::new();
     for paths in paths.chunks(64) {
         if paths.is_empty() {
             continue;
         }
-        let mut command = exiftool_command();
+        let mut command = exiftool_command(exiftool);
         command.args([
             "-json",
             "-n",
@@ -202,8 +312,9 @@ fn string_value(value: Option<&Value>) -> Option<String> {
 fn patch_embedded(
     path: &Path,
     patch: &oxy_domain::MetadataPatch,
+    exiftool: Option<&Path>,
 ) -> Result<PathBuf, MetadataError> {
-    let mut command = exiftool_command();
+    let mut command = exiftool_command(exiftool);
     command.args(["-overwrite_original", "-P"]);
     let sony_hif = path
         .extension()
@@ -257,12 +368,32 @@ fn add_patch_args(
     Ok(())
 }
 
-fn exiftool_command() -> Command {
-    let executable =
-        std::env::var_os("OXY_EXIFTOOL_PATH").unwrap_or_else(|| OsString::from("exiftool"));
+fn exiftool_command(configured: Option<&Path>) -> Command {
+    let executable = configured
+        .map(Path::as_os_str)
+        .map(OsString::from)
+        .or_else(|| std::env::var_os("OXY_EXIFTOOL_PATH"))
+        .unwrap_or_else(|| OsString::from("exiftool"));
     let mut command = platform_exiftool_command(executable);
     command.env("LC_ALL", "C").env("LANG", "C");
     command
+}
+
+/// Validates the selected provider and returns its version string.
+pub fn probe_exiftool(executable: Option<&Path>) -> Result<String, MetadataError> {
+    let output = exiftool_output(exiftool_command(executable).arg("-ver"))?;
+    if !output.status.success() {
+        return Err(MetadataError::Read(
+            String::from_utf8_lossy(&output.stderr).trim().to_owned(),
+        ));
+    }
+    let version = String::from_utf8_lossy(&output.stdout).trim().to_owned();
+    if version.is_empty() {
+        return Err(MetadataError::Read(
+            "ExifTool returned an empty version".into(),
+        ));
+    }
+    Ok(version)
 }
 
 #[cfg(target_os = "windows")]
@@ -290,11 +421,11 @@ fn exiftool_output(command: &mut Command) -> Result<Output, MetadataError> {
     })
 }
 
-fn patch_raw_sidecar(
-    raw_path: &Path,
+fn patch_sidecar(
+    asset_path: &Path,
     patch: &oxy_domain::MetadataPatch,
 ) -> Result<PathBuf, MetadataError> {
-    let destination = sidecar_path(raw_path);
+    let destination = sidecar_path(asset_path);
     let mut xml = if destination.is_file() {
         fs::read_to_string(&destination)?
     } else {
@@ -524,20 +655,24 @@ fn orient_focus_info(
 
 pub fn write_metadata(
     path: &Path,
-    kind: AssetKind,
+    _kind: AssetKind,
     metadata: &EditableMetadata,
 ) -> Result<PathBuf, MetadataError> {
-    if kind != AssetKind::Raw {
-        return Err(MetadataError::EmbeddedWorkerUnavailable);
-    }
-    write_raw_sidecar(path, metadata)
+    write_sidecar(path, metadata)
 }
 
 pub fn write_raw_sidecar(
     raw_path: &Path,
     metadata: &EditableMetadata,
 ) -> Result<PathBuf, MetadataError> {
-    let destination = sidecar_path(raw_path);
+    write_sidecar(raw_path, metadata)
+}
+
+pub fn write_sidecar(
+    asset_path: &Path,
+    metadata: &EditableMetadata,
+) -> Result<PathBuf, MetadataError> {
+    let destination = sidecar_path(asset_path);
     let temporary = destination.with_extension("xmp.oxy-tmp");
     let xml = serialize_xmp(metadata);
     let mut file = fs::File::create(&temporary)?;
@@ -589,6 +724,53 @@ fn escape_xml(value: &str) -> String {
 mod tests {
     use super::*;
     use tempfile::tempdir;
+
+    #[test]
+    fn facade_switches_the_embedded_provider_without_affecting_its_contract() {
+        let facade = MetadataFacade::default();
+        assert_eq!(facade.exiftool(), None);
+        let configured = PathBuf::from("/managed/exiftool");
+        facade.set_exiftool(Some(configured.clone()));
+        assert_eq!(facade.exiftool(), Some(configured));
+    }
+
+    #[test]
+    fn hif_edits_create_a_sidecar_without_touching_the_asset() {
+        let directory = tempdir().unwrap();
+        let hif = directory.path().join("photo.HIF");
+        fs::write(&hif, b"camera image bytes").unwrap();
+
+        patch_metadata(
+            &hif,
+            AssetKind::Heif,
+            &oxy_domain::MetadataPatch {
+                rating: Some(Some(4)),
+                color_label: Some(Some("Green".into())),
+                ..oxy_domain::MetadataPatch::default()
+            },
+        )
+        .unwrap();
+
+        assert_eq!(fs::read(&hif).unwrap(), b"camera image bytes");
+        let metadata = read_metadata_with_exiftool(
+            &hif,
+            AssetKind::Heif,
+            Some(Path::new("/missing/exiftool")),
+        )
+        .unwrap();
+        assert_eq!(metadata.rating, Some(4));
+        assert_eq!(metadata.color_label.as_deref(), Some("Green"));
+    }
+
+    #[test]
+    fn embedded_sync_requires_an_existing_sidecar() {
+        let directory = tempdir().unwrap();
+        let hif = directory.path().join("photo.HIF");
+        fs::write(&hif, b"camera image bytes").unwrap();
+
+        let result = MetadataFacade::default().sync_metadata_to_embedded(&hif);
+        assert!(matches!(result, Err(MetadataError::SidecarUnavailable(_))));
+    }
 
     #[test]
     fn parses_and_normalizes_hif_rating_and_color_label() {
@@ -665,6 +847,22 @@ mod tests {
     }
 
     #[test]
+    fn reads_and_orients_repository_sony_hif_focus_metadata() {
+        let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/DSC00449.HIF");
+        let focus = read_focus_info(&path, Some((4_672, 7_008)))
+            .unwrap()
+            .expect("repository HIF fixture has Sony FocusLocation");
+
+        assert_eq!(focus.coordinate_width, 4_672);
+        assert_eq!(focus.coordinate_height, 7_008);
+        assert_eq!(focus.regions.len(), 1);
+        assert_eq!(focus.regions[0].center_x, 2_327);
+        assert_eq!(focus.regions[0].center_y, 1_489);
+        assert_eq!(focus.regions[0].width, Some(154));
+        assert_eq!(focus.regions[0].height, Some(153));
+    }
+
+    #[test]
     #[ignore = "requires OXY_FOCUS_FIXTURE to point to a Sony image with FocusLocation metadata"]
     fn reads_sony_focus_fixture_from_any_supported_container() {
         let path = std::env::var("OXY_FOCUS_FIXTURE").expect("set OXY_FOCUS_FIXTURE");
@@ -707,7 +905,7 @@ mod tests {
         )
         .unwrap();
 
-        patch_raw_sidecar(
+        patch_sidecar(
             &raw,
             &oxy_domain::MetadataPatch {
                 rating: Some(Some(5)),
@@ -717,7 +915,7 @@ mod tests {
         )
         .unwrap();
 
-        let metadata = read_raw_sidecar(&raw).unwrap();
+        let metadata = read_sidecar(&raw).unwrap();
         assert_eq!(metadata.rating, Some(5));
         assert_eq!(metadata.color_label.as_deref(), Some("Blue & Cyan"));
         let xml = fs::read_to_string(sidecar_path(&raw)).unwrap();
@@ -741,7 +939,7 @@ mod tests {
         )
         .unwrap();
 
-        patch_raw_sidecar(
+        patch_sidecar(
             &raw,
             &oxy_domain::MetadataPatch {
                 rating: Some(None),
@@ -751,7 +949,7 @@ mod tests {
         )
         .unwrap();
 
-        let metadata = read_raw_sidecar(&raw).unwrap();
+        let metadata = read_sidecar(&raw).unwrap();
         assert_eq!(metadata.rating, None);
         assert_eq!(metadata.color_label, None);
     }

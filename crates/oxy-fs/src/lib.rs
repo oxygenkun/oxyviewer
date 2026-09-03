@@ -649,4 +649,22 @@ mod tests {
         assert!(directory.path().join("after.nef").exists());
         assert!(directory.path().join("after.xmp").exists());
     }
+
+    #[test]
+    fn renames_hif_and_its_sidecar_together() {
+        let directory = tempdir().unwrap();
+        let hif = directory.path().join("before.HIF");
+        File::create(&hif).unwrap();
+        File::create(sidecar_path(&hif)).unwrap();
+
+        execute_file_operation(&FileOperation::Rename {
+            source: hif,
+            new_name: "after.HIF".into(),
+        })
+        .unwrap();
+
+        assert!(directory.path().join("after.HIF").exists());
+        assert!(directory.path().join("after.xmp").exists());
+        assert!(!directory.path().join("before.xmp").exists());
+    }
 }

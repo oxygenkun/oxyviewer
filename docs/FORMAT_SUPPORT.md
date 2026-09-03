@@ -2,8 +2,8 @@
 
 | Format | Discovery | Preview | Metadata read | Metadata write |
 | --- | --- | --- | --- | --- |
-| JPEG/JPG | Implemented | Foundation implemented | XMP rating/color plus Sony shooting focus location/frame | Embedded XMP rating/color through ExifTool |
-| HEIF/HEIC/HIF | Implemented | 512/4096 px preview plus cancellable full-resolution RGBA8 tile session; Windows WIC and macOS ImageIO native decoders, dynamic FFmpeg software tile-grid backend, and libheif fallback; native hardware use remains pending GPU qualification | XMP rating/color plus Sony shooting focus location/frame | Embedded XMP rating/color through ExifTool |
+| JPEG/JPG | Implemented | Foundation implemented | Sidecar-first XMP rating/color plus Sony shooting focus location/frame | XMP sidecar by default; optional embedded sync through ExifTool |
+| HEIF/HEIC/HIF | Implemented | 512/4096 px preview plus cancellable full-resolution RGBA8 tile session; Windows WIC and macOS ImageIO native decoders, dynamic FFmpeg software tile-grid backend, and libheif fallback; native hardware use remains pending GPU qualification | Sidecar-first XMP rating/color plus Sony shooting focus location/frame | XMP sidecar by default; optional embedded sync through ExifTool |
 | ARW/CR2/CR3/NEF/DNG/RAF/RW2/ORF | Implemented | Bundled LibRaw 0.22.1 embedded preview with half-size preview fallback, followed by full-resolution loupe development; macOS Quick Look final preview fallback | Adjacent XMP rating/color plus Sony shooting focus location/frame | Adjacent XMP sidecar rating/color |
 | PNG/WebP/TIFF | Implemented as secondary formats | Foundation/Planned | Read-only planned | Not in MVP |
 
@@ -12,9 +12,11 @@ vendored source and does not depend on a developer machine's system package.
 The full format fixture matrix and Windows/Linux packaging validation remain
 part of milestone RAW-1.
 
-Embedded JPEG/HEIF metadata currently invokes `exiftool` from `PATH`, or the
-executable selected by `OXY_EXIFTOOL_PATH`. Release packaging still needs to
-bundle that worker. RAW rating/color reads and writes do not require ExifTool.
+All formats write rating/color to adjacent XMP sidecars by default. A sidecar
+overrides embedded XMP when both exist. ExifTool is optional and is prompted for
+only when the user explicitly synchronizes into JPEG/HEIF/HIF; the desktop then
+offers a pinned, checksum-verified managed download or an existing executable
+path. `OXY_EXIFTOOL_PATH` and `PATH` remain deployment/development fallbacks.
 
 For supported Sony ARW, JPEG, and HEIF/HIF files, the loupe can show the
 shooting focus location from MakerNote tag `FocusLocation` as a green frame

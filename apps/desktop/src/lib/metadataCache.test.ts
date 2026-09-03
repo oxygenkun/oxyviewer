@@ -29,6 +29,11 @@ describe("metadata cache patches", () => {
     const details: AssetDetails = {
       asset,
       metadata: { rating: 2, colorLabel: "Red", keywords: [] },
+      metadataCapability: {
+        provider: "sidecar",
+        readable: true,
+        writable: true,
+      },
     };
     const patched = patchAssetDetails(details, paths, { rating: null, colorLabel: null });
     expect(patched?.asset.rating).toBeUndefined();
