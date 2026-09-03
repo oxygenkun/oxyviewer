@@ -44,6 +44,7 @@ export function Inspector({ asset, selectedCount, selectedPaths, t }: InspectorP
         { queryKey: ["assets"] },
         { queryKey: ["asset-metadata"] },
         { queryKey: ["preload-assets"] },
+        { queryKey: ["progressive-metadata-assets"] },
       ];
       await Promise.all(filters.map((filter) => queryClient.cancelQueries(filter)));
       const snapshots = filters.flatMap((filter) => queryClient.getQueriesData(filter));
@@ -52,7 +53,7 @@ export function Inspector({ asset, selectedCount, selectedPaths, t }: InspectorP
         patchAssetDetails(current, paths, value));
       queryClient.setQueriesData<AssetSummary[]>({ queryKey: ["asset-metadata"] }, (current) =>
         patchAssetSummaries(current, paths, value));
-      for (const queryKey of [["assets"], ["preload-assets"]] as const) {
+      for (const queryKey of [["assets"], ["preload-assets"], ["progressive-metadata-assets"]] as const) {
         queryClient.setQueriesData<InfiniteData<Page<AssetSummary>>>({ queryKey }, (current) =>
           patchAssetPages(current, paths, value));
       }
@@ -69,6 +70,7 @@ export function Inspector({ asset, selectedCount, selectedPaths, t }: InspectorP
         queryClient.invalidateQueries({ queryKey: ["assets"] }),
         queryClient.invalidateQueries({ queryKey: ["asset-metadata"] }),
         queryClient.invalidateQueries({ queryKey: ["preload-assets"] }),
+        queryClient.invalidateQueries({ queryKey: ["progressive-metadata-assets"] }),
       ]);
     },
   });
@@ -82,6 +84,7 @@ export function Inspector({ asset, selectedCount, selectedPaths, t }: InspectorP
         queryClient.invalidateQueries({ queryKey: ["asset-details"] }),
         queryClient.invalidateQueries({ queryKey: ["assets"] }),
         queryClient.invalidateQueries({ queryKey: ["asset-metadata"] }),
+        queryClient.invalidateQueries({ queryKey: ["progressive-metadata-assets"] }),
       ]);
     },
   });

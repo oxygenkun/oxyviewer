@@ -165,10 +165,17 @@ fn refresh_directory(
         .files
         .session_root(&session_id)
         .map_err(|error| error.to_string())?;
+    let resolved_directory = state
+        .files
+        .session_directory(&session_id, directory.as_deref())
+        .map_err(|error| error.to_string())?;
     state
         .files
         .refresh_directory(&session_id, directory.as_deref())
         .map_err(|error| error.to_string())?;
+    state
+        .metadata
+        .invalidate_summary_directory(&resolved_directory);
     state
         .library
         .invalidate_index(&root)

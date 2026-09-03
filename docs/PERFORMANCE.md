@@ -16,6 +16,13 @@ end-to-end regression harness that enforces these budgets is described in
 
 ## Verification Log
 
+- 2026-09-03: Grid metadata enrichment and rating/color filtering now share a
+  fingerprinted in-memory projection cache. Switching on a metadata filter
+  reuses rating and color labels already parsed for visible assets and parses
+  only cache misses; metadata edits and explicit directory refreshes invalidate
+  the affected entries. Metadata filtering publishes matching assets after each
+  32-item parse batch, so grid, list, filmstrip, and loupe update progressively
+  instead of waiting for the complete directory pass.
 - 2026-09-03: A same-machine, same-fixture release E2E sweep tested macOS
   ImageIO full-resolution HEIF publication at 512 / 1024 / 2048 / 4096 / 8192
   px per RGBA tile, with ten measured runs per size after warmup. Median

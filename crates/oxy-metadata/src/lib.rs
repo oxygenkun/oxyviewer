@@ -40,12 +40,29 @@ pub enum MetadataError {
 #[derive(Debug, Clone, Default)]
 pub struct MetadataFacade {
     exiftool: Arc<RwLock<Option<PathBuf>>>,
+    summary_cache: Arc<RwLock<HashMap<PathBuf, CachedSummaryMetadata>>>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct CachedSummaryMetadata {
+    fingerprint: SummaryMetadataFingerprint,
+    rating: Option<u8>,
+    color_label: Option<String>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct SummaryMetadataFingerprint {
+    source_modified_at_ms: u64,
+    source_size_bytes: u64,
+    sidecar_modified_at_ns: Option<u128>,
+    sidecar_size_bytes: Option<u64>,
 }
 
 impl MetadataFacade {
     pub fn new(exiftool: Option<PathBuf>) -> Self {
         Self {
             exiftool: Arc::new(RwLock::new(exiftool)),
+            summary_cache: Arc::new(RwLock::new(HashMap::new())),
         }
     }
 
@@ -90,8 +107,63 @@ impl MetadataFacade {
         &self,
         assets: &mut [oxy_domain::AssetSummary],
     ) -> Result<(), MetadataError> {
+        let fingerprints = assets
+            .iter()
+            .map(summary_metadata_fingerprint)
+            .collect::<Vec<_>>();
+        let cached = self
+            .summary_cache
+            .read()
+            .expect("metadata summary cache lock poisoned");
+        let mut misses = Vec::new();
+        for (index, asset) in assets.iter_mut().enumerate() {
+            match cached.get(&asset.path) {
+                Some(entry) if entry.fingerprint == fingerprints[index] => {
+                    asset.rating = entry.rating;
+                    asset.color_label.clone_from(&entry.color_label);
+                }
+                _ => misses.push((index, asset.clone())),
+            }
+        }
+        drop(cached);
+
+        if misses.is_empty() {
+            return Ok(());
+        }
+
         let executable = self.exiftool();
-        enrich_summaries_with_exiftool(assets, executable.as_deref())
+        let mut uncached_assets = misses
+            .iter()
+            .map(|(_, asset)| asset.clone())
+            .collect::<Vec<_>>();
+        enrich_summaries_with_exiftool(&mut uncached_assets, executable.as_deref())?;
+
+        let mut cache = self
+            .summary_cache
+            .write()
+            .expect("metadata summary cache lock poisoned");
+        for ((index, _), enriched) in misses.into_iter().zip(uncached_assets) {
+            assets[index].rating = enriched.rating;
+            assets[index].color_label.clone_from(&enriched.color_label);
+            cache.insert(
+                enriched.path,
+                CachedSummaryMetadata {
+                    fingerprint: fingerprints[index],
+                    rating: enriched.rating,
+                    color_label: enriched.color_label,
+                },
+            );
+        }
+        Ok(())
+    }
+
+    /// Drops cached rating/color projections for one directory. The cache is
+    /// shared by grid enrichment and metadata-aware filtering.
+    pub fn invalidate_summary_directory(&self, directory: &Path) {
+        self.summary_cache
+            .write()
+            .expect("metadata summary cache lock poisoned")
+            .retain(|path, _| path.parent() != Some(directory));
     }
 
     pub fn patch_metadata(
@@ -100,7 +172,12 @@ impl MetadataFacade {
         kind: AssetKind,
         patch: &oxy_domain::MetadataPatch,
     ) -> Result<PathBuf, MetadataError> {
-        patch_metadata_to_sidecar(path, kind, patch)
+        let sidecar = patch_metadata_to_sidecar(path, kind, patch)?;
+        self.summary_cache
+            .write()
+            .expect("metadata summary cache lock poisoned")
+            .remove(path);
+        Ok(sidecar)
     }
 
     pub fn sync_metadata_to_embedded(&self, path: &Path) -> Result<PathBuf, MetadataError> {
@@ -114,12 +191,31 @@ impl MetadataFacade {
             ..oxy_domain::MetadataPatch::default()
         };
         let executable = self.exiftool();
-        patch_embedded(path, &patch, executable.as_deref())
+        let updated = patch_embedded(path, &patch, executable.as_deref())?;
+        self.summary_cache
+            .write()
+            .expect("metadata summary cache lock poisoned")
+            .remove(path);
+        Ok(updated)
     }
 
     pub fn exiftool_version(&self) -> Result<String, MetadataError> {
         let executable = self.exiftool();
         probe_exiftool(executable.as_deref())
+    }
+}
+
+fn summary_metadata_fingerprint(asset: &oxy_domain::AssetSummary) -> SummaryMetadataFingerprint {
+    let sidecar_metadata = fs::metadata(sidecar_path(&asset.path)).ok();
+    SummaryMetadataFingerprint {
+        source_modified_at_ms: asset.modified_at_ms,
+        source_size_bytes: asset.size_bytes,
+        sidecar_modified_at_ns: sidecar_metadata
+            .as_ref()
+            .and_then(|metadata| metadata.modified().ok())
+            .and_then(|modified| modified.duration_since(std::time::UNIX_EPOCH).ok())
+            .map(|duration| duration.as_nanos()),
+        sidecar_size_bytes: sidecar_metadata.map(|metadata| metadata.len()),
     }
 }
 
@@ -703,6 +799,61 @@ mod tests {
         let configured = PathBuf::from("/managed/exiftool");
         facade.set_exiftool(Some(configured.clone()));
         assert_eq!(facade.exiftool(), Some(configured));
+    }
+
+    #[test]
+    fn facade_shares_summary_metadata_cache_across_callers() {
+        let directory = tempdir().unwrap();
+        let raw = directory.path().join("photo.nef");
+        fs::write(&raw, b"camera image bytes").unwrap();
+        patch_metadata(
+            &raw,
+            AssetKind::Raw,
+            &oxy_domain::MetadataPatch {
+                rating: Some(Some(5)),
+                color_label: Some(Some("Blue".into())),
+                ..oxy_domain::MetadataPatch::default()
+            },
+        )
+        .unwrap();
+        let mut assets =
+            oxy_fs::scan_directory(directory.path(), &oxy_domain::AssetQuery::default(), 0)
+                .unwrap()
+                .items;
+        let facade = MetadataFacade::default();
+
+        facade.enrich_summaries(&mut assets).unwrap();
+        assert_eq!(assets[0].rating, Some(5));
+        assert_eq!(assets[0].color_label.as_deref(), Some("Blue"));
+        assert_eq!(facade.summary_cache.read().unwrap().len(), 1);
+
+        let shared_caller = facade.clone();
+        assets[0].rating = None;
+        assets[0].color_label = None;
+        shared_caller.enrich_summaries(&mut assets).unwrap();
+        assert_eq!(assets[0].rating, Some(5));
+        assert_eq!(assets[0].color_label.as_deref(), Some("Blue"));
+        assert!(Arc::ptr_eq(
+            &facade.summary_cache,
+            &shared_caller.summary_cache
+        ));
+
+        patch_metadata(
+            &raw,
+            AssetKind::Raw,
+            &oxy_domain::MetadataPatch {
+                rating: Some(Some(2)),
+                color_label: Some(Some("Purple".into())),
+                ..oxy_domain::MetadataPatch::default()
+            },
+        )
+        .unwrap();
+        shared_caller.enrich_summaries(&mut assets).unwrap();
+        assert_eq!(assets[0].rating, Some(2));
+        assert_eq!(assets[0].color_label.as_deref(), Some("Purple"));
+
+        shared_caller.invalidate_summary_directory(directory.path());
+        assert!(facade.summary_cache.read().unwrap().is_empty());
     }
 
     #[test]

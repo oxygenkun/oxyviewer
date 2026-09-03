@@ -24,6 +24,7 @@ import {
   reorderLibraryRoots,
   trashPaths,
 } from "./lib/api";
+import { filterAndSortAssets } from "./lib/assetFiltering";
 import { isSameOrDescendantPath, parentFolderPath, relativeFolderPath } from "./lib/folderPaths";
 import { translate } from "./lib/i18n";
 import {
@@ -107,19 +108,24 @@ export function App({ perfScenario }: { perfScenario?: PerfScenario }) {
     direction,
     pageSize: 250,
   }), [colorLabel, direction, kind, minimumRating, search, sort]);
+  const progressivelyFilterMetadata = Boolean(!search && (minimumRating || colorLabel));
   const shouldPreloadFilteredAssets = Boolean(!search && (kind || minimumRating || colorLabel));
   const preloadQuery = useMemo<AssetQuery>(() => ({
     sort: "name",
     direction: "ascending",
     pageSize: 250,
   }), []);
+  const progressiveMetadataBatchQuery = useMemo<AssetQuery>(() => ({
+    ...preloadQuery,
+    pageSize: 32,
+  }), [preloadQuery]);
 
   const assetsQuery = useInfiniteQuery({
     queryKey: ["assets", activeSession?.id, currentPath, query],
     queryFn: ({ pageParam }) => listAssets(activeSession!.id, currentPath!, query, pageParam),
     initialPageParam: 0,
     getNextPageParam: (page) => page.nextCursor,
-    enabled: Boolean(activeSession && currentPath),
+    enabled: Boolean(activeSession && currentPath && !progressivelyFilterMetadata),
     staleTime: Infinity,
   });
   const preloadAssetsQuery = useInfiniteQuery({
@@ -132,7 +138,29 @@ export function App({ perfScenario }: { perfScenario?: PerfScenario }) {
     ),
     initialPageParam: 0,
     getNextPageParam: (page) => page.nextCursor,
-    enabled: Boolean(shouldPreloadFilteredAssets && activeSession && currentPath),
+    enabled: Boolean(
+      shouldPreloadFilteredAssets &&
+      !progressivelyFilterMetadata &&
+      activeSession &&
+      currentPath,
+    ),
+    staleTime: Infinity,
+  });
+  const progressiveMetadataQuery = useInfiniteQuery({
+    queryKey: ["progressive-metadata-assets", activeSession?.id, currentPath],
+    queryFn: async ({ pageParam }) => {
+      const page = await listAssets(
+        activeSession!.id,
+        currentPath!,
+        progressiveMetadataBatchQuery,
+        pageParam,
+      );
+      const items = await enrichAssetMetadata(page.items.map((asset) => asset.path));
+      return { ...page, items };
+    },
+    initialPageParam: 0,
+    getNextPageParam: (page) => page.nextCursor,
+    enabled: Boolean(progressivelyFilterMetadata && activeSession && currentPath),
     staleTime: Infinity,
   });
   const cheapAssets = useMemo(
@@ -147,10 +175,10 @@ export function App({ perfScenario }: { perfScenario?: PerfScenario }) {
       cheapAssets.map((asset) => [asset.path, asset.modifiedAtMs]),
     ],
     queryFn: () => enrichAssetMetadata(cheapAssets.map((asset) => asset.path)),
-    enabled: cheapAssets.length > 0 && !minimumRating && !colorLabel,
+    enabled: cheapAssets.length > 0 && !progressivelyFilterMetadata,
     staleTime: Infinity,
   });
-  const assets = useMemo(() => {
+  const enrichedAssets = useMemo(() => {
     if (!metadataQuery.data) return cheapAssets;
     const metadataByPath = new Map(metadataQuery.data.map((asset) => [asset.path, asset]));
     return cheapAssets.map((asset) => {
@@ -160,24 +188,61 @@ export function App({ perfScenario }: { perfScenario?: PerfScenario }) {
         : asset;
     });
   }, [cheapAssets, metadataQuery.data]);
+  const progressivelyEnrichedAssets = useMemo(
+    () => progressiveMetadataQuery.data?.pages.flatMap((page) => page.items) ?? [],
+    [progressiveMetadataQuery.data],
+  );
+  const assets = useMemo(
+    () => progressivelyFilterMetadata
+      ? filterAndSortAssets(progressivelyEnrichedAssets, query)
+      : enrichedAssets,
+    [enrichedAssets, progressivelyEnrichedAssets, progressivelyFilterMetadata, query],
+  );
   const preloadCandidates = useMemo(() => {
     const visibleIds = new Set(assets.map((asset) => asset.id));
-    return preloadAssetsQuery.data?.pages
-      .flatMap((page) => page.items)
-      .filter((asset) => !visibleIds.has(asset.id)) ?? [];
-  }, [assets, preloadAssetsQuery.data]);
-  const total = assetsQuery.data?.pages[0]?.total ?? 0;
+    const candidates = progressivelyFilterMetadata
+      ? progressivelyEnrichedAssets
+      : preloadAssetsQuery.data?.pages.flatMap((page) => page.items) ?? [];
+    return candidates.filter((asset) => !visibleIds.has(asset.id));
+  }, [assets, preloadAssetsQuery.data, progressivelyEnrichedAssets, progressivelyFilterMetadata]);
+  const total = progressivelyFilterMetadata
+    ? assets.length
+    : assetsQuery.data?.pages[0]?.total ?? 0;
   const activeAsset = assets.find((asset) => asset.id === activeId);
+  const progressiveWorkPending = progressivelyFilterMetadata && (
+    progressiveMetadataQuery.isLoading ||
+    progressiveMetadataQuery.isFetchingNextPage ||
+    progressiveMetadataQuery.hasNextPage
+  );
+  const assetsLoading = progressivelyFilterMetadata
+    ? assets.length === 0 && progressiveWorkPending
+    : assetsQuery.isLoading;
+  const assetsError = progressivelyFilterMetadata
+    ? progressiveMetadataQuery.error
+    : assetsQuery.error;
 
   useEffect(() => {
-    if (preloadAssetsQuery.hasNextPage && !preloadAssetsQuery.isFetchingNextPage) {
-      void preloadAssetsQuery.fetchNextPage();
-    }
+    if (!preloadAssetsQuery.hasNextPage || preloadAssetsQuery.isFetchingNextPage) return;
+    void preloadAssetsQuery.fetchNextPage();
   }, [
     preloadAssetsQuery.data?.pages.length,
     preloadAssetsQuery.fetchNextPage,
     preloadAssetsQuery.hasNextPage,
     preloadAssetsQuery.isFetchingNextPage,
+  ]);
+
+  useEffect(() => {
+    if (
+      progressiveMetadataQuery.hasNextPage &&
+      !progressiveMetadataQuery.isFetchingNextPage
+    ) {
+      void progressiveMetadataQuery.fetchNextPage();
+    }
+  }, [
+    progressiveMetadataQuery.data?.pages.length,
+    progressiveMetadataQuery.fetchNextPage,
+    progressiveMetadataQuery.hasNextPage,
+    progressiveMetadataQuery.isFetchingNextPage,
   ]);
 
   const dismissOnboarding = useCallback(() => {
@@ -289,6 +354,7 @@ export function App({ perfScenario }: { perfScenario?: PerfScenario }) {
         queryClient.cancelQueries({ queryKey: ["assets", activeSession.id, currentPath] }),
         queryClient.cancelQueries({ queryKey: ["asset-metadata", activeSession.id, currentPath] }),
         queryClient.cancelQueries({ queryKey: ["preload-assets", activeSession.id, currentPath] }),
+        queryClient.cancelQueries({ queryKey: ["progressive-metadata-assets", activeSession.id, currentPath] }),
         queryClient.cancelQueries({ queryKey: ["directories", activeSession.id, currentPath] }),
       ]);
       await refreshDirectory(activeSession.id, currentPath);
@@ -296,6 +362,7 @@ export function App({ perfScenario }: { perfScenario?: PerfScenario }) {
         queryClient.invalidateQueries({ queryKey: ["assets", activeSession.id, currentPath] }),
         queryClient.invalidateQueries({ queryKey: ["asset-metadata", activeSession.id, currentPath] }),
         queryClient.invalidateQueries({ queryKey: ["preload-assets", activeSession.id, currentPath] }),
+        queryClient.invalidateQueries({ queryKey: ["progressive-metadata-assets", activeSession.id, currentPath] }),
         queryClient.invalidateQueries({ queryKey: ["directories", activeSession.id, currentPath] }),
       ]);
     } catch (cause) {
@@ -339,6 +406,7 @@ export function App({ perfScenario }: { perfScenario?: PerfScenario }) {
         queryClient.invalidateQueries({ queryKey: ["assets", session.id] }),
         queryClient.invalidateQueries({ queryKey: ["asset-metadata", session.id] }),
         queryClient.invalidateQueries({ queryKey: ["preload-assets", session.id] }),
+        queryClient.invalidateQueries({ queryKey: ["progressive-metadata-assets", session.id] }),
         queryClient.invalidateQueries({ queryKey: ["directories", session.id] }),
         queryClient.invalidateQueries({ queryKey: ["directory-search", session.id] }),
       ]);
@@ -403,12 +471,12 @@ export function App({ perfScenario }: { perfScenario?: PerfScenario }) {
             <strong>{foldersQuery.isLoading ? t("restoringFolders") : t("noFolderTitle")}</strong>
             <span>{foldersQuery.isLoading ? t("restoringFoldersBody") : t("noFolderBody")}</span>
           </div>
-        ) : assetsQuery.isLoading ? (
+        ) : assetsLoading ? (
           <div className="workspace-loading"><Aperture size={24} /> {t("scanningFolder")} {activeSession.displayName}…</div>
-        ) : assetsQuery.isError ? (
+        ) : assetsError ? (
           <div className="workspace-error">
             <CircleAlert size={24} />
-            <strong>{String(assetsQuery.error)}</strong>
+            <strong>{String(assetsError)}</strong>
             <button onClick={handleOpen}><FolderPlus size={15} />{t("openFolder")}</button>
           </div>
         ) : (
@@ -416,9 +484,13 @@ export function App({ perfScenario }: { perfScenario?: PerfScenario }) {
             assets={assets}
             total={total}
             view={view}
-            hasNextPage={assetsQuery.hasNextPage}
-            isFetchingNextPage={assetsQuery.isFetchingNextPage}
-            fetchNextPage={() => void assetsQuery.fetchNextPage()}
+            hasNextPage={progressivelyFilterMetadata ? false : assetsQuery.hasNextPage}
+            isFetchingNextPage={progressivelyFilterMetadata
+              ? progressiveWorkPending
+              : assetsQuery.isFetchingNextPage}
+            fetchNextPage={() => {
+              if (!progressivelyFilterMetadata) void assetsQuery.fetchNextPage();
+            }}
             onTrashAsset={(asset) => void handleTrashAsset(asset)}
             onCopyAssetPath={(asset, relative) => void handleCopyPath(activeSession.rootPath, asset.path, relative)}
             onOpenInFileManager={(path) => void handleOpenInFileManager(path)}
@@ -459,7 +531,9 @@ export function App({ perfScenario }: { perfScenario?: PerfScenario }) {
         selectedCount={selectedIds.length}
         t={t}
       />
-      {shouldPreloadFilteredAssets && assetsQuery.isSuccess && activeSession && currentPath ? (
+      {shouldPreloadFilteredAssets &&
+      (progressivelyFilterMetadata ? progressiveMetadataQuery.isSuccess : assetsQuery.isSuccess) &&
+      activeSession && currentPath ? (
         <BackgroundPreviewPreloader
           key={`${activeSession.id}:${currentPath}`}
           assets={preloadCandidates}
