@@ -138,7 +138,7 @@ end-to-end regression harness that enforces these budgets is described in
   On the repository Sony fixtures, `DSC00529.ARW` exposed 7008x4672 in 13 ms
   and `DSC02948.ARW` exposed 6192x4128 in 11 ms; the former unconditional full
   development historically took 23.75 seconds.
-- 2026-09-02: HEIF loupe zoom now uses the full tile-session dimensions rather
+- 2026-09-02: HEIF loupe zoom now uses the full-image dimensions rather
   than the 512 px placeholder's natural size. A displayed 100% therefore maps
   one source pixel to one CSS pixel and 400% is a true four-times pixel zoom.
   HEIF full-resolution display tiles also receive an optional mild luma
@@ -148,9 +148,14 @@ end-to-end regression harness that enforces these budgets is described in
   so neighboring samples cross tile boundaries. Three Debug runs on the NAS
   `DSC00518.HIF` fixture measured 36-52 ms ImageIO decode, 42-49 ms sharpened
   tile publication, and 78-101 ms backend total.
-- 2026-09-01: The HEIF loupe path now uses the 512 px JPEG only as a temporary
-  base layer and starts the full-resolution tile session without requesting a
-  second 4096 px JPEG. On macOS, HEIF preview JPEGs are encoded by ImageIO and
+- 2026-09-03: The active HEIF loupe path uses the embedded JPEG as a temporary
+  base layer, then replaces it with one full-resolution JPEG converted directly
+  from the source HEIF. Canvas tile events and `oxy-media://` tile transfers are
+  no longer started by the frontend. On macOS, the full conversion stays inside
+  ImageIO (`CGImageSource` to JPEG destination), so the former 125 MiB Rust RGBA
+  re-encode is not part of cache generation.
+- 2026-09-01: The former HEIF loupe tile path used the 512 px JPEG only as a temporary
+  base layer. On macOS, HEIF preview JPEGs are encoded by ImageIO and
   the global decode permit is released after decode, before JPEG encode and
   cache sync. Full-tile publication converts the decoded image to RGBA once
   and copies contiguous rows into tiles. On the reference Mac against

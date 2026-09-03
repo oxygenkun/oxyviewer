@@ -179,6 +179,48 @@ pub fn decode_full_rgba8(
     Ok(DynamicImage::ImageRgba8(image))
 }
 
+/// Convert the primary HEIF tile grid straight to one JPEG in FFmpeg. The
+/// decoded frame never crosses into a Rust `RgbaImage`.
+#[cfg_attr(target_os = "macos", allow(dead_code))]
+pub fn transcode_full_jpeg(
+    path: &Path,
+    destination: &Path,
+    display_size: ImageDimensions,
+    quality: u8,
+) -> Result<(), MediaError> {
+    let grid = cached_grid(path)?;
+    let (filter, _, _) = filter_for_grid(&grid, display_size)?;
+    let filter = filter.replace(",format=rgba[out]", ",format=yuvj444p[out]");
+    let qscale = ((100_u16.saturating_sub(u16::from(quality))) / 4 + 1)
+        .clamp(1, 31)
+        .to_string();
+    let output = media_command(&FFMPEG_COMMAND)
+        .args(["-v", "error", "-threads", "2", "-i"])
+        .arg(path)
+        .args([
+            "-filter_complex",
+            &filter,
+            "-map",
+            "[out]",
+            "-frames:v",
+            "1",
+        ])
+        .args(["-c:v", "mjpeg", "-q:v", &qscale, "-y"])
+        .arg(destination)
+        .stdin(Stdio::null())
+        .output()
+        .map_err(|error| native_error(format!("start ffmpeg HEIF to JPEG conversion: {error}")))?;
+    if output.status.success() {
+        Ok(())
+    } else {
+        Err(native_error(format!(
+            "HEIF to JPEG conversion failed with {}: {}",
+            output.status,
+            String::from_utf8_lossy(&output.stderr).trim()
+        )))
+    }
+}
+
 fn decode_tile_bitmaps(
     path: &Path,
     grid: &TileGrid,
@@ -817,6 +859,31 @@ mod tests {
             false,
         )
         .unwrap();
+        assert_eq!((image.width(), image.height()), (4672, 7008));
+    }
+
+    #[test]
+    fn transcodes_repository_hif_directly_to_jpeg_when_ffmpeg_is_available() {
+        if capability().is_err() {
+            return;
+        }
+        let fixture =
+            Path::new(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/DSC00449.HIF");
+        let output = tempfile::Builder::new().suffix(".jpg").tempfile().unwrap();
+        transcode_full_jpeg(
+            &fixture,
+            output.path(),
+            ImageDimensions {
+                width: 4672,
+                height: 7008,
+            },
+            95,
+        )
+        .unwrap();
+        let image = image::ImageReader::open(output.path())
+            .unwrap()
+            .decode()
+            .unwrap();
         assert_eq!((image.width(), image.height()), (4672, 7008));
     }
 

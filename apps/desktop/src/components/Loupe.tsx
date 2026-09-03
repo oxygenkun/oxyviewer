@@ -36,7 +36,6 @@ import type { RawPreviewStatus } from "../lib/rawPreview";
 import { useWorkspaceStore } from "../store";
 import type { AssetSummary, HeifDecodeStatus, NavigatorPosition } from "../types";
 import { AssetMetadataBadges } from "./AssetMetadataBadges";
-import { HeifTileCanvas } from "./HeifTileCanvas";
 import { Thumbnail } from "./Thumbnail";
 
 interface LoupeProps {
@@ -77,8 +76,6 @@ export function Loupe({
   const select = useWorkspaceStore((state) => state.select);
   const navigatorVisible = useWorkspaceStore((state) => state.navigatorVisible);
   const navigatorPosition = useWorkspaceStore((state) => state.navigatorPosition);
-  const hardwareAcceleration = useWorkspaceStore((state) => state.hardwareAcceleration);
-  const displaySharpening = useWorkspaceStore((state) => state.displaySharpening);
   const focusAreasVisible = useWorkspaceStore((state) => state.focusAreasVisible);
   const loupeMetadataVisible = useWorkspaceStore((state) => state.loupeMetadataVisible);
   const loupeControlsAutoHide = useWorkspaceStore((state) => state.loupeControlsAutoHide);
@@ -106,7 +103,6 @@ export function Loupe({
   const [layoutVersion, setLayoutVersion] = useState(0);
   const [stageContentSize, setStageContentSize] = useState<Size>({ width: 0, height: 0 });
   const [naturalSize, setNaturalSize] = useState<{ assetId: string; size: Size } | undefined>(undefined);
-  const [heifFullSize, setHeifFullSize] = useState<{ assetId: string; size: Size } | undefined>(undefined);
   const [rawPreviewStatus, setRawPreviewStatus] = useState<RawPreviewStatus>({ state: "loadingPreview" });
   const [heifStatus, setHeifStatus] = useState<HeifDecodeStatus>("probing");
   const details = useQuery({
@@ -120,17 +116,14 @@ export function Loupe({
   const sourceSize = resolveLoupeSourceSize(
     active.kind,
     naturalSize?.assetId === active.id ? naturalSize.size : undefined,
-    heifFullSize?.assetId === active.id ? heifFullSize.size : undefined,
+    undefined,
     metadataSize,
     DEFAULT_IMAGE_SIZE,
   );
   const fittedImageSize = fitSize(stageContentSize, sourceSize);
   const navigatorImageSize = fitSize(NAVIGATOR_MAX_SIZE, sourceSize);
   const currentNaturalSize = naturalSize?.assetId === active.id ? naturalSize.size : undefined;
-  const currentHeifSize = heifFullSize?.assetId === active.id ? heifFullSize.size : undefined;
-  const displayedNaturalSize = active.kind === "heif"
-    ? currentHeifSize ?? currentNaturalSize ?? metadataSize
-    : currentNaturalSize ?? metadataSize;
+  const displayedNaturalSize = currentNaturalSize ?? metadataSize;
   const mappedFocusRegions = useMemo(
     () => mapFocusRegions(details.data?.focusInfo, displayedNaturalSize, metadataSize),
     [details.data?.focusInfo, displayedNaturalSize, metadataSize],
@@ -159,15 +152,13 @@ export function Loupe({
     setOffset({ x: 0, y: 0 });
   }, []);
 
-  const handleHeifImageSize = useCallback((size: Size) => {
-    setHeifFullSize((current) => (
-      current?.assetId === active.id
-        && current.size.width === size.width
-        && current.size.height === size.height
-        ? current
-        : { assetId: active.id, size }
-    ));
-  }, [active.id]);
+  const handleHeifPreviewStatus = useCallback((status: RawPreviewStatus) => {
+    setHeifStatus(status.state === "fullReady"
+      ? "complete"
+      : status.state === "fullFailed"
+        ? "failed"
+        : "decoding");
+  }, []);
 
   useEffect(() => {
     resetZoom();
@@ -391,17 +382,10 @@ export function Loupe({
               asset={active}
               large
               onImageLoad={(size) => setNaturalSize({ assetId: active.id, size })}
-              onRawPreviewStatus={setRawPreviewStatus}
+              onRawPreviewStatus={active.kind === "heif"
+                ? handleHeifPreviewStatus
+                : setRawPreviewStatus}
             />
-            {active.kind === "heif" ? (
-              <HeifTileCanvas
-                asset={active}
-                displaySharpening={displaySharpening}
-                hardwareAcceleration={hardwareAcceleration}
-                onImageSize={handleHeifImageSize}
-                onStatus={setHeifStatus}
-              />
-            ) : null}
             {showFocusAreas && mappedFocusRegions.length > 0 ? (
               <div className="loupe__focus-overlay" aria-hidden="true">
                 {mappedFocusRegions.map((region, index) => (

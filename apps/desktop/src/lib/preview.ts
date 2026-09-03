@@ -5,8 +5,7 @@ export type RenderSurface = "thumbnail" | "loupe";
 
 export type RenderMethod =
   | { type: "originalImage" }
-  | { type: "generatedImage"; requestLevel: RenderLevel }
-  | { type: "heifTiles" };
+  | { type: "generatedImage"; requestLevel: RenderLevel };
 
 type ConfiguredRenderMethod = RenderMethod | { type: "reuse"; level: RenderLevel };
 type RenderProfile = Record<RenderLevel, ConfiguredRenderMethod>;
@@ -52,7 +51,7 @@ const heifProfile: RenderProfile = {
   // Sony HIF's 160x120 camera JPEG fulfills both semantic levels. Resolving
   // this alias gives grid and loupe the exact same React Query cache identity.
   preview: { type: "reuse", level: "thumbnail" },
-  full: { type: "heifTiles" },
+  full: { type: "generatedImage", requestLevel: "full" },
 };
 
 // Keep platform as an explicit policy dimension even where the qualified

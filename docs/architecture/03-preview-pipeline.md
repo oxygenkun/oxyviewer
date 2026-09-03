@@ -24,7 +24,7 @@ HEVC 解码器或操作系统预览服务。即使原文件可解码，也不应
 | --- | --- | --- | --- |
 | JPEG/PNG/WebP | 原文件 URL | 原文件 URL | 原文件 URL |
 | RAW | LibRaw 512 | LibRaw 4096 | 近全尺寸内嵌 JPEG；不足时 full development |
-| HEIF/HIF | 内嵌 160×120 JPEG | 复用同一内嵌 JPEG | 独立 HEIF tile session |
+| HEIF/HIF | 内嵌 160×120 JPEG | 复用同一内嵌 JPEG | 源 HEIF 直接转换的完整 JPEG |
 | TIFF | 系统 512 | 系统 512 | 系统 4096（当前最佳可用表示） |
 
 交互图不随格式改变：网格/列表只进入 `thumbnail`；放大镜固定执行 `preview → full`。
@@ -73,8 +73,8 @@ sequenceDiagram
 这避免“高清请求已返回 URL，但文件尚未解码进浏览器”时让画面闪空。RAW full 失败也会继续
 保留渐进预览，而不是让放大镜不可用。
 
-Windows HEIF 的 `preview` renderer 复用 `thumbnail` 的 160×120 JPEG，`full` 则由 Canvas tile
-session 负责。该 JPEG 保留在 Canvas 下方，直到瓦片逐步覆盖。这样不会让重复的全图解码和 JPEG
+Windows HEIF 的 `preview` renderer 复用 `thumbnail` 的 160×120 JPEG，`full` 则请求一个
+源 HEIF 直接转换的完整 JPEG。该小 JPEG 保留到完整图加载成功。这样不会让重复的全图解码和 JPEG
 编码占住串行 preview queue，阻塞屏内缩略图。
 
 ## 5. 第一层调度：前端 `previewQueue`
@@ -150,7 +150,7 @@ flowchart TD
     request["platform + kind + RenderLevel"] --> policy["render_method_for"]
     policy -->|RAW Full| rawFull["raw_full"]
     policy -->|RAW Thumbnail/Preview| rawPreview["raw_preview_with_priority + policy size"]
-    policy -->|HEIF Full| heifFull["heif_full / tile session"]
+    policy -->|HEIF Full| heifFull["heif_full / source JPEG"]
     policy -->|HEIF Thumbnail/Preview| heifPreview["heif_preview_with_priority + policy size"]
     policy -->|TIFF| systemPreview["system_preview + policy size"]
     policy -->|JPEG/PNG/WebP| original["original"]
@@ -216,9 +216,11 @@ HIF 会直接读取前 2 MiB 内的 160×120 MJPEG item，注入正确 EXIF orie
 primary image 时，可使用 macOS ImageIO、FFmpeg 或 libheif 等后端，并限制线程数避免后台
 缩略图吃满 CPU。
 
-HEIF `preview` 与全分辨率 tile session 是两条配合路径：前者提供持久底图，后者提供放大检查。
+HEIF `preview` 与全分辨率 JPEG 是两条渐进路径：前者立即提供内嵌底图，后者提供放大检查。
 当前各平台都将 Sony HIF 的 `thumbnail` 与 `preview` 映射到 160×120 产物；平台策略以后可以在
 有独立 fixture 基准证据时分化。
+后端直接从源 HEIF 生成全尺寸 JPEG 缓存。再次进入相同 HIF 时，loupe 直接显示该 JPG，
+跳过源解码。活动前端路径不再启动 session，也不再传输 tile。
 macOS 的预览 JPEG 使用 ImageIO 编码；解码 permit 在 primary image 解码完成
 后立即释放，JPEG 编码与缓存同步不继续阻塞下一项解码。下一章专门解释 session。
 
@@ -293,4 +295,4 @@ WebView 的文件会在这轮清理中保留，容量小于单个 artifact 时�
 - 缓存键为什么包含版本和修改时间？
 - 原子写入避免了哪一类缓存损坏？
 
-下一章：[04：HEIF 会话与瓦片协议](04-heif-tile-session.md)。
+下一章：[04：HEIF 完整 JPEG 与旧瓦片协议](04-heif-tile-session.md)。

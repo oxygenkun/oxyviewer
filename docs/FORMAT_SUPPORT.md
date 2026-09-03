@@ -3,7 +3,7 @@
 | Format | Discovery | Preview | Metadata read | Metadata write |
 | --- | --- | --- | --- | --- |
 | JPEG/JPG | Implemented | Foundation implemented | Unified native EXIF/XMP/IPTC/ICC/MakerNote reader; sidecar-first editable metadata | XMP sidecar by default; optional embedded sync through ExifTool |
-| HEIF/HEIC/HIF | Implemented | 512/4096 px preview plus cancellable full-resolution RGBA8 tile session; Windows WIC and macOS ImageIO native decoders, dynamic FFmpeg software tile-grid backend, and libheif fallback; native hardware use remains pending GPU qualification | Unified native reader; `libheif-rs` item-table XMP extraction; Sony shooting focus location/frame | XMP sidecar by default; optional embedded sync through ExifTool |
+| HEIF/HEIC/HIF | Implemented | Embedded preview followed by one cached full-resolution JPEG converted directly from the source HEIF; the legacy RGBA8 tile-session backend remains available for diagnostics but is not started by loupe | Unified native reader; `libheif-rs` item-table XMP extraction; Sony shooting focus location/frame | XMP sidecar by default; optional embedded sync through ExifTool |
 | ARW/CR2/CR3/NEF/DNG/RAF/RW2/ORF | Implemented | Bundled LibRaw 0.22.2 embedded preview with half-size preview fallback, followed by full-resolution loupe development; macOS Quick Look final preview fallback | Unified native EXIF/XMP/IPTC/ICC/MakerNote reader; adjacent sidecar override | Adjacent XMP sidecar rating/color |
 | PNG/WebP/TIFF | Implemented as secondary formats | Foundation/Planned | Unified native EXIF/XMP/IPTC/ICC reader | Not in MVP |
 

@@ -1,3 +1,8 @@
+// The former full-detail RGBA/color-conversion path is retained for the
+// disabled tile-session compatibility backend and its fidelity tests. The
+// active loupe path converts the source HEIF directly to a JPEG.
+#![allow(dead_code)]
+
 use image::{
     DynamicImage, ExtendedColorType, ImageEncoder,
     codecs::jpeg::JpegEncoder,

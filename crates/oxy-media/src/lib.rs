@@ -33,7 +33,7 @@ const LIBRAW_FULL_CACHE_VERSION: &str = "libraw-0.22.2-full-detail-v2";
 // Bumped from `libheif-1.23-sdr-v1` (16-bit PNG) to an 8-bit sRGB JPEG with an
 // embedded ICC profile, unifying the cache format across every preview stage
 // and format. Old PNG caches are rebuildable and simply ignored.
-const HEIF_FULL_CACHE_VERSION: &str = "heif-sdr-jpeg-v1";
+const HEIF_FULL_CACHE_VERSION: &str = "heif-source-jpeg-v2";
 const HEIF_CACHE_VERSION: &str = "heif-native-preview-v7";
 const SYSTEM_CACHE_VERSION: &str = "system-preview-v2";
 const LOUPE_PREVIEW_THRESHOLD: u32 = 2_048;
@@ -46,6 +46,9 @@ const PREVIEW_CACHE_SIZES: [u32; 2] = [512, 4_096];
 // covers the progressive stages (512 / 4096) for every format.
 static RAW_FULL_DECODE_LOCK: Mutex<()> = Mutex::new(());
 static DECODE_GATE: DecodeGate = DecodeGate::new();
+// A stale selection may finish writing its rebuildable JPEG without blocking
+// the foreground decode gate needed by the newly selected HEIF.
+static HEIF_SESSION_CACHE_WRITE_LOCK: Mutex<()> = Mutex::new(());
 
 // Per-file locks coalesce duplicate cache work after the global decode gate has
 // selected the next source. Shared by every format.
@@ -150,6 +153,14 @@ pub(crate) fn acquire_decode(priority: DecodePriority) -> impl Drop {
 /// Backwards-compatible alias for [`acquire_decode`].
 pub(crate) fn acquire_heif_decode(priority: DecodePriority) -> impl Drop {
     acquire_decode(priority)
+}
+
+pub(crate) fn try_acquire_heif_session_cache_write() -> Option<impl Drop> {
+    match HEIF_SESSION_CACHE_WRITE_LOCK.try_lock() {
+        Ok(guard) => Some(guard),
+        Err(std::sync::TryLockError::WouldBlock) => None,
+        Err(std::sync::TryLockError::Poisoned(poisoned)) => Some(poisoned.into_inner()),
+    }
 }
 
 /// Look up or create a per-file `Mutex`, clone the `Arc`, then lock it.
@@ -488,11 +499,55 @@ pub fn heif_full(path: &Path, cache_dir: &Path) -> Result<PreviewResult, MediaEr
         return preview_result(destination, PreviewKind::Decoded);
     }
 
-    let image = heif::decode_primary(path)?;
-    let temporary = NamedTempFile::new_in(destination.parent().unwrap_or_else(|| Path::new(".")))?;
-    heif::write_srgb_jpeg(&image, temporary.path(), 95)?;
+    let temporary = tempfile::Builder::new()
+        .suffix(".jpg")
+        .tempfile_in(destination.parent().unwrap_or_else(|| Path::new(".")))?;
+    #[cfg(target_os = "macos")]
+    crate::apple_image_io::transcode_jpeg(path, temporary.path(), 95)?;
+    #[cfg(any(target_os = "windows", target_os = "linux"))]
+    crate::ffmpeg_heif::transcode_full_jpeg(path, temporary.path(), heif::dimensions(path)?, 95)?;
     persist_atomically(temporary, &destination)?;
     preview_result(destination, PreviewKind::Decoded)
+}
+
+fn heif_session_cache_path(path: &Path, cache_dir: &Path) -> Result<PathBuf, MediaError> {
+    let cache_key = preview_cache_key(path, HEIF_FULL_CACHE_VERSION, 0)?;
+    Ok(cache_dir.join(format!("{cache_key}.jpg")))
+}
+
+/// Returns a full-resolution JPEG previously converted from the source HEIF.
+/// Kept for the disabled tile-session compatibility entry point; the active
+/// loupe requests the same artifact through [`heif_full`].
+pub fn cached_heif_session(
+    path: &Path,
+    cache_dir: &Path,
+) -> Result<Option<PreviewResult>, MediaError> {
+    let destination = heif_session_cache_path(path, cache_dir)?;
+    destination
+        .is_file()
+        .then(|| preview_result(destination, PreviewKind::Decoded))
+        .transpose()
+}
+
+pub(crate) fn cache_heif_source_jpeg(path: &Path, cache_dir: &Path) -> Result<PathBuf, MediaError> {
+    fs::create_dir_all(cache_dir)?;
+    let destination = heif_session_cache_path(path, cache_dir)?;
+    if !destination.is_file() {
+        let temporary = tempfile::Builder::new()
+            .suffix(".jpg")
+            .tempfile_in(destination.parent().unwrap_or_else(|| Path::new(".")))?;
+        #[cfg(target_os = "macos")]
+        crate::apple_image_io::transcode_jpeg(path, temporary.path(), 95)?;
+        #[cfg(any(target_os = "windows", target_os = "linux"))]
+        crate::ffmpeg_heif::transcode_full_jpeg(
+            path,
+            temporary.path(),
+            heif::dimensions(path)?,
+            95,
+        )?;
+        persist_atomically(temporary, &destination)?;
+    }
+    Ok(destination)
 }
 
 pub fn heif_preview(
@@ -1040,6 +1095,24 @@ mod tests {
                 .join("../..")
                 .join(path)
         }
+    }
+
+    #[test]
+    fn heif_session_cache_is_lookup_only_and_comes_from_the_source_heif() {
+        let directory = tempfile::tempdir().unwrap();
+        let source =
+            Path::new(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/DSC00449.HIF");
+        let cache = directory.path().join("previews");
+
+        assert!(cached_heif_session(&source, &cache).unwrap().is_none());
+
+        cache_heif_source_jpeg(&source, &cache).unwrap();
+        let cached = cached_heif_session(&source, &cache)
+            .unwrap()
+            .expect("source HEIF should have a full JPEG cache");
+        assert!(cached.width >= 4_672);
+        assert!(cached.height >= 4_672);
+        assert!(cached.path.is_file());
     }
 
     #[test]

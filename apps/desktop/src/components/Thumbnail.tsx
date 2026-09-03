@@ -44,10 +44,10 @@ function hashSeed(value: string) {
 
 /**
  * Formats whose loupe experience reports full-resolution single-image status.
- * HEIF full detail is owned by `HeifTileCanvas` instead.
+ * Both RAW and HEIF use the unified full-resolution JPEG stage.
  */
 function hasFullDetailStage(kind: AssetKind): boolean {
-  return kind === "raw";
+  return kind === "raw" || kind === "heif";
 }
 
 function generatedLevel(method: RenderMethod | undefined): RenderLevel | undefined {
@@ -183,8 +183,7 @@ export function Thumbnail({
 
   useEffect(() => {
     // Report progressive status only for formats that run the full-detail
-    // stage here (currently RAW). HEIF's full-resolution status is owned by
-    // the tile canvas and surfaced through a separate event channel.
+    // stage here.
     if (!onRawPreviewStatus || !large || !hasFullDetailStage(asset.kind)) return;
     onRawPreviewStatus(rawPreviewStatus({
       assetId: asset.id,

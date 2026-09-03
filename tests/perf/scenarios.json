@@ -55,22 +55,24 @@
       "fixture": { "type": "file", "path": "tests/fixtures/DSC00449.HIF" },
       "selectName": "DSC00449.HIF",
       "enterLoupe": true,
-      "awaitMarks": ["image:loaded"],
-      "budgets": { "firstPreviewMs": 150 },
+      "awaitMarks": ["image:loaded@full"],
+      "budgets": { "firstPreviewMs": 150, "fullMs": 150 },
       "runs": 3,
       "coldCache": false,
       "warmup": true,
+      "clearCacheBeforeWarmup": true,
+      "warmupAwaitMarks": ["image:loaded@full"],
       "timeoutMs": 60000
     },
-    "loupe-tiles-hif": {
+    "loupe-full-hif": {
       "fixture": { "type": "file", "path": "tests/fixtures/DSC00449.HIF" },
       "selectName": "DSC00449.HIF",
       "enterLoupe": true,
-      "awaitMarks": ["heif:all-tiles-painted"],
+      "awaitMarks": ["image:loaded@full"],
       "budgets": {},
       "runs": 3,
-      "coldCache": false,
-      "warmup": true,
+      "coldCache": true,
+      "warmup": false,
       "timeoutMs": 60000
     },
     "loupe-full-arw": {

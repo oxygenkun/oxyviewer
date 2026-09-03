@@ -28,7 +28,7 @@ OxyViewer 是一个“React 界面 + Rust 本地能力”的桌面照片浏览�
 | 第一次接触 Rust/Tauri | [01：Rust 与 Tauri 运行时](architecture/01-rust-tauri-runtime.md) |
 | 理解打开文件夹为什么快 | [02：文件夹浏览与分页](architecture/02-folder-browsing.md) |
 | 理解缩略图、RAW、HEIF | [03：统一预览流水线](architecture/03-preview-pipeline.md) |
-| 深入 HEIF 全分辨率显示 | [04：HEIF 会话与瓦片协议](architecture/04-heif-tile-session.md) |
+| 深入 HEIF 全分辨率显示 | [04：HEIF 完整 JPEG 与旧瓦片协议](architecture/04-heif-tile-session.md) |
 | 理解状态、SQLite、元数据 | [05：状态、数据与安全边界](architecture/05-data-and-state.md) |
 | 准备新增功能或格式 | [06：扩展、调试与验证](architecture/06-extension-guide.md) |
 | 查一个类型或命令属于哪里 | [架构索引](architecture/README.md) |
@@ -202,8 +202,8 @@ flowchart LR
     previewUrl --> upgrade{在放大镜中?}
     upgrade -->|否| display["显示缩略图"]
     upgrade -->|是| heif{HEIF?}
-    heif -->|是| heifTiles["启动全分辨率瓦片会话"]
-    heifTiles --> display
+    heif -->|是| heifJpeg["源 HEIF 转完整 JPEG"]
+    heifJpeg --> display
     heif -->|否| stage4096["升级到 4096 px"]
     stage4096 --> rawFull{RAW?}
     rawFull -->|否| display
@@ -218,11 +218,11 @@ flowchart LR
 
 ### 6.3 HEIF 全分辨率显示
 
-HEIF 在放大镜中先保留 512 px JPEG 作为临时底图，不再额外生成 4096 px JPEG；同时启动一个只能有一个活跃实例的
-解码会话。Rust 解码整图并按中心优先顺序发布 RGBA 瓦片，React Canvas 将其覆盖到底图上。
-切换照片时使用 `generation` 和 `sessionId` 拒绝迟到瓦片。
+HEIF 在放大镜中先保留内嵌 JPEG 作为临时底图，再通过统一 preview pipeline 请求完整 JPEG。
+缓存未命中时由平台适配器直接从源 HEIF 转换并原子落盘；前端随后通过文件 URL 一次加载，
+不启动 Canvas session，也不发送 RGBA/JPEG tiles。再次进入同一照片时直接读取缓存文件。
 
-详见 [04：HEIF 会话与瓦片协议](architecture/04-heif-tile-session.md) 和
+旧的分片方案及停用原因记录于 [04：HEIF 完整 JPEG 与旧瓦片协议](architecture/04-heif-tile-session.md) 和
 [ADR 0004](adr/0004-heif-full-resolution-sessions.md)。
 
 ## 7. 为什么这样设计

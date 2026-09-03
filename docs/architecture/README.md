@@ -17,8 +17,8 @@
    - 渐进预览、双层调度、缓存和格式分派
    - JPEG/PNG/WebP、RAW、HEIF、TIFF 的不同路径
    - 取消语义和性能取舍
-4. [HEIF 会话与瓦片协议](04-heif-tile-session.md)
-   - 会话生命周期、后端选择、瓦片发布
+4. [HEIF 完整 JPEG 与旧瓦片协议](04-heif-tile-session.md)
+   - 当前完整 JPEG 路径、旧会话协议与停用原因
    - event 只传元数据，自定义协议传 RGBA
    - `generation` 如何防止旧结果污染新选择
 5. [状态、数据与安全边界](05-data-and-state.md)
@@ -39,7 +39,7 @@
 | 分页请求 | `FsCatalog::list_assets` | `useInfiniteQuery` in `App.tsx` |
 | 渲染等级 | `render_method_for` / `oxy_media::preview` | `renderPlan` |
 | 预览优先级 | `DecodeGate` | `previewQueue` |
-| HEIF 会话 | `HeifDecodeService` | `HeifTileCanvas` |
+| HEIF 完整图 | `oxy_media::heif_full` | `Thumbnail` 的 full stage |
 | UI 服务端状态 | 不适用 | React Query |
 | UI 交互状态 | 不适用 | Zustand `useWorkspaceStore` |
 | 资料库 | `oxy-library::Library` | library query in `App.tsx` |

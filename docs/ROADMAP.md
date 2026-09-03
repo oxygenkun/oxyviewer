@@ -101,6 +101,7 @@ retain the existing portable behavior.
 - [x] Pass DecodingOptions with explicit thread counts to leverage multi-core HEVC decode
 - [x] Use embedded HEIF thumbnails first, including undersized thumbnails as a progressive first stage
 - [x] Use an 8-bit RGB fast path for preview JPEGs while retaining color-managed high-bit-depth full detail
+- [x] Replace HEIF tile transfer with one source-derived full-resolution JPEG for loupe display
 - [x] Profile end-to-end decode pipeline; establish performance regression budget
 - [ ] Evaluate true reduced-resolution HEVC decode when supported by the bundled decoder
 

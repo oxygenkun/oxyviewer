@@ -8,7 +8,7 @@
 | 10 万文件目录首屏开始渲染 | ≤ 300 ms | `folder-open-100k` |
 | 冷缓存选中图片预览 | ≤ 800 ms | `cold-preview-arw` / `cold-preview-hif` |
 | 热缓存 loupe 预览 | ≤ 150 ms | `warm-loupe-arw` / `warm-loupe-hif` |
-| loupe 全分辨率（HEIF tile / RAW full） | 记录 + 基线回归 | `loupe-tiles-hif` / `loupe-full-arw` |
+| loupe 全分辨率（HEIF JPEG / RAW full） | 记录 + 基线回归 | `loupe-full-hif` / `loupe-full-arw` |
 
 ## 为什么不用 tauri-driver / Playwright
 
@@ -41,7 +41,7 @@ PerfHarness 组件（真实 UI 路径）
   ▼
 perfProbe（src/lib/perfProbe.ts，未激活时零开销）
   │  埋点：api.ts(openFolder/listAssets/generatedPreview/startHeifDecode)
-  │       Thumbnail(image:loaded)  HeifTileCanvas(tile 进度)  PerfHarness
+  │       Thumbnail(image:loaded)                         PerfHarness
   ▼
 write_perf_report (Rust, 写 JSON)
   ▼
@@ -61,9 +61,7 @@ runner 汇总 N 次运行 → median/p95 → 绝对预算 + 基线回归判定 �
 | `harness:select` | PerfHarness | 选中目标图片（冷/热预览计时起点） |
 | `preview:queued` / `preview:result` | api.generatedPreview | 预览请求入队 / 后端返回（含 `diagnostics`） |
 | `image:loaded` | Thumbnail.onLoad | 某一语义等级上屏（detail 含 `stage` / `renderLevel`） |
-| `heif:decode-requested` / `heif:session-ready` | api / HeifTileCanvas | HEIF 全分辨率 tile 会话 |
-| `heif:first-tile-painted` / `heif:all-tiles-painted` | HeifTileCanvas | 首 tile / 全部 tile 上屏 |
-| `heif:backend-*` | HeifTileCanvas | 后端状态事件（含 decode/tile 诊断） |
+| `image:loaded@full` | Thumbnail | HEIF/RAW 完整 JPEG 上屏 |
 | `harness:done` | PerfHarness | 场景结束（reason: complete / timeout） |
 
 Runner 由 mark 对计算出命名指标，`scenarios.json` 的 `budgets` 引用这些名字：
@@ -88,7 +86,7 @@ Runner 由 mark 对计算出命名指标，`scenarios.json` 的 `budgets` 引用
 | `cold-preview-hif` | `tests/fixtures/DSC00449.HIF` | 冷 | firstPreviewMs ≤ 800 |
 | `cold-preview-jpeg` | 合成 JPEG | 冷 | firstPreviewMs ≤ 800（走 asset 直读路径） |
 | `warm-loupe-arw` / `warm-loupe-hif` | 同上 | 热（连续第二次，不清缓存） | firstPreviewMs ≤ 150 |
-| `loupe-tiles-hif` | HIF | 热启动后进入 loupe | tile 指标记录 + 基线回归 |
+| `loupe-full-hif` | HIF | 清空缓存后进入 loupe | 完整 JPEG 上屏记录 + 基线回归 |
 | `loupe-full-arw` | ARW | 同上（awaitFull） | fullMs 仅记录（全幅显影是秒级，单列预算） |
 
 扩展新格式（CR3/NEF/DNG/TIFF/HEIC…）：把可分发夹具放入 `test/fixtures/media`
@@ -153,7 +151,7 @@ node scripts/perf-e2e.mjs --update-baseline
 
 - `harness:first-page-painted` 用双 rAF 近似"开始渲染"，不替代真实
   First Contentful Paint；如需更精确可叠加 PerformanceObserver。
-- HEIF 全分辨率 tile、RAW 全幅显影目前是"记录 + 基线回归"，待
+- HEIF 全分辨率 JPEG、RAW 全幅显影目前是"记录 + 基线回归"，待
   `docs/PERFORMANCE.md` 给出正式预算后再升级为绝对预算。
 - Windows/Linux 可叠加 tauri-driver 做 UI 行为校验；性能数字仍以应用内
   探针为准。

@@ -1,7 +1,14 @@
-# 04：HEIF 会话与瓦片协议
+# 04：HEIF 完整 JPEG 与旧瓦片协议
 
-本章深入 HEIF/HIF 在放大镜中的全分辨率路径。普通 512 预览属于统一预览流水线；
-这里讨论的是覆盖在 512 临时底图之上的 Canvas 瓦片。
+当前 loupe 已停用 Canvas 分片传输。活动路径只有两级：先显示源文件内嵌的小 JPEG，再由
+统一 preview pipeline 将源 HEIF 直接转换为 quality 95 的完整 JPEG，并以文件 URL 一次加载。
+macOS 转换停留在 ImageIO 的 `CGImageSource → CGImageDestination` 内，不把约 125 MiB 的整幅
+RGBA 缓冲区传回 Rust 再压缩；Windows/Linux 使用 FFmpeg 从 HEIF tile grid 直接合成 JPEG。
+缓存命中时不再解码源 HEIF。
+
+`HeifDecodeService`、`HeifTileCanvas`、event 和 `oxy-media://` tile protocol 暂时保留为诊断与
+回退实现，但 `Loupe` 不再挂载 `HeifTileCanvas`，所以正常浏览不会启动 session 或传输任何 tile。
+下文记录的是已停用的旧协议，便于后续安全删除。
 
 架构决策见 [ADR 0004](../adr/0004-heif-full-resolution-sessions.md)。
 
@@ -11,13 +18,15 @@
 `<img>` 等一个全尺寸临时文件生成完再显示，用户会经历长时间无反馈；如果把 RGBA 像素塞进
 command JSON，又会发生 base64/数组序列化和多次复制。
 
-当前方案把问题拆开：
+旧方案曾把问题拆开：
 
-- 512 JPEG：统一 preview pipeline 提供，快速、可缓存、作为临时底图；
+- preview JPEG：统一 preview pipeline 提供，快速、可缓存、作为临时底图；
 - full RGBA：一次有身份的后台 session 解码；
 - tile metadata：通过 Tauri event 发送；
 - tile bytes：通过 `oxy-media://` 自定义协议按 URL 读取；
-- display：Canvas 按坐标覆盖到底图。
+- display：Canvas 按坐标覆盖到底图；
+- warm display：首次 session 在发布瓦片后原子写入全分辨率 JPEG；相同源文件和显示设置再次
+  进入 loupe 时直接加载该文件，不再启动 session 或重复传输瓦片。
 
 ## 2. 组件关系
 
@@ -42,6 +51,7 @@ flowchart LR
         backendProbe["capability probes"]
         backend["ImageIO、FFmpeg、libheif"]
         tileStore[("in-memory RGBA tiles")]
+        fullCache[("full JPEG cache")]
     end
 
     loupe --> basePreview
@@ -54,11 +64,13 @@ flowchart LR
     backendProbe --> backend
     backend --> service
     service --> tileStore
+    service --> fullCache
     service --> eventBus
     eventBus --> eventListener
     eventListener --> tileCanvas
     tileCanvas --> protocol
     protocol --> tileStore
+    loupe --> fullCache
 ```
 
 `HeifDecodeService` 属于 `AppState`，因此 command、protocol handler 和后台 worker 访问的是
@@ -91,6 +103,13 @@ sequenceDiagram
     Canvas->>Canvas: putImageData at x、y
     HeifService->>EventBus: complete + diagnostics
 ```
+
+解码完成前，前端保留 Canvas，因此首次打开仍能渐进绘制。后端使用本次 session 已经得到的
+完整像素（Windows FFmpeg 网格路径则拼接已经生成的 JPEG tiles）写缓存，不会为了缓存再次解码
+HEIF。缓存键包含源文件身份、硬件解码偏好和显示锐化设置；任一项变化都会安全地回到 tile path。
+瓦片发布后会立即释放前台 decode gate 并报告显示完成；JPEG 落盘使用独立的串行锁，不属于
+loupe 完成条件。写入前还有一个可取消的短暂稳定期，快速掠过的照片不会排队编码大图；即使某个
+已经开始的缓存写入无法中途停止，也不会阻塞新选中照片的解码。
 
 前端先安装 listener 再启动 command，避免非常快的后台事件在订阅前丢失。即使 event 早于
 `sessionId` 赋值到达，组件也会暂存 `pendingTiles`，拿到 session 后再筛选并绘制。

@@ -74,22 +74,31 @@ fn benchmark_preview(path: &Path, size: u32, runs: usize) -> Result<(), Box<dyn 
 fn benchmark_tiles(path: &Path, runs: usize) -> Result<(), Box<dyn Error>> {
     let mut first_tile = Vec::with_capacity(runs);
     let mut totals = Vec::with_capacity(runs);
+    let cache = tempfile::tempdir()?;
     for generation in 0..runs {
         let service = HeifDecodeService::default();
         let session = service.begin(path, generation as u64, true, true)?;
         let started = Instant::now();
         let mut first = None;
         let mut payload_bytes = 0_usize;
-        let diagnostics = service.decode(&session, path.to_owned(), |event| {
-            first.get_or_insert_with(|| started.elapsed());
-            if let Some(tile) = service.tile(&event.session_id, event.generation, event.x, event.y)
-            {
-                payload_bytes += tile
-                    .encoded_jpeg
-                    .as_ref()
-                    .map_or(tile.rgba.len(), |jpeg| jpeg.len());
-            }
-        })?;
+        let diagnostics = service.decode(
+            &session,
+            path.to_owned(),
+            cache.path(),
+            true,
+            |event| {
+                first.get_or_insert_with(|| started.elapsed());
+                if let Some(tile) =
+                    service.tile(&event.session_id, event.generation, event.x, event.y)
+                {
+                    payload_bytes += tile
+                        .encoded_jpeg
+                        .as_ref()
+                        .map_or(tile.rgba.len(), |jpeg| jpeg.len());
+                }
+            },
+            |_| {},
+        )?;
         first_tile.push(first.unwrap_or_else(|| started.elapsed()));
         totals.push(started.elapsed());
         println!(

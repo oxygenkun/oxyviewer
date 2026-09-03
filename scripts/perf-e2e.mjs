@@ -272,6 +272,8 @@ function computeMetrics(report, selectName) {
     if (firstTile !== undefined) metrics.heifFirstTileMs = firstTile - select;
     const allTiles = markTime(report, "heif:all-tiles-painted", "assetName", selectName);
     if (allTiles !== undefined) metrics.heifAllTilesMs = allTiles - select;
+    const fullCacheHit = markTime(report, "heif:full-cache-hit", "assetName", selectName);
+    if (fullCacheHit !== undefined) metrics.heifFullCacheHitMs = fullCacheHit - select;
     // Backend arrival of the semantic preview level, independent of which
     // concrete dimensions the platform/format policy selected.
     const previewResult = report.marks.find((mark) =>
@@ -349,19 +351,25 @@ async function main() {
       ?? (scenario.fixture.type === "file" ? path.basename(scenario.fixture.path) : undefined);
     console.log(`\n== ${name} == runs=${runs} coldCache=${Boolean(scenario.coldCache)} folder=${folder}`);
 
-    const payload = (reportName) => ({
+    const payload = (reportName, awaitMarks = scenario.awaitMarks) => ({
       name,
       folder,
       selectName,
       enterLoupe: scenario.enterLoupe,
-      awaitMarks: scenario.awaitMarks ?? ["harness:first-page-painted"],
+      awaitMarks: awaitMarks ?? ["harness:first-page-painted"],
       timeoutMs: scenario.timeoutMs,
       reportPath: path.join(REPORTS_DIR, reportName),
     });
 
     if (scenario.warmup && !scenario.coldCache) {
       if (args.verbose) console.log("  warmup run (not measured)");
-      await runScenarioOnce(appBinary, payload(`${name}.warmup.json`), scenario.timeoutMs ?? 30_000, args.verbose);
+      if (scenario.clearCacheBeforeWarmup) clearPreviewCache();
+      await runScenarioOnce(
+        appBinary,
+        payload(`${name}.warmup.json`, scenario.warmupAwaitMarks),
+        scenario.timeoutMs ?? 30_000,
+        args.verbose,
+      );
     }
 
     const samples = [];

@@ -561,6 +561,16 @@ export async function startHeifDecode(
   return session;
 }
 
+export async function getCachedHeifFull(
+  path: string,
+): Promise<PreviewResult | undefined> {
+  if (!isTauri()) return undefined;
+  const result = await invoke<Omit<PreviewResult, "url"> | null>("get_cached_heif_full", {
+    path,
+  });
+  return result ? { ...result, url: convertFileSrc(result.path) } : undefined;
+}
+
 export async function cancelHeifDecode(sessionId: string): Promise<boolean> {
   return invoke<boolean>("cancel_heif_decode", { sessionId });
 }

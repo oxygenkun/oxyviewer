@@ -17,13 +17,13 @@ describe("semantic render graph", () => {
 
     expect(preview.method).toEqual({ type: "generatedImage", requestLevel: "thumbnail" });
     expect(renderMethodKey(preview.method)).toBe(renderMethodKey(thumbnail.method));
-    expect(full.method).toEqual({ type: "heifTiles" });
+    expect(full.method).toEqual({ type: "generatedImage", requestLevel: "full" });
   });
 
   it("keeps the platform dimension without regressing the qualified HIF fast path", () => {
     const [preview, full] = renderPlan("heif", "loupe", "macos");
     expect(preview.method).toEqual({ type: "generatedImage", requestLevel: "thumbnail" });
-    expect(full.method).toEqual({ type: "heifTiles" });
+    expect(full.method).toEqual({ type: "generatedImage", requestLevel: "full" });
   });
 
   it("maps RAW and TIFF levels without exposing concrete pixel sizes", () => {

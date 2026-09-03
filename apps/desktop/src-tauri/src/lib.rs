@@ -502,6 +502,31 @@ fn get_heif_diagnostics(state: State<'_, AppState>) -> Option<HeifDiagnostics> {
 }
 
 #[tauri::command]
+async fn get_cached_heif_full(
+    path: PathBuf,
+    state: State<'_, AppState>,
+) -> Result<Option<PreviewResult>, String> {
+    let asset = state
+        .files
+        .get_asset(&path)
+        .map_err(|error| error.to_string())?;
+    if asset.kind != AssetKind::Heif {
+        return Err("full-resolution HEIF cache lookup requires a HEIF asset".into());
+    }
+    let preview_dir = state.cache.preview_dir();
+    let cache = state.cache.clone();
+    let result = tauri::async_runtime::spawn_blocking(move || {
+        oxy_media::cached_heif_session(&path, &preview_dir).map_err(|error| error.to_string())
+    })
+    .await
+    .map_err(|error| error.to_string())??;
+    if let Some(result) = &result {
+        cache.mark_used(&result.path);
+    }
+    Ok(result)
+}
+
+#[tauri::command]
 async fn start_heif_decode(
     path: PathBuf,
     generation: u64,
@@ -522,6 +547,8 @@ async fn start_heif_decode(
         .begin(&path, generation, hardware_acceleration, display_sharpening)
         .map_err(|error| error.to_string())?;
     let worker_session = session.clone();
+    let preview_dir = state.cache.preview_dir();
+    let cache = state.cache.clone();
     let fallback_status = (session.status == HeifDecodeStatus::CompatibilityFallback).then(|| {
         oxy_media::HeifDecodeService::status_event(
             &session,
@@ -534,30 +561,58 @@ async fn start_heif_decode(
         let _ = app.emit("heif-decode-status", status);
     }
     tauri::async_runtime::spawn_blocking(move || {
-        let result = service.decode(&worker_session, path, |tile| {
-            let _ = app.emit("heif-tile-ready", tile);
-        });
+        let cache_source_path = path.clone();
+        let result = service.decode(
+            &worker_session,
+            path,
+            &preview_dir,
+            hardware_acceleration,
+            |tile| {
+                let _ = app.emit("heif-tile-ready", tile);
+            },
+            |diagnostics| {
+                let event = oxy_media::HeifDecodeService::status_event(
+                    &worker_session,
+                    HeifDecodeStatus::Complete,
+                    Some(diagnostics.clone()),
+                    None,
+                );
+                let _ = app.emit("heif-decode-status", event);
+            },
+        );
+        if result.is_ok()
+            && let Ok(Some(cached)) =
+                oxy_media::cached_heif_session(&cache_source_path, &preview_dir)
+        {
+            cache.mark_used(&cached.path);
+            if cache.try_start_prune() {
+                if let Err(error) = cache.prune_after_write(&cached.path) {
+                    eprintln!("preview cache pruning failed: {error}");
+                }
+                cache.finish_prune();
+            }
+            let _ = app.emit("heif-cache-ready", worker_session.clone());
+        }
         let event = match result {
-            Ok(diagnostics) => oxy_media::HeifDecodeService::status_event(
-                &worker_session,
-                HeifDecodeStatus::Complete,
-                Some(diagnostics),
-                None,
-            ),
-            Err(oxy_media::MediaError::Cancelled) => oxy_media::HeifDecodeService::status_event(
-                &worker_session,
-                HeifDecodeStatus::Cancelled,
-                None,
-                None,
-            ),
-            Err(error) => oxy_media::HeifDecodeService::status_event(
+            Ok(_) => None,
+            Err(oxy_media::MediaError::Cancelled) => {
+                Some(oxy_media::HeifDecodeService::status_event(
+                    &worker_session,
+                    HeifDecodeStatus::Cancelled,
+                    None,
+                    None,
+                ))
+            }
+            Err(error) => Some(oxy_media::HeifDecodeService::status_event(
                 &worker_session,
                 HeifDecodeStatus::Failed,
                 None,
                 Some(error.to_string()),
-            ),
+            )),
         };
-        let _ = app.emit("heif-decode-status", event);
+        if let Some(event) = event {
+            let _ = app.emit("heif-decode-status", event);
+        }
     });
     Ok(session)
 }
@@ -689,6 +744,7 @@ pub fn run() {
             cancel_job,
             get_heif_capabilities,
             get_heif_diagnostics,
+            get_cached_heif_full,
             start_heif_decode,
             cancel_heif_decode,
             get_perf_scenario,

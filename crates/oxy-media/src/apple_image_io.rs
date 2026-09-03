@@ -22,6 +22,13 @@ unsafe extern "C" {
         height: u32,
         quality: u8,
     ) -> i32;
+    fn oxy_apple_image_io_transcode_jpeg(
+        source_path: *const u8,
+        source_path_len: usize,
+        destination_path: *const u8,
+        destination_path_len: usize,
+        quality: u8,
+    ) -> i32;
     fn oxy_apple_image_io_sharpen_rgba8(
         pixels: *mut u8,
         pixels_len: usize,
@@ -117,6 +124,27 @@ pub fn write_jpeg(image: &DynamicImage, path: &Path, quality: u8) -> Result<(), 
     }
 }
 
+pub fn transcode_jpeg(source: &Path, destination: &Path, quality: u8) -> Result<(), MediaError> {
+    let source = source.as_os_str().as_bytes();
+    let destination = destination.as_os_str().as_bytes();
+    let status = unsafe {
+        oxy_apple_image_io_transcode_jpeg(
+            source.as_ptr(),
+            source.len(),
+            destination.as_ptr(),
+            destination.len(),
+            quality,
+        )
+    };
+    if status == 0 {
+        Ok(())
+    } else {
+        Err(native_error(format!(
+            "source HEIF to JPEG conversion failed at native stage {status}"
+        )))
+    }
+}
+
 pub fn sharpen_rgba8(image: &mut RgbaImage) -> Result<(), MediaError> {
     let width = image.width();
     let height = image.height();
@@ -165,6 +193,22 @@ mod tests {
             .decode()
             .unwrap();
         assert_eq!((decoded.width(), decoded.height()), (32, 16));
+    }
+
+    #[test]
+    fn transcodes_repository_heif_directly_to_jpeg() {
+        let fixture =
+            Path::new(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/DSC00449.HIF");
+        if can_decode(&fixture).is_err() {
+            return;
+        }
+        let output = tempfile::Builder::new().suffix(".jpg").tempfile().unwrap();
+        transcode_jpeg(&fixture, output.path(), 95).unwrap();
+        let decoded = image::ImageReader::open(output.path())
+            .unwrap()
+            .decode()
+            .unwrap();
+        assert_eq!((decoded.width(), decoded.height()), (7008, 4672));
     }
 
     #[test]
