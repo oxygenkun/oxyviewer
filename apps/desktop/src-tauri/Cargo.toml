@@ -23,7 +23,6 @@ oxy-media = { path = "../../../crates/oxy-media" }
 oxy-metadata = { path = "../../../crates/oxy-metadata" }
 oxy-runtime = { path = "../../../crates/oxy-runtime" }
 flate2 = "1.1"
-reqwest = { version = "0.12", default-features = false, features = ["blocking", "rustls-tls"] }
 serde.workspace = true
 serde_json.workspace = true
 sha2 = "0.10"
@@ -31,6 +30,7 @@ tauri = { version = "2", features = ["protocol-asset"] }
 tauri-plugin-dialog = "2"
 tauri-plugin-log = "2"
 tar = "0.4"
+ureq = { version = "3.4", default-features = false, features = ["native-tls"] }
 
 [target.'cfg(windows)'.dependencies]
 zip = { version = "2.4", default-features = false, features = ["deflate"] }

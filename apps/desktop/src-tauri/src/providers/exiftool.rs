@@ -159,16 +159,23 @@ fn managed_executable(_data_dir: &Path) -> Option<PathBuf> {
 }
 
 fn download(url: &str, expected_sha256: &str) -> Result<Vec<u8>, String> {
-    let mut response = reqwest::blocking::Client::builder()
-        .user_agent("OxyViewer metadata provider installer")
+    let agent = ureq::config::Config::builder()
+        .tls_config(
+            ureq::tls::TlsConfig::builder()
+                .provider(ureq::tls::TlsProvider::NativeTls)
+                .build(),
+        )
         .build()
-        .map_err(|error| error.to_string())?
+        .new_agent();
+    let mut response = agent
         .get(url)
-        .send()
-        .and_then(reqwest::blocking::Response::error_for_status)
+        .header("User-Agent", "OxyViewer metadata provider installer")
+        .call()
         .map_err(|error| format!("ExifTool download failed: {error}"))?;
     let mut bytes = Vec::new();
     response
+        .body_mut()
+        .as_reader()
         .read_to_end(&mut bytes)
         .map_err(|error| format!("ExifTool download failed: {error}"))?;
     verify_checksum(&bytes, expected_sha256)?;
