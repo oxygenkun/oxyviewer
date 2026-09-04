@@ -24,6 +24,7 @@ import {
   fitSize,
   getNavigatorViewport,
   MAX_PIXEL_ZOOM_PERCENT,
+  orderVisibleFilmstripItems,
   panByNavigatorDelta,
   pixelZoomPercent,
   resolveLoupeSourceSize,
@@ -39,6 +40,10 @@ import type { MessageKey } from "../lib/i18n";
 import type { RawPreviewStatus } from "../lib/rawPreview";
 import { orderBySelectionPriority } from "../lib/selectionPriority";
 import { renderPlan } from "../lib/preview";
+import {
+  backgroundPreviewIntents,
+  PreviewScheduleScope,
+} from "../lib/previewScheduling";
 import { useWorkspaceStore } from "../store";
 import type { AssetSummary, HeifDecodeStatus, NavigatorPosition } from "../types";
 import { AssetMetadataBadges } from "./AssetMetadataBadges";
@@ -122,9 +127,13 @@ export function Loupe({
   const [heifFullSize, setHeifFullSize] = useState<{ assetId: string; size: Size } | undefined>(undefined);
   const [rawPreviewStatus, setRawPreviewStatus] = useState<RawPreviewStatus>({ state: "loadingPreview" });
   const [heifStatus, setHeifStatus] = useState<HeifDecodeStatus>("probing");
-  const [visibleFilmstripIds, setVisibleFilmstripIds] = useState<ReadonlySet<string>>(
-    () => new Set(),
-  );
+  const [visibleFilmstripIds, setVisibleFilmstripIds] = useState<readonly string[]>([]);
+  const filmstripMeasureFrame = useRef<number | undefined>(undefined);
+  const [filmstripSchedule] = useState(() => new PreviewScheduleScope("loupe-filmstrip"));
+  const [backgroundSchedule] = useState(() => new PreviewScheduleScope(
+    "loupe-background",
+    { minDispatchIntervalMs: 200 },
+  ));
   const unloadedFilmstripCount = Math.max(0, total - assets.length);
   const unloadedFilmstripWidth = filmstripUnloadedWidth(
     unloadedFilmstripCount,
@@ -280,33 +289,49 @@ export function Loupe({
     return () => observer.disconnect();
   }, [getSizes, zoom]);
 
-  useEffect(() => {
+  const measureFilmstripViewport = useCallback((strip: HTMLDivElement) => {
+    const viewport = strip.getBoundingClientRect();
+    const visibleIds = orderVisibleFilmstripItems(
+      Array.from(strip.querySelectorAll<HTMLButtonElement>("button[data-filmstrip-asset-id]"))
+        .flatMap((item) => {
+          const id = item.dataset.filmstripAssetId;
+          if (!id) return [];
+          const bounds = item.getBoundingClientRect();
+          return [{ id, start: bounds.left, end: bounds.right }];
+        }),
+      viewport.left,
+      viewport.right,
+    );
+    setVisibleFilmstripIds((current) => (
+      current.length === visibleIds.length
+      && current.every((id, index) => id === visibleIds[index])
+        ? current
+        : visibleIds
+    ));
+  }, []);
+
+  const scheduleFilmstripMeasurement = useCallback((strip: HTMLDivElement) => {
+    if (filmstripMeasureFrame.current !== undefined) return;
+    filmstripMeasureFrame.current = window.requestAnimationFrame(() => {
+      filmstripMeasureFrame.current = undefined;
+      measureFilmstripViewport(strip);
+    });
+  }, [measureFilmstripViewport]);
+
+  useLayoutEffect(() => {
     const strip = filmstripRef.current;
     if (!strip) return;
-    const items = Array.from(
-      strip.querySelectorAll<HTMLButtonElement>("button[data-filmstrip-asset-id]"),
-    );
-    if (typeof IntersectionObserver === "undefined") {
-      setVisibleFilmstripIds(new Set(items.map((item) => item.dataset.filmstripAssetId!)));
-      return;
-    }
-
-    const observer = new IntersectionObserver((entries) => {
-      setVisibleFilmstripIds((current) => {
-        const next = new Set(current);
-        for (const entry of entries) {
-          const id = (entry.target as HTMLButtonElement).dataset.filmstripAssetId;
-          if (!id) continue;
-          if (entry.isIntersecting) next.add(id);
-          else next.delete(id);
-        }
-        if (next.size === current.size && [...next].every((id) => current.has(id))) return current;
-        return next;
-      });
-    }, { root: strip });
-    items.forEach((item) => observer.observe(item));
-    return () => observer.disconnect();
-  }, [assets]);
+    scheduleFilmstripMeasurement(strip);
+    const observer = new ResizeObserver(() => scheduleFilmstripMeasurement(strip));
+    observer.observe(strip);
+    return () => {
+      observer.disconnect();
+      if (filmstripMeasureFrame.current !== undefined) {
+        window.cancelAnimationFrame(filmstripMeasureFrame.current);
+        filmstripMeasureFrame.current = undefined;
+      }
+    };
+  }, [assets, filmstripHeight, scheduleFilmstripMeasurement]);
 
   const priorityOrderedAssets = useMemo(
     () => orderBySelectionPriority(assets, active.id, (asset) => asset.id),
@@ -316,12 +341,60 @@ export function Loupe({
     () => new Map(priorityOrderedAssets.map((asset, index) => [asset.id, index])),
     [priorityOrderedAssets],
   );
-  const visibleFilmstripAssets = useMemo(
-    () => priorityOrderedAssets.filter(
-      (asset) => asset.id === active.id || visibleFilmstripIds.has(asset.id),
-    ),
-    [active.id, priorityOrderedAssets, visibleFilmstripIds],
+  const assetsById = useMemo(
+    () => new Map(assets.map((asset) => [asset.id, asset])),
+    [assets],
   );
+  const visibleFilmstripIdSet = useMemo(
+    () => new Set(visibleFilmstripIds),
+    [visibleFilmstripIds],
+  );
+  const viewportRankById = useMemo(
+    () => new Map(visibleFilmstripIds.map((id, index) => [id, index])),
+    [visibleFilmstripIds],
+  );
+  const visibleFilmstripAssets = useMemo(
+    () => [active, ...visibleFilmstripIds
+      .filter((id) => id !== active.id)
+      .flatMap((id) => assetsById.get(id) ?? [])],
+    [active, assetsById, visibleFilmstripIds],
+  );
+  const filmstripScheduleIntents = useMemo(() => visibleFilmstripAssets.flatMap(
+    (asset, rank) => {
+      const priority = asset.id === active.id ? "loupe" as const : "visible" as const;
+      const thumbnailIntent = {
+        path: asset.path,
+        level: "thumbnail" as const,
+        priority,
+        rank,
+      };
+      const previewMethod = renderPlan(asset.kind, "loupe")[0].method;
+      return previewMethod.type === "generatedImage"
+        && previewMethod.requestLevel !== "thumbnail"
+        ? [thumbnailIntent, {
+            path: asset.path,
+            level: previewMethod.requestLevel,
+            priority,
+            rank,
+          }]
+        : [thumbnailIntent];
+    },
+  ), [active.id, visibleFilmstripAssets]);
+  useEffect(() => {
+    filmstripSchedule.reconcile(filmstripScheduleIntents);
+  }, [filmstripSchedule, filmstripScheduleIntents]);
+
+  useEffect(() => {
+    const timer = window.setTimeout(() => {
+      backgroundSchedule.reconcile(backgroundPreviewIntents(assets, active.id));
+    }, 150);
+    return () => window.clearTimeout(timer);
+  }, [active.id, assets, backgroundSchedule]);
+
+  useEffect(() => () => {
+    filmstripSchedule.release();
+    backgroundSchedule.release();
+  }, [backgroundSchedule, filmstripSchedule]);
 
   const fetchFilmstripPageIfNeeded = useCallback((strip: HTMLDivElement) => {
     if (!hasNextPage || isFetchingNextPage) return;
@@ -667,7 +740,10 @@ export function Loupe({
       <div
         className="filmstrip"
         ref={filmstripRef}
-        onScroll={(event) => fetchFilmstripPageIfNeeded(event.currentTarget)}
+        onScroll={(event) => {
+          fetchFilmstripPageIfNeeded(event.currentTarget);
+          scheduleFilmstripMeasurement(event.currentTarget);
+        }}
         onWheel={(event) => {
           if (event.deltaY === 0) return;
           event.preventDefault();
@@ -680,9 +756,11 @@ export function Loupe({
             active={active.id === asset.id}
             asset={asset}
             onClick={() => select(asset.id)}
-            queueOrder={priorityRankById.get(asset.id) ?? assets.length}
+            queueOrder={viewportRankById.get(asset.id)
+              ?? visibleFilmstripIds.length + (priorityRankById.get(asset.id) ?? assets.length)}
             root={filmstripRef}
             showMetadata={loupeMetadataVisible}
+            visible={visibleFilmstripIdSet.has(asset.id)}
           />
         ))}
         {unloadedFilmstripCount > 0 ? (
@@ -705,6 +783,7 @@ interface FilmstripItemProps {
   queueOrder: number;
   root: React.RefObject<HTMLDivElement | null>;
   showMetadata: boolean;
+  visible: boolean;
 }
 
 function FilmstripItem({
@@ -714,38 +793,30 @@ function FilmstripItem({
   queueOrder,
   root,
   showMetadata,
+  visible,
 }: FilmstripItemProps) {
   const itemRef = useRef<HTMLButtonElement>(null);
   const [nearby, setNearby] = useState(active);
-  const [visible, setVisible] = useState(active);
 
   useEffect(() => {
     const item = itemRef.current;
     if (!item || !root.current || typeof IntersectionObserver === "undefined") {
       setNearby(true);
-      setVisible(true);
       return;
     }
     const nearbyObserver = new IntersectionObserver(
       ([entry]) => setNearby(entry.isIntersecting),
       { root: root.current, rootMargin: "0px 320px" },
     );
-    const visibleObserver = new IntersectionObserver(
-      ([entry]) => setVisible(entry.isIntersecting),
-      { root: root.current },
-    );
     nearbyObserver.observe(item);
-    visibleObserver.observe(item);
     return () => {
       nearbyObserver.disconnect();
-      visibleObserver.disconnect();
     };
   }, [root]);
 
   useEffect(() => {
     if (active) {
       setNearby(true);
-      setVisible(true);
       itemRef.current?.scrollIntoView({ block: "nearest", inline: "nearest" });
     }
   }, [active]);
@@ -758,12 +829,15 @@ function FilmstripItem({
       onClick={onClick}
       title={asset.name}
     >
-      <Thumbnail
-        asset={asset}
-        enabled={nearby || active}
-        priority={active ? "loupe" : visible ? "visible" : "nearby"}
-        queueOrder={queueOrder}
-      />
+      {nearby || visible || active ? (
+        <Thumbnail
+          asset={asset}
+          priority={active ? "loupe" : visible ? "visible" : "nearby"}
+          queueOrder={queueOrder}
+        />
+      ) : (
+        <div className="thumbnail" aria-hidden="true" />
+      )}
       {showMetadata ? (
         <span className="filmstrip__metadata">
           <AssetMetadataBadges asset={asset} />

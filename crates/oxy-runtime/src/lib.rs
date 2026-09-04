@@ -11,9 +11,254 @@ use std::{
     },
 };
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct SchedulePosition {
+    pub tier: u16,
+    pub rank: u32,
+}
+
+impl SchedulePosition {
+    pub const fn new(tier: u16, rank: u32) -> Self {
+        Self { tier, rank }
+    }
+}
+
+impl PartialOrd for SchedulePosition {
+    fn partial_cmp(&self, other: &Self) -> Option<CmpOrdering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl Ord for SchedulePosition {
+    fn cmp(&self, other: &Self) -> CmpOrdering {
+        other
+            .tier
+            .cmp(&self.tier)
+            .then_with(|| other.rank.cmp(&self.rank))
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum QueuePlacement {
+    Front,
+    Back,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum OmittedIntentPolicy {
+    Release,
+    Demote {
+        tier: u16,
+        placement: QueuePlacement,
+    },
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct EffectiveScheduleChange<K> {
+    pub key: K,
+    pub position: Option<SchedulePosition>,
+}
+
+struct ScopeSchedule<K> {
+    epoch: u64,
+    intents: HashMap<K, SchedulePosition>,
+}
+
+/// Aggregates ordered task intents owned by independent scopes. Lower tier and
+/// rank values are more important; `SchedulePosition::Ord` reverses that order
+/// so the effective position can be selected with `max` and used in a max-heap.
+pub struct ScopedIntentScheduler<K, S> {
+    scopes: HashMap<S, ScopeSchedule<K>>,
+}
+
+impl<K, S> Default for ScopedIntentScheduler<K, S> {
+    fn default() -> Self {
+        Self {
+            scopes: HashMap::new(),
+        }
+    }
+}
+
+impl<K, S> ScopedIntentScheduler<K, S>
+where
+    K: Clone + Eq + Hash,
+    S: Clone + Eq + Hash,
+{
+    pub fn effective_position(&self, key: &K) -> Option<SchedulePosition> {
+        self.scopes
+            .values()
+            .filter_map(|scope| scope.intents.get(key).copied())
+            .max()
+    }
+
+    pub fn reconcile(
+        &mut self,
+        scope_id: S,
+        epoch: u64,
+        intents: impl IntoIterator<Item = (K, SchedulePosition)>,
+        omitted: OmittedIntentPolicy,
+    ) -> Option<Vec<EffectiveScheduleChange<K>>> {
+        if self
+            .scopes
+            .get(&scope_id)
+            .is_some_and(|scope| scope.epoch > epoch)
+        {
+            return None;
+        }
+
+        let previous = self
+            .scopes
+            .get(&scope_id)
+            .map_or_else(HashMap::new, |scope| scope.intents.clone());
+        let mut next = intents.into_iter().collect::<HashMap<_, _>>();
+        let mut omitted_items = previous
+            .iter()
+            .filter(|(key, _)| !next.contains_key(*key))
+            .map(|(key, position)| (key.clone(), *position))
+            .collect::<Vec<_>>();
+        omitted_items.sort_by_key(|(_, position)| (position.tier, position.rank));
+
+        if let OmittedIntentPolicy::Demote { tier, placement } = omitted {
+            let back_start = next
+                .values()
+                .filter(|position| position.tier == tier)
+                .map(|position| position.rank)
+                .max()
+                .map_or(0, |rank| rank.saturating_add(1));
+            let omitted_count = u32::try_from(omitted_items.len()).unwrap_or(u32::MAX);
+            if placement == QueuePlacement::Front && omitted_count > 0 {
+                for position in next.values_mut().filter(|position| position.tier == tier) {
+                    position.rank = position.rank.saturating_add(omitted_count);
+                }
+            }
+            for (index, (key, _)) in omitted_items.into_iter().enumerate() {
+                let offset = u32::try_from(index).unwrap_or(u32::MAX);
+                let rank = match placement {
+                    QueuePlacement::Front => offset,
+                    QueuePlacement::Back => back_start.saturating_add(offset),
+                };
+                next.insert(key, SchedulePosition::new(tier, rank));
+            }
+        }
+
+        let mut affected = previous.keys().cloned().collect::<Vec<_>>();
+        affected.extend(
+            next.keys()
+                .filter(|key| !previous.contains_key(*key))
+                .cloned(),
+        );
+        let before = affected
+            .iter()
+            .map(|key| (key.clone(), self.effective_position(key)))
+            .collect::<HashMap<_, _>>();
+        self.scopes.insert(
+            scope_id,
+            ScopeSchedule {
+                epoch,
+                intents: next,
+            },
+        );
+        Some(self.changed_effective_positions(affected, before))
+    }
+
+    pub fn upsert(
+        &mut self,
+        scope_id: S,
+        epoch: u64,
+        key: K,
+        tier: u16,
+        placement: QueuePlacement,
+    ) -> Option<Vec<EffectiveScheduleChange<K>>> {
+        if self
+            .scopes
+            .get(&scope_id)
+            .is_some_and(|scope| scope.epoch > epoch)
+        {
+            return None;
+        }
+        let mut intents = self
+            .scopes
+            .get(&scope_id)
+            .map_or_else(HashMap::new, |scope| scope.intents.clone());
+        intents.remove(&key);
+        let mut tier_items = intents
+            .iter()
+            .filter(|(_, position)| position.tier == tier)
+            .map(|(key, position)| (key.clone(), *position))
+            .collect::<Vec<_>>();
+        tier_items.sort_by_key(|(_, position)| position.rank);
+        let mut ordered = Vec::with_capacity(tier_items.len() + 1);
+        if placement == QueuePlacement::Front {
+            ordered.push(key.clone());
+        }
+        ordered.extend(tier_items.into_iter().map(|(key, _)| key));
+        if placement == QueuePlacement::Back {
+            ordered.push(key.clone());
+        }
+        for (rank, tier_key) in ordered.into_iter().enumerate() {
+            intents.insert(
+                tier_key,
+                SchedulePosition::new(tier, u32::try_from(rank).unwrap_or(u32::MAX)),
+            );
+        }
+        self.reconcile(scope_id, epoch, intents, OmittedIntentPolicy::Release)
+    }
+
+    pub fn release(
+        &mut self,
+        scope_id: &S,
+        epoch: u64,
+        key: &K,
+    ) -> Option<Vec<EffectiveScheduleChange<K>>> {
+        let scope = self.scopes.get(scope_id)?;
+        if scope.epoch > epoch || !scope.intents.contains_key(key) {
+            return None;
+        }
+        let mut intents = scope.intents.clone();
+        intents.remove(key);
+        self.reconcile(
+            scope_id.clone(),
+            epoch,
+            intents,
+            OmittedIntentPolicy::Release,
+        )
+    }
+
+    pub fn release_scope(&mut self, scope_id: &S) -> Vec<EffectiveScheduleChange<K>> {
+        let Some(scope) = self.scopes.remove(scope_id) else {
+            return Vec::new();
+        };
+        let affected = scope.intents.keys().cloned().collect::<Vec<_>>();
+        let before = affected
+            .iter()
+            .map(|key| {
+                let previous = scope.intents.get(key).copied();
+                let remaining = self.effective_position(key);
+                (key.clone(), previous.max(remaining))
+            })
+            .collect::<HashMap<_, _>>();
+        self.changed_effective_positions(affected, before)
+    }
+
+    fn changed_effective_positions(
+        &self,
+        affected: Vec<K>,
+        before: HashMap<K, Option<SchedulePosition>>,
+    ) -> Vec<EffectiveScheduleChange<K>> {
+        affected
+            .into_iter()
+            .filter_map(|key| {
+                let position = self.effective_position(&key);
+                (before.get(&key).copied().flatten() != position)
+                    .then_some(EffectiveScheduleChange { key, position })
+            })
+            .collect()
+    }
+}
+
 /// Priority queue for source-derived work. One pending entry exists per key;
-/// repeated requests replace its payload and can only raise its priority.
-/// Stale heap entries created by promotion are discarded during `pop`.
+/// repeated requests merge its payload, while explicit schedule updates may
+/// move it in either direction. Stale heap entries are discarded during `pop`.
 pub struct CoalescingPriorityQueue<K, V, P> {
     pending: HashMap<K, PendingEntry<V, P>>,
     heap: BinaryHeap<HeapEntry<K, P>>,
@@ -149,6 +394,29 @@ where
         true
     }
 
+    /// Updates a pending payload and derives its replacement priority from the
+    /// updated value, allowing consumer-aware promotion and demotion.
+    pub fn update_priority_if_present(
+        &mut self,
+        key: &K,
+        update: impl FnOnce(&mut V) -> P,
+    ) -> bool {
+        let Some(current) = self.pending.get_mut(key) else {
+            return false;
+        };
+        current.priority = update(&mut current.value);
+        current.generation = current.generation.wrapping_add(1);
+        current.sequence = self.next_sequence;
+        self.next_sequence = self.next_sequence.wrapping_add(1);
+        self.heap.push(HeapEntry {
+            key: key.clone(),
+            priority: current.priority,
+            generation: current.generation,
+            sequence: current.sequence,
+        });
+        true
+    }
+
     /// Replaces a pending entry's priority, allowing a coordinator to demote
     /// work that is no longer active as well as promote newly active work.
     pub fn reprioritize_if_present(&mut self, key: &K, priority: P) -> bool {
@@ -223,6 +491,121 @@ mod tests {
     use super::*;
 
     #[test]
+    fn scoped_scheduler_aggregates_consumers_and_rejects_stale_epochs() {
+        let mut scheduler = ScopedIntentScheduler::default();
+        let task = "asset";
+        assert!(
+            scheduler
+                .reconcile(
+                    "grid",
+                    2,
+                    [(task, SchedulePosition::new(1, 4))],
+                    OmittedIntentPolicy::Release,
+                )
+                .is_some()
+        );
+        assert!(
+            scheduler
+                .reconcile(
+                    "preload",
+                    1,
+                    [(task, SchedulePosition::new(3, 0))],
+                    OmittedIntentPolicy::Release,
+                )
+                .is_some()
+        );
+        assert_eq!(
+            scheduler.effective_position(&task),
+            Some(SchedulePosition::new(1, 4))
+        );
+
+        assert!(
+            scheduler
+                .reconcile(
+                    "grid",
+                    1,
+                    [(task, SchedulePosition::new(3, 0))],
+                    OmittedIntentPolicy::Release,
+                )
+                .is_none()
+        );
+        assert_eq!(
+            scheduler.effective_position(&task),
+            Some(SchedulePosition::new(1, 4))
+        );
+
+        let changes = scheduler.release_scope(&"grid");
+        assert_eq!(
+            changes,
+            vec![EffectiveScheduleChange {
+                key: task,
+                position: Some(SchedulePosition::new(3, 0)),
+            }]
+        );
+        assert_eq!(
+            scheduler.effective_position(&task),
+            Some(SchedulePosition::new(3, 0))
+        );
+    }
+
+    #[test]
+    fn reconcile_demotes_omitted_work_to_the_requested_edge() {
+        let mut scheduler = ScopedIntentScheduler::default();
+        scheduler.reconcile(
+            "viewport",
+            1,
+            [
+                ("old-a", SchedulePosition::new(1, 0)),
+                ("old-b", SchedulePosition::new(1, 1)),
+            ],
+            OmittedIntentPolicy::Release,
+        );
+        scheduler.reconcile(
+            "viewport",
+            2,
+            [("visible", SchedulePosition::new(1, 0))],
+            OmittedIntentPolicy::Demote {
+                tier: 3,
+                placement: QueuePlacement::Back,
+            },
+        );
+
+        assert_eq!(
+            scheduler.effective_position(&"visible"),
+            Some(SchedulePosition::new(1, 0))
+        );
+        assert_eq!(
+            scheduler.effective_position(&"old-a"),
+            Some(SchedulePosition::new(3, 0))
+        );
+        assert_eq!(
+            scheduler.effective_position(&"old-b"),
+            Some(SchedulePosition::new(3, 1))
+        );
+    }
+
+    #[test]
+    fn point_upsert_supports_front_and_back_placement() {
+        let mut scheduler = ScopedIntentScheduler::default();
+        scheduler.upsert("selection", 1, "a", 0, QueuePlacement::Back);
+        scheduler.upsert("selection", 2, "b", 0, QueuePlacement::Front);
+        scheduler.upsert("selection", 3, "c", 0, QueuePlacement::Back);
+
+        assert_eq!(
+            scheduler.effective_position(&"b"),
+            Some(SchedulePosition::new(0, 0))
+        );
+        assert_eq!(
+            scheduler.effective_position(&"a"),
+            Some(SchedulePosition::new(0, 1))
+        );
+        assert_eq!(
+            scheduler.effective_position(&"c"),
+            Some(SchedulePosition::new(0, 2))
+        );
+    }
+
+    #[test]
     fn jobs_can_be_cancelled_and_finished() {
         let registry = JobRegistry::default();
         let ticket = registry.register(JobPriority::VisibleThumbnail);
@@ -270,5 +653,17 @@ mod tests {
         assert!(queue.reprioritize_if_present(&"new-active", 3));
         assert_eq!(queue.pop(), Some(("new-active", (), 3)));
         assert_eq!(queue.pop(), Some(("old-active", (), 1)));
+    }
+
+    #[test]
+    fn payload_derived_priority_preserves_the_highest_remaining_consumer() {
+        let mut queue = CoalescingPriorityQueue::default();
+        queue.push("asset", vec![3, 2], 3);
+
+        assert!(queue.update_priority_if_present(&"asset", |priorities| {
+            priorities[0] = 0;
+            *priorities.iter().max().unwrap()
+        }));
+        assert_eq!(queue.pop(), Some(("asset", vec![0, 2], 2)));
     }
 }

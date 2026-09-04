@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { orderBySelectionPriority } from "./selectionPriority";
+import { orderBalancedAroundSelection, orderBySelectionPriority } from "./selectionPriority";
 
 describe("selection-centered priority order", () => {
   it("puts selection first, then nearest right, nearest left, and the remaining sides", () => {
@@ -13,5 +13,13 @@ describe("selection-centered priority order", () => {
     const items = ["one", "two", "three"];
 
     expect(orderBySelectionPriority(items, "missing", (item) => item)).toEqual(items);
+  });
+
+  it("balances background work before draining the longer side", () => {
+    expect(orderBalancedAroundSelection(
+      ["l3", "l2", "l1", "selected", "r1", "r2"],
+      "selected",
+      (item) => item,
+    )).toEqual(["r1", "l1", "r2", "l2", "l3"]);
   });
 });

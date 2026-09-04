@@ -25,8 +25,11 @@ import type {
   Page,
   PerfScenario,
   PreviewPriority,
+  PreviewOmittedPolicy,
   PreviewResult,
+  PreviewScheduleIntent,
   RenderLevel,
+  SchedulePlacement,
 } from "../types";
 import { preloadBrowserImage } from "./browserImageCache";
 import { browserPreloadQueue, priorityWeight } from "./previewQueue";
@@ -34,6 +37,22 @@ import { acceptImageProjection } from "./imageProjection";
 import { acceptMetadataProjection } from "./metadataProjection";
 import { perfMark } from "./perfProbe";
 import { beginPreviewDebug } from "./previewDebug";
+
+function setGeneratedPreviewPriority(
+  asset: AssetSummary,
+  level: RenderLevel,
+  requestId: string,
+  priority: PreviewPriority,
+  queueOrder = 0,
+): void {
+  void invoke("reprioritize_preview", {
+    path: asset.path,
+    level,
+    requestId,
+    priority,
+    queueOrder,
+  }).catch(() => undefined);
+}
 
 const demoNames: Array<[string, AssetKind, number]> = [
   ["DSC_4281.NEF", "raw", 42_840_312],
@@ -566,13 +585,25 @@ export async function generatedPreview(
   if (signal?.aborted) throw signal.reason ?? new DOMException("Aborted", "AbortError");
   debug?.start();
   perfMark("preview:queued", { assetName: asset.name, level, priority });
+  const requestId = crypto.randomUUID();
+  const backendRequest = invoke<ImageProjection>("get_preview", {
+    requestId,
+    path: asset.path,
+    level,
+    priority,
+    queueOrder,
+  });
+  let rejectAbort: ((reason: unknown) => void) | undefined;
+  const aborted = new Promise<never>((_resolve, reject) => {
+    rejectAbort = reject;
+  });
+  const stopWaiting = () => {
+    setGeneratedPreviewPriority(asset, level, requestId, "preload");
+    rejectAbort?.(signal?.reason ?? new DOMException("Aborted", "AbortError"));
+  };
+  signal?.addEventListener("abort", stopWaiting, { once: true });
   try {
-    const projection = await invoke<ImageProjection>("get_preview", {
-      path: asset.path,
-      level,
-      priority,
-      queueOrder,
-    });
+    const projection = await (signal ? Promise.race([backendRequest, aborted]) : backendRequest);
     if (signal?.aborted) throw signal.reason ?? new DOMException("Aborted", "AbortError");
     acceptImageProjection(projection);
     const result = projection.result;
@@ -600,23 +631,51 @@ export async function generatedPreview(
     if (signal?.aborted) debug?.cancel();
     else debug?.fail(error);
     throw error;
+  } finally {
+    signal?.removeEventListener("abort", stopWaiting);
   }
 }
 
-export function raiseGeneratedPreviewPriority(
-  asset: AssetSummary,
+export async function reconcilePreviewSchedule(
+  scopeId: string,
+  epoch: number,
+  intents: PreviewScheduleIntent[],
+  omittedPolicy: PreviewOmittedPolicy,
+): Promise<boolean> {
+  if (!isTauri()) return true;
+  return invoke<boolean>("reconcile_preview_schedule", {
+    scopeId,
+    epoch,
+    intents,
+    omittedPolicy,
+  });
+}
+
+export async function upsertPreviewSchedule(
+  scopeId: string,
+  epoch: number,
+  intent: Omit<PreviewScheduleIntent, "rank">,
+  placement: SchedulePlacement,
+): Promise<boolean> {
+  if (!isTauri()) return true;
+  return invoke<boolean>("upsert_preview_schedule", {
+    scopeId,
+    epoch,
+    path: intent.path,
+    level: intent.level,
+    priority: intent.priority,
+    placement,
+  });
+}
+
+export async function releasePreviewSchedule(
+  scopeId: string,
+  epoch: number,
+  path: string,
   level: RenderLevel,
-  priority: PreviewPriority,
-  queueOrder = 0,
-): boolean {
-  if (!isTauri()) return false;
-  void invoke("get_preview", {
-    path: asset.path,
-    level,
-    priority,
-    queueOrder,
-  }).catch(() => undefined);
-  return true;
+): Promise<boolean> {
+  if (!isTauri()) return true;
+  return invoke<boolean>("release_preview_schedule", { scopeId, epoch, path, level });
 }
 
 /**

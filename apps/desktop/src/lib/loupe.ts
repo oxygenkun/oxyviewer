@@ -37,6 +37,29 @@ export function filmstripUnloadedWidth(unloadedCount: number, filmstripHeight: n
     + (unloadedCount - 1) * FILMSTRIP_GAP;
 }
 
+export interface FilmstripItemRange {
+  id: string;
+  start: number;
+  end: number;
+}
+
+/** Returns visible filmstrip items nearest the viewport center first. */
+export function orderVisibleFilmstripItems(
+  items: readonly FilmstripItemRange[],
+  viewportStart: number,
+  viewportEnd: number,
+): string[] {
+  const viewportCenter = (viewportStart + viewportEnd) / 2;
+  return items
+    .filter((item) => item.end > viewportStart && item.start < viewportEnd)
+    .sort((left, right) => {
+      const leftDistance = Math.abs((left.start + left.end) / 2 - viewportCenter);
+      const rightDistance = Math.abs((right.start + right.end) / 2 - viewportCenter);
+      return leftDistance - rightDistance || left.start - right.start;
+    })
+    .map((item) => item.id);
+}
+
 export function resolveLoupeSourceSize(
   kind: AssetKind,
   previewNaturalSize: Size | undefined,

@@ -227,6 +227,37 @@ pub enum PreviewPriority {
     Loupe,
 }
 
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub enum SchedulePlacement {
+    Front,
+    Back,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub enum OmittedScheduleAction {
+    Release,
+    Demote,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct PreviewScheduleIntent {
+    pub path: PathBuf,
+    pub level: RenderLevel,
+    pub priority: PreviewPriority,
+    pub rank: usize,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct PreviewOmittedPolicy {
+    pub action: OmittedScheduleAction,
+    pub priority: Option<PreviewPriority>,
+    pub placement: Option<SchedulePlacement>,
+}
+
 /// Rust-owned state for one semantic render level of an asset.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]

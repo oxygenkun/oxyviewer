@@ -7,6 +7,7 @@ import {
   fitSize,
   getNavigatorViewport,
   MAX_PIXEL_ZOOM_PERCENT,
+  orderVisibleFilmstripItems,
   panByNavigatorDelta,
   panFromNavigatorPoint,
   pixelZoomPercent,
@@ -25,6 +26,16 @@ describe("loupe geometry", () => {
     expect(filmstripItemWidth(300)).toBe(190);
     expect(filmstripUnloadedWidth(3, 180)).toBe(448);
     expect(filmstripUnloadedWidth(0, 180)).toBe(0);
+  });
+
+  it("prioritizes visible filmstrip items from the viewport center", () => {
+    expect(orderVisibleFilmstripItems([
+      { id: "off-left", start: -120, end: -20 },
+      { id: "left", start: 0, end: 80 },
+      { id: "center", start: 90, end: 170 },
+      { id: "right", start: 180, end: 260 },
+      { id: "off-right", start: 270, end: 350 },
+    ], 0, 260)).toEqual(["center", "left", "right"]);
   });
 
   it("uses HEIF full-resolution dimensions instead of the 512 px placeholder", () => {

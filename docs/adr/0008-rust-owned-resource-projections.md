@@ -59,6 +59,10 @@ request's priority. The order is:
 5. filter-required metadata;
 6. directory/background preload and library indexing.
 
+Viewport-wide priority replacement, per-scope epochs, demotion, and shared
+consumer aggregation are defined by [ADR 0009](0009-scoped-multilevel-work-scheduling.md).
+Cancellation remains a separate lifecycle operation rather than a priority tier.
+
 Metadata detail reads may satisfy summary fields. Higher image render levels may
 satisfy lower semantic levels only when the format policy explicitly declares the
 artifact suitable; pixel dimensions alone do not imply that relationship.

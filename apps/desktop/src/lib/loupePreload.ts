@@ -11,6 +11,7 @@ import { renderPlan } from "./preview";
 export async function preloadAssetLoupePreview(
   asset: AssetSummary,
   queueOrder = 0,
+  signal?: AbortSignal,
 ): Promise<void> {
   if (!isTauri()) return;
 
@@ -18,7 +19,7 @@ export async function preloadAssetLoupePreview(
   const previewMethod = previewStep.method;
   if (previewMethod.type === "originalImage") {
     const source = previewUrl(asset);
-    if (source) await preloadBrowserImage(source);
+    if (source) await preloadBrowserImage(source, signal);
     return;
   }
   if (previewMethod.type !== "generatedImage") return;
@@ -26,9 +27,9 @@ export async function preloadAssetLoupePreview(
   const result = await generatedPreview(
     asset,
     previewMethod.requestLevel,
-    undefined,
+    signal,
     "visible",
     queueOrder,
   );
-  if (result) await preloadBrowserImage(result.url);
+  if (result) await preloadBrowserImage(result.url, signal);
 }

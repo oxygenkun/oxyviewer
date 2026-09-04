@@ -16,6 +16,22 @@ end-to-end regression harness that enforces these budgets is described in
 
 ## Verification Log
 
+- 2026-09-04: Grid, list, and the loupe filmstrip now rank thumbnail work around
+  the current selection when it is visible, otherwise from the viewport center.
+  When an item leaves the overscan area,
+  React Query stops waiting for it and the Rust-owned pending task is demoted
+  to `preload` rather than cancelled, so it can still populate the cache after
+  current-screen work. Filmstrip preview warming likewise stops its foreground
+  wait and moves on to the new viewport while the former candidate continues
+  in the background. Priority changes use a lightweight, bidirectional queue
+  update rather than a duplicate blocking preview request. Two bounded preview
+  workers keep one slow, already-started decode from stalling the entire visible
+  screen; decoder-specific gates continue to enforce their own concurrency
+  limits. Frontend schedule snapshots are animation-frame coalesced, content
+  deduplicated, and limited to one viewport IPC per 50 ms. Background ordering
+  is constructed after a 150 ms debounce and limited to one IPC per 200 ms;
+  each scope permits only one bridge request in flight.
+
 - 2026-09-04: Adopted Rust-owned versioned resource projections for metadata
   and image state (ADR 0008). Selected, visible, filter, and background work
   share stale-result rejection and priority semantics. Pending and in-flight

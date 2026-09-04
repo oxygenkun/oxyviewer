@@ -1,13 +1,18 @@
-use crate::{jobs::preview::PreviewRequest, state::AppState};
+use crate::{
+    jobs::preview::{PreviewIdentity, PreviewRequest},
+    state::AppState,
+};
 use oxy_domain::{
     AssetKind, CacheSettings, CacheSettingsUpdate, HeifCapabilities, HeifDecodeSession,
-    HeifDecodeStatus, HeifDiagnostics, PreviewPriority, PreviewResult, RenderLevel,
+    HeifDecodeStatus, HeifDiagnostics, PreviewOmittedPolicy, PreviewPriority, PreviewResult,
+    PreviewScheduleIntent, RenderLevel, SchedulePlacement,
 };
 use std::path::PathBuf;
 use tauri::{Emitter, State};
 
 #[tauri::command]
 pub(crate) async fn get_preview(
+    request_id: String,
     path: PathBuf,
     level: RenderLevel,
     priority: PreviewPriority,
@@ -23,6 +28,7 @@ pub(crate) async fn get_preview(
     let (projection, receiver) = state.preview_queue.request(
         &app,
         PreviewRequest {
+            request_id,
             path: asset.path.clone(),
             preview_dir: state.cache.preview_dir(),
             kind: asset.kind,
@@ -59,6 +65,78 @@ pub(crate) async fn get_preview(
         });
     }
     Ok(projection)
+}
+
+#[tauri::command]
+pub(crate) fn reprioritize_preview(
+    path: PathBuf,
+    level: RenderLevel,
+    request_id: String,
+    priority: PreviewPriority,
+    queue_order: Option<usize>,
+    state: State<'_, AppState>,
+) -> Result<bool, String> {
+    let asset = state
+        .files
+        .get_asset(&path)
+        .map_err(|error| error.to_string())?;
+    let identity = PreviewIdentity {
+        path: asset.path,
+        level,
+    };
+    Ok(state.preview_queue.reprioritize_pending(
+        identity,
+        &request_id,
+        priority,
+        queue_order.unwrap_or_default(),
+    ))
+}
+
+#[tauri::command]
+pub(crate) fn reconcile_preview_schedule(
+    scope_id: String,
+    epoch: u64,
+    intents: Vec<PreviewScheduleIntent>,
+    omitted_policy: PreviewOmittedPolicy,
+    state: State<'_, AppState>,
+) -> Result<bool, String> {
+    state
+        .preview_queue
+        .reconcile_schedule(scope_id, epoch, intents, omitted_policy)
+}
+
+#[tauri::command]
+pub(crate) fn upsert_preview_schedule(
+    scope_id: String,
+    epoch: u64,
+    path: PathBuf,
+    level: RenderLevel,
+    priority: PreviewPriority,
+    placement: SchedulePlacement,
+    state: State<'_, AppState>,
+) -> bool {
+    state.preview_queue.upsert_schedule(
+        scope_id,
+        epoch,
+        crate::jobs::preview::PreviewScheduleKey { path, level },
+        priority,
+        placement,
+    )
+}
+
+#[tauri::command]
+pub(crate) fn release_preview_schedule(
+    scope_id: String,
+    epoch: u64,
+    path: PathBuf,
+    level: RenderLevel,
+    state: State<'_, AppState>,
+) -> bool {
+    state.preview_queue.release_schedule(
+        &scope_id,
+        epoch,
+        &crate::jobs::preview::PreviewScheduleKey { path, level },
+    )
 }
 
 #[tauri::command]

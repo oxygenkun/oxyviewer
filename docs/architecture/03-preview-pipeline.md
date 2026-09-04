@@ -5,7 +5,8 @@
 
 统一调度见 [ADR 0005](../adr/0005-unified-preview-pipeline.md)，语义等级图见
 [ADR 0006](../adr/0006-semantic-render-level-graph.md)，状态归属见
-[ADR 0008](../adr/0008-rust-owned-resource-projections.md)。
+[ADR 0008](../adr/0008-rust-owned-resource-projections.md)，多级 scope 调度契约见
+[ADR 0009](../adr/0009-scoped-multilevel-work-scheduling.md)。
 
 ## 1. 为什么需要预览，而不是总显示原文件
 
@@ -84,21 +85,32 @@ HEIF 的 `preview` renderer 复用 `thumbnail` 的 160×120 JPEG。macOS 的 `fu
 
 ## 5. 第一层调度：Rust `PreviewQueue`
 
-所有需要生成的格式和 stage 共用一个 Rust 串行队列。前端只提交由选择和可见性产生的
-priority hint，并可在拿到 artifact URL 后预热 WebView 图片解码。权重为：
+所有需要生成的格式和 stage 共用一个 Rust 多级队列。前端场景策略提交由选择、可见性和
+overscan 产生的 scope intent，并可在拿到 artifact URL 后预热 WebView 图片解码。规范化位置为
+`(tier, rank)`，数值越小越重要：
 
 ```text
-loupe  = 2   当前单图查看
-visible = 1  真正位于视口内
-nearby  = 0  overscan 预加载
-preload = -1 过滤后未显示的同目录图片
+tier 0  loupe/selected  当前单图或选中项
+tier 1  visible         真正位于视口内
+tier 2  nearby          overscan 预加载
+tier 3  preload         视口外缓存预热
 ```
 
-队列每次从 pending 中选最高权重。身份由 canonical path、source revision 和 semantic level
-组成；相同请求无论尚在等待还是已经运行，都只挂接新的 consumer，不启动第二次解码。
-同一产物从 sidebar 进入 loupe 时会提升尚未开始任务的 priority。这既避免重复解码，也保留
-`loupe > visible > nearby > preload` 的调度顺序。调用方取消后，已开始工作可继续完成并温热
-可重建缓存，但前端不再消费该 promise。
+Grid、list 和 loupe filmstrip 各自持有 viewport scope；稳定的已加载资产集合持有 background
+scope。viewport 随虚拟列表产生的视窗快照提交有界全量 reconcile，background 只在分页、排序或选择变化时
+更新。`epoch` 拒绝乱序到达的旧视窗快照。选中图排在 tier 0；可见图按选择或视窗中心产生 rank；
+附近项进入 tier 2；离屏后 viewport intent 被释放，既有 background/request intent 令任务自然降到
+tier 3，而不是删除任务。
+
+前端 scope 不会为每次 render 立即调用 IPC。同一帧内的 viewport 快照按 latest-wins 合并并做内容
+去重，发送间隔不小于 50ms；background 排序先防抖 150ms，再以 200ms 最小间隔发送。每个 scope
+最多保留一个进行中的 IPC，后续更新继续在前端合并，从而让 native bridge 反压而不是堆积请求。
+单个 Thumbnail 不再随 queueOrder 变化发送独立提权 IPC；可见项优先级统一由 viewport scope 更新。
+
+具体任务身份由 canonical path、source revision 和 semantic level 组成；相同请求无论尚在等待
+还是已经运行，都只挂接新的 consumer，不启动第二次解码。有效位置取所有 scope/consumer 中
+最重要的 `(tier, rank)`，所以一个离屏组件不能把另一个仍可见组件的共享任务错误降级。
+全量 `reconcile`、单项 `upsert(front/back)` 和 `release` 的通用实现位于 `oxy-runtime`。
 
 开启搜索、格式、评级或颜色过滤时，另一个无过滤的廉价分页查询会继续枚举当前目录。未出现在
 可见结果中的图片由 `BackgroundPreviewPreloader` 串行提交，每次只放入一个 `preload`
@@ -106,19 +118,19 @@ preload = -1 过滤后未显示的同目录图片
 
 ```mermaid
 flowchart LR
-    nearbyA["nearby A"] --> pending["pending tasks"]
-    visibleB["visible B"] --> pending
-    loupeC["loupe C"] --> pending
-    pending --> sort["按权重降序"]
+    grid["grid viewport scope"] --> aggregate["按 task key 聚合 intents"]
+    filmstrip["loupe filmstrip scope"] --> aggregate
+    background["background scope"] --> aggregate
+    aggregate --> pending["pending tasks"]
+    pending --> sort["按 tier、rank 排序"]
     sort --> loupeRun["先运行 loupe C"]
     loupeRun --> visibleRun["再运行 visible B"]
-    visibleRun --> aborted{nearby A 仍需要?}
-    aborted -->|否| drop["丢弃"]
-    aborted -->|是| nearbyRun["运行 nearby A"]
+    visibleRun --> demote["离屏 A 降到 preload"]
+    demote --> nearbyRun["空闲时完成并写缓存"]
 ```
 
-Rust 串行不是媒体库的理论最大吞吐方案，而是防止快速滚动时堆积大量无法及时显示的本地
-decode。并发度若要提高，必须用基准证明不会恶化 UI、内存和磁盘压力。
+PreviewQueue 使用两个有界 worker，避免一个已经开始且不可抢占的慢任务完全堵住当前视窗。
+具体媒体解码器仍通过下一节的 gate 限制自身并发，防止快速滚动压垮 CPU、内存或磁盘。
 
 ## 6. 第二层调度：后端 `DecodeGate`
 
@@ -149,6 +161,10 @@ Tauri `get_preview` 的逻辑是：
 3. 向 Rust `PreviewQueue` 提交或挂接同源请求；
 4. worker 调用 `oxy_media::preview(...)` 并把 artifact path 提交给 SQLite；
 5. command 返回已接受、带 revision 的 `ImageProjection`，而不是另一份裸图片结果。
+
+视窗调度另有三个轻量 IPC：`reconcile_preview_schedule` 原子替换一个 scope，
+`upsert_preview_schedule` 把单项放到某 tier 的队首/队尾，`release_preview_schedule` 释放单项
+intent。它们只更新队列元数据，不读取或传输图片。
 
 `oxy_media::preview` 根据 `(platform, kind, level)` 查表分派。IPC 不接收像素尺寸：
 
@@ -275,9 +291,10 @@ WebView 的文件会在这轮清理中保留，容量小于单个 artifact 时�
 2. **前端忽略结果**：command 已开始，React Query 不再使用返回值；
 3. **后端协作取消**：解码器定期检查 flag 并提前退出。
 
-统一 preview 当前完整支持第 1 项，第 2 项是运行中请求的行为，第 3 项尚未普遍实现。Tauri
-`invoke` 本身不能携带浏览器 `AbortSignal` 去中断 Rust 原生解码。文档或 UI 不应把“停止等待
-结果”描述成“停止了 CPU 解码”。HEIF full session 有自己的取消 flag，语义更强，见下一章。
+统一 preview 当前完整支持第 1 项；第 2 项同时把对应 request intent 降到 `preload`，后端仍会
+完成并温热缓存；第 3 项尚未普遍实现。Tauri `invoke` 本身不能携带浏览器 `AbortSignal` 去中断
+Rust 原生解码。文档或 UI 不应把“停止等待结果”描述成“停止了 CPU 解码”。HEIF full session
+有自己的取消 flag，语义更强，见下一章。
 
 ## 12. 诊断与性能
 

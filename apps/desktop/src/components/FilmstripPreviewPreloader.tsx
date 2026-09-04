@@ -11,6 +11,8 @@ export function FilmstripPreviewPreloader({ assets }: FilmstripPreviewPreloaderP
   const completed = useRef(new Set<string>());
   const candidates = useRef(assets);
   const running = useRef(false);
+  const runningKey = useRef<string | undefined>(undefined);
+  const controller = useRef<AbortController | undefined>(undefined);
   const mounted = useRef(true);
   const pump = useRef<() => void>(() => undefined);
 
@@ -24,19 +26,25 @@ export function FilmstripPreviewPreloader({ assets }: FilmstripPreviewPreloaderP
     const key = `${asset.id}:${asset.modifiedAtMs}`;
     const queueOrder = candidates.current.indexOf(asset);
     running.current = true;
+    runningKey.current = key;
+    controller.current = new AbortController();
     window.setTimeout(() => {
       if (!mounted.current) {
         running.current = false;
         return;
       }
-      void preloadAssetLoupePreview(asset, queueOrder)
+      const signal = controller.current?.signal;
+      void preloadAssetLoupePreview(asset, queueOrder, signal)
         .then(() => completed.current.add(key))
         .catch((error) => {
+          if (signal?.aborted) return;
           console.warn(`[OxyPreview] filmstrip preload failed for ${asset.name}`, error);
           completed.current.add(key);
         })
         .finally(() => {
           running.current = false;
+          runningKey.current = undefined;
+          controller.current = undefined;
           pump.current();
         });
     }, 0);
@@ -44,6 +52,12 @@ export function FilmstripPreviewPreloader({ assets }: FilmstripPreviewPreloaderP
 
   useEffect(() => {
     candidates.current = assets;
+    if (
+      runningKey.current
+      && !assets.some((asset) => `${asset.id}:${asset.modifiedAtMs}` === runningKey.current)
+    ) {
+      controller.current?.abort();
+    }
     pump.current();
   }, [assets]);
 
@@ -51,6 +65,7 @@ export function FilmstripPreviewPreloader({ assets }: FilmstripPreviewPreloaderP
     mounted.current = true;
     return () => {
       mounted.current = false;
+      controller.current?.abort();
     };
   }, []);
 

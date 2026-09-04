@@ -140,6 +140,22 @@ export interface AssetDetailsResult {
 
 export type RenderLevel = "thumbnail" | "preview" | "full";
 export type PreviewPriority = "preload" | "nearby" | "visible" | "loupe";
+export type SchedulePlacement = "front" | "back";
+
+export interface PreviewScheduleIntent {
+  path: string;
+  level: RenderLevel;
+  priority: PreviewPriority;
+  rank: number;
+}
+
+export type PreviewOmittedPolicy =
+  | { action: "release" }
+  | {
+      action: "demote";
+      priority: PreviewPriority;
+      placement: SchedulePlacement;
+    };
 export type PreviewKind = "embedded" | "developed" | "decoded" | "system" | "original";
 
 export interface PreviewDiagnostics {

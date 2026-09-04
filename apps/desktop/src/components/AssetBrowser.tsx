@@ -1,6 +1,6 @@
 import { useVirtualizer } from "@tanstack/react-virtual";
 import { Copy, FileImage, FolderOpen, Trash2 } from "lucide-react";
-import { memo, useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
+import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import {
   activeAssetIndex,
@@ -10,6 +10,11 @@ import {
 } from "../lib/assetViewPosition";
 import type { MessageKey } from "../lib/i18n";
 import { platformFileManager } from "../lib/folderPaths";
+import {
+  backgroundPreviewIntents,
+  PreviewScheduleScope,
+  viewportPreviewIntents,
+} from "../lib/previewScheduling";
 import { useWorkspaceStore } from "../store";
 import type { AssetSummary, ViewMode } from "../types";
 import { AssetMetadataBadges } from "./AssetMetadataBadges";
@@ -33,6 +38,7 @@ interface AssetBrowserProps {
 interface AssetCardProps {
   asset: AssetSummary;
   priority: "nearby" | "visible";
+  queueOrder: number;
   selected: boolean;
   onSelect: (event: React.MouseEvent) => void;
   onContextMenu: (event: React.MouseEvent) => void;
@@ -49,6 +55,7 @@ const FILE_MANAGER_LABEL = {
 const AssetCard = memo(function AssetCard({
   asset,
   priority,
+  queueOrder,
   selected,
   onSelect,
   onContextMenu,
@@ -62,7 +69,12 @@ const AssetCard = memo(function AssetCard({
       onDoubleClick={onOpen}
       title={asset.path}
     >
-      <Thumbnail asset={asset} priority={priority} onContextMenu={onContextMenu} />
+      <Thumbnail
+        asset={asset}
+        priority={priority}
+        queueOrder={queueOrder}
+        onContextMenu={onContextMenu}
+      />
       <span className="asset-card__name">{asset.name}</span>
       <span className="asset-card__meta">
         {asset.extension}
@@ -252,6 +264,41 @@ function VirtualGrid({
     overscan: 3,
   });
   const rows = virtualizer.getVirtualItems();
+  const viewportCenter = (parentRef.current?.scrollTop ?? 0)
+    + (parentRef.current?.clientHeight ?? rowHeight) / 2;
+  const selectedAsset = assets.find((asset) => asset.id === activeId);
+  const [viewportSchedule] = useState(() => new PreviewScheduleScope("grid-viewport"));
+  const [backgroundSchedule] = useState(() => new PreviewScheduleScope(
+    "grid-background",
+    { minDispatchIntervalMs: 200 },
+  ));
+  const scheduleCandidates = useMemo(() => rows.flatMap((row) => {
+    const visible = isVisible(row.start, row.end, parentRef.current);
+    const distance = Math.abs((row.start + row.end) / 2 - viewportCenter);
+    return Array.from({ length: columns }, (_, columnIndex) => {
+      const asset = assets[row.index * columns + columnIndex];
+      return asset ? { asset, visible, distance: distance + columnIndex } : undefined;
+    }).filter((candidate) => candidate !== undefined);
+  }), [assets, columns, rows, viewportCenter]);
+  const viewportIntents = useMemo(
+    () => viewportPreviewIntents(scheduleCandidates, selectedAsset),
+    [scheduleCandidates, selectedAsset],
+  );
+  useEffect(() => {
+    viewportSchedule.reconcile(viewportIntents);
+  }, [viewportIntents, viewportSchedule]);
+
+  useEffect(() => {
+    const timer = window.setTimeout(() => {
+      backgroundSchedule.reconcile(backgroundPreviewIntents(assets, activeId));
+    }, 150);
+    return () => window.clearTimeout(timer);
+  }, [activeId, assets, backgroundSchedule]);
+
+  useEffect(() => () => {
+    viewportSchedule.release();
+    backgroundSchedule.release();
+  }, [backgroundSchedule, viewportSchedule]);
 
   useEffect(() => {
     if (!parentRef.current) return;
@@ -297,11 +344,17 @@ function VirtualGrid({
               (_, columnIndex) => {
                 const assetIndex = row.index * columns + columnIndex;
                 const asset = assets[assetIndex];
+                const priority = isVisible(row.start, row.end, parentRef.current)
+                  ? "visible"
+                  : "nearby";
+                const rowDistance = Math.abs((row.start + row.end) / 2 - viewportCenter);
+                const queueOrder = Math.round(rowDistance / rowHeight) * columns + columnIndex;
                 return asset ? (
                   <AssetCard
                     key={asset.id}
                     asset={asset}
-                    priority={isVisible(row.start, row.end, parentRef.current) ? "visible" : "nearby"}
+                    priority={priority}
+                    queueOrder={queueOrder}
                     selected={selectedIds.includes(asset.id)}
                     onSelect={(event) => select(asset.id, event.metaKey || event.ctrlKey)}
                     onContextMenu={(event) => onAssetContextMenu(event, asset)}
@@ -348,6 +401,41 @@ function VirtualList({
     overscan: 8,
   });
   const rows = virtualizer.getVirtualItems();
+  const viewportCenter = (parentRef.current?.scrollTop ?? 0)
+    + (parentRef.current?.clientHeight ?? 58) / 2;
+  const selectedAsset = assets.find((asset) => asset.id === activeId);
+  const [viewportSchedule] = useState(() => new PreviewScheduleScope("list-viewport"));
+  const [backgroundSchedule] = useState(() => new PreviewScheduleScope(
+    "list-background",
+    { minDispatchIntervalMs: 200 },
+  ));
+  const scheduleCandidates = useMemo(() => rows.flatMap((row) => {
+    const asset = assets[row.index];
+    return asset ? [{
+      asset,
+      visible: isVisible(row.start, row.end, parentRef.current),
+      distance: Math.abs((row.start + row.end) / 2 - viewportCenter),
+    }] : [];
+  }), [assets, rows, viewportCenter]);
+  const viewportIntents = useMemo(
+    () => viewportPreviewIntents(scheduleCandidates, selectedAsset),
+    [scheduleCandidates, selectedAsset],
+  );
+  useEffect(() => {
+    viewportSchedule.reconcile(viewportIntents);
+  }, [viewportIntents, viewportSchedule]);
+
+  useEffect(() => {
+    const timer = window.setTimeout(() => {
+      backgroundSchedule.reconcile(backgroundPreviewIntents(assets, activeId));
+    }, 150);
+    return () => window.clearTimeout(timer);
+  }, [activeId, assets, backgroundSchedule]);
+
+  useEffect(() => () => {
+    viewportSchedule.release();
+    backgroundSchedule.release();
+  }, [backgroundSchedule, viewportSchedule]);
   const restoreActiveId = useRef(activeId).current;
   const restoreAssetIndex = activeAssetIndex(assets, restoreActiveId);
 
@@ -392,6 +480,7 @@ function VirtualList({
               <Thumbnail
                 asset={asset}
                 priority={isVisible(row.start, row.end, parentRef.current) ? "visible" : "nearby"}
+                queueOrder={Math.round(Math.abs((row.start + row.end) / 2 - viewportCenter) / 58)}
                 onContextMenu={(event) => onAssetContextMenu(event, asset)}
               />
               <strong>{asset.name}</strong>

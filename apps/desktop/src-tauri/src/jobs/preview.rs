@@ -1,10 +1,14 @@
 use oxy_domain::{
-    AssetKind, ImageProjection, PreviewPriority, PreviewResult, RenderLevel, ResourceLoadStatus,
+    AssetKind, ImageProjection, OmittedScheduleAction, PreviewOmittedPolicy, PreviewPriority,
+    PreviewResult, PreviewScheduleIntent, RenderLevel, ResourceLoadStatus, SchedulePlacement,
 };
 use oxy_library::Library;
-use oxy_runtime::CoalescingPriorityQueue;
+use oxy_runtime::{
+    CoalescingPriorityQueue, EffectiveScheduleChange, OmittedIntentPolicy, QueuePlacement,
+    SchedulePosition, ScopedIntentScheduler,
+};
 use std::{
-    collections::HashMap,
+    collections::{HashMap, HashSet},
     path::PathBuf,
     sync::{
         Arc, Condvar, Mutex, RwLock,
@@ -15,6 +19,7 @@ use std::{
 use tauri::{AppHandle, Emitter};
 
 pub const IMAGE_PROJECTION_UPDATED_EVENT: &str = "image-projection-updated";
+const PREVIEW_WORKER_COUNT: usize = 2;
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 struct RequestKey {
@@ -24,6 +29,12 @@ struct RequestKey {
     generation: u64,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct PreviewScheduleKey {
+    pub path: PathBuf,
+    pub level: RenderLevel,
+}
+
 struct WorkRequest {
     path: PathBuf,
     preview_dir: PathBuf,
@@ -31,10 +42,16 @@ struct WorkRequest {
     source_revision: String,
     level: RenderLevel,
     valid_at: u64,
-    waiters: Vec<Sender<Result<ImageProjection, String>>>,
+    waiters: Vec<Waiter>,
+}
+
+struct Waiter {
+    id: String,
+    sender: Sender<Result<ImageProjection, String>>,
 }
 
 pub struct PreviewRequest {
+    pub request_id: String,
     pub path: PathBuf,
     pub preview_dir: PathBuf,
     pub kind: AssetKind,
@@ -43,6 +60,11 @@ pub struct PreviewRequest {
     pub level: RenderLevel,
     pub priority: PreviewPriority,
     pub queue_order: usize,
+}
+
+pub struct PreviewIdentity {
+    pub path: PathBuf,
+    pub level: RenderLevel,
 }
 
 struct ProjectionUpdate {
@@ -56,8 +78,29 @@ struct ProjectionUpdate {
 
 #[derive(Default)]
 struct WorkState {
-    pending: CoalescingPriorityQueue<RequestKey, WorkRequest, i64>,
+    pending: CoalescingPriorityQueue<RequestKey, WorkRequest, SchedulePosition>,
+    pending_keys: HashMap<PreviewScheduleKey, HashSet<RequestKey>>,
     active: HashMap<RequestKey, Arc<Mutex<WorkRequest>>>,
+    schedule: ScopedIntentScheduler<PreviewScheduleKey, String>,
+}
+
+impl WorkState {
+    fn apply_schedule_changes(
+        &mut self,
+        changes: Vec<EffectiveScheduleChange<PreviewScheduleKey>>,
+    ) {
+        for change in changes {
+            let Some(position) = change.position else {
+                continue;
+            };
+            let Some(request_keys) = self.pending_keys.get(&change.key).cloned() else {
+                continue;
+            };
+            for request_key in request_keys {
+                self.pending.reprioritize_if_present(&request_key, position);
+            }
+        }
+    }
 }
 
 #[derive(Clone)]
@@ -76,7 +119,9 @@ impl PreviewQueue {
             library,
             request_generation: Arc::new(AtomicU64::new(0)),
         };
-        queue.spawn_worker(app);
+        for worker_index in 0..PREVIEW_WORKER_COUNT {
+            queue.spawn_worker(app.clone(), worker_index);
+        }
         queue
     }
 
@@ -86,6 +131,7 @@ impl PreviewQueue {
         request: PreviewRequest,
     ) -> Result<(ImageProjection, Receiver<Result<ImageProjection, String>>), String> {
         let PreviewRequest {
+            request_id,
             path,
             preview_dir,
             kind,
@@ -95,10 +141,8 @@ impl PreviewQueue {
             priority,
             queue_order,
         } = request;
-        let source_revision = format!(
-            "{modified_at_ms}:{size_bytes}:{}",
-            preview_dir.to_string_lossy()
-        );
+        let requested_position = schedule_position(priority, queue_order);
+        let source_revision = source_revision(modified_at_ms, size_bytes, &preview_dir);
         let state_key = (path.clone(), level);
         if let Some(cached) = self
             .projections
@@ -147,13 +191,30 @@ impl PreviewQueue {
             level,
             generation: self.request_generation.load(Ordering::Relaxed),
         };
+        let schedule_key = PreviewScheduleKey {
+            path: path.clone(),
+            level,
+        };
         let mut work = self.work.0.lock().expect("preview queue lock poisoned");
+        work.schedule.reconcile(
+            request_id.clone(),
+            0,
+            [(schedule_key.clone(), requested_position)],
+            OmittedIntentPolicy::Release,
+        );
+        let effective_position = work
+            .schedule
+            .effective_position(&schedule_key)
+            .unwrap_or(requested_position);
         if let Some(active) = work.active.get(&key) {
             active
                 .lock()
                 .expect("active preview request lock poisoned")
                 .waiters
-                .push(sender);
+                .push(Waiter {
+                    id: request_id,
+                    sender,
+                });
             let projection = self
                 .projections
                 .read()
@@ -171,20 +232,26 @@ impl PreviewQueue {
                 .get(&state_key)
                 .cloned()
                 .expect("pending preview request must have a projection");
-            let updated = work.pending.update_if_present(
-                &key,
-                priority_score(priority, queue_order),
-                |current| current.waiters.push(sender),
-            );
+            let updated = work.pending.update_priority_if_present(&key, |current| {
+                current.waiters.push(Waiter {
+                    id: request_id,
+                    sender,
+                });
+                effective_position
+            });
             debug_assert!(updated);
             return Ok((projection, receiver));
         }
 
-        let valid_at = self
-            .library
-            .next_resource_revision()
-            .map_err(|error| error.to_string())?;
-        let loading = self.transition(
+        let valid_at = match self.library.next_resource_revision() {
+            Ok(valid_at) => valid_at,
+            Err(error) => {
+                let changes = work.schedule.release_scope(&request_id);
+                work.apply_schedule_changes(changes);
+                return Err(error.to_string());
+            }
+        };
+        let loading = match self.transition(
             path.clone(),
             ProjectionUpdate {
                 source_revision: source_revision.clone(),
@@ -194,7 +261,14 @@ impl PreviewQueue {
                 result: None,
                 error: None,
             },
-        )?;
+        ) {
+            Ok(loading) => loading,
+            Err(error) => {
+                let changes = work.schedule.release_scope(&request_id);
+                work.apply_schedule_changes(changes);
+                return Err(error);
+            }
+        };
         let _ = app.emit(IMAGE_PROJECTION_UPDATED_EVENT, loading.clone());
         let request = WorkRequest {
             path,
@@ -203,19 +277,106 @@ impl PreviewQueue {
             source_revision,
             level,
             valid_at,
-            waiters: vec![sender],
+            waiters: vec![Waiter {
+                id: request_id,
+                sender,
+            }],
         };
         work.pending.push_or_merge(
-            key,
+            key.clone(),
             request,
-            priority_score(priority, queue_order),
+            effective_position,
             |current, replacement| {
                 current.waiters.extend(replacement.waiters);
             },
         );
+        work.pending_keys
+            .entry(schedule_key)
+            .or_default()
+            .insert(key);
         drop(work);
         self.work.1.notify_one();
         Ok((loading, receiver))
+    }
+
+    pub fn reprioritize_pending(
+        &self,
+        identity: PreviewIdentity,
+        request_id: &str,
+        priority: PreviewPriority,
+        queue_order: usize,
+    ) -> bool {
+        let key = PreviewScheduleKey {
+            path: identity.path,
+            level: identity.level,
+        };
+        let position = schedule_position(priority, queue_order);
+        let mut work = self.work.0.lock().expect("preview queue lock poisoned");
+        let Some(changes) = work.schedule.reconcile(
+            request_id.to_owned(),
+            0,
+            [(key, position)],
+            OmittedIntentPolicy::Release,
+        ) else {
+            return false;
+        };
+        work.apply_schedule_changes(changes);
+        true
+    }
+
+    pub fn reconcile_schedule(
+        &self,
+        scope_id: String,
+        epoch: u64,
+        intents: Vec<PreviewScheduleIntent>,
+        omitted: PreviewOmittedPolicy,
+    ) -> Result<bool, String> {
+        let intents = intents
+            .into_iter()
+            .map(|intent| {
+                (
+                    PreviewScheduleKey {
+                        path: intent.path,
+                        level: intent.level,
+                    },
+                    schedule_position(intent.priority, intent.rank),
+                )
+            })
+            .collect::<Vec<_>>();
+        let omitted = omitted_policy(omitted)?;
+        let mut work = self.work.0.lock().expect("preview queue lock poisoned");
+        let Some(changes) = work.schedule.reconcile(scope_id, epoch, intents, omitted) else {
+            return Ok(false);
+        };
+        work.apply_schedule_changes(changes);
+        Ok(true)
+    }
+
+    pub fn upsert_schedule(
+        &self,
+        scope_id: String,
+        epoch: u64,
+        key: PreviewScheduleKey,
+        priority: PreviewPriority,
+        placement: SchedulePlacement,
+    ) -> bool {
+        let tier = schedule_position(priority, 0).tier;
+        let placement = runtime_placement(placement);
+        let mut work = self.work.0.lock().expect("preview queue lock poisoned");
+        let Some(changes) = work.schedule.upsert(scope_id, epoch, key, tier, placement) else {
+            return false;
+        };
+        work.apply_schedule_changes(changes);
+        true
+    }
+
+    pub fn release_schedule(&self, scope_id: &str, epoch: u64, key: &PreviewScheduleKey) -> bool {
+        let mut work = self.work.0.lock().expect("preview queue lock poisoned");
+        let Some(changes) = work.schedule.release(&scope_id.to_owned(), epoch, key) else {
+            return false;
+        };
+        work.apply_schedule_changes(changes);
+        true
     }
 
     pub fn invalidate_directory(&self, directory: &std::path::Path) {
@@ -285,10 +446,10 @@ impl PreviewQueue {
         Ok(projection)
     }
 
-    fn spawn_worker(&self, app: AppHandle) {
+    fn spawn_worker(&self, app: AppHandle, worker_index: usize) {
         let queue = self.clone();
         std::thread::Builder::new()
-            .name("oxy-image-projection".into())
+            .name(format!("oxy-image-projection-{worker_index}"))
             .spawn(move || {
                 loop {
                     let request = {
@@ -300,13 +461,23 @@ impl PreviewQueue {
                                 .wait(pending)
                                 .expect("preview queue lock poisoned");
                         }
-                        pending.pending.pop().map(|(key, request, score)| {
+                        pending.pending.pop().map(|(key, request, position)| {
+                            let schedule_key = PreviewScheduleKey {
+                                path: key.path.clone(),
+                                level: key.level,
+                            };
+                            if let Some(keys) = pending.pending_keys.get_mut(&schedule_key) {
+                                keys.remove(&key);
+                                if keys.is_empty() {
+                                    pending.pending_keys.remove(&schedule_key);
+                                }
+                            }
                             let request = Arc::new(Mutex::new(request));
                             pending.active.insert(key.clone(), request.clone());
-                            (key, request, score)
+                            (key, request, position)
                         })
                     };
-                    let Some((key, request, score)) = request else {
+                    let Some((key, request, position)) = request else {
                         continue;
                     };
                     let (path, preview_dir, kind, source_revision, level, valid_at) = {
@@ -326,7 +497,7 @@ impl PreviewQueue {
                         &path,
                         &preview_dir,
                         level,
-                        oxy_media::decode_priority_for(priority_from_score(score)),
+                        oxy_media::decode_priority_for(priority_from_position(position)),
                         kind,
                     )
                     .map_err(|error| error.to_string());
@@ -385,10 +556,14 @@ impl PreviewQueue {
                                 .waiters,
                         );
                         work.active.remove(&key);
+                        for waiter in &waiters {
+                            let changes = work.schedule.release_scope(&waiter.id);
+                            work.apply_schedule_changes(changes);
+                        }
                         waiters
                     };
                     for waiter in waiters {
-                        let _ = waiter.send(accepted.clone());
+                        let _ = waiter.sender.send(accepted.clone());
                     }
                 }
             })
@@ -396,25 +571,54 @@ impl PreviewQueue {
     }
 }
 
-fn priority_score(priority: PreviewPriority, queue_order: usize) -> i64 {
-    let tier = match priority {
-        PreviewPriority::Preload => 0,
-        PreviewPriority::Nearby => 1,
-        PreviewPriority::Visible => 2,
-        PreviewPriority::Loupe => 3,
-    };
-    i64::from(tier) * 1_000_000 - i64::try_from(queue_order.min(999_999)).unwrap_or_default()
+fn source_revision(modified_at_ms: u64, size_bytes: u64, preview_dir: &std::path::Path) -> String {
+    format!(
+        "{modified_at_ms}:{size_bytes}:{}",
+        preview_dir.to_string_lossy()
+    )
 }
 
-fn priority_from_score(score: i64) -> PreviewPriority {
-    if score > 2_000_000 {
-        PreviewPriority::Loupe
-    } else if score > 1_000_000 {
-        PreviewPriority::Visible
-    } else if score > 0 {
-        PreviewPriority::Nearby
-    } else {
-        PreviewPriority::Preload
+fn runtime_placement(placement: SchedulePlacement) -> QueuePlacement {
+    match placement {
+        SchedulePlacement::Front => QueuePlacement::Front,
+        SchedulePlacement::Back => QueuePlacement::Back,
+    }
+}
+
+fn omitted_policy(policy: PreviewOmittedPolicy) -> Result<OmittedIntentPolicy, String> {
+    match policy.action {
+        OmittedScheduleAction::Release => Ok(OmittedIntentPolicy::Release),
+        OmittedScheduleAction::Demote => {
+            let priority = policy
+                .priority
+                .ok_or_else(|| "demote policy requires priority".to_owned())?;
+            let placement = policy
+                .placement
+                .ok_or_else(|| "demote policy requires placement".to_owned())?;
+            Ok(OmittedIntentPolicy::Demote {
+                tier: schedule_position(priority, 0).tier,
+                placement: runtime_placement(placement),
+            })
+        }
+    }
+}
+
+fn schedule_position(priority: PreviewPriority, queue_order: usize) -> SchedulePosition {
+    let tier = match priority {
+        PreviewPriority::Loupe => 0,
+        PreviewPriority::Visible => 1,
+        PreviewPriority::Nearby => 2,
+        PreviewPriority::Preload => 3,
+    };
+    SchedulePosition::new(tier, u32::try_from(queue_order).unwrap_or(u32::MAX))
+}
+
+fn priority_from_position(position: SchedulePosition) -> PreviewPriority {
+    match position.tier {
+        0 => PreviewPriority::Loupe,
+        1 => PreviewPriority::Visible,
+        2 => PreviewPriority::Nearby,
+        _ => PreviewPriority::Preload,
     }
 }
 
@@ -425,15 +629,15 @@ mod tests {
     #[test]
     fn selected_order_is_preserved_inside_each_priority_tier() {
         assert!(
-            priority_score(PreviewPriority::Loupe, 999_999)
-                > priority_score(PreviewPriority::Visible, 0)
+            schedule_position(PreviewPriority::Loupe, 999_999)
+                > schedule_position(PreviewPriority::Visible, 0)
         );
         assert!(
-            priority_score(PreviewPriority::Visible, 0)
-                > priority_score(PreviewPriority::Visible, 10)
+            schedule_position(PreviewPriority::Visible, 0)
+                > schedule_position(PreviewPriority::Visible, 10)
         );
         assert_eq!(
-            priority_from_score(priority_score(PreviewPriority::Nearby, 4)),
+            priority_from_position(schedule_position(PreviewPriority::Nearby, 4)),
             PreviewPriority::Nearby
         );
     }

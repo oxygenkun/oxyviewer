@@ -4,7 +4,6 @@ import {
   generatedPreview,
   isTauri,
   previewUrl,
-  raiseGeneratedPreviewPriority,
 } from "../lib/api";
 import {
   getBrowserImageSize,
@@ -191,12 +190,6 @@ export function Thumbnail({
   useEffect(() => {
     imageDebug.current?.handle.updatePriority(requestPriority);
   }, [requestPriority]);
-
-  useEffect(() => {
-    if (previewLevel) {
-      raiseGeneratedPreviewPriority(asset, previewLevel, requestPriority, queueOrder);
-    }
-  }, [asset, previewLevel, queueOrder, requestPriority]);
 
   useEffect(() => {
     setLoaded(undefined);
