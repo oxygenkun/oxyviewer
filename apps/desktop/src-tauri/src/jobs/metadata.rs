@@ -1,5 +1,6 @@
 use oxy_domain::{
-    AssetDetails, AssetDetailsResult, AssetSummary, MetadataProjection, MetadataRequestPriority,
+    AssetDetails, AssetDetailsResult, AssetKind, AssetSummary, EditableMetadata,
+    MetadataCapability, MetadataProjection, MetadataProvider, MetadataRequestPriority,
     ResourceLoadStatus,
 };
 use oxy_fs::FsCatalog;
@@ -366,7 +367,7 @@ fn build_asset_details(
         .as_ref()
         .map(|document| (document.capture.clone(), document.focus.clone()))
         .unwrap_or_default();
-    let (metadata, metadata_capability) = super::metadata_for_details(
+    let (metadata, metadata_capability) = metadata_for_details(
         asset.kind,
         asset.has_sidecar,
         document.map(|document| document.editable),
@@ -382,5 +383,71 @@ fn build_asset_details(
         sidecar_path,
         capture_metadata,
         focus_info,
+    }
+}
+
+/// The native engine reads embedded metadata; sidecars override it. ExifTool
+/// remains an optional write capability for explicit embedded synchronization.
+fn metadata_for_details(
+    _kind: AssetKind,
+    has_sidecar: bool,
+    result: Result<EditableMetadata, oxy_metadata::MetadataError>,
+) -> (EditableMetadata, MetadataCapability) {
+    let provider = if has_sidecar {
+        MetadataProvider::Sidecar
+    } else {
+        MetadataProvider::Native
+    };
+    match result {
+        Ok(metadata) => (
+            metadata,
+            MetadataCapability {
+                provider,
+                readable: true,
+                writable: true,
+                detail: None,
+            },
+        ),
+        Err(error) => (
+            EditableMetadata::default(),
+            MetadataCapability {
+                provider,
+                readable: false,
+                writable: true,
+                detail: Some(error.to_string()),
+            },
+        ),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn asset_details_do_not_require_the_optional_exiftool_worker() {
+        let (metadata, capability) = metadata_for_details(
+            AssetKind::Heif,
+            false,
+            Err(oxy_metadata::MetadataError::EmbeddedWorkerUnavailable),
+        );
+
+        assert_eq!(metadata, EditableMetadata::default());
+        assert_eq!(capability.provider, MetadataProvider::Native);
+        assert!(!capability.readable);
+        assert!(capability.writable);
+        assert!(capability.detail.is_some());
+    }
+
+    #[test]
+    fn metadata_read_error_does_not_masquerade_as_missing_provider() {
+        let (_, capability) = metadata_for_details(
+            AssetKind::Heif,
+            false,
+            Err(oxy_metadata::MetadataError::Read("invalid XMP".into())),
+        );
+
+        assert!(!capability.readable);
+        assert!(capability.writable);
     }
 }
