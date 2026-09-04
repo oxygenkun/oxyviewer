@@ -42,7 +42,7 @@ flowchart LR
 
 1. React 组件通过 `useInfiniteQuery` 发起请求；
 2. `apps/desktop/src/lib/api.ts` 的 `listAssets` 包装 `invoke`；
-3. `apps/desktop/src-tauri/src/lib.rs` 的 `list_assets` command 接收参数；
+3. `apps/desktop/src-tauri/src/commands/folder.rs` 的 `list_assets` command 接收参数；
 4. command 调用 `oxy_fs::FsCatalog::list_assets`。
 
 ```mermaid
@@ -97,8 +97,11 @@ Rust 通常使用 `snake_case`，TypeScript 通常使用 `camelCase`。两处转
 | `files` | `Arc<FsCatalog>` | 整个应用 | 文件夹会话和目录快照 |
 | `jobs` | `JobRegistry` | 整个应用 | 后台作业 ID 和取消标记 |
 | `library` | `Arc<Library>` | 整个应用 | SQLite 连接和资料库根目录 |
-| `preview_dir` | `PathBuf` | 整个应用 | 可重建预览缓存目录 |
+| `cache` | `Arc<CacheManager>` | 整个应用 | 当前预览目录、容量策略、使用量和清理协调 |
 | `heif` | `Arc<HeifDecodeService>` | 整个应用 | 当前 HEIF 会话和内存瓦片 |
+| `metadata` / `metadata_provider` | facade / provider manager | 整个应用 | 原生读取与可选 ExifTool 能力发现 |
+| `metadata_queue` / `preview_queue` | 资源协调队列 | 整个应用 | 合并请求、优先级、projection 接受与发布 |
+| `directory_tree_queue` | 目录加载队列 | 整个应用 | 按活动根目录/节点重排按层读取 |
 
 `app.manage(state)` 把它交给 Tauri。command 参数中的 `State<'_, AppState>` 是借用，不会为
 每次调用重新创建数据库或媒体服务。
@@ -165,11 +168,12 @@ async command
 
 适合小型结构化数据。当前 command 包括：
 
-- 文件：`open_folder`、`list_assets`、`get_directory_tree`、`set_directory_expanded`、`set_active_directory`、`refresh_directory`；
-- 详情/预览：`get_asset_details`、`get_preview`；
-- 写操作：`execute_file_operation`、`patch_metadata`；
-- 资料库：`add_library_root`、`list_library_roots`；
-- 作业/HEIF：`cancel_job`、`start_heif_decode` 等。
+- 文件：`open_folder`、`list_assets`、目录树/目录搜索、刷新和文件管理器操作；
+- 详情/预览：`get_asset_details`、`request_metadata`、`get_preview` 与 scope 调度命令；
+- 设置/写操作：缓存设置、`execute_file_operation`、`patch_metadata`、内嵌同步与 ExifTool 配置；
+- 资料库：根目录添加、移除、排序和列出；
+- 作业/HEIF：`cancel_job`、HEIF capability/cache/session/diagnostics 命令；
+- 性能 harness：场景读取与 runner-owned 报告写入。
 
 ### 7.2 Event：Rust 主动推送状态
 
@@ -181,8 +185,8 @@ Event 仍走序列化边界，所以只发送 session、坐标、尺寸、URL、
 ### 7.3 自定义协议：二进制读取
 
 `register_uri_scheme_protocol("oxy-media", ...)` 注册本地 URL handler。Canvas 收到瓦片事件
-后 `fetch` 该 URL，Rust 从 `HeifDecodeService` 的内存映射中取出 RGBA 字节并返回。响应头
-携带宽、高和 stride，响应 body 才是像素。
+后 `fetch` 该 URL，Rust 从 `HeifDecodeService` 的内存映射中取出 RGBA 或已编码 JPEG tile
+并返回。响应头携带内容类型、宽、高和 stride，响应 body 才是二进制图片数据。
 
 ## 8. Domain 契约是边界语言
 

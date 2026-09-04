@@ -67,7 +67,7 @@ OxyViewer 通过三种通道传递不同数据：
 | --- | --- | --- | --- |
 | Tauri command | 前端请求，Rust 返回 | 小型结构化数据 | 文件页、详情、预览路径 |
 | Tauri event | Rust 主动通知前端 | 状态和事件元数据 | HEIF 瓦片已就绪 |
-| 自定义协议 | 前端按 URL 读取 Rust 数据 | 二进制内容 | `oxy-media://...` RGBA 瓦片 |
+| 自定义协议 | 前端按 URL 读取 Rust 数据 | 二进制内容 | `oxy-media://...` RGBA/JPEG 瓦片 |
 
 关键规则是：**图片字节不放进 JSON command 返回值。** 普通预览返回文件 URL；HEIF
 全分辨率像素通过自定义协议读取。这样避免大块二进制被 JSON 编码、复制和占用主线程。
@@ -141,7 +141,8 @@ apps/desktop/src-tauri/       Tauri 启动、命令、状态和协议注册
 crates/oxy-domain/            跨 Rust/TypeScript 边界的公共数据契约
 crates/oxy-fs/                文件发现、会话、分页、路径校验、文件操作
 crates/oxy-media/             尺寸读取、预览生成、RAW/HEIF/native adapters
-crates/oxy-metadata/          XMP/ExifTool 边界与按格式、厂商分派的拍摄元数据
+crates/oxy-metadata-parser/   进程内 EXIF/XMP/IPTC/ICC/MakerNote 解析器
+crates/oxy-metadata/          元数据归一化、sidecar 与可选 ExifTool 能力边界
 crates/oxy-library/           SQLite 资料库和显式根目录
 crates/oxy-runtime/           作业 ID、优先级和取消标记
 docs/adr/                     重要且难以逆转的架构决策
@@ -156,6 +157,7 @@ docs/adr/                     重要且难以逆转的架构决策
 | `oxy-domain` | 可序列化契约和共享词汇 | 文件 IO、解码、数据库操作 |
 | `oxy-fs` | 安全路径、非递归扫描、分页、文件操作 | UI 状态、图片解码 |
 | `oxy-media` | 解码、预览、缓存、HEIF 会话 | React/Tauri 组件逻辑 |
+| `oxy-metadata-parser` | 解析图片容器与通用/私有元数据标签 | UI 投影、sidecar 写入、启动外部进程 |
 | `oxy-metadata` | XMP/ExifTool 策略；通用 EXIF、图片格式与厂商 MakerNotes 分层归一化 | 任意文件浏览、跨厂商复用私有标签数值表 |
 | `oxy-library` | 可重建索引、显式资料库根目录 | 成为照片的唯一事实来源 |
 | `oxy-runtime` | 后台作业的通用控制词汇 | 具体媒体算法 |
@@ -263,12 +265,12 @@ Tauri command 只负责：取状态、校验/转换参数、把阻塞工作转�
 | Windows HIF 160×120 `preview` 底图 → 全分辨率瓦片 | 已实现 |
 | Rust 资源 projection 队列和后端解码门 | 已实现；同源 pending/in-flight 合并，不抢占运行中的解码 |
 | metadata/image projection SQLite 重启缓存 | 已实现；WAL 事务 revision 拒绝迟到结果 |
-| XMP sidecar 写入 | RAW 已实现基础版本 |
+| 原生元数据读取与 XMP sidecar 写入 | 已实现；所有支持格式均为 sidecar-first，ExifTool 只作解析失败兼容 fallback 或显式内嵌同步 |
 | SQLite 显式资料库根目录 | 已实现 |
-| SQLite 后台资产索引 | 数据表已存在，完整索引流程仍在规划中 |
+| SQLite 后台资产/目录索引与 FTS 搜索 | 已实现；按目录短事务更新，完成 generation 后清理旧行并重建 FTS |
 | 文件系统 watcher 和 `folder_delta` | 规划中 |
 | 解码过程中的协作式取消 | 规划中 |
-| 10 万文件性能门槛实测 | 尚未完成 |
+| 10 万文件性能门槛实测 | 已完成首次 release E2E；约 2.3 秒，尚未达到 300 ms 目标 |
 
 更细的进度以 [ROADMAP.md](ROADMAP.md) 为准；性能目标与历史测量见
 [PERFORMANCE.md](PERFORMANCE.md)。
@@ -292,7 +294,7 @@ Tauri command 只负责：取状态、校验/转换参数、把阻塞工作转�
 | 想回答的问题 | 起点 |
 | --- | --- |
 | 前端怎样调用 Rust | `apps/desktop/src/lib/api.ts` |
-| command 在哪里注册 | `apps/desktop/src-tauri/src/lib.rs` |
+| command 在哪里实现/注册 | `apps/desktop/src-tauri/src/commands/*.rs` / `apps/desktop/src-tauri/src/lib.rs` |
 | IPC 数据长什么样 | `crates/oxy-domain/src/lib.rs` |
 | 文件夹如何限制在根目录内 | `crates/oxy-fs/src/lib.rs` 的 `FsCatalog` |
 | 预览怎样选择解码器 | `crates/oxy-media/src/lib.rs` 的 `preview` |

@@ -35,12 +35,13 @@
 | --- | --- | --- |
 | IPC 契约 | `crates/oxy-domain/src/lib.rs` | `apps/desktop/src/types.ts` |
 | 文件夹会话 | `crates/oxy-fs/src/lib.rs` | `apps/desktop/src/lib/api.ts` |
-| Command 注册 | `apps/desktop/src-tauri/src/lib.rs` | `invoke(...)` wrappers in `api.ts` |
+| Command 实现/注册 | `apps/desktop/src-tauri/src/commands/*.rs` / `apps/desktop/src-tauri/src/lib.rs` | `invoke(...)` wrappers in `api.ts` |
 | 分页请求 | `FsCatalog::list_assets` | `useInfiniteQuery` in `App.tsx` |
 | 渲染等级 | `render_method_for` / `oxy_media::preview` | `renderPlan` |
 | 预览优先级 | `PreviewQueue` / `DecodeGate` | selection/visibility priority hints |
 | HEIF 完整图 | `HeifDecodeService` / `oxy_media::heif_full` | macOS `Thumbnail` full stage；Windows/Linux `HeifTileCanvas` |
 | 资源 projection 状态 | `MetadataQueue` / `PreviewQueue` / SQLite | Zustand 只读镜像 |
+| 原生元数据解析 | `oxy-metadata-parser` + `oxy-metadata` | `AssetDetails` / projection types |
 | UI 请求生命周期 | 不适用 | React Query |
 | UI 交互状态 | 不适用 | Zustand `useWorkspaceStore` |
 | 资料库 | `oxy-library::Library` | library query in `App.tsx` |

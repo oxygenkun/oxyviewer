@@ -35,7 +35,9 @@ flowchart TD
 - 搜索、类型过滤、排序和方向。
 
 这些值由用户交互立即修改，主要决定“界面想显示什么”。它们不代表磁盘事实，也不保存预览
-Promise。当前 store 没有持久化 middleware，应用重启后恢复默认值。
+Promise。store 没有通用持久化 middleware；`workspacePersistence.ts` 只显式保存当前根目录/
+子目录、文件夹排序，以及焦点框、面板尺寸、元数据可见性和 loupe 控件等少量偏好。其他值重启后
+恢复默认值。
 
 选择模型中，普通选择把数组替换为单个 ID；按 meta/ctrl 的 additive 选择切换成员，并把操作
 对象设为 active。打开新目录时调用 `clearSelection`，避免旧 ID 指向新 session。
@@ -67,6 +69,7 @@ Rust projection 与前端显示镜像失效。
 - `Library` 的 SQLite connection；
 - `CacheManager`（当前 preview cache directory、容量策略和配置文件）；
 - `MetadataQueue` / `PreviewQueue` 的 priority、pending/in-flight consumer 与 live projection；
+- `DirectoryTreeQueue` 的分层目录读取优先级；
 - `HeifDecodeService` 当前 session、tiles 和 diagnostics。
 
 队列和 HEIF tiles 只活在 Rust 进程内；已接受的 metadata/image projection 写入 SQLite，图片
@@ -169,9 +172,10 @@ MakerNotes。厂商路由同时接收图片类型，因此同一厂商在 JPEG�
 
 `oxy-metadata` 对所有格式的 rating/color 默认读写同名 XMP sidecar；更新时只替换
 `rdf:Description` 上对应的 `xmp:Rating` / `xmp:Label` 属性，保留其他 XMP 字段。首次写入时
-创建最小 Adobe 风格 XMP。读取优先级为 sidecar、内嵌 XMP、空值，因此存在 sidecar 时它明确
-覆盖文件内部的旧值。Sony HIF 的 rating/color 从文件头附近的有界 RDF/XMP item 直接读取，
-无需启动 ExifTool；其他容器的通用内嵌 XMP 仍通过 ExifTool 读取。
+创建最小 Adobe 风格 XMP。读取优先级为 sidecar、原生解析的内嵌 XMP、空值，因此存在 sidecar
+时它明确覆盖文件内部的旧值。普通图片/RAW 由 `oxy-metadata-parser` 在进程内解析；HEIF/HIF
+优先通过 `libheif-rs` 的 item table 读取 XMP，只有 libheif 拒绝损坏或合成容器时才使用有界扫描。
+批量兼容入口可在原生解析失败后调用已配置的 ExifTool，但正常详情读取不依赖它。
 
 Sony HIF 需要额外遵循 Imaging Edge Viewer 的写法：XMP 使用 compact shorthand，颜色值为
 小写 `red` / `yellow` / `green` / `blue`，清除值写作 `Rating=0` / `Label=None`。Sony Viewer
@@ -251,7 +255,7 @@ session/root policy 显式加入 command 契约并增加符号链接测试。
 
 - 搜索文本为什么属于 Zustand，而搜索结果属于 React Query？
 - 删除 preview cache 会丢失什么，删除 XMP 又会丢失什么？
-- SQLite 中已有 `assets` 表是否等于后台索引已经完成？
+- SQLite 中已有 `indexed_assets` 行是否等于某个 root 的完整 generation 已经完成？
 - `cancel_job` 为什么必须有 worker 主动检查才能生效？
 - 当前文件写操作是否受 FolderSession root 限制？
 - 为什么 sidecar 的 rename/copy/trash 必须与源照片一起设计？

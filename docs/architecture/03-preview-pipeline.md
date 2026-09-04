@@ -243,8 +243,9 @@ HEIF `preview` 与全分辨率 JPEG 是两条渐进路径：前者立即提供�
 当前各平台都将 Sony HIF 的 `thumbnail` 与 `preview` 映射到 160×120 产物；平台策略以后可以在
 有独立 fixture 基准证据时分化。
 后端直接从源 HEIF 生成全尺寸 JPEG 缓存。再次进入相同 HIF 时，loupe 直接显示该 JPG，
-跳过源解码。活动前端路径不再启动 session，也不再传输 tile。
-macOS 的预览 JPEG 使用 ImageIO 编码；解码 permit 在 primary image 解码完成
+跳过源解码。macOS 冷缓存路径直接生成完整 JPEG，不启动 tile session；Windows/Linux
+冷缓存路径仍启动 session 渐进发布 tile，并在完成后写入这份热缓存。
+macOS 的完整 JPEG 使用 ImageIO 编码；解码 permit 在 primary image 解码完成
 后立即释放，JPEG 编码与缓存同步不继续阻塞下一项解码。下一章专门解释 session。
 
 ## 10. 缓存键与原子写入

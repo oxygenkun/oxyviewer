@@ -2,128 +2,163 @@
 
 Status markers: `[x]` complete, `[~]` active, `[ ]` planned.
 
-## Phase 0: Engineering Foundation
+This roadmap describes the current `main` branch rather than the order in which
+features originally landed. Last reviewed: 2026-09-04.
 
-- [x] Cargo and pnpm workspaces
-- [x] Domain contracts, structured errors, logging entrypoint, and i18n
-- [x] Tauri 2 application shell and capability policy
-- [x] CI definitions for macOS, Windows, and Linux
-- [x] Architecture, format, performance, and licensing records
-- [x] macOS debug desktop binary build and startup smoke test
-- [~] Validate signed installers on all target platforms
+## Current Status
 
-**Gate:** passed locally on macOS on 2026-06-10. `cargo test --workspace`,
-strict Clippy, frontend type checking/tests/build, and a debug Tauri desktop
-build all pass. Cross-platform CI and signed installers remain release work.
+OxyViewer already has a functional local-first browser, persistent library,
+progressive RAW/HEIF display, native metadata engine, sidecar editing, and
+rebuildable caches. The project is still pre-release because its large-directory
+performance gate, cross-platform media matrix, file-operation recovery, and
+signed distribution work are incomplete.
 
-## Phase 1: Instant Folder Browsing
+The main release blockers are:
 
-- [x] Native folder picker and paged non-recursive directory scan
-- [x] Grid/list/loupe workspace, search, type filters, and sort controls
-- [x] Inline folder-name search with ancestor-preserving tree results
-- [x] Multi-selection model and keyboard navigation
-- [x] Safe rename/copy/move/trash service contracts
-- [ ] Filesystem watcher and streamed `folder_delta` events
-- [x] TanStack Virtual integration for grid and list rendering
-- [ ] 100k-item generated-directory benchmark and performance tuning
+- the measured 100k-file first page takes about 2.3 s instead of the 300 ms target;
+- RAW/HEIF fixtures and packaged codecs are not validated across all release targets;
+- external filesystem changes still require manual refresh;
+- file writes lack a session-scoped authorization contract, undo journal, and recovery;
+- accessibility, crash recovery, signing, notarization, and installer validation remain.
 
-**Gate:** first page from a local 100k-file directory begins rendering within
-300 ms on the reference machine. Functional browsing is complete; this
-performance gate has not yet been measured.
+## Phase 1: Core Browser and Local Library
 
-## Phase 2: Image Pipeline and Loupe
+This phase combines the former engineering-foundation, folder-browsing, and
+library phases. The remaining work is now dominated by scale and consistency,
+not by basic UI construction.
 
-- [~] Media crate contracts, JPEG preview foundation, and RAW preview pipeline
-- [~] Bundle and integrate LibRaw and libheif on all target platforms; libheif
-  full-detail integration is implemented, while packaged HEVC decoder
-  validation remains
-- [~] Priority scheduler, cancellation, thumbnail cache, and custom protocol — unified priority scheduler (ADR 0005) covers ordering + abort-before-start; full cooperative cancellation is still open
-- [x] Color-managed progressive loupe and filmstrip previews — unified JPEG + ICC cache (ADR 0005)
+### Implemented
 
-### Milestone RAW-1: Reliable RAW Display
+- [x] Cargo/pnpm workspaces, Rust 2024 lint policy, Tauri 2 shell, logging, i18n,
+  shared domain contracts, and macOS/Windows/Linux CI builds
+- [x] Native folder picker and cheap, non-recursive folder sessions
+- [x] Paged asset queries with search, type/rating/color filters, sorting, and
+  virtualized grid/list rendering
+- [x] Grid, list, progressive loupe, filmstrip, multi-selection, and keyboard navigation
+- [x] Rust-owned, revisioned directory trees with on-demand child loading and
+  active-directory priority scheduling
+- [x] Persistent, reorderable library roots and background SQLite WAL indexing
+- [x] Asset FTS search plus ancestor-preserving directory search inside an indexed root
+- [x] Configurable, size-bounded preview cache with safe clear/prune behavior
+- [x] Rename/copy/move/trash service contracts with sidecar pairing, collision
+  rejection, and recoverable system trash
 
-- [x] Pin and vendor LibRaw 0.22.2 with a reproducible in-repository build
-- [x] Read RAW dimensions through LibRaw
-- [x] Extract the embedded RAW preview first
-- [x] Fall back to half-size LibRaw development when no usable preview exists
-- [x] Cache 512 px thumbnails and 4096 px loupe previews separately
-- [x] Bound RAW decoding to one thumbnail and one loupe task concurrently
-- [x] Keep macOS Quick Look as a final compatibility fallback
-- [x] Pass a real camera RAW smoke test on macOS
-- [ ] Validate ARW, CR2, CR3, NEF, DNG, RAF, RW2, and ORF fixtures
-- [ ] Validate LibRaw builds and RAW preview behavior in Windows and Linux CI
-- [~] Add full priority scheduling and request cancellation — the Rust-owned projection queue plus backend `DecodeGate` landed in ADR 0008; consumer cancellation does not discard accepted cache work, and cooperative mid-decode cancellation is still outstanding
+### Remaining
 
-### Milestone RAW-2: macOS Native Full-Size Rendering
+- [~] Replace the synchronous full-directory snapshot on the first uncached page.
+  The 2026-09-02 release E2E run measured about 18 ms for `open_folder`, 2.2 s
+  for the first 250-item page, and 2.3 s to first-page paint for 100k files.
+- [ ] Add filesystem watching and streamed `folder_delta` updates without making
+  folder open recursive or blocking.
+- [ ] Add cross-root asset search and metadata-aware indexed filters. Current FTS
+  queries cover one loaded root; rating/color filters still enrich current-directory
+  metadata progressively.
+- [ ] Put file writes behind an explicit folder-session/root authorization policy,
+  then add complete dialogs, partial-failure reporting, an undo journal, and recovery.
 
-- [ ] Benchmark Core Image `CIRAWFilter` on the RAW fixture matrix for cold
-  full-size rendering, peak memory, output dimensions, orientation, color, and
-  100% detail before selecting it as a production backend
-- [ ] Add a macOS-only Core Image adapter in `oxy-media`; keep Tauri commands
-  thin, perform rendering off the UI/async thread, reuse a bounded `CIContext`,
-  and avoid unnecessary full-frame copies between Core Image and Rust
-- [ ] Preserve the existing fast path: use the near-full-size embedded JPEG
-  when it covers at least 90% of the RAW dimensions; otherwise prefer Core
-  Image for macOS full-detail rendering and fall back to LibRaw development
-- [ ] Keep Windows and Linux on the bundled LibRaw backend; Core Image must not
-  become a requirement for 512/4096 previews or reduce portable RAW coverage
-- [ ] Define the macOS output contract for EXIF orientation, working/output
-  color spaces, ICC data, SDR tone mapping, and the current 8-bit JPEG cache
-- [ ] Give Core Image its own cache/backend version and report the selected
-  backend, decoder version, timing, and fallback reason through preview
-  diagnostics
-- [ ] Keep the 4096 preview visible if Core Image initialization or rendering
-  fails, then verify automatic LibRaw fallback with fixture-backed tests
+**Gate:** on a local SSD release build, a 100k-file directory begins rendering
+within 300 ms, remains virtualized while scrolling, and reflects external changes
+without a blocking rescan.
 
-**Gate:** on supported macOS versions, Core Image full-detail rendering is used
-only after the embedded-preview fast path, meets the measured fidelity and
-resource budgets, and falls back to LibRaw without blanking or delaying the
-already-visible loupe preview. Other platforms and unsupported macOS RAW files
-retain the existing portable behavior.
+## Phase 2: Media and Metadata Reliability
 
-### Milestone HEIF-1: Full-detail and Color-managed Display
+This phase combines the former image-pipeline and metadata phases. Semantic render
+levels, scheduling, native reads, and sidecar writes are implemented; the focus is
+now fixture coverage, cancellation, platform packaging, and conflict safety.
 
-- [x] Decode the primary image through libheif after progressive previews
-- [x] Preserve high-bit-depth pixels through SDR conversion and 16-bit PNG cache
-- [x] Convert ICC profiles and map HLG/PQ inputs to SDR
-- [x] Bound full-detail HEIF decoding to one task
-- [x] Keep an 8192 px macOS Quick Look compatibility fallback
-- [ ] Bundle and validate libde265 for macOS, Windows, and Linux releases
+### Implemented foundation
 
-### Milestone HEIF-2: HEIF Decoding Performance
+- [x] Semantic `thumbnail → preview → full` render graph with Rust-owned image
+  projections, stale-result rejection, and SQLite restart persistence
+- [x] Scoped `loupe / visible / nearby / preload` scheduling with request
+  coalescing, two preview workers, up-tier cache reuse, and a shared decode gate
+- [x] Direct JPEG/PNG/WebP display and semantic TIFF preview routing
+- [x] Bundled LibRaw 0.22.2 build, dimensions, embedded RAW preview, half-size
+  fallback, 512/4096 caches, and full-resolution development
+- [x] Near-full-size RAW embedded-JPEG fast path and macOS Quick Look fallback
+- [x] HEIF embedded-preview fast path, ICC/HDR-to-SDR conversion, and bounded
+  source decoding
+- [x] Direct ImageIO full JPEG on macOS; progressive RGBA/JPEG tile sessions on
+  Windows/Linux with a source-derived full JPEG warm cache
+- [x] Native `oxy-metadata-parser` engine for EXIF/XMP/IPTC/ICC/MakerNotes, with
+  `libheif-rs` item-table XMP extraction for HEIF/HIF
+- [x] Sony ARW/JPEG/HEIF shooting-focus overlay with persistent and temporary controls
+- [x] Sidecar-first rating/color reads and multi-selection writes for all supported
+  formats, including embedded RAW XMP preservation on first edit
+- [x] Optional ExifTool configuration and checksum-verified managed install for
+  explicit JPEG/HEIF/HIF embedded synchronization; it is not a core bundled worker
 
-- [x] Scale decoded image in libheif before expensive pixel processing (Image::scale)
-- [x] LUT-accelerated HDR tone mapping (transfer function + sRGB gamma lookup tables)
-- [x] SIMD-friendly unpack_rgb: split 8/16-bit paths, iterator-based batch processing
-- [x] Confirm libheif parallel tile decoding enabled by default in v1.23
-- [x] Preview cache write path: use JPEG instead of PNG for non-full-detail previews
-- [x] Replace global Mutex decode locks with per-file granular locking
-- [x] Pass DecodingOptions with explicit thread counts to leverage multi-core HEVC decode
-- [x] Use embedded HEIF thumbnails first, including undersized thumbnails as a progressive first stage
-- [x] Use an 8-bit RGB fast path for preview JPEGs while retaining color-managed high-bit-depth full detail
-- [x] Use direct ImageIO full JPEG on macOS; cache a full JPEG after progressive HEIF tile display on Windows/Linux
-- [x] Profile end-to-end decode pipeline; establish performance regression budget
-- [ ] Evaluate true reduced-resolution HEVC decode when supported by the bundled decoder
+### RAW reliability
 
-**Gate:** a supported RAW file displays a cached thumbnail and loupe preview
-without depending on operating-system RAW support. Unsupported or damaged RAW
-files return a concrete LibRaw and fallback error instead of failing silently.
+- [ ] Validate ARW, CR2, CR3, NEF, DNG, RAF, RW2, and ORF with distributable
+  orientation, color, embedded-preview, damaged-file, and full-detail fixtures.
+- [ ] Validate the bundled LibRaw build and RAW preview/full behavior on Windows
+  and Linux release artifacts, not only compile-only or synthetic coverage.
+- [ ] Add cooperative cancellation checkpoints where possible. Pending work can
+  be reordered and consumers can stop waiting, but an active native decode is not
+  generally preemptible.
 
-## Phase 3: Metadata Workflow
+#### Optional macOS full-size backend evaluation
 
-- [x] Sony ARW/JPEG/HEIF shooting-focus overlay with persisted and temporary controls
-- [x] Rating/color contracts, RAW sidecar policy, list filters, and ExifTool worker boundary
-- [ ] Bundle persistent ExifTool worker
-- [~] Rating/color read/write round trips and batch editing; debouncing and conflict handling remain
+- [ ] Benchmark Core Image `CIRAWFilter` against LibRaw for cold latency, peak
+  memory, dimensions, orientation, color, and 100% detail before selecting it.
+- [ ] If it wins, add a bounded macOS adapter with a distinct cache/backend version,
+  diagnostics, and automatic LibRaw fallback while retaining the visible preview.
+- [ ] Keep the embedded-JPEG fast path first and keep Windows/Linux fully portable;
+  Core Image must never become a prerequisite for thumbnail or preview display.
 
-## Phase 4: Library and File Management
+### HEIF reliability
 
-- [x] SQLite WAL library roots, rebuildable directory/file cache, and FTS schema
-- [~] Low-priority indexing, cross-folder filters, and live search results — serialized background indexing and live FTS refresh now cover every directory inside one loaded root; cross-root and metadata-aware indexed filters remain
-- [ ] Complete file-operation dialogs, undo journal, and recovery
+- [ ] Bundle and validate a working HEVC decoder, including libde265 where used,
+  in macOS, Windows, and Linux release packages.
+- [ ] Complete the HEIF/HEIC/HIF fixture matrix across embedded-thumbnail,
+  full-frame, tile-grid, high-bit-depth, ICC, HLG/PQ, orientation, and damaged files.
+- [ ] Evaluate true reduced-resolution HEVC decode only where the packaged backend
+  supports it and measurements beat the current embedded-preview path.
 
-## Phase 5: Release Hardening
+### Secondary-format reliability
 
-- [ ] Native dependency packaging, signing, notarization, and installers
-- [ ] Accessibility, keyboard efficiency, crash recovery, and benchmarks
-- [ ] Complete fixture matrix and third-party notices
+- [ ] Implement and validate a TIFF preview backend on Windows and Linux. The
+  current generated system-preview implementation uses macOS Quick Look; the
+  other platform stubs report that no native decoder is available.
+
+### Metadata reliability
+
+- [ ] Add conflict detection for source/sidecar changes during edits and define
+  deterministic partial-failure reporting for multi-file writes.
+- [ ] Complete native-versus-ExifTool round-trip fixtures for JPEG, HEIF/HIF, and
+  the supported RAW families on every target platform.
+- [ ] Evaluate a persistent ExifTool process only if measured compatibility-fallback
+  or embedded-write workloads justify its lifecycle and packaging cost.
+
+**Gate:** supported RAW and HEIF files show a fast cached representation without
+depending on undocumented host capabilities, full-detail work never blanks the
+existing preview, metadata edits preserve unrelated XMP, and every packaged native
+dependency passes the release fixture matrix.
+
+## Phase 3: Product and Release Readiness
+
+### Product hardening
+
+- [ ] Complete keyboard and screen-reader navigation, focus management, contrast,
+  reduced-motion behavior, and platform accessibility audits.
+- [ ] Add crash/session recovery for interrupted indexing, cache writes, metadata
+  writes, and multi-file operations.
+- [ ] Turn the application-level performance harness into a repeatable release
+  gate with maintained baselines for folder open, cold preview, warm loupe, and
+  full-detail diagnostics.
+
+### Distribution
+
+- [ ] Validate native dependency licenses, notices, codec availability, and
+  relinking obligations for each release artifact.
+- [ ] Sign and notarize macOS builds, sign Windows installers, and validate Linux
+  packages on supported distributions.
+- [ ] Validate the optional ExifTool capability flow under platform signing,
+  quarantine, offline, invalid-download, upgrade, and rollback conditions.
+- [ ] Run clean-install, upgrade, damaged-cache, missing-codec, and uninstall
+  smoke tests on macOS, Windows, and Linux.
+
+**Release gate:** all Phase 1 and Phase 2 gates pass on the declared support
+matrix, signed installers pass clean-machine smoke tests, and user-owned photos
+and sidecars remain recoverable across failure paths.

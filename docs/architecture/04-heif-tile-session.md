@@ -17,7 +17,7 @@ command JSON，又会发生 base64/数组序列化和多次复制。
 Windows/Linux 活动方案把问题拆开：
 
 - preview JPEG：统一 preview pipeline 提供，快速、可缓存、作为临时底图；
-- full RGBA：一次有身份的后台 session 解码；
+- full display tiles：一次有身份的后台 session 解码，按后端保存 RGBA 或 JPEG tile；
 - tile metadata：通过 Tauri event 发送；
 - tile bytes：通过 `oxy-media://` 自定义协议按 URL 读取；
 - display：Canvas 按坐标覆盖到底图；
@@ -30,7 +30,7 @@ Windows/Linux 活动方案把问题拆开：
 flowchart LR
     subgraph frontend["React"]
         loupe["Loupe"]
-        basePreview["512 px temporary Thumbnail"]
+        basePreview["embedded JPEG temporary Thumbnail"]
         tileCanvas["HeifTileCanvas"]
         eventListener["Tauri event listeners"]
     end
@@ -46,7 +46,7 @@ flowchart LR
         service["HeifDecodeService"]
         backendProbe["capability probes"]
         backend["ImageIO、FFmpeg、libheif"]
-        tileStore[("in-memory RGBA tiles")]
+        tileStore[("in-memory RGBA/JPEG tiles")]
         fullCache[("full JPEG cache")]
     end
 
@@ -89,13 +89,13 @@ sequenceDiagram
     HeifService-->>Canvas: session id、尺寸、backend、status
     TauriCommand->>HeifService: 后台 decode
     HeifService->>Decoder: 解码 full image
-    Decoder-->>HeifService: display-ready RGBA
+    Decoder-->>HeifService: display-ready RGBA/JPEG tiles
     HeifService->>HeifService: 按中心优先切 512 tile
     HeifService->>EventBus: heif-tile-ready metadata
     EventBus-->>Canvas: session、generation、坐标、URL
     Canvas->>MediaProtocol: fetch oxy-media URL
     MediaProtocol->>HeifService: tile(session, generation, x, y)
-    HeifService-->>Canvas: RGBA bytes
+    HeifService-->>Canvas: RGBA/JPEG bytes
     Canvas->>Canvas: putImageData at x、y
     HeifService->>EventBus: complete + diagnostics
 ```
@@ -192,8 +192,8 @@ flowchart TD
 tile 中心到整图中心的平方距离排序，因此最接近画面中心的 tile 先发布。对默认居中的放大镜，
 这比严格左上到右下更快呈现用户关注区域。
 
-每个 `HeifTile` 包含：宽、高、stride 和 `Arc<[u8]>` RGBA。tile 放入 service 的 HashMap，event
-只携带可定位它的 metadata 和 URL。
+每个 `HeifTile` 包含宽、高、stride，以及 `Arc<[u8]>` RGBA 或可选的已编码 JPEG。tile 放入
+service 的 HashMap，event 只携带可定位它的 metadata 和 URL。
 
 macOS 的“标准”高倍查看锐化在完整 RGBA 图上通过 Accelerate/vImage 执行轻量亮度 unsharp
 mask，再切成瓦片。它只改变内存中的显示瓦片，不修改原文件或缓存；先整图处理也保证 512 px
@@ -212,12 +212,13 @@ oxy-media://localhost/tile/{session}/{generation}/{x}/{y}
 
 Tauri handler 解析五段 path，读取 tile，并返回：
 
-- `Content-Type: application/octet-stream`；
+- RGBA tile 使用 `Content-Type: application/octet-stream`，源网格 JPEG tile 使用
+  `Content-Type: image/jpeg`；
 - `Access-Control-Allow-Origin: *`；
 - `x-oxy-width`、`x-oxy-height`、`x-oxy-stride`；
-- body 为紧密排列的 RGBA8 bytes。
+- body 为紧密排列的 RGBA8 bytes 或已编码 JPEG bytes。
 
-Canvas 当前主要信任 event 中的宽高来构造 `ImageData`。找不到 tile 返回 404。协议不是公开
+Canvas 按响应类型构造 `ImageData` 或解码 JPEG。找不到 tile 返回 404。协议不是公开
 网络服务，只在应用内部为 WebView 提供二进制桥梁。
 
 ## 9. 取消语义

@@ -17,8 +17,8 @@ unrelated formatting changes.
 You will need:
 
 - Node.js 22
-- pnpm 10.30.3 (the version pinned in `package.json`)
-- The stable Rust toolchain with `rustfmt` and `clippy`
+- pnpm 10.34.5 (the version pinned in `package.json`)
+- Rust 1.85 or newer with `rustfmt` and `clippy` (the workspace uses edition 2024)
 - The platform prerequisites required by Tauri 2
 
 Clone the repository with its submodules, then install the frontend
@@ -65,7 +65,8 @@ when intentionally regenerating application icons.
 - `crates/oxy-domain`: serialized contracts shared across Rust boundaries
 - `crates/oxy-fs`: discovery, path identity, sidecars, and file operations
 - `crates/oxy-media`: previews, thumbnails, and native media adapters
-- `crates/oxy-metadata`: metadata and ExifTool boundary
+- `crates/oxy-metadata-parser`: in-process EXIF/XMP/IPTC/ICC/MakerNote parser
+- `crates/oxy-metadata`: normalized metadata, sidecars, and optional ExifTool boundary
 - `crates/oxy-library`: rebuildable SQLite cache and library roots
 - `crates/oxy-runtime`: job priority and cancellation vocabulary
 - `docs`: architecture, decisions, roadmap, formats, and performance budgets

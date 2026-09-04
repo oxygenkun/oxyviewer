@@ -85,7 +85,8 @@ Runner 由 mark 对计算出命名指标，`scenarios.json` 的 `budgets` 引用
 | `cold-preview-arw` | `test/fixtures/media/DSC00529.ARW` | 冷 | firstPreviewMs ≤ 800 |
 | `cold-preview-hif` | `tests/fixtures/DSC00449.HIF` | 冷 | firstPreviewMs ≤ 800 |
 | `cold-preview-jpeg` | 合成 JPEG | 冷 | firstPreviewMs ≤ 800（走 asset 直读路径） |
-| `warm-loupe-arw` / `warm-loupe-hif` | 同上 | 热（连续第二次，不清缓存） | firstPreviewMs ≤ 150 |
+| `warm-loupe-arw` | 同上 | 热（连续第二次，不清缓存） | firstPreviewMs ≤ 150 |
+| `warm-loupe-hif` | 同上 | 热身生成完整 JPEG 后复用缓存 | firstPreviewMs、fullMs ≤ 150 |
 | `loupe-full-hif` | HIF | 清空缓存后进入 loupe | 完整 JPEG 上屏记录 + 基线回归 |
 | `loupe-full-arw` | ARW | 同上（awaitFull） | fullMs 仅记录（全幅显影是秒级，单列预算） |
 
@@ -155,5 +156,5 @@ node scripts/perf-e2e.mjs --update-baseline
   `docs/PERFORMANCE.md` 给出正式预算后再升级为绝对预算。
 - Windows/Linux 可叠加 tauri-driver 做 UI 行为校验；性能数字仍以应用内
   探针为准。
-- 10 万文件目录的真实计时首次跑通后，应回填 `docs/PERFORMANCE.md` 中
-  "not yet recorded" 的 100k benchmark 记录。
+- 10 万文件目录在 2026-09-02 的首次 release 计时约为 2.3 s，尚未达到
+  300 ms 预算；优化后应在相同场景重跑并更新 `docs/PERFORMANCE.md`。

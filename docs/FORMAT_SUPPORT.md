@@ -2,15 +2,17 @@
 
 | Format | Discovery | Preview | Metadata read | Metadata write |
 | --- | --- | --- | --- | --- |
-| JPEG/JPG | Implemented | Foundation implemented | Unified native EXIF/XMP/IPTC/ICC/MakerNote reader; sidecar-first editable metadata | XMP sidecar by default; optional embedded sync through ExifTool |
+| JPEG/JPG | Implemented | Original file in WebView; generated paths are not required | Unified native EXIF/XMP/IPTC/ICC/MakerNote reader; sidecar-first editable metadata | XMP sidecar by default; optional embedded sync through ExifTool |
 | HEIF/HEIC/HIF | Implemented | Embedded preview followed by a direct ImageIO full JPEG on macOS or progressive full-resolution tiles on Windows/Linux; tile sessions also write a source-derived JPEG for subsequent warm loupe loads | Unified native reader; `libheif-rs` item-table XMP extraction; Sony shooting focus location/frame | XMP sidecar by default; optional embedded sync through ExifTool |
 | ARW/CR2/CR3/NEF/DNG/RAF/RW2/ORF | Implemented | Bundled LibRaw 0.22.2 embedded preview with half-size preview fallback, followed by full-resolution loupe development; macOS Quick Look final preview fallback | Unified native EXIF/XMP/IPTC/ICC/MakerNote reader; embedded XMP with adjacent sidecar override | Embedded XMP rating/color read; adjacent XMP sidecar write and override |
-| PNG/WebP/TIFF | Implemented as secondary formats | Foundation/Planned | Unified native EXIF/XMP/IPTC/ICC reader | Not in MVP |
+| PNG/WebP | Implemented as secondary formats | Original file in WebView | Unified native EXIF/XMP/IPTC/ICC reader | XMP sidecar rating/color |
+| TIFF | Implemented as a secondary format | System-generated 512 px thumbnail/preview and 4096 px full representation | Unified native EXIF/XMP/IPTC/ICC reader | XMP sidecar rating/color |
 
 RAW support follows bundled LibRaw 0.22.2. The code builds LibRaw from the
 vendored source and does not depend on a developer machine's system package.
-The full format fixture matrix and Windows/Linux packaging validation remain
-part of milestone RAW-1.
+The full RAW fixture matrix and Windows/Linux packaging validation remain part
+of milestone RAW-1. “Implemented” here describes the code path; it does not mean
+that every camera/codec combination has passed the release matrix.
 
 All formats write rating/color to adjacent XMP sidecars by default. A sidecar
 overrides embedded XMP when both exist. Embedded reads use the in-process

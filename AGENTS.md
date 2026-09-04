@@ -16,7 +16,8 @@ metadata, and indexing work.
 - `crates/oxy-domain`: serialized contracts shared across Rust boundaries.
 - `crates/oxy-fs`: discovery, path identity, sidecars, and file operations.
 - `crates/oxy-media`: preview, thumbnail, and native media adapters.
-- `crates/oxy-metadata`: metadata and ExifTool boundary.
+- `crates/oxy-metadata-parser`: in-process EXIF/XMP/IPTC/ICC/MakerNote parser.
+- `crates/oxy-metadata`: normalized metadata, sidecars, and optional ExifTool boundary.
 - `crates/oxy-library`: rebuildable SQLite cache and library roots.
 - `crates/oxy-runtime`: job priority and cancellation vocabulary.
 - `docs`: architecture, roadmap, format support, performance budgets, and ADRs.

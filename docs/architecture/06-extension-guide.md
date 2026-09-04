@@ -30,9 +30,9 @@ flowchart TD
 
 1. 在 `oxy-domain` 定义输入/输出，确认可 serde，字段使用 camelCase；
 2. 在真正拥有行为的 crate 中实现和测试；
-3. 在 `src-tauri/src/lib.rs` 增加 `#[tauri::command]` wrapper；
+3. 在 `src-tauri/src/commands/` 对应职责模块增加 `#[tauri::command]` wrapper；
 4. 阻塞 IO/CPU 工作使用 `spawn_blocking`；
-5. 在 `generate_handler!` 注册 command；
+5. 从 `commands.rs` 导出，并在 `src-tauri/src/lib.rs` 的 `generate_handler!` 注册 command；
 6. 在 `apps/desktop/src/types.ts` 对齐类型；
 7. 在 `apps/desktop/src/lib/api.ts` 增加唯一 invoke wrapper；
 8. 若 browser demo 能合理模拟，补充 demo behavior；

@@ -321,15 +321,16 @@ and image-loader architecture also:
 - allows a suitable larger cached thumbnail to satisfy a smaller request.
 
 OxyViewer now follows the embedded-preview fast path and progressive loupe
-display. Remaining improvements should be adopted in this order:
+display. Coalescing, up-tier cache reuse, and scoped priority scheduling have
+landed since the original investigation. Remaining improvements are:
 
 1. Add fixture-backed timings for embedded-preview extraction, half-size
    development, resize, JPEG encode, and warm-cache lookup beyond the current
    end-to-end fixture budget test.
-2. Coalesce in-flight requests by source identity and allow a suitable cached
-   larger preview to satisfy a smaller request.
-3. Add cancellable priority scheduling for selected-image previews, visible
-   thumbnails, and low-priority preloads.
+2. Add cooperative cancellation checkpoints to the expensive development path;
+   current scheduling can reorder pending work but does not preempt native decode.
+3. Benchmark the proposed macOS Core Image full-size backend against LibRaw
+   before changing the portable full-detail fallback.
 4. Increase thumbnail concurrency only after measuring memory and storage
    pressure. The current single thumbnail lane protects against many concurrent
    half-size RAW fallbacks.
