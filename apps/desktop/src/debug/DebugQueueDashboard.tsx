@@ -41,11 +41,19 @@ function QueueRows({ items, empty }: { items: DebugQueueItem[]; empty: string })
       {items.map((item) => (
         <div className="debug-row" key={item.key}>
           <span className={`debug-priority priority-${item.priority}`}>{item.priority}</span>
-          <span className="debug-file" title={item.resource ?? item.path}>
+          <span className="debug-file" title={item.path}>
             <b>{basename(item.path)}</b>
-            {item.resource ? <small>{item.resource}</small> : null}
+            {item.rootPath ? <small title={item.rootPath}>root · {item.rootPath}</small> : null}
+            {!item.rootPath && item.resource ? <small>{item.resource}</small> : null}
           </span>
-          <span className="debug-stage">{item.stage}</span>
+          <span className="debug-stage">
+            <span>{item.stage}</span>
+            {item.pendingCount !== undefined ? (
+              <small>
+                pending {item.pendingCount.toLocaleString()} · assets {(item.assetCount ?? 0).toLocaleString()} · dirs {(item.directoryCount ?? 0).toLocaleString()}
+              </small>
+            ) : null}
+          </span>
           <span className="debug-consumers">×{item.consumers}</span>
         </div>
       ))}

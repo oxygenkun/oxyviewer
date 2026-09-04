@@ -189,6 +189,7 @@ fn directory_debug_item(key: &RequestKey, score: i64) -> DebugQueueItem {
     DebugQueueItem {
         key: format!("{}:{}", key.session_id, key.directory.display()),
         path: Some(key.directory.clone()),
+        root_path: None,
         stage: "children".into(),
         priority: match tier {
             3 => "active",
@@ -198,6 +199,9 @@ fn directory_debug_item(key: &RequestKey, score: i64) -> DebugQueueItem {
         .into(),
         rank: Some(rank),
         consumers: 1,
+        pending_count: None,
+        asset_count: None,
+        directory_count: None,
     }
 }
 

@@ -1,6 +1,5 @@
 use crate::{
-    commands::schedule_tag_xmp_sync,
-    jobs::{directory_tree::DIRECTORY_TREE_UPDATED_EVENT, schedule_library_index},
+    commands::schedule_tag_xmp_sync, jobs::directory_tree::DIRECTORY_TREE_UPDATED_EVENT,
     state::AppState,
 };
 use oxy_domain::{
@@ -26,7 +25,9 @@ pub(crate) async fn open_folder(
     .await
     .map_err(|error| error.to_string())??;
     if should_index {
-        schedule_library_index(app, state.library.clone(), session.root_path.clone());
+        state
+            .library_index_queue
+            .schedule(app, session.root_path.clone());
     }
     schedule_tag_xmp_sync(
         state.library.clone(),
@@ -193,7 +194,7 @@ pub(crate) async fn refresh_directory(
         .library
         .invalidate_index(&root)
         .map_err(|error| error.to_string())?;
-    schedule_library_index(app, state.library.clone(), root);
+    state.library_index_queue.schedule(app, root);
     Ok(tree)
 }
 

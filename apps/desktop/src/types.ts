@@ -179,11 +179,15 @@ export type PreviewPriority = "preload" | "nearby" | "visible" | "loupe";
 export interface DebugQueueItem {
   key: string;
   path?: string;
+  rootPath?: string;
   resource?: string;
   stage: string;
   priority: string;
   rank?: number;
   consumers: number;
+  pendingCount?: number;
+  assetCount?: number;
+  directoryCount?: number;
 }
 
 export interface DebugQueueState {

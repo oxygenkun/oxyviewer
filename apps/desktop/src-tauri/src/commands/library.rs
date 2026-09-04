@@ -1,4 +1,4 @@
-use crate::{jobs::schedule_library_index, state::AppState};
+use crate::state::AppState;
 use std::path::PathBuf;
 use tauri::State;
 
@@ -13,7 +13,7 @@ pub(crate) fn add_library_root(
         .library
         .add_root(&root)
         .map_err(|error| error.to_string())?;
-    schedule_library_index(app, state.library.clone(), root);
+    state.library_index_queue.schedule(app, root);
     state.library.roots().map_err(|error| error.to_string())
 }
 

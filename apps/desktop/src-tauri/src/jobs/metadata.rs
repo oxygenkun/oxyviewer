@@ -422,6 +422,7 @@ fn metadata_debug_item(
     DebugQueueItem {
         key: format!("{}:{}", key.path.display(), key.generation),
         path: Some(key.path.clone()),
+        root_path: None,
         stage: if request.detail_waiters.is_empty() {
             "summary".into()
         } else {
@@ -430,6 +431,9 @@ fn metadata_debug_item(
         priority: format!("{priority:?}").to_lowercase(),
         rank: None,
         consumers: request.detail_waiters.len().max(1),
+        pending_count: None,
+        asset_count: None,
+        directory_count: None,
     }
 }
 

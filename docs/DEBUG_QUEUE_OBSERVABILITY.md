@@ -13,12 +13,14 @@ interactive while folder changes, scrolling, selection, and preview requests
 continue to exercise the live queues.
 
 The dashboard samples at 4 Hz and can be paused to inspect a stable snapshot.
-It shows WebView preview requests plus the native preview, metadata, and lazy
-directory-tree schedulers. Each scheduler separates pending and running work
-and reports its concurrency, semantic priority, stage, asset path, rank, and
-number of coalesced consumers. WebView rows also show the concrete artifact
-level (`original`, `thumbnail`, `preview`, or `full`) and the requested URL or
-path. Multiple DOM consumers of the same URL are collapsed into one row.
+It shows WebView preview requests plus the native preview, metadata, lazy
+directory-tree, and library-index schedulers. Each scheduler separates pending
+and running work and reports its concurrency, semantic priority, stage, asset
+path, rank, and number of coalesced consumers. A running library-index row also
+reports its root, current directory, pending directory count, and cumulative
+asset and directory counts. WebView rows show the concrete artifact level
+(`original`, `thumbnail`, `preview`, or `full`) and the requested URL or path.
+Multiple DOM consumers of the same URL are collapsed into one row.
 
 ## IPC contract
 
@@ -31,7 +33,8 @@ DebugQueueSnapshot
     name
     concurrency
     pending[] / active[]
-      key, path?, stage, priority, rank?, consumers
+      key, path?, rootPath?, stage, priority, rank?, consumers
+      pendingCount?, assetCount?, directoryCount?
 ```
 
 The shared serialized types live in `oxy-domain`; matching TypeScript types

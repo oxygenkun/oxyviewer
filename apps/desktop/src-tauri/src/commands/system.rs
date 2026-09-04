@@ -40,6 +40,7 @@ pub(crate) fn get_debug_queue_snapshot(
             state.preview_queue.debug_snapshot(),
             state.metadata_queue.debug_snapshot(),
             state.directory_tree_queue.debug_snapshot(),
+            state.library_index_queue.debug_snapshot(),
         ],
     })
 }

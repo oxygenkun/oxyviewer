@@ -157,6 +157,15 @@ pub struct IndexStats {
     pub directory_count: usize,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct IndexProgress {
+    pub root_path: PathBuf,
+    pub current_directory: PathBuf,
+    pub pending_directory_count: usize,
+    pub asset_count: usize,
+    pub directory_count: usize,
+}
+
 impl Library {
     pub fn open(path: &Path) -> Result<Self, LibraryError> {
         if let Some(parent) = path.parent() {
@@ -701,6 +710,14 @@ impl Library {
     /// rows remain queryable until the final cleanup transaction, and only one
     /// worker per canonical root is admitted at a time.
     pub fn index_root(&self, root: &Path) -> Result<Option<IndexStats>, LibraryError> {
+        self.index_root_with_progress(root, |_| {})
+    }
+
+    pub fn index_root_with_progress(
+        &self,
+        root: &Path,
+        mut report_progress: impl FnMut(IndexProgress),
+    ) -> Result<Option<IndexStats>, LibraryError> {
         let root = root.canonicalize()?;
         {
             let mut active = self.indexing_roots.lock();
@@ -709,7 +726,7 @@ impl Library {
             }
         }
         let _gate = self.index_gate.lock();
-        let result = self.index_root_inner(&root);
+        let result = self.index_root_inner(&root, &mut report_progress);
         self.indexing_roots.lock().remove(&root);
         result.map(Some)
     }
@@ -905,13 +922,24 @@ impl Library {
         Ok(())
     }
 
-    fn index_root_inner(&self, root: &Path) -> Result<IndexStats, LibraryError> {
+    fn index_root_inner(
+        &self,
+        root: &Path,
+        report_progress: &mut impl FnMut(IndexProgress),
+    ) -> Result<IndexStats, LibraryError> {
         let scan_id = self.next_scan_id()?;
         let mut queue = DirectoryPriorityQueue::new(root.to_owned());
         let mut asset_count = 0;
         let mut directory_count = 0;
 
         while let Some((directory, depth)) = queue.pop_next() {
+            report_progress(IndexProgress {
+                root_path: root.to_owned(),
+                current_directory: directory.clone(),
+                pending_directory_count: queue.pending.len(),
+                asset_count,
+                directory_count,
+            });
             if !self.contains_root(root)? {
                 return Ok(IndexStats {
                     asset_count,
@@ -926,6 +954,13 @@ impl Library {
             asset_count += scan.assets.len();
             directory_count += safe_directories.len();
             self.write_index_batch(root, &directory, scan_id, &scan.assets, &safe_directories)?;
+            report_progress(IndexProgress {
+                root_path: root.to_owned(),
+                current_directory: directory,
+                pending_directory_count: queue.pending.len(),
+                asset_count,
+                directory_count,
+            });
         }
         self.finish_index(root, scan_id, asset_count, directory_count)?;
         Ok(IndexStats {
@@ -1591,6 +1626,34 @@ mod tests {
                 .unwrap()
                 .is_empty()
         );
+    }
+
+    #[test]
+    fn reports_index_progress_for_each_directory_batch() {
+        let library = Library::in_memory().unwrap();
+        let root = tempdir().unwrap();
+        let child = root.path().join("child");
+        std::fs::create_dir(&child).unwrap();
+        std::fs::write(root.path().join("root.jpg"), b"jpeg").unwrap();
+        std::fs::write(child.join("nested.jpg"), b"jpeg").unwrap();
+        library.add_root(root.path()).unwrap();
+        let mut progress = Vec::new();
+
+        library
+            .index_root_with_progress(root.path(), |update| progress.push(update))
+            .unwrap();
+
+        let canonical_root = root.path().canonicalize().unwrap();
+        assert_eq!(progress.first().unwrap().current_directory, canonical_root);
+        assert_eq!(progress.first().unwrap().asset_count, 0);
+        assert!(progress.iter().any(|update| {
+            update.current_directory == child.canonicalize().unwrap()
+                && update.pending_directory_count == 0
+        }));
+        let completed = progress.last().unwrap();
+        assert_eq!(completed.asset_count, 2);
+        assert_eq!(completed.directory_count, 1);
+        assert_eq!(completed.pending_directory_count, 0);
     }
 
     #[test]

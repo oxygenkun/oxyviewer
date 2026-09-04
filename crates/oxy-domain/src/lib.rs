@@ -290,11 +290,19 @@ pub struct DebugQueueItem {
     pub key: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub path: Option<PathBuf>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub root_path: Option<PathBuf>,
     pub stage: String,
     pub priority: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub rank: Option<i64>,
     pub consumers: usize,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pending_count: Option<usize>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub asset_count: Option<usize>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub directory_count: Option<usize>,
 }
 
 /// A point-in-time view of a scheduler. This contract is intentionally

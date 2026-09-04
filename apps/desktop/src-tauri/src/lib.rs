@@ -113,6 +113,7 @@ pub fn run() {
             );
             let preview_queue =
                 jobs::preview::PreviewQueue::new(app.handle().clone(), library.clone());
+            let library_index_queue = jobs::LibraryIndexQueue::new(library.clone());
             app.manage(AppState {
                 files,
                 jobs: JobRegistry::default(),
@@ -123,6 +124,7 @@ pub fn run() {
                 metadata_queue,
                 preview_queue,
                 directory_tree_queue,
+                library_index_queue,
                 metadata_provider,
             });
 

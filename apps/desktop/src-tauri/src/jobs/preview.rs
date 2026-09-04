@@ -711,10 +711,14 @@ fn debug_item(
     DebugQueueItem {
         key: format!("{}:{:?}:{}", key.path.display(), key.level, key.generation),
         path: Some(key.path.clone()),
+        root_path: None,
         stage: format!("{:?}", key.level).to_lowercase(),
         priority: format!("{priority:?}").to_lowercase(),
         rank: Some(i64::from(position.rank)),
         consumers: request.waiters.len(),
+        pending_count: None,
+        asset_count: None,
+        directory_count: None,
     }
 }
 
