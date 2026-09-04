@@ -21,6 +21,8 @@ export const MIN_ZOOM = 1;
 export const MAX_PIXEL_ZOOM_PERCENT = 400;
 const FILMSTRIP_VERTICAL_CHROME = 13;
 export const FILMSTRIP_GAP = 5;
+const FILMSTRIP_MIN_PAGE_LOAD_AHEAD = 400;
+const FILMSTRIP_PAGE_LOAD_AHEAD_VIEWPORTS = 2;
 
 export function filmstripItemWidth(
   filmstripHeight: number,
@@ -40,6 +42,23 @@ export function filmstripUnloadedWidth(
   if (unloadedCount <= 0) return 0;
   return unloadedCount * filmstripItemWidth(filmstripHeight, orientation)
     + (unloadedCount - 1) * FILMSTRIP_GAP;
+}
+
+/**
+ * Starts the next cheap-summary page before the viewport reaches unloaded
+ * filmstrip space. The distance scales with the viewport so a fast fling has
+ * enough runway even when the filmstrip has been resized to show large items.
+ */
+export function shouldFetchFilmstripPage(
+  scrollLeft: number,
+  viewportWidth: number,
+  loadedRight: number,
+): boolean {
+  const loadAhead = Math.max(
+    FILMSTRIP_MIN_PAGE_LOAD_AHEAD,
+    viewportWidth * FILMSTRIP_PAGE_LOAD_AHEAD_VIEWPORTS,
+  );
+  return scrollLeft + viewportWidth + loadAhead >= loadedRight;
 }
 
 export interface FilmstripItemRange {

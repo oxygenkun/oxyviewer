@@ -12,6 +12,7 @@ import {
   panFromNavigatorPoint,
   pixelZoomPercent,
   resolveLoupeSourceSize,
+  shouldFetchFilmstripPage,
   zoomAtPoint,
   zoomForPixelPercent,
 } from "./loupe";
@@ -40,6 +41,12 @@ describe("loupe geometry", () => {
       { id: "right", start: 180, end: 260 },
       { id: "off-right", start: 270, end: 350 },
     ], 0, 260)).toEqual(["center", "left", "right"]);
+  });
+
+  it("loads the next filmstrip page with viewport-scaled runway", () => {
+    expect(shouldFetchFilmstripPage(6_000, 1_200, 9_500)).toBe(true);
+    expect(shouldFetchFilmstripPage(5_800, 1_200, 9_500)).toBe(false);
+    expect(shouldFetchFilmstripPage(8_900, 200, 9_500)).toBe(true);
   });
 
   it("uses HEIF full-resolution dimensions instead of the 512 px placeholder", () => {

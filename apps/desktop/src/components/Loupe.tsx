@@ -28,6 +28,7 @@ import {
   panByNavigatorDelta,
   pixelZoomPercent,
   resolveLoupeSourceSize,
+  shouldFetchFilmstripPage,
   zoomAtPoint,
   zoomForPixelPercent,
   type Point,
@@ -404,7 +405,9 @@ export function Loupe({
     if (!hasNextPage || isFetchingNextPage) return;
     const loadedRight = 9 + assets.length
       * (filmstripItemWidth(filmstripHeight, thumbnailOrientation) + FILMSTRIP_GAP);
-    if (strip.scrollLeft + strip.clientWidth >= loadedRight - 400) fetchNextPage();
+    if (shouldFetchFilmstripPage(strip.scrollLeft, strip.clientWidth, loadedRight)) {
+      fetchNextPage();
+    }
   }, [assets.length, fetchNextPage, filmstripHeight, hasNextPage, isFetchingNextPage, thumbnailOrientation]);
 
   useEffect(() => {
