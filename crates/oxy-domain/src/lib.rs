@@ -58,6 +58,16 @@ pub enum AssetKind {
     Webp,
 }
 
+/// A portable review flag stored in the digiKam XMP namespace. The numeric
+/// wire values are handled by the metadata crate; serialized IPC uses names.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub enum PickLabel {
+    Rejected,
+    Pending,
+    Accepted,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct AssetSummary {
@@ -73,6 +83,8 @@ pub struct AssetSummary {
     pub rating: Option<u8>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub color_label: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pick_label: Option<PickLabel>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq, Eq)]
@@ -80,11 +92,49 @@ pub struct AssetSummary {
 pub struct EditableMetadata {
     pub rating: Option<u8>,
     pub color_label: Option<String>,
+    pub pick_label: Option<PickLabel>,
     pub title: Option<String>,
     pub description: Option<String>,
     pub creator: Option<String>,
     pub copyright: Option<String>,
     pub keywords: Vec<String>,
+    #[serde(default)]
+    pub hierarchical_keywords: Vec<String>,
+}
+
+pub type CustomTagId = i64;
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct CustomTag {
+    pub id: CustomTagId,
+    pub parent_id: Option<CustomTagId>,
+    pub name: String,
+    pub path: String,
+    pub sort_order: i64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct AssetTagAssignment {
+    pub tag: CustomTag,
+    pub assigned_count: usize,
+    pub asset_count: usize,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct TagDeleteImpact {
+    pub tag_count: usize,
+    pub asset_count: usize,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct TagSyncStatus {
+    pub pending_count: usize,
+    pub failed_count: usize,
+    pub last_error: Option<String>,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
@@ -158,6 +208,10 @@ pub struct AssetDetails {
     pub width: Option<u32>,
     pub height: Option<u32>,
     pub metadata: EditableMetadata,
+    #[serde(default)]
+    pub embedded_keywords: Vec<String>,
+    #[serde(default)]
+    pub embedded_hierarchical_keywords: Vec<String>,
     pub metadata_capability: MetadataCapability,
     pub sidecar_path: Option<PathBuf>,
     #[serde(default)]
@@ -179,6 +233,8 @@ pub struct MetadataProjection {
     pub status: ResourceLoadStatus,
     pub rating: Option<u8>,
     pub color_label: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pick_label: Option<PickLabel>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub error: Option<String>,
 }
@@ -502,13 +558,30 @@ pub struct LibraryIndexUpdate {
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 #[serde(rename_all = "camelCase")]
 pub struct MetadataPatch {
+    #[serde(default, deserialize_with = "deserialize_nullable_field")]
     pub rating: Option<Option<u8>>,
+    #[serde(default, deserialize_with = "deserialize_nullable_field")]
     pub color_label: Option<Option<String>>,
+    #[serde(default, deserialize_with = "deserialize_nullable_field")]
+    pub pick_label: Option<Option<PickLabel>>,
+    #[serde(default, deserialize_with = "deserialize_nullable_field")]
     pub title: Option<Option<String>>,
+    #[serde(default, deserialize_with = "deserialize_nullable_field")]
     pub description: Option<Option<String>>,
+    #[serde(default, deserialize_with = "deserialize_nullable_field")]
     pub creator: Option<Option<String>>,
+    #[serde(default, deserialize_with = "deserialize_nullable_field")]
     pub copyright: Option<Option<String>>,
     pub keywords: Option<Vec<String>>,
+    pub hierarchical_keywords: Option<Vec<String>>,
+}
+
+fn deserialize_nullable_field<'de, D, T>(deserializer: D) -> Result<Option<Option<T>>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+    T: Deserialize<'de>,
+{
+    Option::<T>::deserialize(deserializer).map(Some)
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -573,4 +646,37 @@ pub struct PerfScenario {
     #[serde(default)]
     pub timeout_ms: Option<u64>,
     pub report_path: PathBuf,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn metadata_patch_distinguishes_missing_fields_from_explicit_nulls() {
+        let missing: MetadataPatch = serde_json::from_value(serde_json::json!({})).unwrap();
+        assert_eq!(missing.rating, None);
+        assert_eq!(missing.color_label, None);
+        assert_eq!(missing.pick_label, None);
+
+        let cleared: MetadataPatch = serde_json::from_value(serde_json::json!({
+            "rating": null,
+            "colorLabel": null,
+            "pickLabel": null
+        }))
+        .unwrap();
+        assert_eq!(cleared.rating, Some(None));
+        assert_eq!(cleared.color_label, Some(None));
+        assert_eq!(cleared.pick_label, Some(None));
+
+        let assigned: MetadataPatch = serde_json::from_value(serde_json::json!({
+            "rating": 4,
+            "colorLabel": "Purple",
+            "pickLabel": "accepted"
+        }))
+        .unwrap();
+        assert_eq!(assigned.rating, Some(Some(4)));
+        assert_eq!(assigned.color_label, Some(Some("Purple".into())));
+        assert_eq!(assigned.pick_label, Some(Some(PickLabel::Accepted)));
+    }
 }

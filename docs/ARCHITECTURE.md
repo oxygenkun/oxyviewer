@@ -265,7 +265,7 @@ Tauri command 只负责：取状态、校验/转换参数、把阻塞工作转�
 | Windows HIF 160×120 `preview` 底图 → 全分辨率瓦片 | 已实现 |
 | Rust 资源 projection 队列和后端解码门 | 已实现；同源 pending/in-flight 合并，不抢占运行中的解码 |
 | metadata/image projection SQLite 重启缓存 | 已实现；WAL 事务 revision 拒绝迟到结果 |
-| 原生元数据读取与 XMP sidecar 写入 | 已实现；所有支持格式均为 sidecar-first，ExifTool 只作解析失败兼容 fallback 或显式内嵌同步 |
+| 原生元数据读取与 XMP sidecar 写入 | 已实现；所有支持格式均为 sidecar-first；星级/颜色使用 `xmp:Rating`/`xmp:Label`，旗标使用 `digiKam:PickLabel`；ExifTool 只作解析失败兼容 fallback 或显式内嵌同步 |
 | SQLite 显式资料库根目录 | 已实现 |
 | SQLite 后台资产/目录索引与 FTS 搜索 | 已实现；按目录短事务更新，完成 generation 后清理旧行并重建 FTS |
 | 文件系统 watcher 和 `folder_delta` | 规划中 |

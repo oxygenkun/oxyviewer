@@ -1,6 +1,7 @@
 use oxy_domain::{
     AssetKind, AssetQuery, AssetSort, AssetSummary, DirectorySearchMatch, DirectorySummary,
-    ImageProjection, MetadataProjection, Page, RenderLevel, ResourceLoadStatus, SortDirection,
+    ImageProjection, MetadataProjection, Page, PickLabel, RenderLevel, ResourceLoadStatus,
+    SortDirection,
 };
 use parking_lot::Mutex;
 use rusqlite::{Connection, OptionalExtension, Transaction, TransactionBehavior, params};
@@ -10,6 +11,8 @@ use std::{
     path::{Path, PathBuf},
 };
 use thiserror::Error;
+
+mod tags;
 
 const DEFAULT_PAGE_SIZE: usize = 250;
 const MAX_PAGE_SIZE: usize = 1_000;
@@ -26,6 +29,14 @@ pub enum LibraryError {
     Json(#[from] serde_json::Error),
     #[error("folder order must contain every library root exactly once")]
     InvalidRootOrder,
+    #[error("tag name must not be empty or contain '|'")]
+    InvalidTagName,
+    #[error("tag parent does not exist")]
+    MissingTagParent,
+    #[error("a tag cannot be moved below itself")]
+    TagHierarchyCycle,
+    #[error("a tag with this name already exists at this level")]
+    DuplicateTagName,
 }
 
 pub struct Library {
@@ -153,6 +164,7 @@ impl Library {
         }
         let mut connection = Connection::open(path)?;
         connection.pragma_update(None, "journal_mode", "WAL")?;
+        connection.pragma_update(None, "foreign_keys", "ON")?;
         connection.execute_batch(
             "
             CREATE TABLE IF NOT EXISTS library_roots (
@@ -220,12 +232,45 @@ impl Library {
               status TEXT NOT NULL,
               rating INTEGER,
               color_label TEXT,
+              pick_label TEXT,
               result_json TEXT,
               error TEXT,
               PRIMARY KEY(path, projection_kind)
             );
             CREATE INDEX IF NOT EXISTS resource_projections_parent
               ON resource_projections(parent_path);
+            CREATE TABLE IF NOT EXISTS custom_tags (
+              id INTEGER PRIMARY KEY AUTOINCREMENT,
+              parent_id INTEGER REFERENCES custom_tags(id) ON DELETE CASCADE,
+              name TEXT NOT NULL,
+              name_key TEXT NOT NULL,
+              sort_order INTEGER NOT NULL,
+              created_at INTEGER NOT NULL DEFAULT (unixepoch()),
+              updated_at INTEGER NOT NULL DEFAULT (unixepoch())
+            );
+            CREATE UNIQUE INDEX IF NOT EXISTS custom_tags_sibling_name
+              ON custom_tags(COALESCE(parent_id, 0), name_key);
+            CREATE INDEX IF NOT EXISTS custom_tags_parent
+              ON custom_tags(parent_id, sort_order, name);
+            CREATE TABLE IF NOT EXISTS asset_tags (
+              asset_path TEXT NOT NULL,
+              tag_id INTEGER NOT NULL REFERENCES custom_tags(id) ON DELETE CASCADE,
+              assigned_at INTEGER NOT NULL DEFAULT (unixepoch()),
+              PRIMARY KEY(asset_path, tag_id)
+            );
+            CREATE INDEX IF NOT EXISTS asset_tags_tag ON asset_tags(tag_id, asset_path);
+            CREATE TABLE IF NOT EXISTS asset_tag_xmp_state (
+              asset_path TEXT PRIMARY KEY NOT NULL,
+              subjects_json TEXT NOT NULL DEFAULT '[]',
+              hierarchical_json TEXT NOT NULL DEFAULT '[]',
+              synced_at INTEGER NOT NULL DEFAULT (unixepoch())
+            );
+            CREATE TABLE IF NOT EXISTS tag_xmp_sync_queue (
+              asset_path TEXT PRIMARY KEY NOT NULL,
+              requested_at INTEGER NOT NULL DEFAULT (unixepoch()),
+              attempt_count INTEGER NOT NULL DEFAULT 0,
+              last_error TEXT
+            );
             ",
         )?;
         let has_sort_order = connection
@@ -240,6 +285,18 @@ impl Library {
                 [],
             )?;
         }
+        let has_pick_label = connection
+            .prepare("PRAGMA table_info(resource_projections)")?
+            .query_map([], |row| row.get::<_, String>(1))?
+            .collect::<Result<Vec<_>, _>>()?
+            .iter()
+            .any(|column| column == "pick_label");
+        if !has_pick_label {
+            connection.execute(
+                "ALTER TABLE resource_projections ADD COLUMN pick_label TEXT",
+                [],
+            )?;
+        }
         normalize_root_order(&mut connection)?;
         Ok(Self {
             connection: Mutex::new(connection),
@@ -250,6 +307,7 @@ impl Library {
 
     pub fn in_memory() -> Result<Self, LibraryError> {
         let mut connection = Connection::open_in_memory()?;
+        connection.pragma_update(None, "foreign_keys", "ON")?;
         connection.execute_batch(
             "
             CREATE TABLE library_roots (
@@ -316,11 +374,43 @@ impl Library {
               status TEXT NOT NULL,
               rating INTEGER,
               color_label TEXT,
+              pick_label TEXT,
               result_json TEXT,
               error TEXT,
               PRIMARY KEY(path, projection_kind)
             );
             CREATE INDEX resource_projections_parent ON resource_projections(parent_path);
+            CREATE TABLE custom_tags (
+              id INTEGER PRIMARY KEY AUTOINCREMENT,
+              parent_id INTEGER REFERENCES custom_tags(id) ON DELETE CASCADE,
+              name TEXT NOT NULL,
+              name_key TEXT NOT NULL,
+              sort_order INTEGER NOT NULL,
+              created_at INTEGER NOT NULL DEFAULT (unixepoch()),
+              updated_at INTEGER NOT NULL DEFAULT (unixepoch())
+            );
+            CREATE UNIQUE INDEX custom_tags_sibling_name
+              ON custom_tags(COALESCE(parent_id, 0), name_key);
+            CREATE INDEX custom_tags_parent ON custom_tags(parent_id, sort_order, name);
+            CREATE TABLE asset_tags (
+              asset_path TEXT NOT NULL,
+              tag_id INTEGER NOT NULL REFERENCES custom_tags(id) ON DELETE CASCADE,
+              assigned_at INTEGER NOT NULL DEFAULT (unixepoch()),
+              PRIMARY KEY(asset_path, tag_id)
+            );
+            CREATE INDEX asset_tags_tag ON asset_tags(tag_id, asset_path);
+            CREATE TABLE asset_tag_xmp_state (
+              asset_path TEXT PRIMARY KEY NOT NULL,
+              subjects_json TEXT NOT NULL DEFAULT '[]',
+              hierarchical_json TEXT NOT NULL DEFAULT '[]',
+              synced_at INTEGER NOT NULL DEFAULT (unixepoch())
+            );
+            CREATE TABLE tag_xmp_sync_queue (
+              asset_path TEXT PRIMARY KEY NOT NULL,
+              requested_at INTEGER NOT NULL DEFAULT (unixepoch()),
+              attempt_count INTEGER NOT NULL DEFAULT 0,
+              last_error TEXT
+            );
             ",
         )?;
         normalize_root_order(&mut connection)?;
@@ -472,8 +562,8 @@ impl Library {
         transaction.execute(
             "INSERT INTO resource_projections(
                path, parent_path, projection_kind, source_revision, valid_at,
-               projection_revision, status, rating, color_label, result_json, error
-             ) VALUES (?1, ?2, 'metadata', ?3, ?4, ?5, ?6, ?7, ?8, NULL, ?9)
+               projection_revision, status, rating, color_label, pick_label, result_json, error
+             ) VALUES (?1, ?2, 'metadata', ?3, ?4, ?5, ?6, ?7, ?8, ?9, NULL, ?10)
              ON CONFLICT(path, projection_kind) DO UPDATE SET
                parent_path=excluded.parent_path,
                source_revision=excluded.source_revision,
@@ -482,6 +572,7 @@ impl Library {
                status=excluded.status,
                rating=excluded.rating,
                color_label=excluded.color_label,
+               pick_label=excluded.pick_label,
                result_json=NULL,
                error=excluded.error",
             params![
@@ -493,6 +584,7 @@ impl Library {
                 status_name(candidate.status),
                 candidate.rating,
                 candidate.color_label,
+                candidate.pick_label.map(pick_label_name),
                 candidate.error,
             ],
         )?;
@@ -535,8 +627,8 @@ impl Library {
         transaction.execute(
             "INSERT INTO resource_projections(
                path, parent_path, projection_kind, source_revision, valid_at,
-               projection_revision, status, rating, color_label, result_json, error
-             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, NULL, NULL, ?8, ?9)
+               projection_revision, status, rating, color_label, pick_label, result_json, error
+             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, NULL, NULL, NULL, ?8, ?9)
              ON CONFLICT(path, projection_kind) DO UPDATE SET
                parent_path=excluded.parent_path,
                source_revision=excluded.source_revision,
@@ -545,6 +637,7 @@ impl Library {
                status=excluded.status,
                rating=NULL,
                color_label=NULL,
+               pick_label=NULL,
                result_json=excluded.result_json,
                error=excluded.error",
             params![
@@ -575,6 +668,7 @@ impl Library {
                status = 'error',
                rating = NULL,
                color_label = NULL,
+               pick_label = NULL,
                result_json = NULL,
                error = 'invalidated'
              WHERE parent_path = ?2",
@@ -997,7 +1091,7 @@ fn read_metadata_projection(
     let row = connection
         .query_row(
             "SELECT source_revision, projection_revision, valid_at, status,
-                    rating, color_label, error
+                    rating, color_label, pick_label, error
              FROM resource_projections
              WHERE path = ?1 AND projection_kind = 'metadata'",
             params![path.to_string_lossy()],
@@ -1010,12 +1104,22 @@ fn read_metadata_projection(
                     row.get::<_, Option<u8>>(4)?,
                     row.get::<_, Option<String>>(5)?,
                     row.get::<_, Option<String>>(6)?,
+                    row.get::<_, Option<String>>(7)?,
                 ))
             },
         )
         .optional()?;
     row.map(
-        |(source_revision, projection_revision, valid_at, status, rating, color_label, error)| {
+        |(
+            source_revision,
+            projection_revision,
+            valid_at,
+            status,
+            rating,
+            color_label,
+            pick_label,
+            error,
+        )| {
             Ok(MetadataProjection {
                 path: path.to_path_buf(),
                 source_revision,
@@ -1024,6 +1128,7 @@ fn read_metadata_projection(
                 status: parse_status(&status)?,
                 rating,
                 color_label,
+                pick_label: parse_pick_label(pick_label)?,
                 error,
             })
         },
@@ -1180,6 +1285,25 @@ fn parse_kind(value: &str) -> Result<AssetKind, rusqlite::Error> {
     }
 }
 
+fn pick_label_name(value: PickLabel) -> &'static str {
+    match value {
+        PickLabel::Rejected => "rejected",
+        PickLabel::Pending => "pending",
+        PickLabel::Accepted => "accepted",
+    }
+}
+
+fn parse_pick_label(value: Option<String>) -> Result<Option<PickLabel>, rusqlite::Error> {
+    value
+        .map(|value| match value.as_str() {
+            "rejected" => Ok(PickLabel::Rejected),
+            "pending" => Ok(PickLabel::Pending),
+            "accepted" => Ok(PickLabel::Accepted),
+            _ => Err(rusqlite::Error::InvalidQuery),
+        })
+        .transpose()
+}
+
 fn asset_from_row(row: &rusqlite::Row<'_>) -> Result<AssetSummary, rusqlite::Error> {
     Ok(AssetSummary {
         id: row.get(0)?,
@@ -1192,6 +1316,7 @@ fn asset_from_row(row: &rusqlite::Row<'_>) -> Result<AssetSummary, rusqlite::Err
         has_sidecar: row.get(7)?,
         rating: None,
         color_label: None,
+        pick_label: None,
     })
 }
 
@@ -1292,6 +1417,45 @@ mod tests {
 
         let reopened = Library::open(&database).unwrap();
         assert_eq!(reopened.roots().unwrap(), [second, first]);
+    }
+
+    #[test]
+    fn migrates_metadata_projection_cache_for_pick_labels() {
+        let directory = tempdir().unwrap();
+        let database = directory.path().join("library.sqlite");
+        {
+            let legacy = Connection::open(&database).unwrap();
+            legacy
+                .execute_batch(
+                    "CREATE TABLE resource_projections (
+                       path TEXT NOT NULL,
+                       parent_path TEXT NOT NULL,
+                       projection_kind TEXT NOT NULL,
+                       source_revision TEXT NOT NULL,
+                       valid_at INTEGER NOT NULL,
+                       projection_revision INTEGER NOT NULL,
+                       status TEXT NOT NULL,
+                       rating INTEGER,
+                       color_label TEXT,
+                       result_json TEXT,
+                       error TEXT,
+                       PRIMARY KEY(path, projection_kind)
+                     );",
+                )
+                .unwrap();
+        }
+
+        let library = Library::open(&database).unwrap();
+        let columns = library
+            .connection
+            .lock()
+            .prepare("PRAGMA table_info(resource_projections)")
+            .unwrap()
+            .query_map([], |row| row.get::<_, String>(1))
+            .unwrap()
+            .collect::<Result<Vec<_>, _>>()
+            .unwrap();
+        assert!(columns.iter().any(|column| column == "pick_label"));
     }
 
     #[test]
@@ -1530,6 +1694,7 @@ mod tests {
                     status: ResourceLoadStatus::Ready,
                     rating: Some(4),
                     color_label: Some("Red".into()),
+                    pick_label: Some(PickLabel::Accepted),
                     error: None,
                 })
                 .unwrap();
@@ -1543,6 +1708,7 @@ mod tests {
             .unwrap();
         assert_eq!(cached.rating, Some(4));
         assert_eq!(cached.color_label.as_deref(), Some("Red"));
+        assert_eq!(cached.pick_label, Some(PickLabel::Accepted));
     }
 
     #[test]
@@ -1560,6 +1726,7 @@ mod tests {
             has_sidecar: false,
             rating: None,
             color_label: None,
+            pick_label: None,
         };
         let valid_at = library.next_resource_revision().unwrap();
         library
@@ -1571,6 +1738,7 @@ mod tests {
                 status: ResourceLoadStatus::Ready,
                 rating: Some(3),
                 color_label: Some("Yellow".into()),
+                pick_label: None,
                 error: None,
             })
             .unwrap();
@@ -1614,6 +1782,7 @@ mod tests {
                 status: ResourceLoadStatus::Ready,
                 rating: Some(5),
                 color_label: None,
+                pick_label: None,
                 error: None,
             })
             .unwrap();
@@ -1626,6 +1795,7 @@ mod tests {
                 status: ResourceLoadStatus::Ready,
                 rating: Some(1),
                 color_label: None,
+                pick_label: None,
                 error: None,
             })
             .unwrap();
@@ -1690,6 +1860,7 @@ mod tests {
             status: ResourceLoadStatus::Loading,
             rating: None,
             color_label: None,
+            pick_label: None,
             error: None,
         };
         library.accept_metadata_projection(loading.clone()).unwrap();

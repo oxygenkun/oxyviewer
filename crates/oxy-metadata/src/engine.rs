@@ -1,4 +1,7 @@
-use crate::{MetadataError, normalize_color_label, xmp_value};
+use crate::{
+    MetadataError, is_rejected_xmp_rating, normalize_color_label, parse_pick_label,
+    parse_xmp_rating, xmp_value,
+};
 use libheif_rs::{Chroma, ColorSpace, HeifContext};
 use oxy_domain::{CaptureMetadata, EditableMetadata, FocusInfo};
 use oxy_metadata_parser::{Tag, core::TagValue};
@@ -20,6 +23,7 @@ pub struct RawMetadataTag {
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct MetadataDocument {
     pub editable: EditableMetadata,
+    pub embedded_editable: EditableMetadata,
     pub capture: CaptureMetadata,
     pub focus: Option<FocusInfo>,
     pub raw: Vec<RawMetadataTag>,
@@ -72,6 +76,7 @@ impl MetadataReader for NativeMetadataReader {
             }
         }
 
+        document.embedded_editable = document.editable.clone();
         Ok(document)
     }
 }
@@ -87,11 +92,19 @@ fn document_from_tags(
             .map(|tag| tag.value.as_str())
     };
 
+    let rating_value = value("XMP", "Rating");
     let editable = EditableMetadata {
-        rating: value("XMP", "Rating").and_then(|value| value.parse().ok()),
+        rating: rating_value.and_then(parse_xmp_rating),
         color_label: value("XMP", "Label")
             .map(str::to_owned)
             .and_then(normalize_color_label),
+        pick_label: value("XMP", "PickLabel")
+            .and_then(parse_pick_label)
+            .or_else(|| {
+                rating_value
+                    .filter(|value| is_rejected_xmp_rating(value))
+                    .map(|_| oxy_domain::PickLabel::Rejected)
+            }),
         title: value("XMP", "Title").map(str::to_owned),
         description: value("XMP", "Description").map(str::to_owned),
         creator: value("XMP", "Creator").map(str::to_owned),
@@ -99,11 +112,15 @@ fn document_from_tags(
             .or_else(|| value("XMP", "Copyright"))
             .map(str::to_owned),
         keywords: value("XMP", "Subject").map(split_list).unwrap_or_default(),
+        hierarchical_keywords: value("XMP", "HierarchicalSubject")
+            .map(split_list)
+            .unwrap_or_default(),
     };
 
     let capture = crate::capture::from_tags(tags, path);
 
     MetadataDocument {
+        embedded_editable: editable.clone(),
         editable,
         capture,
         focus: focus_from_tags(tags, display_dimensions),
@@ -250,13 +267,33 @@ fn read_bounded_xmp_fallback(path: &Path) -> Result<Option<String>, MetadataErro
 }
 
 fn overlay_xmp(metadata: &mut EditableMetadata, xml: &str) {
-    metadata.rating = xmp_value(xml, "Rating")
-        .and_then(|value| value.parse().ok())
-        .or(metadata.rating);
-    metadata.color_label = xmp_value(xml, "Label")
-        .filter(|value| !value.is_empty())
-        .and_then(normalize_color_label)
-        .or_else(|| metadata.color_label.clone());
+    let rating_value = xmp_value(xml, "Rating");
+    if let Some(value) = rating_value.as_deref() {
+        metadata.rating = parse_xmp_rating(value);
+    }
+    if let Some(value) = xmp_value(xml, "Label") {
+        // An explicit Sony/Imaging Edge `None` is a clear operation, so it
+        // must override a label discovered by the generic container parser.
+        metadata.color_label = normalize_color_label(value);
+    }
+    metadata.pick_label = crate::xmp_prefixed_value(xml, "digiKam", "PickLabel")
+        .as_deref()
+        .and_then(parse_pick_label)
+        .or_else(|| {
+            rating_value
+                .as_deref()
+                .filter(|value| is_rejected_xmp_rating(value))
+                .map(|_| oxy_domain::PickLabel::Rejected)
+        })
+        .or(metadata.pick_label);
+    let keywords = crate::xmp_array_values(xml, "dc", "subject");
+    if !keywords.is_empty() || xml.contains("<dc:subject") {
+        metadata.keywords = keywords;
+    }
+    let hierarchical = crate::xmp_array_values(xml, "lr", "hierarchicalSubject");
+    if !hierarchical.is_empty() || xml.contains("<lr:hierarchicalSubject") {
+        metadata.hierarchical_keywords = hierarchical;
+    }
 }
 
 fn append_xmp_raw_tags(tags: &mut Vec<RawMetadataTag>, xml: &str) {
@@ -274,6 +311,20 @@ fn append_xmp_raw_tags(tags: &mut Vec<RawMetadataTag>, xml: &str) {
                     value,
                 });
             }
+        }
+    }
+    if let Some(value) = crate::xmp_prefixed_value(xml, "digiKam", "PickLabel") {
+        if let Some(existing) = tags
+            .iter_mut()
+            .find(|tag| tag.namespace == "XMP" && tag.name == "PickLabel")
+        {
+            existing.value = value;
+        } else {
+            tags.push(RawMetadataTag {
+                namespace: "XMP".to_owned(),
+                name: "PickLabel".to_owned(),
+                value,
+            });
         }
     }
 }
@@ -298,13 +349,30 @@ mod tests {
             Tag::new("EXIF", "FNumber", "28/10"),
             Tag::new("XMP", "Rating", "4"),
             Tag::new("XMP", "Label", "red"),
+            Tag::new("XMP", "PickLabel", "3"),
         ];
         let document = document_from_tags(&tags, Path::new("photo.jpg"), None);
         assert_eq!(document.capture.camera_make.as_deref(), Some("SONY"));
         assert_eq!(document.capture.aperture.as_deref(), Some("f/2.8"));
         assert_eq!(document.editable.rating, Some(4));
         assert_eq!(document.editable.color_label.as_deref(), Some("Red"));
-        assert_eq!(document.raw.len(), 4);
+        assert_eq!(
+            document.editable.pick_label,
+            Some(oxy_domain::PickLabel::Accepted)
+        );
+        assert_eq!(document.raw.len(), 5);
+    }
+
+    #[test]
+    fn embedded_none_label_clears_an_earlier_color_projection() {
+        let mut metadata = EditableMetadata {
+            color_label: Some("Red".into()),
+            ..EditableMetadata::default()
+        };
+
+        overlay_xmp(&mut metadata, "<rdf:Description xmp:Label='None' />");
+
+        assert_eq!(metadata.color_label, None);
     }
 
     #[test]

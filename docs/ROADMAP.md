@@ -83,8 +83,8 @@ now fixture coverage, cancellation, platform packaging, and conflict safety.
 - [x] Native `oxy-metadata-parser` engine for EXIF/XMP/IPTC/ICC/MakerNotes, with
   `libheif-rs` item-table XMP extraction for HEIF/HIF
 - [x] Sony ARW/JPEG/HEIF shooting-focus overlay with persistent and temporary controls
-- [x] Sidecar-first rating/color reads and multi-selection writes for all supported
-  formats, including embedded RAW XMP preservation on first edit
+- [x] Sidecar-first rating/color/flag reads and multi-selection writes for all
+  supported formats, including embedded RAW XMP preservation on first edit
 - [x] Optional ExifTool configuration and checksum-verified managed install for
   explicit JPEG/HEIF/HIF embedded synchronization; it is not a core bundled worker
 

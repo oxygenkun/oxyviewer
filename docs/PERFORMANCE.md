@@ -71,6 +71,9 @@ end-to-end regression harness that enforces these budgets is described in
   to the left. Full RAW/HEIF work
   remains selection-driven, and a prepared image becomes the loupe's visible
   layer immediately instead of flashing through the empty fallback.
+- 2026-09-04: Review flags join the fingerprinted metadata projection without
+  adding work to folder open. Visible-item enrichment now publishes flag,
+  `xmp:Rating`, and `xmp:Label` together from the same parse.
 - 2026-09-03: Grid metadata enrichment and rating/color filtering now share a
   fingerprinted in-memory projection cache. Switching on a metadata filter
   reuses rating and color labels already parsed for visible assets and parses

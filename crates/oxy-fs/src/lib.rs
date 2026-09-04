@@ -649,6 +649,7 @@ fn summary_for_path(path: &Path) -> Result<Option<AssetSummary>, FsError> {
         has_sidecar: sidecar_path(path).is_file(),
         rating: None,
         color_label: None,
+        pick_label: None,
     }))
 }
 

@@ -1,4 +1,5 @@
 use crate::{
+    commands::schedule_tag_xmp_sync,
     jobs::{directory_tree::DIRECTORY_TREE_UPDATED_EVENT, schedule_library_index},
     state::AppState,
 };
@@ -27,6 +28,11 @@ pub(crate) async fn open_folder(
     if should_index {
         schedule_library_index(app, state.library.clone(), session.root_path.clone());
     }
+    schedule_tag_xmp_sync(
+        state.library.clone(),
+        state.files.clone(),
+        state.metadata.clone(),
+    );
     Ok(session)
 }
 
@@ -189,9 +195,55 @@ pub(crate) async fn refresh_directory(
 #[tauri::command]
 pub(crate) async fn execute_file_operation(
     operation: FileOperation,
+    state: State<'_, AppState>,
 ) -> Result<FileOperationResult, String> {
+    let library = state.library.clone();
     tauri::async_runtime::spawn_blocking(move || {
-        oxy_fs::execute_file_operation(&operation).map_err(|error| error.to_string())
+        let result =
+            oxy_fs::execute_file_operation(&operation).map_err(|error| error.to_string())?;
+        match &operation {
+            FileOperation::Rename { source, new_name } => {
+                let destination = source
+                    .parent()
+                    .unwrap_or_else(|| std::path::Path::new(""))
+                    .join(new_name);
+                library
+                    .move_asset_tag_state(source, &destination)
+                    .map_err(|error| error.to_string())?;
+            }
+            FileOperation::Copy {
+                sources,
+                destination_dir,
+            } => {
+                for source in sources {
+                    if let Some(name) = source.file_name() {
+                        library
+                            .copy_asset_tag_state(source, &destination_dir.join(name))
+                            .map_err(|error| error.to_string())?;
+                    }
+                }
+            }
+            FileOperation::Move {
+                sources,
+                destination_dir,
+            } => {
+                for source in sources {
+                    if let Some(name) = source.file_name() {
+                        library
+                            .move_asset_tag_state(source, &destination_dir.join(name))
+                            .map_err(|error| error.to_string())?;
+                    }
+                }
+            }
+            FileOperation::Trash { paths } => {
+                for path in paths {
+                    library
+                        .remove_asset_tag_state(path)
+                        .map_err(|error| error.to_string())?;
+                }
+            }
+        }
+        Ok(result)
     })
     .await
     .map_err(|error| error.to_string())?

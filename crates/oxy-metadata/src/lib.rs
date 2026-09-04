@@ -1,9 +1,11 @@
 use oxy_domain::{
     AssetKind, CaptureMetadata, EditableMetadata, FocusInfo, FocusRegion, MetadataProjection,
-    ResourceLoadStatus,
+    PickLabel, ResourceLoadStatus,
 };
 use oxy_fs::sidecar_path;
 use serde_json::Value;
+#[cfg(unix)]
+use std::os::unix::fs::PermissionsExt;
 #[cfg(target_os = "windows")]
 use std::os::windows::process::CommandExt;
 use std::{
@@ -31,8 +33,6 @@ pub enum MetadataError {
     EmbeddedWorkerUnavailable,
     #[error("invalid rating {0}; expected 0 through 5")]
     InvalidRating(u8),
-    #[error("Sony HIF supports only red, yellow, green, and blue color labels, not {0}")]
-    UnsupportedHifColorLabel(String),
     #[error("metadata sidecar was not found for {0}")]
     SidecarUnavailable(PathBuf),
     #[error("metadata read failed: {0}")]
@@ -59,6 +59,7 @@ struct CachedSummaryMetadata {
     projection_revision: u64,
     rating: Option<u8>,
     color_label: Option<String>,
+    pick_label: Option<PickLabel>,
     status: ResourceLoadStatus,
     error: Option<String>,
 }
@@ -175,6 +176,7 @@ impl MetadataFacade {
                     projection_revision: projection.projection_revision,
                     rating: projection.rating,
                     color_label: projection.color_label.clone(),
+                    pick_label: projection.pick_label,
                     status: projection.status,
                     error: projection.error.clone(),
                 },
@@ -197,6 +199,7 @@ impl MetadataFacade {
             observation.valid_at,
             document.editable.rating,
             document.editable.color_label.clone(),
+            document.editable.pick_label,
         );
         Ok((document, projection))
     }
@@ -240,10 +243,16 @@ impl MetadataFacade {
         {
             return projection_from_cache(&observation.asset, current);
         }
-        let (rating, color_label) = cache
+        let (rating, color_label, pick_label) = cache
             .get(&observation.asset.path)
             .filter(|current| current.fingerprint == observation.fingerprint)
-            .map(|current| (current.rating, current.color_label.clone()))
+            .map(|current| {
+                (
+                    current.rating,
+                    current.color_label.clone(),
+                    current.pick_label,
+                )
+            })
             .unwrap_or_default();
         let projection_revision = self
             .next_projection_revision
@@ -256,6 +265,7 @@ impl MetadataFacade {
                 projection_revision,
                 rating,
                 color_label,
+                pick_label,
                 status,
                 error,
             },
@@ -299,6 +309,7 @@ impl MetadataFacade {
                 {
                     asset.rating = entry.rating;
                     asset.color_label.clone_from(&entry.color_label);
+                    asset.pick_label = entry.pick_label;
                     projections[index] = Some(projection_from_cache(asset, entry));
                 }
                 _ => misses.push((index, asset.clone(), self.begin_observation())),
@@ -324,6 +335,7 @@ impl MetadataFacade {
                 valid_at,
                 enriched.rating,
                 enriched.color_label,
+                enriched.pick_label,
             );
             projections[index] = Some(projection);
             if let Some(current) = self
@@ -335,6 +347,7 @@ impl MetadataFacade {
             {
                 assets[index].rating = current.rating;
                 assets[index].color_label.clone_from(&current.color_label);
+                assets[index].pick_label = current.pick_label;
             }
         }
         Ok(projections.into_iter().flatten().collect())
@@ -351,6 +364,7 @@ impl MetadataFacade {
         valid_at: u64,
         rating: Option<u8>,
         color_label: Option<String>,
+        pick_label: Option<PickLabel>,
     ) -> MetadataProjection {
         let mut cache = self
             .summary_cache
@@ -373,6 +387,7 @@ impl MetadataFacade {
                 projection_revision,
                 rating,
                 color_label,
+                pick_label,
                 status: ResourceLoadStatus::Ready,
                 error: None,
             },
@@ -393,7 +408,7 @@ impl MetadataFacade {
             .map(|entry| projection_from_cache(asset, entry))
     }
 
-    /// Drops cached rating/color projections for one directory. The cache is
+    /// Drops cached rating/color/flag projections for one directory. The cache is
     /// shared by grid enrichment and metadata-aware filtering.
     pub fn invalidate_summary_directory(&self, directory: &Path) {
         self.summary_cache
@@ -424,6 +439,9 @@ impl MetadataFacade {
         let patch = oxy_domain::MetadataPatch {
             rating: Some(metadata.rating),
             color_label: Some(metadata.color_label),
+            pick_label: Some(metadata.pick_label),
+            keywords: Some(metadata.keywords),
+            hierarchical_keywords: Some(metadata.hierarchical_keywords),
             ..oxy_domain::MetadataPatch::default()
         };
         let executable = self.exiftool();
@@ -503,6 +521,7 @@ fn projection_from_cache(
         status: cached.status,
         rating: cached.rating,
         color_label: cached.color_label.clone(),
+        pick_label: cached.pick_label,
         error: cached.error.clone(),
     }
 }
@@ -557,6 +576,7 @@ pub fn enrich_summaries_with_exiftool(
         };
         asset.rating = metadata.rating;
         asset.color_label = metadata.color_label;
+        asset.pick_label = metadata.pick_label;
     }
     Ok(())
 }
@@ -593,23 +613,40 @@ fn read_sidecar(asset_path: &Path) -> Result<EditableMetadata, MetadataError> {
         return Ok(EditableMetadata::default());
     }
     let xml = fs::read_to_string(path)?;
+    let rating_value = xmp_value(&xml, "Rating");
+    let pick_label = xmp_prefixed_value(&xml, "digiKam", "PickLabel")
+        .as_deref()
+        .and_then(parse_pick_label)
+        .or_else(|| {
+            rating_value
+                .as_deref()
+                .filter(|value| is_rejected_xmp_rating(value))
+                .map(|_| PickLabel::Rejected)
+        });
     Ok(EditableMetadata {
-        rating: xmp_value(&xml, "Rating").and_then(|value| value.parse().ok()),
-        color_label: xmp_value(&xml, "Label").filter(|value| !value.is_empty()),
+        rating: rating_value.as_deref().and_then(parse_xmp_rating),
+        color_label: xmp_value(&xml, "Label").and_then(normalize_color_label),
+        pick_label,
+        keywords: xmp_array_values(&xml, "dc", "subject"),
+        hierarchical_keywords: xmp_array_values(&xml, "lr", "hierarchicalSubject"),
         ..EditableMetadata::default()
     })
 }
 
 pub(crate) fn xmp_value(xml: &str, name: &str) -> Option<String> {
+    xmp_prefixed_value(xml, "xmp", name)
+}
+
+fn xmp_prefixed_value(xml: &str, prefix: &str, name: &str) -> Option<String> {
     for quote in ['"', '\''] {
-        let attribute = format!("xmp:{name}={quote}");
+        let attribute = format!("{prefix}:{name}={quote}");
         if let Some(start) = xml.find(&attribute) {
             let value = &xml[start + attribute.len()..];
             return value.find(quote).map(|end| unescape_xml(&value[..end]));
         }
     }
-    let open = format!("<xmp:{name}>");
-    let close = format!("</xmp:{name}>");
+    let open = format!("<{prefix}:{name}>");
+    let close = format!("</{prefix}:{name}>");
     let start = xml.find(&open)? + open.len();
     let end = xml[start..].find(&close)? + start;
     Some(unescape_xml(xml[start..end].trim()))
@@ -651,11 +688,13 @@ fn read_embedded_batch(
             "-n",
             "-XMP:Rating",
             "-XMP:Label",
+            "-XMP-digiKam:PickLabel",
             "-XMP:Title",
             "-XMP:Description",
             "-XMP:Creator",
             "-XMP:Copyright",
             "-XMP:Subject",
+            "-XMP-lr:HierarchicalSubject",
         ]);
         command.args(&exiftool_paths);
         let output = exiftool_output(&mut command)?;
@@ -690,12 +729,20 @@ fn is_sony_hif(path: &Path) -> bool {
 }
 
 fn metadata_from_json(row: &Value) -> EditableMetadata {
+    let rating_value = row.get("Rating");
     EditableMetadata {
-        rating: row
-            .get("Rating")
+        rating: rating_value
             .and_then(|value| value.as_u64().or_else(|| value.as_str()?.parse().ok()))
             .and_then(|value| u8::try_from(value).ok()),
         color_label: string_value(row.get("Label")).and_then(normalize_color_label),
+        pick_label: string_value(row.get("PickLabel"))
+            .as_deref()
+            .and_then(parse_pick_label)
+            .or_else(|| {
+                rating_value
+                    .filter(|value| value.as_i64() == Some(-1) || value.as_str() == Some("-1"))
+                    .map(|_| PickLabel::Rejected)
+            }),
         title: string_value(row.get("Title")),
         description: string_value(row.get("Description")),
         creator: string_value(row.get("Creator")),
@@ -707,23 +754,61 @@ fn metadata_from_json(row: &Value) -> EditableMetadata {
                 .collect(),
             value => string_value(value).into_iter().collect(),
         },
+        hierarchical_keywords: match row.get("HierarchicalSubject") {
+            Some(Value::Array(values)) => values
+                .iter()
+                .filter_map(|value| string_value(Some(value)))
+                .collect(),
+            value => string_value(value).into_iter().collect(),
+        },
     }
 }
 
 pub(crate) fn normalize_color_label(value: String) -> Option<String> {
-    if value.eq_ignore_ascii_case("none") {
+    let value = value.trim();
+    if value.is_empty() || value.eq_ignore_ascii_case("none") {
         return None;
     }
     ["Red", "Yellow", "Green", "Blue", "Purple"]
         .into_iter()
-        .find(|label| label.eq_ignore_ascii_case(&value))
+        .find(|label| label.eq_ignore_ascii_case(value))
         .map(str::to_owned)
-        .or(Some(value))
+        .or_else(|| Some(value.to_owned()))
+}
+
+pub(crate) fn parse_pick_label(value: &str) -> Option<PickLabel> {
+    match value.trim().to_ascii_lowercase().as_str() {
+        "1" | "rejected" => Some(PickLabel::Rejected),
+        "2" | "pending" => Some(PickLabel::Pending),
+        "3" | "accepted" | "picked" => Some(PickLabel::Accepted),
+        _ => None,
+    }
+}
+
+pub(crate) fn parse_xmp_rating(value: &str) -> Option<u8> {
+    value
+        .trim()
+        .parse::<u8>()
+        .ok()
+        .filter(|rating| *rating <= 5)
+}
+
+pub(crate) fn is_rejected_xmp_rating(value: &str) -> bool {
+    value.trim() == "-1"
+}
+
+fn pick_label_xmp_value(value: PickLabel) -> &'static str {
+    match value {
+        PickLabel::Rejected => "1",
+        PickLabel::Pending => "2",
+        PickLabel::Accepted => "3",
+    }
 }
 
 fn string_value(value: Option<&Value>) -> Option<String> {
     match value? {
         Value::String(value) if !value.is_empty() => Some(value.clone()),
+        Value::Number(value) => Some(value.to_string()),
         Value::Array(values) => values.first().and_then(|value| string_value(Some(value))),
         _ => None,
     }
@@ -773,16 +858,34 @@ fn add_patch_args(
                 Some(value) if value.eq_ignore_ascii_case("yellow") => "yellow",
                 Some(value) if value.eq_ignore_ascii_case("green") => "green",
                 Some(value) if value.eq_ignore_ascii_case("blue") => "blue",
-                Some(value) => {
-                    return Err(MetadataError::UnsupportedHifColorLabel(value.to_owned()));
-                }
+                Some(value) if value.eq_ignore_ascii_case("purple") => "purple",
+                Some(value) => value,
             }
         } else {
             value.as_deref().unwrap_or_default()
         };
         command.arg(format!("-XMP:Label={value}"));
     }
+    if let Some(value) = patch.pick_label {
+        command.arg(format!(
+            "-XMP-digiKam:PickLabel={}",
+            value.map_or("0", pick_label_xmp_value)
+        ));
+    }
+    if let Some(values) = &patch.keywords {
+        add_exiftool_list_args(command, "XMP:Subject", values);
+    }
+    if let Some(values) = &patch.hierarchical_keywords {
+        add_exiftool_list_args(command, "XMP-lr:HierarchicalSubject", values);
+    }
     Ok(())
+}
+
+fn add_exiftool_list_args(command: &mut Command, name: &str, values: &[String]) {
+    command.arg(format!("-{name}="));
+    for value in values {
+        command.arg(format!("-{name}+={value}"));
+    }
 }
 
 fn exiftool_command(configured: Option<&Path>) -> Command {
@@ -862,17 +965,65 @@ fn patch_sidecar(
     if let Some(value) = &patch.color_label {
         xml = set_xmp_attribute(&xml, "Label", value.as_deref())?;
     }
-    let mut file = fs::OpenOptions::new()
-        .create(true)
-        .truncate(true)
-        .write(true)
-        .open(&destination)?;
-    file.write_all(xml.as_bytes())?;
-    file.sync_all()?;
+    if let Some(value) = patch.pick_label {
+        xml = set_prefixed_xmp_attribute(
+            &xml,
+            "digiKam",
+            "http://www.digikam.org/ns/1.0/",
+            "PickLabel",
+            value.map(pick_label_xmp_value),
+        )?;
+    }
+    if let Some(values) = &patch.keywords {
+        xml = set_xmp_array(
+            &xml,
+            "dc",
+            "http://purl.org/dc/elements/1.1/",
+            "subject",
+            values,
+        )?;
+    }
+    if let Some(values) = &patch.hierarchical_keywords {
+        xml = set_xmp_array(
+            &xml,
+            "lr",
+            "http://ns.adobe.com/lightroom/1.0/",
+            "hierarchicalSubject",
+            values,
+        )?;
+    }
+    write_sidecar_atomically(&destination, &xml)?;
     Ok(destination)
 }
 
+fn write_sidecar_atomically(destination: &Path, xml: &str) -> Result<(), MetadataError> {
+    let parent = destination.parent().unwrap_or_else(|| Path::new("."));
+    let mut builder = tempfile::Builder::new();
+    builder.prefix(".oxyviewer-xmp-").suffix(".tmp");
+    #[cfg(unix)]
+    builder.permissions(fs::metadata(destination).map_or_else(
+        |_| fs::Permissions::from_mode(0o666),
+        |metadata| metadata.permissions(),
+    ));
+    let mut temporary = builder.tempfile_in(parent)?;
+    temporary.write_all(xml.as_bytes())?;
+    temporary
+        .persist(destination)
+        .map_err(|error| MetadataError::Io(error.error))?;
+    Ok(())
+}
+
 fn set_xmp_attribute(xml: &str, name: &str, value: Option<&str>) -> Result<String, MetadataError> {
+    set_prefixed_xmp_attribute(xml, "xmp", "http://ns.adobe.com/xap/1.0/", name, value)
+}
+
+fn set_prefixed_xmp_attribute(
+    xml: &str,
+    prefix: &str,
+    namespace: &str,
+    name: &str,
+    value: Option<&str>,
+) -> Result<String, MetadataError> {
     let start = xml
         .find("<rdf:Description")
         .ok_or_else(|| MetadataError::Read("XMP has no rdf:Description element".into()))?;
@@ -881,7 +1032,7 @@ fn set_xmp_attribute(xml: &str, name: &str, value: Option<&str>) -> Result<Strin
         .map(|offset| start + offset)
         .ok_or_else(|| MetadataError::Read("XMP rdf:Description is not terminated".into()))?;
     let mut opening = xml[start..end].to_owned();
-    let needle = format!(" xmp:{name}=\"");
+    let needle = format!(" {prefix}:{name}=\"");
     if let Some(attribute_start) = opening.find(&needle) {
         let value_start = attribute_start + needle.len();
         let value_end = opening[value_start..]
@@ -890,13 +1041,13 @@ fn set_xmp_attribute(xml: &str, name: &str, value: Option<&str>) -> Result<Strin
             .ok_or_else(|| MetadataError::Read(format!("invalid xmp:{name} attribute")))?;
         opening.replace_range(attribute_start..=value_end, "");
         if let Some(value) = value {
-            insert_description_attribute(&mut opening, name, value);
+            insert_description_attribute(&mut opening, prefix, name, value);
         }
         return Ok(format!("{}{}{}", &xml[..start], opening, &xml[end..]));
     }
 
-    let element_open = format!("<xmp:{name}>");
-    let element_close = format!("</xmp:{name}>");
+    let element_open = format!("<{prefix}:{name}>");
+    let element_close = format!("</{prefix}:{name}>");
     if let Some(element_start) = xml.find(&element_open)
         && let Some(relative_end) = xml[element_start + element_open.len()..].find(&element_close)
     {
@@ -914,12 +1065,15 @@ fn set_xmp_attribute(xml: &str, name: &str, value: Option<&str>) -> Result<Strin
     }
 
     if let Some(value) = value {
-        insert_description_attribute(&mut opening, name, value);
+        if !xml.contains(&format!("xmlns:{prefix}=\"")) {
+            insert_description_attribute(&mut opening, "xmlns", prefix, namespace);
+        }
+        insert_description_attribute(&mut opening, prefix, name, value);
     }
     Ok(format!("{}{}{}", &xml[..start], opening, &xml[end..]))
 }
 
-fn insert_description_attribute(opening: &mut String, name: &str, value: &str) {
+fn insert_description_attribute(opening: &mut String, prefix: &str, name: &str, value: &str) {
     let self_closing_insertion = opening.trim_end().strip_suffix('/').map(str::len);
     let insertion = self_closing_insertion.unwrap_or(opening.len());
     let trailing_space = if self_closing_insertion.is_some() {
@@ -927,8 +1081,104 @@ fn insert_description_attribute(opening: &mut String, name: &str, value: &str) {
     } else {
         ""
     };
-    let attribute = format!(" xmp:{name}=\"{}\"{trailing_space}", escape_xml(value));
+    let attribute = format!(" {prefix}:{name}=\"{}\"{trailing_space}", escape_xml(value));
     opening.insert_str(insertion, &attribute);
+}
+
+fn xmp_array_values(xml: &str, prefix: &str, name: &str) -> Vec<String> {
+    let element_open = format!("<{prefix}:{name}");
+    let element_close = format!("</{prefix}:{name}>");
+    let Some(element_start) = xml.find(&element_open) else {
+        return Vec::new();
+    };
+    let Some(content_start) = xml[element_start..]
+        .find('>')
+        .map(|offset| element_start + offset + 1)
+    else {
+        return Vec::new();
+    };
+    let Some(content_end) = xml[content_start..]
+        .find(&element_close)
+        .map(|offset| content_start + offset)
+    else {
+        return Vec::new();
+    };
+    let mut values = Vec::new();
+    let mut remaining = &xml[content_start..content_end];
+    while let Some(item_start) = remaining.find("<rdf:li") {
+        let Some(value_start) = remaining[item_start..]
+            .find('>')
+            .map(|offset| item_start + offset + 1)
+        else {
+            break;
+        };
+        let Some(value_end) = remaining[value_start..].find("</rdf:li>") else {
+            break;
+        };
+        values.push(unescape_xml(
+            remaining[value_start..value_start + value_end].trim(),
+        ));
+        remaining = &remaining[value_start + value_end + "</rdf:li>".len()..];
+    }
+    values
+}
+
+fn set_xmp_array(
+    xml: &str,
+    prefix: &str,
+    namespace: &str,
+    name: &str,
+    values: &[String],
+) -> Result<String, MetadataError> {
+    let items = values
+        .iter()
+        .map(|value| format!("<rdf:li>{}</rdf:li>", escape_xml(value)))
+        .collect::<String>();
+    let property = format!("<{prefix}:{name}><rdf:Bag>{items}</rdf:Bag></{prefix}:{name}>");
+    let element_open = format!("<{prefix}:{name}");
+    let element_close = format!("</{prefix}:{name}>");
+    if let Some(start) = xml.find(&element_open)
+        && let Some(relative_end) = xml[start..].find(&element_close)
+    {
+        let end = start + relative_end + element_close.len();
+        return Ok(format!("{}{}{}", &xml[..start], property, &xml[end..]));
+    }
+    let description_start = xml
+        .find("<rdf:Description")
+        .ok_or_else(|| MetadataError::Read("XMP has no rdf:Description element".into()))?;
+    let description_open_end = xml[description_start..]
+        .find('>')
+        .map(|offset| description_start + offset)
+        .ok_or_else(|| MetadataError::Read("XMP rdf:Description is not terminated".into()))?;
+    let mut opening = xml[description_start..description_open_end].to_owned();
+    if !opening.contains(&format!("xmlns:{prefix}=\"")) {
+        insert_description_attribute(&mut opening, "xmlns", prefix, namespace);
+    }
+    if opening.trim_end().ends_with('/') {
+        let slash = opening
+            .rfind('/')
+            .expect("self-closing description has slash");
+        opening.replace_range(slash.., "");
+        return Ok(format!(
+            "{}{}>{}</rdf:Description>{}",
+            &xml[..description_start],
+            opening,
+            property,
+            &xml[description_open_end + 1..]
+        ));
+    }
+    let description_end = xml[description_open_end..]
+        .find("</rdf:Description>")
+        .map(|offset| description_open_end + offset)
+        .ok_or_else(|| MetadataError::Read("XMP rdf:Description is self-closing".into()))?;
+    Ok(format!(
+        "{}{}>{}{}{}",
+        &xml[..description_start],
+        opening,
+        &xml[description_open_end + 1..description_end],
+        property,
+        &xml[description_end..]
+    ))
 }
 
 /// Reads shooting focus information through the format-neutral native engine.
@@ -1029,12 +1279,8 @@ pub fn write_sidecar(
     metadata: &EditableMetadata,
 ) -> Result<PathBuf, MetadataError> {
     let destination = sidecar_path(asset_path);
-    let temporary = destination.with_extension("xmp.oxy-tmp");
     let xml = serialize_xmp(metadata);
-    let mut file = fs::File::create(&temporary)?;
-    file.write_all(xml.as_bytes())?;
-    file.sync_all()?;
-    fs::rename(temporary, &destination)?;
+    write_sidecar_atomically(&destination, &xml)?;
     Ok(destination)
 }
 
@@ -1045,25 +1291,34 @@ fn serialize_xmp(metadata: &EditableMetadata) -> String {
         .map(|value| format!("<rdf:li>{}</rdf:li>", escape_xml(value)))
         .collect::<Vec<_>>()
         .join("");
+    let hierarchical_keywords = metadata
+        .hierarchical_keywords
+        .iter()
+        .map(|value| format!("<rdf:li>{}</rdf:li>", escape_xml(value)))
+        .collect::<Vec<_>>()
+        .join("");
     format!(
         r#"<?xpacket begin="" id="W5M0MpCehiHzreSzNTczkc9d"?>
 <x:xmpmeta xmlns:x="adobe:ns:meta/">
   <rdf:RDF xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#">
-    <rdf:Description rdf:about="" xmlns:xmp="http://ns.adobe.com/xap/1.0/" xmlns:dc="http://purl.org/dc/elements/1.1/" xmlns:photoshop="http://ns.adobe.com/photoshop/1.0/" xmp:Rating="{rating}" xmp:Label="{label}" photoshop:Credit="{creator}">
+    <rdf:Description rdf:about="" xmlns:xmp="http://ns.adobe.com/xap/1.0/" xmlns:dc="http://purl.org/dc/elements/1.1/" xmlns:lr="http://ns.adobe.com/lightroom/1.0/" xmlns:photoshop="http://ns.adobe.com/photoshop/1.0/" xmlns:digiKam="http://www.digikam.org/ns/1.0/" xmp:Rating="{rating}" xmp:Label="{label}" digiKam:PickLabel="{pick_label}" photoshop:Credit="{creator}">
       <dc:title><rdf:Alt><rdf:li xml:lang="x-default">{title}</rdf:li></rdf:Alt></dc:title>
       <dc:description><rdf:Alt><rdf:li xml:lang="x-default">{description}</rdf:li></rdf:Alt></dc:description>
       <dc:rights><rdf:Alt><rdf:li xml:lang="x-default">{copyright}</rdf:li></rdf:Alt></dc:rights>
       <dc:subject><rdf:Bag>{keywords}</rdf:Bag></dc:subject>
+      <lr:hierarchicalSubject><rdf:Bag>{hierarchical_keywords}</rdf:Bag></lr:hierarchicalSubject>
     </rdf:Description>
   </rdf:RDF>
 </x:xmpmeta>
 <?xpacket end="w"?>"#,
         rating = metadata.rating.unwrap_or_default(),
         label = escape_xml(metadata.color_label.as_deref().unwrap_or_default()),
+        pick_label = metadata.pick_label.map_or("0", pick_label_xmp_value),
         creator = escape_xml(metadata.creator.as_deref().unwrap_or_default()),
         title = escape_xml(metadata.title.as_deref().unwrap_or_default()),
         description = escape_xml(metadata.description.as_deref().unwrap_or_default()),
         copyright = escape_xml(metadata.copyright.as_deref().unwrap_or_default()),
+        hierarchical_keywords = hierarchical_keywords,
     )
 }
 
@@ -1185,6 +1440,7 @@ mod tests {
             new_valid_at,
             Some(5),
             Some("Red".into()),
+            Some(PickLabel::Accepted),
         );
         let late_background = facade.merge_summary_observation(
             &asset,
@@ -1192,6 +1448,7 @@ mod tests {
             old_valid_at,
             Some(1),
             Some("Blue".into()),
+            Some(PickLabel::Rejected),
         );
 
         assert_eq!(
@@ -1199,6 +1456,7 @@ mod tests {
             selected.projection_revision
         );
         assert_eq!(late_background.rating, Some(5));
+        assert_eq!(late_background.pick_label, Some(PickLabel::Accepted));
         assert_eq!(late_background.color_label.as_deref(), Some("Red"));
     }
 
@@ -1356,11 +1614,26 @@ mod tests {
         let metadata = metadata_from_json(&serde_json::json!({
             "SourceFile": "D:/photos/DSC04979.HIF",
             "Rating": 1,
-            "Label": "red"
+            "Label": "red",
+            "PickLabel": 3
         }));
 
         assert_eq!(metadata.rating, Some(1));
         assert_eq!(metadata.color_label.as_deref(), Some("Red"));
+        assert_eq!(metadata.pick_label, Some(PickLabel::Accepted));
+    }
+
+    #[test]
+    fn maps_standard_rejected_rating_to_a_rejected_flag() {
+        let metadata = metadata_from_json(&serde_json::json!({
+            "SourceFile": "photo.jpg",
+            "Rating": -1,
+            "Label": "Green"
+        }));
+
+        assert_eq!(metadata.rating, None);
+        assert_eq!(metadata.color_label.as_deref(), Some("Green"));
+        assert_eq!(metadata.pick_label, Some(PickLabel::Rejected));
     }
 
     #[test]
@@ -1376,12 +1649,40 @@ mod tests {
     }
 
     #[test]
-    fn reads_sony_hif_xmp_without_exiftool() {
+    fn reads_all_sony_hif_embedded_color_labels_without_exiftool() {
         let directory = tempdir().unwrap();
-        let hif = directory.path().join("photo.HIF");
+        for (sony_value, normalized) in [
+            ("red", "Red"),
+            ("yellow", "Yellow"),
+            ("green", "Green"),
+            ("blue", "Blue"),
+            ("purple", "Purple"),
+        ] {
+            let hif = directory.path().join(format!("{sony_value}.HIF"));
+            let xmp = format!(
+                "....ftypSHIF....application/rdf+xml....<x:xmpmeta xmlns:x='adobe:ns:meta/'><rdf:RDF><rdf:Description xmp:Rating='3' xmp:Label='{sony_value}'/></rdf:RDF></x:xmpmeta>"
+            );
+            fs::write(&hif, xmp).unwrap();
+
+            let metadata = read_metadata_with_exiftool(
+                &hif,
+                AssetKind::Heif,
+                Some(Path::new("/missing/exiftool")),
+            )
+            .unwrap();
+
+            assert_eq!(metadata.rating, Some(3));
+            assert_eq!(metadata.color_label.as_deref(), Some(normalized));
+        }
+    }
+
+    #[test]
+    fn reads_sony_hif_embedded_none_as_unlabeled() {
+        let directory = tempdir().unwrap();
+        let hif = directory.path().join("none.HIF");
         fs::write(
             &hif,
-            br#"....ftypSHIF....application/rdf+xml....<x:xmpmeta xmlns:x='adobe:ns:meta/'><rdf:RDF><rdf:Description xmp:Rating='3' xmp:Label='red'/></rdf:RDF></x:xmpmeta>"#,
+            br#"....ftypSHIF....application/rdf+xml....<x:xmpmeta xmlns:x='adobe:ns:meta/'><rdf:RDF><rdf:Description xmp:Rating='3' xmp:Label='None'/></rdf:RDF></x:xmpmeta>"#,
         )
         .unwrap();
 
@@ -1392,8 +1693,43 @@ mod tests {
         )
         .unwrap();
 
-        assert_eq!(metadata.rating, Some(3));
-        assert_eq!(metadata.color_label.as_deref(), Some("Red"));
+        assert_eq!(metadata.color_label, None);
+    }
+
+    #[test]
+    fn adjacent_sidecar_overrides_sony_hif_embedded_color_label() {
+        let directory = tempdir().unwrap();
+        let hif = directory.path().join("photo.HIF");
+        fs::write(
+            &hif,
+            br#"....ftypSHIF....application/rdf+xml....<x:xmpmeta xmlns:x='adobe:ns:meta/'><rdf:RDF><rdf:Description xmp:Label='red'><dc:subject><rdf:Bag><rdf:li>embedded-only</rdf:li></rdf:Bag></dc:subject><lr:hierarchicalSubject><rdf:Bag><rdf:li>Camera|Embedded</rdf:li></rdf:Bag></lr:hierarchicalSubject></rdf:Description></rdf:RDF></x:xmpmeta>"#,
+        )
+        .unwrap();
+        write_raw_sidecar(
+            &hif,
+            &EditableMetadata {
+                color_label: Some("Purple".into()),
+                keywords: vec!["sidecar".into()],
+                ..EditableMetadata::default()
+            },
+        )
+        .unwrap();
+
+        let document = MetadataFacade::default()
+            .read_document(&hif, AssetKind::Heif, None)
+            .unwrap();
+
+        assert_eq!(document.editable.color_label.as_deref(), Some("Purple"));
+        assert_eq!(document.editable.keywords, ["sidecar"]);
+        assert_eq!(
+            document.embedded_editable.color_label.as_deref(),
+            Some("Red")
+        );
+        assert_eq!(document.embedded_editable.keywords, ["embedded-only"]);
+        assert_eq!(
+            document.embedded_editable.hierarchical_keywords,
+            ["Camera|Embedded"]
+        );
     }
 
     #[test]
@@ -1446,21 +1782,48 @@ mod tests {
     }
 
     #[test]
-    fn rejects_unsupported_sony_hif_color_label() {
-        let mut command = Command::new("exiftool");
-        let result = add_patch_args(
-            &mut command,
+    fn supports_all_ui_color_labels_for_sony_hif() {
+        for (ui_value, sony_value) in [
+            ("Red", "red"),
+            ("Yellow", "yellow"),
+            ("Green", "green"),
+            ("Blue", "blue"),
+            ("Purple", "purple"),
+        ] {
+            let mut command = Command::new("exiftool");
+            add_patch_args(
+                &mut command,
+                &oxy_domain::MetadataPatch {
+                    color_label: Some(Some(ui_value.into())),
+                    ..oxy_domain::MetadataPatch::default()
+                },
+                true,
+            )
+            .unwrap();
+            let args = command
+                .get_args()
+                .map(|value| value.to_string_lossy().into_owned())
+                .collect::<Vec<_>>();
+
+            assert_eq!(args, [format!("-XMP:Label={sony_value}")]);
+        }
+
+        let mut clear_command = Command::new("exiftool");
+        add_patch_args(
+            &mut clear_command,
             &oxy_domain::MetadataPatch {
-                color_label: Some(Some("Purple".into())),
+                color_label: Some(None),
                 ..oxy_domain::MetadataPatch::default()
             },
             true,
-        );
+        )
+        .unwrap();
+        let clear_args = clear_command
+            .get_args()
+            .map(|value| value.to_string_lossy().into_owned())
+            .collect::<Vec<_>>();
 
-        assert!(matches!(
-            result,
-            Err(MetadataError::UnsupportedHifColorLabel(_))
-        ));
+        assert_eq!(clear_args, ["-XMP:Label=None"]);
     }
 
     #[test]
@@ -1536,7 +1899,57 @@ mod tests {
     }
 
     #[test]
-    fn patches_and_reads_raw_rating_and_label_without_losing_other_xmp() {
+    fn reads_and_patches_lightroom_hierarchical_subjects_without_losing_keywords() {
+        let directory = tempdir().unwrap();
+        let raw = directory.path().join("photo.nef");
+        fs::File::create(&raw).unwrap();
+        write_raw_sidecar(
+            &raw,
+            &EditableMetadata {
+                keywords: vec!["external".into(), "Family".into()],
+                hierarchical_keywords: vec!["People|Family".into()],
+                ..EditableMetadata::default()
+            },
+        )
+        .unwrap();
+
+        patch_sidecar(
+            &raw,
+            &oxy_domain::MetadataPatch {
+                keywords: Some(vec!["external".into(), "Friends".into()]),
+                hierarchical_keywords: Some(vec!["People|Friends".into()]),
+                ..oxy_domain::MetadataPatch::default()
+            },
+        )
+        .unwrap();
+
+        let metadata = read_sidecar(&raw).unwrap();
+        assert_eq!(metadata.keywords, ["external", "Friends"]);
+        assert_eq!(metadata.hierarchical_keywords, ["People|Friends"]);
+        let xml = fs::read_to_string(sidecar_path(&raw)).unwrap();
+        assert!(xml.contains("xmlns:lr=\"http://ns.adobe.com/lightroom/1.0/\""));
+    }
+
+    #[test]
+    fn adds_keyword_arrays_to_a_self_closing_description() {
+        let xml = r#"<x:xmpmeta><rdf:RDF><rdf:Description xmlns:xmp="http://ns.adobe.com/xap/1.0/" /></rdf:RDF></x:xmpmeta>"#;
+        let xml = set_xmp_array(
+            xml,
+            "lr",
+            "http://ns.adobe.com/lightroom/1.0/",
+            "hierarchicalSubject",
+            &["Places|Coast".into()],
+        )
+        .unwrap();
+        assert_eq!(
+            xmp_array_values(&xml, "lr", "hierarchicalSubject"),
+            ["Places|Coast"]
+        );
+        assert!(xml.contains("</rdf:Description>"));
+    }
+
+    #[test]
+    fn patches_flag_without_losing_standard_rating_label_or_other_xmp() {
         let directory = tempdir().unwrap();
         let raw = directory.path().join("photo.arw");
         fs::File::create(&raw).unwrap();
@@ -1549,20 +1962,22 @@ mod tests {
         patch_sidecar(
             &raw,
             &oxy_domain::MetadataPatch {
-                rating: Some(Some(5)),
-                color_label: Some(Some("Blue & Cyan".into())),
+                pick_label: Some(Some(PickLabel::Accepted)),
                 ..oxy_domain::MetadataPatch::default()
             },
         )
         .unwrap();
 
         let metadata = read_sidecar(&raw).unwrap();
-        assert_eq!(metadata.rating, Some(5));
-        assert_eq!(metadata.color_label.as_deref(), Some("Blue & Cyan"));
+        assert_eq!(metadata.rating, Some(2));
+        assert_eq!(metadata.color_label.as_deref(), Some("Red"));
+        assert_eq!(metadata.pick_label, Some(PickLabel::Accepted));
         let xml = fs::read_to_string(sidecar_path(&raw)).unwrap();
         assert!(xml.contains("custom:Keep=\"yes\""));
-        assert!(xml.contains("xmp:Label=\"Blue &amp; Cyan\""));
-        assert!(xml.contains("xmp:Label=\"Blue &amp; Cyan\" />"));
+        assert!(xml.contains("xmp:Rating=\"2\""));
+        assert!(xml.contains("xmp:Label=\"Red\""));
+        assert!(xml.contains("xmlns:digiKam=\"http://www.digikam.org/ns/1.0/\""));
+        assert!(xml.contains("digiKam:PickLabel=\"3\""));
     }
 
     #[test]
@@ -1575,6 +1990,7 @@ mod tests {
             &EditableMetadata {
                 rating: Some(3),
                 color_label: Some("Yellow".into()),
+                pick_label: Some(PickLabel::Rejected),
                 ..EditableMetadata::default()
             },
         )
@@ -1585,6 +2001,7 @@ mod tests {
             &oxy_domain::MetadataPatch {
                 rating: Some(None),
                 color_label: Some(None),
+                pick_label: Some(None),
                 ..oxy_domain::MetadataPatch::default()
             },
         )
@@ -1593,6 +2010,7 @@ mod tests {
         let metadata = read_sidecar(&raw).unwrap();
         assert_eq!(metadata.rating, None);
         assert_eq!(metadata.color_label, None);
+        assert_eq!(metadata.pick_label, None);
     }
 
     #[test]
@@ -1603,5 +2021,21 @@ mod tests {
 
         assert!(xml.contains("<xmp:Rating>4</xmp:Rating>"));
         assert!(!xml.contains("xmp:Label"));
+    }
+
+    #[test]
+    fn atomically_replaces_sidecar_without_leaving_a_temporary_file() {
+        let directory = tempdir().unwrap();
+        let destination = directory.path().join("photo.xmp");
+        fs::write(&destination, "old XMP").unwrap();
+
+        write_sidecar_atomically(&destination, "new XMP").unwrap();
+
+        assert_eq!(fs::read_to_string(&destination).unwrap(), "new XMP");
+        let names = fs::read_dir(directory.path())
+            .unwrap()
+            .map(|entry| entry.unwrap().file_name())
+            .collect::<Vec<_>>();
+        assert_eq!(names, ["photo.xmp"]);
     }
 }

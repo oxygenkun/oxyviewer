@@ -30,6 +30,10 @@ import type {
   PreviewScheduleIntent,
   RenderLevel,
   SchedulePlacement,
+  AssetTagAssignment,
+  CustomTag,
+  TagDeleteImpact,
+  TagSyncStatus,
 } from "../types";
 import { preloadBrowserImage } from "./browserImageCache";
 import { browserPreloadQueue, priorityWeight } from "./previewQueue";
@@ -84,6 +88,12 @@ const demoDirectories: DirectorySummary[] = [
 ];
 let demoTreeRevision = 0;
 const demoDirectoryTrees = new Map<string, DirectoryTreeSnapshot>();
+let demoTagId = 3;
+let demoTags: CustomTag[] = [
+  { id: 1, name: "人物", path: "人物", sortOrder: 0 },
+  { id: 2, parentId: 1, name: "家人", path: "人物|家人", sortOrder: 0 },
+];
+const demoAssetTags = new Map<string, Set<number>>();
 
 function demoTreeChildren(path: string, previous: DirectoryTreeNode[] = []): DirectoryTreeNode[] {
   const previousByPath = new Map(previous.map((node) => [node.entry.path, node]));
@@ -135,6 +145,7 @@ const demoAssets: AssetSummary[] = demoNames.map(([name, kind, sizeBytes], index
   hasSidecar: kind === "raw" && index % 3 !== 1,
   rating: index % 6 || undefined,
   colorLabel: ["Red", "Yellow", "Green", "Blue", "Purple"][index % 7],
+  pickLabel: index % 5 === 0 ? "accepted" : index % 7 === 0 ? "rejected" : undefined,
 }));
 
 export const isTauri = () => "__TAURI_INTERNALS__" in window;
@@ -358,10 +369,14 @@ export async function getAssetDetails(asset: AssetSummary): Promise<AssetDetails
       metadata: {
         rating: asset.rating,
         colorLabel: asset.colorLabel,
+        pickLabel: asset.pickLabel,
         creator: "OxyViewer Demo",
         copyright: "Personal archive",
         keywords: ["field-notes", asset.kind],
+        hierarchicalKeywords: [],
       },
+      embeddedKeywords: asset.kind === "heif" ? ["embedded-demo"] : [],
+      embeddedHierarchicalKeywords: [],
       metadataCapability: {
         provider: asset.kind === "raw" ? "sidecar" : "native",
         readable: true,
@@ -414,6 +429,7 @@ export async function requestMetadata(
       status: "ready",
       rating: asset.rating,
       colorLabel: asset.colorLabel,
+      pickLabel: asset.pickLabel,
     }));
   }
   return invoke<MetadataProjection[]>("request_metadata", { paths, priority });
@@ -438,11 +454,117 @@ export async function patchMetadata(paths: string[], patch: MetadataPatch): Prom
     for (const asset of demoAssets.filter((asset) => paths.includes(asset.path))) {
       if ("rating" in patch) asset.rating = patch.rating ?? undefined;
       if ("colorLabel" in patch) asset.colorLabel = patch.colorLabel ?? undefined;
+      if ("pickLabel" in patch) asset.pickLabel = patch.pickLabel ?? undefined;
       asset.hasSidecar = true;
     }
     return "demo-metadata-job";
   }
   return invoke<string>("patch_metadata", { paths, patch });
+}
+
+function refreshDemoTagPaths(): void {
+  const byId = new Map(demoTags.map((tag) => [tag.id, tag]));
+  const pathFor = (tag: CustomTag): string => {
+    const parent = tag.parentId === undefined ? undefined : byId.get(tag.parentId);
+    return parent ? `${pathFor(parent)}|${tag.name}` : tag.name;
+  };
+  demoTags = demoTags.map((tag) => ({ ...tag, path: pathFor(tag) }));
+}
+
+export async function listCustomTags(): Promise<CustomTag[]> {
+  if (!isTauri()) return demoTags.map((tag) => ({ ...tag }));
+  return invoke<CustomTag[]>("list_custom_tags");
+}
+
+export async function getAssetTagAssignments(paths: string[]): Promise<AssetTagAssignment[]> {
+  if (!isTauri()) {
+    return demoTags.map((tag) => ({
+      tag: { ...tag },
+      assignedCount: paths.filter((path) => demoAssetTags.get(path)?.has(tag.id)).length,
+      assetCount: paths.length,
+    }));
+  }
+  return invoke<AssetTagAssignment[]>("get_asset_tag_assignments", { paths });
+}
+
+export async function createCustomTag(parentId: number | undefined, name: string): Promise<CustomTag> {
+  if (!isTauri()) {
+    const siblings = demoTags.filter((tag) => tag.parentId === parentId);
+    const tag: CustomTag = { id: demoTagId++, parentId, name: name.trim(), path: "", sortOrder: siblings.length };
+    demoTags.push(tag);
+    refreshDemoTagPaths();
+    return { ...demoTags.find((item) => item.id === tag.id)! };
+  }
+  return invoke<CustomTag>("create_custom_tag", { parentId: parentId ?? null, name });
+}
+
+export async function updateCustomTag(
+  id: number,
+  parentId: number | undefined,
+  name: string,
+): Promise<CustomTag> {
+  if (!isTauri()) {
+    demoTags = demoTags.map((tag) => tag.id === id ? { ...tag, parentId, name: name.trim() } : tag);
+    refreshDemoTagPaths();
+    return { ...demoTags.find((tag) => tag.id === id)! };
+  }
+  return invoke<CustomTag>("update_custom_tag", { id, parentId: parentId ?? null, name });
+}
+
+export async function getCustomTagDeleteImpact(id: number): Promise<TagDeleteImpact> {
+  if (!isTauri()) {
+    const descendants = new Set([id]);
+    for (let changed = true; changed;) {
+      changed = false;
+      for (const tag of demoTags) {
+        if (tag.parentId !== undefined && descendants.has(tag.parentId) && !descendants.has(tag.id)) {
+          descendants.add(tag.id);
+          changed = true;
+        }
+      }
+    }
+    const assetCount = [...demoAssetTags.values()].filter((ids) => [...descendants].some((tagId) => ids.has(tagId))).length;
+    return { tagCount: descendants.size, assetCount };
+  }
+  return invoke<TagDeleteImpact>("get_custom_tag_delete_impact", { id });
+}
+
+export async function deleteCustomTag(id: number): Promise<TagDeleteImpact> {
+  if (!isTauri()) {
+    const impact = await getCustomTagDeleteImpact(id);
+    const remove = new Set<number>();
+    const collect = (tagId: number) => {
+      remove.add(tagId);
+      demoTags.filter((tag) => tag.parentId === tagId).forEach((tag) => collect(tag.id));
+    };
+    collect(id);
+    demoTags = demoTags.filter((tag) => !remove.has(tag.id));
+    for (const ids of demoAssetTags.values()) for (const tagId of remove) ids.delete(tagId);
+    return impact;
+  }
+  return invoke<TagDeleteImpact>("delete_custom_tag", { id });
+}
+
+export async function setAssetCustomTag(paths: string[], tagId: number, assigned: boolean): Promise<void> {
+  if (!isTauri()) {
+    for (const path of paths) {
+      const ids = demoAssetTags.get(path) ?? new Set<number>();
+      if (assigned) ids.add(tagId); else ids.delete(tagId);
+      demoAssetTags.set(path, ids);
+    }
+    return;
+  }
+  await invoke("set_asset_custom_tag", { paths, tagId, assigned });
+}
+
+export async function getTagSyncStatus(): Promise<TagSyncStatus> {
+  if (!isTauri()) return { pendingCount: 0, failedCount: 0 };
+  return invoke<TagSyncStatus>("get_tag_sync_status");
+}
+
+export async function retryTagXmpSync(): Promise<void> {
+  if (!isTauri()) return;
+  await invoke("retry_tag_xmp_sync");
 }
 
 export async function syncMetadataToEmbedded(paths: string[]): Promise<string> {

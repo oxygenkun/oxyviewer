@@ -1,6 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
-import { Circle, Download, FileCog, FolderSearch, Image, Star, Tag, X } from "lucide-react";
+import { Circle, Download, FileCog, FolderSearch, Image, Star, X } from "lucide-react";
 import {
   chooseAndConfigureExiftool,
   getAssetDetails,
@@ -10,10 +10,15 @@ import {
   syncMetadataToEmbedded,
 } from "../lib/api";
 import type { MessageKey } from "../lib/i18n";
-import { useMetadataProjectionStore } from "../lib/metadataProjection";
+import {
+  applyMetadataProjectionPatch,
+  useMetadataProjectionStore,
+} from "../lib/metadataProjection";
 import { requiresExiftoolSetup } from "../lib/metadataProvider";
-import type { AssetSummary, MetadataPatch } from "../types";
+import type { AssetSummary, MetadataPatch, PickLabel } from "../types";
 import { formatBytes } from "./AssetBrowser";
+import { PickFlagIcon } from "./PickFlagIcon";
+import { TagEditor } from "./TagEditor";
 
 interface InspectorProps {
   asset?: AssetSummary;
@@ -23,7 +28,11 @@ interface InspectorProps {
 }
 
 const colorLabels = ["Red", "Yellow", "Green", "Blue", "Purple"] as const;
-const sonyHifColorLabels = colorLabels.filter((label) => label !== "Purple");
+const pickLabels: Array<[PickLabel, MessageKey]> = [
+  ["accepted", "flagAccepted"],
+  ["pending", "flagPending"],
+  ["rejected", "flagRejected"],
+];
 
 export function Inspector({ asset, selectedCount, selectedPaths, t }: InspectorProps) {
   const queryClient = useQueryClient();
@@ -48,6 +57,7 @@ export function Inspector({ asset, selectedCount, selectedPaths, t }: InspectorP
   });
   const currentRating = projection ? projection.rating : asset?.rating;
   const currentColor = projection ? projection.colorLabel : asset?.colorLabel;
+  const currentPickLabel = projection ? projection.pickLabel : asset?.pickLabel;
   const metadataPaths = selectedPaths.length ? selectedPaths : asset ? [asset.path] : [];
   const syncEmbedded = useMutation({
     mutationFn: () => syncMetadataToEmbedded(metadataPaths),
@@ -82,14 +92,14 @@ export function Inspector({ asset, selectedCount, selectedPaths, t }: InspectorP
     },
   });
   const requestPatch = (value: MetadataPatch) => {
-    patch.mutate(value);
+    const paths = [...metadataPaths];
+    patch.mutate(value, {
+      onSuccess: () => applyMetadataProjectionPatch(paths, value),
+    });
   };
   const requestEmbeddedSync = () => {
     providerCheck.mutate();
   };
-  const availableColorLabels = asset?.extension.toLowerCase() === "hif"
-    ? sonyHifColorLabels
-    : colorLabels;
   const capture = details.data?.captureMetadata;
 
   return (
@@ -135,43 +145,82 @@ export function Inspector({ asset, selectedCount, selectedPaths, t }: InspectorP
             <DataRow label={t("lensMake")} value={capture?.lensMake ?? "—"} />
             <DataRow label={t("lensModel")} value={capture?.lensModel ?? "—"} />
           </InspectorSection>
-          <InspectorSection title={t("metadata")}>
-            <label>{t("rating")}</label>
-            <div className="rating" aria-label={t("rating")}>
-              {[1, 2, 3, 4, 5].map((rating) => (
-                <button
-                  key={rating}
-                  onClick={() => requestPatch({ rating: currentRating === rating ? null : rating })}
-                  disabled={patch.isPending || details.isLoading || providerSetup.isPending}
-                  title={`${rating} / 5`}
-                >
-                  <Star
-                    className={(currentRating ?? 0) >= rating ? "is-filled" : undefined}
-                    size={15}
-                  />
-                </button>
-              ))}
-            </div>
-            <label>{t("colorLabel")}</label>
-            <div className="color-labels" aria-label={t("colorLabel")}>
-              {availableColorLabels.map((label) => (
-                <button
-                  key={label}
-                  className={currentColor?.toLowerCase() === label.toLowerCase() ? "is-active" : ""}
-                  style={{ "--label-color": `var(--label-${label.toLowerCase()})` } as React.CSSProperties}
-                  onClick={() => requestPatch({
-                    colorLabel: currentColor?.toLowerCase() === label.toLowerCase() ? null : label,
-                  })}
-                  disabled={patch.isPending || details.isLoading || providerSetup.isPending}
-                  title={t(label.toLowerCase() as MessageKey)}
+          <InspectorSection title={t("marking")}>
+            <div
+              className={`marking-controls${patch.isPending ? " is-pending" : ""}`}
+              aria-busy={patch.isPending}
+            >
+              <div className="marking-control-row">
+                <span className="marking-control-row__label">{t("stars")}</span>
+                <div className="rating" aria-label={t("rating")}>
+                  {[1, 2, 3, 4, 5].map((rating) => (
+                    <button
+                      key={rating}
+                      onClick={() => requestPatch({ rating: currentRating === rating ? null : rating })}
+                      disabled={patch.isPending || details.isLoading || providerSetup.isPending}
+                      title={`${rating} / 5`}
+                    >
+                      <Star
+                        className={(currentRating ?? 0) >= rating ? "is-filled" : undefined}
+                        size={13}
+                      />
+                    </button>
+                  ))}
+                </div>
+              </div>
+              <div className="marking-control-row">
+                <span className="marking-control-row__label">{t("color")}</span>
+                <div className="color-labels" aria-label={t("colorLabel")}>
+                  {colorLabels.map((label) => (
+                    <button
+                      key={label}
+                      className={currentColor?.toLowerCase() === label.toLowerCase() ? "is-active" : ""}
+                      style={{ "--label-color": `var(--label-${label.toLowerCase()})` } as React.CSSProperties}
+                      onClick={() => requestPatch({
+                        colorLabel: currentColor?.toLowerCase() === label.toLowerCase() ? null : label,
+                      })}
+                      disabled={patch.isPending || details.isLoading || providerSetup.isPending}
+                      title={t(label.toLowerCase() as MessageKey)}
+                    />
+                  ))}
+                  <button
+                    className="color-labels__clear"
+                    onClick={() => requestPatch({ colorLabel: null })}
+                    disabled={patch.isPending || !currentColor || providerSetup.isPending}
+                    title={t("clearColor")}
+                  ><X size={11} /></button>
+                </div>
+              </div>
+              <div className="marking-control-row">
+                <span className="marking-control-row__label">{t("flag")}</span>
+                <div className="pick-labels" role="group" aria-label={t("flag")}>
+                  {pickLabels.map(([value, label]) => (
+                    <button
+                      key={value}
+                      className={`pick-labels__${value}${currentPickLabel === value ? " is-active" : ""}`}
+                      onClick={() => requestPatch({ pickLabel: currentPickLabel === value ? null : value })}
+                      disabled={patch.isPending || details.isLoading || providerSetup.isPending}
+                      title={t(label)}
+                      aria-label={t(label)}
+                      aria-pressed={currentPickLabel === value}
+                    >
+                      <PickFlagIcon value={value} size={13} />
+                    </button>
+                  ))}
+                </div>
+              </div>
+              <div className="marking-control-row marking-control-row--tags">
+                <span className="marking-control-row__label">{t("tagsLabel")}</span>
+                <TagEditor
+                  currentPath={asset.path}
+                  paths={metadataPaths}
+                  sidecarKeywords={asset.hasSidecar ? details.data?.metadata.keywords ?? [] : []}
+                  sidecarHierarchicalKeywords={asset.hasSidecar ? details.data?.metadata.hierarchicalKeywords ?? [] : []}
+                  embeddedKeywords={details.data?.embeddedKeywords ?? []}
+                  embeddedHierarchicalKeywords={details.data?.embeddedHierarchicalKeywords ?? []}
+                  t={t}
                 />
-              ))}
-              <button
-                className="color-labels__clear"
-                onClick={() => requestPatch({ colorLabel: null })}
-                disabled={patch.isPending || !currentColor || providerSetup.isPending}
-                title={t("clearColor")}
-              ><X size={11} /></button>
+              </div>
             </div>
             {patch.isError || details.isError || projection?.status === "error" ? (
               <small className="metadata-error">{String(patch.error ?? details.error ?? projection?.error)}</small>
@@ -191,13 +240,6 @@ export function Inspector({ asset, selectedCount, selectedPaths, t }: InspectorP
             {providerCheck.isError ? (
               <small className="metadata-error">{String(providerCheck.error)}</small>
             ) : null}
-            <label>{t("keywords")}</label>
-            <div className="tags">
-              {(details.data?.metadata.keywords ?? []).map((keyword) => (
-                <span key={keyword}><Tag size={10} />{keyword}</span>
-              ))}
-              {(details.data?.metadata.keywords.length ?? 0) === 0 ? <em>—</em> : null}
-            </div>
           </InspectorSection>
           <InspectorSection title={t("fileInfo")}>
             <DataRow label={t("format")} value={asset.extension} />

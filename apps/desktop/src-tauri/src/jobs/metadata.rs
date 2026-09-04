@@ -306,6 +306,16 @@ impl MetadataQueue {
                     let document = queue
                         .metadata
                         .read_document_observation(&observation, display_dimensions);
+                    if asset.has_sidecar
+                        && let Ok((document, _)) = &document
+                        && let Err(error) = queue.library.import_sidecar_tags(
+                            &asset.path,
+                            &document.editable.keywords,
+                            &document.editable.hierarchical_keywords,
+                        )
+                    {
+                        eprintln!("failed to import hierarchical tags: {error}");
+                    }
                     let (document, candidate) = match document {
                         Ok((document, projection)) => (Ok(document), projection),
                         Err(error) => {
@@ -363,10 +373,18 @@ fn build_asset_details(
     document: Result<MetadataDocument, oxy_metadata::MetadataError>,
 ) -> AssetDetails {
     let sidecar_path = asset.has_sidecar.then(|| oxy_fs::sidecar_path(&asset.path));
-    let (capture_metadata, focus_info) = document
-        .as_ref()
-        .map(|document| (document.capture.clone(), document.focus.clone()))
-        .unwrap_or_default();
+    let (capture_metadata, focus_info, embedded_keywords, embedded_hierarchical_keywords) =
+        document
+            .as_ref()
+            .map(|document| {
+                (
+                    document.capture.clone(),
+                    document.focus.clone(),
+                    document.embedded_editable.keywords.clone(),
+                    document.embedded_editable.hierarchical_keywords.clone(),
+                )
+            })
+            .unwrap_or_default();
     let (metadata, metadata_capability) = metadata_for_details(
         asset.kind,
         asset.has_sidecar,
@@ -374,11 +392,14 @@ fn build_asset_details(
     );
     asset.rating = metadata.rating;
     asset.color_label.clone_from(&metadata.color_label);
+    asset.pick_label = metadata.pick_label;
     AssetDetails {
         asset,
         width: dimensions.map(|value| value.width),
         height: dimensions.map(|value| value.height),
         metadata,
+        embedded_keywords,
+        embedded_hierarchical_keywords,
         metadata_capability,
         sidecar_path,
         capture_metadata,

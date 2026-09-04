@@ -120,9 +120,31 @@ erDiagram
         integer id PK
         integer next_revision
     }
+    CUSTOM_TAGS {
+        integer id PK
+        integer parent_id FK
+        text name
+        integer sort_order
+    }
+    ASSET_TAGS {
+        text asset_path PK
+        integer tag_id PK
+    }
+    ASSET_TAG_XMP_STATE {
+        text asset_path PK
+        text subjects_json
+        text hierarchical_json
+    }
+    TAG_XMP_SYNC_QUEUE {
+        text asset_path PK
+        integer attempt_count
+        text last_error
+    }
+    CUSTOM_TAGS ||--o{ CUSTOM_TAGS : contains
+    CUSTOM_TAGS ||--o{ ASSET_TAGS : assigned
 ```
 
-Mermaid 图没有画关系线，因为 cache schema 不用外键约束事实来源。只有用户明确添加的 canonical
+Mermaid 图只画用户标签关系；可重建 cache schema 不用外键约束事实来源。只有用户明确添加的 canonical
 root 才会持久化和索引；同一路径可分别属于父、子两个显式 root，因此文件与目录以
 `(root_path, path)` 为复合身份。后台使用目录优先队列扫描，目录深度越小（层次越高）权重越大，同层按稳定入队顺序处理，并按目录短事务更新 `indexed_assets` / `indexed_directories`，
 完整 generation 结束时清理旧行并重建 `indexed_asset_search`。普通目录分页、目录树和跨子目录
@@ -135,6 +157,15 @@ SQLite connection 放在 `Mutex` 内，因为 `rusqlite::Connection` 的访问�
 `BEGIN IMMEDIATE` 事务中从同一序列取得 revision；另一个 connection 的旧 worker 结果会
 得到当前较新的 row，而不会覆盖它。显式刷新写入 revision tombstone，阻止刷新前已开始的
 任务把旧结果重新写回。
+
+自定义标签是用户资料，不属于可重建索引。`custom_tags` 保存同级名称唯一的任意深度树，
+`asset_tags` 以资产路径保存明确分配的标签（不会隐式分配祖先）。标签改名、移动、删除及资产标签
+变更先事务提交数据库，再进入持久化 `tag_xmp_sync_queue`。写入成功后
+`asset_tag_xmp_state` 记录 OxyViewer 管理的 `dc:subject` 与 `lr:hierarchicalSubject` 项，使后续同步
+只替换受管值。相邻 XMP sidecar 的普通及层级关键词在详情读取时与 `asset_tags` 对账；存在待写队列
+时暂停反向导入，防止旧 XML 恢复刚删除的数据库状态。图片内嵌关键词不进入数据库，和 sidecar
+重叠时只显示一次，内嵌独有项作为灰色只读标签显示。失败不回滚数据库，可在目录重新打开或由
+用户手动重试。
 
 重启后的 metadata cache 采用两阶段恢复：先用 `AssetSummary` 已有的 size/mtime 逐项发布
 SQLite ready snapshot，再在 Rust worker 中核验 sidecar/嵌入 XMP digest。完整 revision 不同
@@ -170,28 +201,35 @@ MakerNotes。厂商路由同时接收图片类型，因此同一厂商在 JPEG�
 
 ### XMP sidecar：用户数据，不是缓存
 
-`oxy-metadata` 对所有格式的 rating/color 默认读写同名 XMP sidecar；更新时只替换
-`rdf:Description` 上对应的 `xmp:Rating` / `xmp:Label` 属性，保留其他 XMP 字段。首次写入时
-创建最小 Adobe 风格 XMP。读取优先级为 sidecar、原生解析的内嵌 XMP、空值，因此存在 sidecar
+`oxy-metadata` 对所有格式的 rating/color/flag 默认读写同名 XMP sidecar；更新时只替换
+`rdf:Description` 上对应的 `xmp:Rating` / `xmp:Label` / `digiKam:PickLabel` 属性，保留其他
+XMP 字段。旗标采用 digiKam 的 `0/1/2/3 = none/rejected/pending/accepted` 约定，并保持独立于
+星级；读取标准 `xmp:Rating=-1` 时投影为 rejected 旗标。首次写入时创建最小 Adobe 风格 XMP。
+读取优先级为 sidecar、原生解析的内嵌 XMP、空值，因此存在 sidecar
 时它明确覆盖文件内部的旧值。普通图片/RAW 由 `oxy-metadata-parser` 在进程内解析；HEIF/HIF
 优先通过 `libheif-rs` 的 item table 读取 XMP，只有 libheif 拒绝损坏或合成容器时才使用有界扫描。
 批量兼容入口可在原生解析失败后调用已配置的 ExifTool，但正常详情读取不依赖它。
 
-Sony HIF 需要额外遵循 Imaging Edge Viewer 的写法：XMP 使用 compact shorthand，颜色值为
-小写 `red` / `yellow` / `green` / `blue`，清除值写作 `Rating=0` / `Label=None`。Sony Viewer
-没有紫色标签，因此 HIF 检查器只提供上述四种颜色；其他格式仍使用通用 Adobe 标签语义。
+Sony HIF 需要额外遵循 Imaging Edge Viewer 的写法：XMP 使用 compact shorthand，五种界面
+颜色写为小写 `red` / `yellow` / `green` / `blue` / `purple`，清除值写作
+`Rating=0` / `Label=None`。检查器对所有格式提供同一套五色选择；sidecar 保持通用 Adobe
+标签语义，显式同步进 Sony HIF 时再转换为 Viewer 使用的小写值。读取 HIF 内嵌 XMP 时对这
+五种颜色不区分大小写并规范化为界面值；`Label=None` 明确表示无颜色，不能回退到容器解析
+阶段的旧值。存在同名 sidecar 时，仍由 sidecar 的完整可编辑投影覆盖内嵌 XMP。
 
 sidecar 是持久用户数据，与 preview cache 不同，不能随意删除。只有用户主动选择“同步到
 文件内部”时才会写 JPEG/HEIF/HIF 容器，并按用户路径、应用数据目录中的版本化能力包、
 `OXY_EXIFTOOL_PATH`、`PATH` 顺序查找 ExifTool。能力缺失时才提示直接下载经过 SHA-256 校验
 的固定版本官方包，或指定并验证已有执行文件。核心安装包不捆绑 worker；体积、发现顺序及
 下载安全边界见
-[`ADR 0007`](../adr/0007-optional-exiftool-capability.md)。
+[`ADR 0007`](../adr/0007-optional-exiftool-capability.md)。sidecar 更新统一先写入同目录唯一
+临时文件，再以平台原子替换语义提交到目标路径；高频标记操作不逐次调用 `fsync`，避免在
+SMB/NAS 上产生延迟或不支持错误。
 
 `patch_metadata` 在 blocking worker 中把多选编辑写入各自 sidecar；独立的
 `sync_metadata_to_embedded` 才调用 ExifTool。完成后使对应目录摘要缓存失效，并刷新
 详情与列表查询。普通目录打开仍先使用廉价分页，首屏返回后再异步批量补全已加载分页的
-rating/color；只有启用 rating/color 筛选时才批量读取整个当前目录的元数据，然后进行过滤和分页。
+rating/color/flag；只有启用 rating/color 筛选时才批量读取整个当前目录的元数据，然后进行过滤和分页。
 
 ## 8. 文件操作
 

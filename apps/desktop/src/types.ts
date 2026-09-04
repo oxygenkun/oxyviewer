@@ -4,6 +4,7 @@ export type SortDirection = "ascending" | "descending";
 export type ViewMode = "grid" | "list" | "loupe";
 export type GridPreference = "landscape" | "portrait";
 export type NavigatorPosition = "top-left" | "top-right" | "bottom-left" | "bottom-right";
+export type PickLabel = "rejected" | "pending" | "accepted";
 
 export interface FolderSession {
   id: string;
@@ -46,21 +47,52 @@ export interface AssetSummary {
   hasSidecar: boolean;
   rating?: number;
   colorLabel?: string;
+  pickLabel?: PickLabel;
 }
 
 export interface EditableMetadata {
   rating?: number;
   colorLabel?: string;
+  pickLabel?: PickLabel;
   title?: string;
   description?: string;
   creator?: string;
   copyright?: string;
   keywords: string[];
+  hierarchicalKeywords: string[];
 }
 
 export interface MetadataPatch {
   rating?: number | null;
   colorLabel?: string | null;
+  pickLabel?: PickLabel | null;
+  keywords?: string[];
+  hierarchicalKeywords?: string[];
+}
+
+export interface CustomTag {
+  id: number;
+  parentId?: number;
+  name: string;
+  path: string;
+  sortOrder: number;
+}
+
+export interface AssetTagAssignment {
+  tag: CustomTag;
+  assignedCount: number;
+  assetCount: number;
+}
+
+export interface TagDeleteImpact {
+  tagCount: number;
+  assetCount: number;
+}
+
+export interface TagSyncStatus {
+  pendingCount: number;
+  failedCount: number;
+  lastError?: string;
 }
 
 export interface MetadataCapability {
@@ -113,6 +145,8 @@ export interface AssetDetails {
   width?: number;
   height?: number;
   metadata: EditableMetadata;
+  embeddedKeywords: string[];
+  embeddedHierarchicalKeywords: string[];
   metadataCapability: MetadataCapability;
   sidecarPath?: string;
   captureMetadata: CaptureMetadata;
@@ -130,6 +164,7 @@ export interface MetadataProjection {
   status: ResourceLoadStatus;
   rating?: number;
   colorLabel?: string;
+  pickLabel?: PickLabel;
   error?: string;
 }
 

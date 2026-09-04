@@ -1,5 +1,5 @@
 import { create } from "zustand";
-import type { AssetSummary, MetadataProjection } from "../types";
+import type { AssetSummary, MetadataPatch, MetadataProjection } from "../types";
 
 interface MetadataProjectionState {
   records: Record<string, MetadataProjection>;
@@ -30,12 +30,40 @@ export function acceptMetadataProjection(projection: MetadataProjection) {
   useMetadataProjectionStore.getState().accept(projection);
 }
 
+export function applyMetadataProjectionPatch(paths: string[], patch: MetadataPatch) {
+  const selectedPaths = new Set(paths);
+  useMetadataProjectionStore.setState((state) => {
+    let changed = false;
+    const records = { ...state.records };
+    for (const [path, current] of Object.entries(records)) {
+      if (!selectedPaths.has(path)) continue;
+      records[path] = {
+        ...current,
+        ...(Object.hasOwn(patch, "rating") ? { rating: patch.rating ?? undefined } : {}),
+        ...(Object.hasOwn(patch, "colorLabel")
+          ? { colorLabel: patch.colorLabel ?? undefined }
+          : {}),
+        ...(Object.hasOwn(patch, "pickLabel")
+          ? { pickLabel: patch.pickLabel ?? undefined }
+          : {}),
+      };
+      changed = true;
+    }
+    return changed ? { records } : state;
+  });
+}
+
 export function projectAssetMetadata(
   asset: AssetSummary,
   projection?: MetadataProjection,
 ): AssetSummary {
   if (!projection) return asset;
-  return { ...asset, rating: projection.rating, colorLabel: projection.colorLabel };
+  return {
+    ...asset,
+    rating: projection.rating,
+    colorLabel: projection.colorLabel,
+    pickLabel: projection.pickLabel,
+  };
 }
 
 export function invalidateMetadataDirectory(directory: string) {
