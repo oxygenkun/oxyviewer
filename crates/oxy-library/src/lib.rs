@@ -853,6 +853,20 @@ impl Library {
         if !root_is_registered(&transaction, &root.to_string_lossy())? {
             return Ok(());
         }
+        // The parent was inserted optimistically when its own parent was
+        // scanned. Once this level has been visited, its child status is
+        // authoritative and can be corrected without another filesystem read.
+        transaction.execute(
+            "UPDATE indexed_directories
+             SET has_children = ?3, scan_id = ?4
+             WHERE root_path = ?1 AND path = ?2",
+            params![
+                root.to_string_lossy(),
+                parent.to_string_lossy(),
+                !directories.is_empty(),
+                scan_id,
+            ],
+        )?;
         for asset in assets {
             transaction.execute(
                 "INSERT INTO indexed_assets(
@@ -1395,6 +1409,7 @@ mod tests {
             .unwrap()
             .unwrap();
         assert_eq!(directories[0].name, "Trips");
+        assert!(directories[0].has_children);
 
         let directory_matches = library
             .search_directories(&canonical_root, "coa")
@@ -1402,6 +1417,7 @@ mod tests {
             .unwrap();
         assert_eq!(directory_matches.len(), 1);
         assert_eq!(directory_matches[0].directory.name, "Coast");
+        assert!(!directory_matches[0].directory.has_children);
         assert_eq!(directory_matches[0].ancestors.len(), 1);
         assert_eq!(directory_matches[0].ancestors[0].name, "Trips");
         assert!(

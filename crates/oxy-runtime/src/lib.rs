@@ -149,6 +149,25 @@ where
         true
     }
 
+    /// Replaces a pending entry's priority, allowing a coordinator to demote
+    /// work that is no longer active as well as promote newly active work.
+    pub fn reprioritize_if_present(&mut self, key: &K, priority: P) -> bool {
+        let Some(current) = self.pending.get_mut(key) else {
+            return false;
+        };
+        current.priority = priority;
+        current.generation = current.generation.wrapping_add(1);
+        current.sequence = self.next_sequence;
+        self.next_sequence = self.next_sequence.wrapping_add(1);
+        self.heap.push(HeapEntry {
+            key: key.clone(),
+            priority,
+            generation: current.generation,
+            sequence: current.sequence,
+        });
+        true
+    }
+
     pub fn len(&self) -> usize {
         self.pending.len()
     }
@@ -239,5 +258,17 @@ mod tests {
             queue.pop(),
             Some(("asset", vec!["grid", "loupe"], JobPriority::LoupePreview))
         );
+    }
+
+    #[test]
+    fn pending_work_can_be_demoted_when_the_active_context_changes() {
+        let mut queue = CoalescingPriorityQueue::default();
+        queue.push("old-active", (), 3);
+        queue.push("new-active", (), 1);
+
+        assert!(queue.reprioritize_if_present(&"old-active", 1));
+        assert!(queue.reprioritize_if_present(&"new-active", 3));
+        assert_eq!(queue.pop(), Some(("new-active", (), 3)));
+        assert_eq!(queue.pop(), Some(("old-active", (), 1)));
     }
 }

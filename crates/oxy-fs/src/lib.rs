@@ -1,16 +1,19 @@
 use oxy_domain::{
-    AssetKind, AssetQuery, AssetSort, AssetSummary, DirectorySummary, FileOperation,
-    FileOperationResult, FolderSession, Page, SortDirection,
+    AssetKind, AssetQuery, AssetSort, AssetSummary, DirectorySummary, DirectoryTreeNode,
+    DirectoryTreeSnapshot, FileOperation, FileOperationResult, FolderSession, Page, SortDirection,
 };
-use parking_lot::RwLock;
+use parking_lot::{Mutex, RwLock};
 use std::{
     cmp::Ordering,
-    collections::{HashMap, hash_map::DefaultHasher},
+    collections::{HashMap, HashSet, hash_map::DefaultHasher},
     fs,
     hash::{Hash, Hasher},
     path::{Path, PathBuf},
     process::Command,
-    sync::Arc,
+    sync::{
+        Arc,
+        atomic::{AtomicU64, Ordering as AtomicOrdering},
+    },
     time::{SystemTime, UNIX_EPOCH},
 };
 use thiserror::Error;
@@ -41,6 +44,14 @@ pub struct FsCatalog {
     sessions: RwLock<HashMap<String, PathBuf>>,
     asset_cache: RwLock<HashMap<PathBuf, Arc<Vec<AssetSummary>>>>,
     directory_cache: RwLock<HashMap<PathBuf, Arc<Vec<DirectorySummary>>>>,
+    directory_trees: RwLock<HashMap<String, Arc<Mutex<DirectoryTreeState>>>>,
+    next_directory_tree_revision: AtomicU64,
+}
+
+#[derive(Debug)]
+struct DirectoryTreeState {
+    snapshot: DirectoryTreeSnapshot,
+    loading_directories: HashSet<PathBuf>,
 }
 
 /// One cheap, non-recursive filesystem batch used by the background library
@@ -68,12 +79,33 @@ impl FsCatalog {
             .map(str::to_owned)
             .unwrap_or_else(|| root_path.to_string_lossy().into_owned());
 
-        Ok(FolderSession {
+        let session = FolderSession {
             id,
             display_name,
             root_path,
             opened_at_ms,
-        })
+        };
+        self.directory_trees.write().insert(
+            session.id.clone(),
+            Arc::new(Mutex::new(DirectoryTreeState {
+                snapshot: DirectoryTreeSnapshot {
+                    session_id: session.id.clone(),
+                    revision: self.next_tree_revision(),
+                    root: DirectoryTreeNode {
+                        entry: DirectorySummary {
+                            path: session.root_path.clone(),
+                            name: session.display_name.clone(),
+                            has_children: true,
+                        },
+                        expanded: false,
+                        children: None,
+                    },
+                },
+                loading_directories: HashSet::new(),
+            })),
+        );
+
+        Ok(session)
     }
 
     pub fn list_assets(
@@ -110,15 +142,115 @@ impl FsCatalog {
         Ok(directories.as_ref().clone())
     }
 
+    /// Returns the Rust-owned, lazily loaded directory tree projection.
+    /// Only expanded levels are read from disk.
+    pub fn directory_tree(&self, session_id: &str) -> Result<DirectoryTreeSnapshot, FsError> {
+        let tree = self.directory_tree_state(session_id)?;
+        let state = tree.lock();
+        Ok(state.snapshot.clone())
+    }
+
+    /// Resolves a UI activity signal against the Rust-owned tree without
+    /// touching the filesystem. Clicked nodes were originally supplied by
+    /// this projection, so the stored path is already canonical and scoped.
+    pub fn known_directory_tree_path(
+        &self,
+        session_id: &str,
+        directory: &Path,
+    ) -> Result<PathBuf, FsError> {
+        let tree = self.directory_tree_state(session_id)?;
+        let state = tree.lock();
+        find_tree_node(&state.snapshot.root, directory)
+            .map(|node| node.entry.path.clone())
+            .ok_or_else(|| FsError::InvalidFolder(directory.to_owned()))
+    }
+
+    /// Records an expansion intent without performing filesystem IO. The
+    /// boolean tells the runtime whether it won the right to load this level.
+    pub fn set_directory_expanded(
+        &self,
+        session_id: &str,
+        directory: &Path,
+        expanded: bool,
+    ) -> Result<(DirectoryTreeSnapshot, bool), FsError> {
+        let directory = self.resolve_session_directory(session_id, Some(directory))?;
+        let tree = self.directory_tree_state(session_id)?;
+        let mut state = tree.lock();
+        let needs_load = {
+            let node = find_tree_node_mut(&mut state.snapshot.root, &directory)
+                .ok_or_else(|| FsError::InvalidFolder(directory.clone()))?;
+            let known_leaf = node.children.as_ref().is_some_and(Vec::is_empty);
+            node.expanded = expanded && !known_leaf;
+            node.expanded && node.children.is_none()
+        };
+        if !expanded {
+            state.loading_directories.remove(&directory);
+        }
+        let should_load = needs_load && state.loading_directories.insert(directory);
+        state.snapshot.revision = self.next_tree_revision();
+        Ok((state.snapshot.clone(), should_load))
+    }
+
+    /// Completes one previously admitted expansion. A collapse or refresh can
+    /// revoke the admission while IO is in flight, preventing stale results
+    /// from replacing newer tree state.
+    pub fn load_directory_children(
+        &self,
+        session_id: &str,
+        directory: &Path,
+    ) -> Result<DirectoryTreeSnapshot, FsError> {
+        let requested_directory = directory.to_owned();
+        let tree = self.directory_tree_state(session_id)?;
+        {
+            let state = tree.lock();
+            if !state.loading_directories.contains(&requested_directory) {
+                return Ok(state.snapshot.clone());
+            }
+        }
+        let directory = match self.resolve_session_directory(session_id, Some(directory)) {
+            Ok(directory) => directory,
+            Err(error) => {
+                self.fail_directory_load(session_id, &requested_directory)?;
+                return Err(error);
+            }
+        };
+        let directories = match self.cached_directories(&directory) {
+            Ok(directories) => directories,
+            Err(error) => {
+                self.fail_directory_load(session_id, &directory)?;
+                return Err(error);
+            }
+        };
+        let mut state = tree.lock();
+        if !state.loading_directories.remove(&directory) {
+            return Ok(state.snapshot.clone());
+        }
+        let node = find_tree_node_mut(&mut state.snapshot.root, &directory)
+            .ok_or_else(|| FsError::InvalidFolder(directory.clone()))?;
+        replace_tree_children(node, directories.as_ref());
+        state.snapshot.revision = self.next_tree_revision();
+        Ok(state.snapshot.clone())
+    }
+
     pub fn refresh_directory(
         &self,
         session_id: &str,
         directory: Option<&Path>,
-    ) -> Result<(), FsError> {
+    ) -> Result<DirectoryTreeSnapshot, FsError> {
         let directory = self.resolve_session_directory(session_id, directory)?;
+        let tree = self.directory_tree_state(session_id)?;
+        tree.lock().loading_directories.remove(&directory);
         self.asset_cache.write().remove(&directory);
         self.directory_cache.write().remove(&directory);
-        Ok(())
+        let directories = self.cached_directories(&directory)?;
+        let mut state = tree.lock();
+        if let Some(node) = find_tree_node_mut(&mut state.snapshot.root, &directory)
+            && (node.expanded || node.children.is_some())
+        {
+            replace_tree_children(node, directories.as_ref());
+        }
+        state.snapshot.revision = self.next_tree_revision();
+        Ok(state.snapshot.clone())
     }
 
     pub fn invalidate_directory(&self, directory: &Path) {
@@ -192,6 +324,93 @@ impl FsCatalog {
             .or_insert_with(|| directories.clone())
             .clone())
     }
+
+    fn next_tree_revision(&self) -> u64 {
+        self.next_directory_tree_revision
+            .fetch_add(1, AtomicOrdering::Relaxed)
+            .saturating_add(1)
+    }
+
+    fn directory_tree_state(
+        &self,
+        session_id: &str,
+    ) -> Result<Arc<Mutex<DirectoryTreeState>>, FsError> {
+        self.directory_trees
+            .read()
+            .get(session_id)
+            .cloned()
+            .ok_or_else(|| FsError::SessionNotFound(session_id.to_owned()))
+    }
+
+    fn fail_directory_load(&self, session_id: &str, directory: &Path) -> Result<(), FsError> {
+        let tree = self.directory_tree_state(session_id)?;
+        let mut state = tree.lock();
+        state.loading_directories.remove(directory);
+        if let Some(node) = find_tree_node_mut(&mut state.snapshot.root, directory) {
+            node.expanded = false;
+        }
+        state.snapshot.revision = self.next_tree_revision();
+        Ok(())
+    }
+}
+
+fn find_tree_node_mut<'a>(
+    node: &'a mut DirectoryTreeNode,
+    path: &Path,
+) -> Option<&'a mut DirectoryTreeNode> {
+    if node.entry.path == path {
+        return Some(node);
+    }
+    node.children
+        .as_mut()?
+        .iter_mut()
+        .find_map(|child| find_tree_node_mut(child, path))
+}
+
+fn find_tree_node<'a>(node: &'a DirectoryTreeNode, path: &Path) -> Option<&'a DirectoryTreeNode> {
+    if node.entry.path == path {
+        return Some(node);
+    }
+    node.children
+        .as_ref()?
+        .iter()
+        .find_map(|child| find_tree_node(child, path))
+}
+
+fn replace_tree_children(node: &mut DirectoryTreeNode, directories: &[DirectorySummary]) {
+    let previous = node
+        .children
+        .take()
+        .unwrap_or_default()
+        .into_iter()
+        .map(|child| (child.entry.path.clone(), child))
+        .collect::<HashMap<_, _>>();
+    let mut previous = previous;
+    let children = directories
+        .iter()
+        .cloned()
+        .map(|entry| {
+            if let Some(mut child) = previous.remove(&entry.path) {
+                child.entry.name = entry.name;
+                child.entry.has_children = child
+                    .children
+                    .as_ref()
+                    .map_or(entry.has_children, |children| !children.is_empty());
+                child
+            } else {
+                DirectoryTreeNode {
+                    entry,
+                    expanded: false,
+                    children: None,
+                }
+            }
+        })
+        .collect::<Vec<_>>();
+    node.entry.has_children = !children.is_empty();
+    if children.is_empty() {
+        node.expanded = false;
+    }
+    node.children = Some(children);
 }
 
 pub fn scan_index_directory(root: &Path) -> Result<DirectoryScan, FsError> {
@@ -695,6 +914,137 @@ mod tests {
             catalog.list_directories(&session.id, None).unwrap().len(),
             1
         );
+    }
+
+    #[test]
+    fn rust_owns_lazy_directory_tree_expansion_and_leaf_detection() {
+        let root = tempdir().unwrap();
+        let branch = root.path().join("branch");
+        let leaf = branch.join("leaf");
+        fs::create_dir_all(&leaf).unwrap();
+        let catalog = FsCatalog::default();
+        let session = catalog.open_folder(root.path()).unwrap();
+        let branch = session.root_path.join("branch");
+        let leaf = branch.join("leaf");
+
+        let initial = catalog.directory_tree(&session.id).unwrap();
+        assert!(!initial.root.expanded);
+        assert!(initial.root.children.is_none());
+        assert_eq!(
+            catalog
+                .known_directory_tree_path(&session.id, &session.root_path)
+                .unwrap(),
+            session.root_path
+        );
+        assert!(matches!(
+            catalog.known_directory_tree_path(&session.id, &branch),
+            Err(FsError::InvalidFolder(_))
+        ));
+
+        let (root_loading, should_load) = catalog
+            .set_directory_expanded(&session.id, &session.root_path, true)
+            .unwrap();
+        assert!(should_load);
+        let (_, duplicate_load) = catalog
+            .set_directory_expanded(&session.id, &session.root_path, true)
+            .unwrap();
+        assert!(!duplicate_load);
+        assert!(root_loading.root.expanded);
+        assert!(root_loading.root.children.is_none());
+        let root_tree = catalog
+            .load_directory_children(&session.id, &session.root_path)
+            .unwrap();
+        let root_children = root_tree.root.children.unwrap();
+        assert_eq!(root_children.len(), 1);
+        assert_eq!(root_children[0].entry.name, "branch");
+        assert!(root_children[0].children.is_none());
+        assert_eq!(
+            catalog
+                .known_directory_tree_path(&session.id, &branch)
+                .unwrap(),
+            branch
+        );
+
+        let (_, should_load) = catalog
+            .set_directory_expanded(&session.id, &branch, true)
+            .unwrap();
+        assert!(should_load);
+        let branch_tree = catalog
+            .load_directory_children(&session.id, &branch)
+            .unwrap();
+        let branch_node = &branch_tree.root.children.as_ref().unwrap()[0];
+        assert!(branch_node.expanded);
+        assert_eq!(branch_node.children.as_ref().unwrap().len(), 1);
+
+        let (_, should_load) = catalog
+            .set_directory_expanded(&session.id, &leaf, true)
+            .unwrap();
+        assert!(should_load);
+        let leaf_tree = catalog.load_directory_children(&session.id, &leaf).unwrap();
+        let leaf_node = &leaf_tree.root.children.as_ref().unwrap()[0]
+            .children
+            .as_ref()
+            .unwrap()[0];
+        assert!(!leaf_node.expanded);
+        assert!(!leaf_node.entry.has_children);
+        assert!(leaf_node.children.as_ref().unwrap().is_empty());
+        assert!(leaf_tree.revision > initial.revision);
+    }
+
+    #[test]
+    fn refreshing_a_loaded_tree_level_preserves_nodes_and_removes_deleted_children() {
+        let root = tempdir().unwrap();
+        let child = root.path().join("child");
+        fs::create_dir(&child).unwrap();
+        let catalog = FsCatalog::default();
+        let session = catalog.open_folder(root.path()).unwrap();
+        let child = session.root_path.join("child");
+        let (_, should_load) = catalog
+            .set_directory_expanded(&session.id, &session.root_path, true)
+            .unwrap();
+        assert!(should_load);
+        catalog
+            .load_directory_children(&session.id, &session.root_path)
+            .unwrap();
+
+        fs::remove_dir(&child).unwrap();
+        let refreshed = catalog.refresh_directory(&session.id, None).unwrap();
+
+        assert!(!refreshed.root.entry.has_children);
+        assert!(refreshed.root.children.as_ref().unwrap().is_empty());
+    }
+
+    #[test]
+    fn collapsing_a_queued_node_revokes_its_filesystem_load() {
+        let root = tempdir().unwrap();
+        let child = root.path().join("child");
+        fs::create_dir(&child).unwrap();
+        let catalog = FsCatalog::default();
+        let session = catalog.open_folder(root.path()).unwrap();
+        let child = session.root_path.join("child");
+        let (_, should_load) = catalog
+            .set_directory_expanded(&session.id, &session.root_path, true)
+            .unwrap();
+        assert!(should_load);
+        catalog
+            .load_directory_children(&session.id, &session.root_path)
+            .unwrap();
+
+        let (_, should_load) = catalog
+            .set_directory_expanded(&session.id, &child, true)
+            .unwrap();
+        assert!(should_load);
+        catalog
+            .set_directory_expanded(&session.id, &child, false)
+            .unwrap();
+        fs::remove_dir(&child).unwrap();
+
+        let tree = catalog
+            .load_directory_children(&session.id, &child)
+            .unwrap();
+        let child = &tree.root.children.as_ref().unwrap()[0];
+        assert!(!child.expanded);
+        assert!(child.children.is_none());
     }
 
     #[test]

@@ -29,7 +29,7 @@ SQLite 排序和分页。打开 command 本身始终不等待递归索引。
 4. 在内存中记录 `sessionId -> canonical root`；
 5. 返回 `FolderSession`。
 
-随后 `list_assets`、`list_directories` 和 `refresh_directory` 都必须带 session ID。访问子目录
+随后 `list_assets`、`get_directory_tree`、`set_directory_expanded`、`set_active_directory` 和 `refresh_directory` 都必须带 session ID。访问子目录
 时，`resolve_session_directory` 会再次 canonicalize，并检查它是否 `starts_with(root)`。
 
 ```mermaid
@@ -189,12 +189,25 @@ flowchart TD
 
 ## 9. 目录树路径
 
-索引可用时，`list_directories` 从 `indexed_directories(root_path, parent_path)` 读取；否则只列磁盘
-当前目录的直接子目录。返回的目录会先乐观标记为 `hasChildren`，避免为了画展开标记而提前读取
-每一个子目录；用户展开某项时，用实际返回结果修正展开状态。结果按不区分大小写的名称排序。
+`oxy-fs::FsCatalog` 按 session 持有带单调 revision 的 `DirectoryTreeSnapshot`。快照记录节点的
+展开状态，以及 `children = None`（尚未加载）和 `children = []`（已确认叶子）的区别。React
+只发送展开、折叠或刷新意图，并拒绝覆盖较新 revision 的迟到响应，不再为每个节点维护独立
+的展开状态或目录查询。
 
-因此目录树按层、按需推进：先展示当前层，再读取被展开的下一层。不要为了精确预测展开标记而
-探测所有子目录，更不能递归构建整棵目录树。
+目录树仍按层、按需推进：根 session 建立时不读取子目录；激活根或展开节点时，Rust 只读取
+该目录的直接子目录，并用实际结果修正 `hasChildren`。刷新已加载节点时由 Rust 合并仍存在的
+子节点，保留其展开状态并移除已删除节点。不要为了精确预测展开标记而探测所有同级子目录，
+更不能在打开文件夹时递归构建整棵目录树。
+
+后台资料库索引在遍历某一层后会把该目录自身的 `has_children` 回写为真实值，因此目录搜索
+也能使用准确的叶子信息；索引不是主目录树交互状态的所有者。
+
+目录节点读取统一进入 Rust 的合并优先级队列，而不是由 WebView 分别启动任务。React 在活动
+收藏夹或当前目录变化时调用 `set_active_directory`：当前目录的待加载节点优先级最高，同一
+收藏夹中的其他节点次之，其他收藏夹最后；同一层级继续保持请求先后顺序。切换收藏夹会同时
+提升新收藏夹并降低旧收藏夹尚未开始的任务，已经进入单次 `read_dir` 的任务则自然完成，不做
+破坏性的线程中断。活动节点只对照 Rust 已持有的树快照校验，不额外访问磁盘。折叠或刷新节点
+会撤销其加载许可，即使旧任务稍后出队也不能写回过期结果。
 
 “文件夹”标题栏提供独立的内联目录搜索，不占用工作区顶部的图片搜索。输入会短暂防抖，然后
 对所有已加载根目录的持久索引执行文件夹名称包含查询。结果仍显示为树：每个根目录下仅保留

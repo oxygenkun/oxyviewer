@@ -18,6 +18,18 @@ export interface DirectorySummary {
   hasChildren: boolean;
 }
 
+export interface DirectoryTreeNode {
+  entry: DirectorySummary;
+  expanded: boolean;
+  children: DirectoryTreeNode[] | null;
+}
+
+export interface DirectoryTreeSnapshot {
+  sessionId: string;
+  revision: number;
+  root: DirectoryTreeNode;
+}
+
 export interface DirectorySearchMatch {
   directory: DirectorySummary;
   ancestors: DirectorySummary[];

@@ -10,6 +10,8 @@ import type {
   CacheSettings,
   DirectorySearchMatch,
   DirectorySummary,
+  DirectoryTreeNode,
+  DirectoryTreeSnapshot,
   FolderSession,
   HeifCapabilities,
   HeifDecodeSession,
@@ -57,10 +59,51 @@ const demoNames: Array<[string, AssetKind, number]> = [
 
 const demoRoot = "/demo/Field Notes";
 const demoDirectories: DirectorySummary[] = [
-  { path: `${demoRoot}/Portraits`, name: "Portraits", hasChildren: false },
+  { path: `${demoRoot}/Portraits`, name: "Portraits", hasChildren: true },
   { path: `${demoRoot}/Trips`, name: "Trips", hasChildren: true },
-  { path: `${demoRoot}/Trips/Coast`, name: "Coast", hasChildren: false },
+  { path: `${demoRoot}/Trips/Coast`, name: "Coast", hasChildren: true },
 ];
+let demoTreeRevision = 0;
+const demoDirectoryTrees = new Map<string, DirectoryTreeSnapshot>();
+
+function demoTreeChildren(path: string, previous: DirectoryTreeNode[] = []): DirectoryTreeNode[] {
+  const previousByPath = new Map(previous.map((node) => [node.entry.path, node]));
+  return demoDirectories
+    .filter((entry) => entry.path.slice(0, entry.path.lastIndexOf("/")) === path)
+    .map((entry) => previousByPath.get(entry.path) ?? {
+      entry,
+      expanded: false,
+      children: null,
+    });
+}
+
+function findDemoTreeNode(node: DirectoryTreeNode, path: string): DirectoryTreeNode | undefined {
+  if (node.entry.path === path) return node;
+  return node.children?.map((child) => findDemoTreeNode(child, path)).find(Boolean);
+}
+
+function cloneDemoTree(snapshot: DirectoryTreeSnapshot): DirectoryTreeSnapshot {
+  const cloneNode = (node: DirectoryTreeNode): DirectoryTreeNode => ({
+    entry: { ...node.entry },
+    expanded: node.expanded,
+    children: node.children?.map(cloneNode) ?? null,
+  });
+  return { ...snapshot, root: cloneNode(snapshot.root) };
+}
+
+function createDemoTree(session: FolderSession): DirectoryTreeSnapshot {
+  const snapshot: DirectoryTreeSnapshot = {
+    sessionId: session.id,
+    revision: ++demoTreeRevision,
+    root: {
+      entry: { path: session.rootPath, name: session.displayName, hasChildren: true },
+      expanded: false,
+      children: null,
+    },
+  };
+  demoDirectoryTrees.set(session.id, snapshot);
+  return snapshot;
+}
 
 const demoAssets: AssetSummary[] = demoNames.map(([name, kind, sizeBytes], index) => ({
   id: `demo-${index}`,
@@ -85,12 +128,14 @@ export async function chooseFolder(): Promise<string | null> {
 
 export async function openFolder(path: string): Promise<FolderSession> {
   if (!isTauri()) {
-    return {
+    const session = {
       id: "demo-session",
       rootPath: path,
       displayName: "Field Notes",
       openedAtMs: Date.now(),
     };
+    createDemoTree(session);
+    return session;
   }
   perfMark("folder:open-requested", { path });
   const session = await invoke<FolderSession>("open_folder", { path });
@@ -147,17 +192,57 @@ export async function onLibraryIndexUpdated(
   return listen<LibraryIndexUpdate>("library-index-updated", (event) => callback(event.payload));
 }
 
-export async function listDirectories(
+export async function onDirectoryTreeUpdated(
+  callback: (snapshot: DirectoryTreeSnapshot) => void,
+): Promise<UnlistenFn> {
+  if (!isTauri()) return () => {};
+  return listen<DirectoryTreeSnapshot>("directory-tree-updated", (event) => callback(event.payload));
+}
+
+export async function getDirectoryTree(session: FolderSession): Promise<DirectoryTreeSnapshot> {
+  if (!isTauri()) {
+    const snapshot = demoDirectoryTrees.get(session.id) ?? createDemoTree(session);
+    return cloneDemoTree(snapshot);
+  }
+  return invoke<DirectoryTreeSnapshot>("get_directory_tree", { sessionId: session.id });
+}
+
+export async function setDirectoryExpanded(
   sessionId: string,
   directory: string,
-): Promise<DirectorySummary[]> {
+  expanded: boolean,
+): Promise<DirectoryTreeSnapshot> {
   if (!isTauri()) {
-    return demoDirectories.filter((entry) => {
-      const parent = entry.path.slice(0, entry.path.lastIndexOf("/"));
-      return parent === directory;
-    });
+    const snapshot = demoDirectoryTrees.get(sessionId);
+    if (!snapshot) throw new Error(`Unknown folder session: ${sessionId}`);
+    const node = findDemoTreeNode(snapshot.root, directory);
+    if (!node) throw new Error(`Unknown directory tree node: ${directory}`);
+    const knownLeaf = node.children?.length === 0;
+    node.expanded = expanded && !knownLeaf;
+    if (node.expanded && node.children === null) {
+      node.children = demoTreeChildren(directory);
+      node.entry.hasChildren = node.children.length > 0;
+      if (node.children.length === 0) node.expanded = false;
+    }
+    snapshot.revision = ++demoTreeRevision;
+    return cloneDemoTree(snapshot);
   }
-  return invoke<DirectorySummary[]>("list_directories", { sessionId, directory });
+  return invoke<DirectoryTreeSnapshot>("set_directory_expanded", {
+    sessionId,
+    directory,
+    expanded,
+  });
+}
+
+export async function setActiveDirectory(sessionId: string, directory: string): Promise<void> {
+  if (!isTauri()) {
+    if (!demoDirectoryTrees.has(sessionId)) {
+      throw new Error(`Unknown folder session: ${sessionId}`);
+    }
+    void directory;
+    return;
+  }
+  await invoke("set_active_directory", { sessionId, directory });
 }
 
 export async function searchDirectories(
@@ -185,9 +270,23 @@ export async function searchDirectories(
   return invoke<DirectorySearchMatch[] | null>("search_directories", { sessionId, search });
 }
 
-export async function refreshDirectory(sessionId: string, directory: string): Promise<void> {
-  if (!isTauri()) return;
-  await invoke("refresh_directory", { sessionId, directory });
+export async function refreshDirectory(
+  sessionId: string,
+  directory: string,
+): Promise<DirectoryTreeSnapshot> {
+  if (!isTauri()) {
+    const snapshot = demoDirectoryTrees.get(sessionId);
+    if (!snapshot) throw new Error(`Unknown folder session: ${sessionId}`);
+    const node = findDemoTreeNode(snapshot.root, directory);
+    if (node && (node.expanded || node.children !== null)) {
+      node.children = demoTreeChildren(directory, node.children ?? []);
+      node.entry.hasChildren = node.children.length > 0;
+      if (node.children.length === 0) node.expanded = false;
+    }
+    snapshot.revision = ++demoTreeRevision;
+    return cloneDemoTree(snapshot);
+  }
+  return invoke<DirectoryTreeSnapshot>("refresh_directory", { sessionId, directory });
 }
 
 export async function trashPaths(paths: string[]): Promise<void> {

@@ -1,21 +1,24 @@
 mod cache;
+mod directory_tree_queue;
 mod exiftool;
 mod metadata_queue;
 mod preview_queue;
 
 use oxy_domain::{
     AssetDetailsResult, AssetKind, AssetQuery, AssetSummary, CacheSettings, CacheSettingsUpdate,
-    DirectorySearchMatch, DirectorySummary, EditableMetadata, FileOperation, FileOperationResult,
-    FolderSession, HeifCapabilities, HeifDecodeSession, HeifDecodeStatus, HeifDiagnostics, JobId,
-    JobPriority, LibraryIndexUpdate, MetadataCapability, MetadataPatch, MetadataProjection,
-    MetadataProvider, MetadataRequestPriority, Page, PerfScenario, PreviewPriority, PreviewResult,
-    RenderLevel,
+    DirectorySearchMatch, DirectoryTreeSnapshot, EditableMetadata, FileOperation,
+    FileOperationResult, FolderSession, HeifCapabilities, HeifDecodeSession, HeifDecodeStatus,
+    HeifDiagnostics, JobId, JobPriority, LibraryIndexUpdate, MetadataCapability, MetadataPatch,
+    MetadataProjection, MetadataProvider, MetadataRequestPriority, Page, PerfScenario,
+    PreviewPriority, PreviewResult, RenderLevel,
 };
 use oxy_fs::FsCatalog;
 use oxy_library::Library;
 use oxy_runtime::JobRegistry;
 use std::{path::PathBuf, sync::Arc};
 use tauri::{Emitter, Manager, State, http};
+
+use directory_tree_queue::{DIRECTORY_TREE_UPDATED_EVENT, DirectoryTreeQueue};
 
 struct AppState {
     files: Arc<FsCatalog>,
@@ -26,6 +29,7 @@ struct AppState {
     metadata: oxy_metadata::MetadataFacade,
     metadata_queue: metadata_queue::MetadataQueue,
     preview_queue: preview_queue::PreviewQueue,
+    directory_tree_queue: DirectoryTreeQueue,
     metadata_provider: Arc<exiftool::ProviderManager>,
 }
 
@@ -111,32 +115,51 @@ async fn list_assets(
 }
 
 #[tauri::command]
-async fn list_directories(
+async fn get_directory_tree(
     session_id: String,
-    directory: Option<PathBuf>,
     state: State<'_, AppState>,
-) -> Result<Vec<DirectorySummary>, String> {
+) -> Result<DirectoryTreeSnapshot, String> {
     let files = state.files.clone();
-    let library = state.library.clone();
     tauri::async_runtime::spawn_blocking(move || {
-        let root = files
-            .session_root(&session_id)
-            .map_err(|error| error.to_string())?;
-        let resolved_directory = files
-            .session_directory(&session_id, directory.as_deref())
-            .map_err(|error| error.to_string())?;
-        if let Some(directories) = library
-            .list_directories(&root, &resolved_directory)
-            .map_err(|error| error.to_string())?
-        {
-            return Ok(directories);
-        }
         files
-            .list_directories(&session_id, directory.as_deref())
+            .directory_tree(&session_id)
             .map_err(|error| error.to_string())
     })
     .await
     .map_err(|error| error.to_string())?
+}
+
+#[tauri::command]
+fn set_directory_expanded(
+    session_id: String,
+    directory: PathBuf,
+    expanded: bool,
+    app: tauri::AppHandle,
+    state: State<'_, AppState>,
+) -> Result<DirectoryTreeSnapshot, String> {
+    let (snapshot, should_load) = state
+        .files
+        .set_directory_expanded(&session_id, &directory, expanded)
+        .map_err(|error| error.to_string())?;
+    let _ = app.emit(DIRECTORY_TREE_UPDATED_EVENT, snapshot.clone());
+    if should_load {
+        state.directory_tree_queue.enqueue(session_id, directory);
+    }
+    Ok(snapshot)
+}
+
+#[tauri::command]
+fn set_active_directory(
+    session_id: String,
+    directory: PathBuf,
+    state: State<'_, AppState>,
+) -> Result<(), String> {
+    let directory = state
+        .files
+        .known_directory_tree_path(&session_id, &directory)
+        .map_err(|error| error.to_string())?;
+    state.directory_tree_queue.set_active(session_id, directory);
+    Ok(())
 }
 
 #[tauri::command]
@@ -160,24 +183,27 @@ async fn search_directories(
 }
 
 #[tauri::command]
-fn refresh_directory(
+async fn refresh_directory(
     session_id: String,
     directory: Option<PathBuf>,
     app: tauri::AppHandle,
     state: State<'_, AppState>,
-) -> Result<(), String> {
-    let root = state
-        .files
-        .session_root(&session_id)
-        .map_err(|error| error.to_string())?;
-    let resolved_directory = state
-        .files
-        .session_directory(&session_id, directory.as_deref())
-        .map_err(|error| error.to_string())?;
-    state
-        .files
-        .refresh_directory(&session_id, directory.as_deref())
-        .map_err(|error| error.to_string())?;
+) -> Result<DirectoryTreeSnapshot, String> {
+    let files = state.files.clone();
+    let (tree, root, resolved_directory) = tauri::async_runtime::spawn_blocking(move || {
+        let root = files
+            .session_root(&session_id)
+            .map_err(|error| error.to_string())?;
+        let resolved_directory = files
+            .session_directory(&session_id, directory.as_deref())
+            .map_err(|error| error.to_string())?;
+        let tree = files
+            .refresh_directory(&session_id, directory.as_deref())
+            .map_err(|error| error.to_string())?;
+        Ok::<_, String>((tree, root, resolved_directory))
+    })
+    .await
+    .map_err(|error| error.to_string())??;
     state
         .library
         .invalidate_resource_projections(&resolved_directory)
@@ -193,7 +219,7 @@ fn refresh_directory(
         .invalidate_index(&root)
         .map_err(|error| error.to_string())?;
     schedule_library_index(app, state.library.clone(), root);
-    Ok(())
+    Ok(tree)
 }
 
 #[tauri::command]
@@ -729,6 +755,7 @@ pub fn run() {
             let library = Arc::new(Library::open(&data_dir.join("oxyviewer.sqlite"))?);
             let metadata_provider = Arc::new(exiftool::ProviderManager::load(data_dir));
             let files = Arc::new(FsCatalog::default());
+            let directory_tree_queue = DirectoryTreeQueue::new(app.handle().clone(), files.clone());
             let metadata = metadata_provider.facade();
             let metadata_queue = metadata_queue::MetadataQueue::new(
                 app.handle().clone(),
@@ -747,6 +774,7 @@ pub fn run() {
                 metadata,
                 metadata_queue,
                 preview_queue,
+                directory_tree_queue,
                 metadata_provider,
             });
 
@@ -755,7 +783,9 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             open_folder,
             list_assets,
-            list_directories,
+            get_directory_tree,
+            set_directory_expanded,
+            set_active_directory,
             search_directories,
             refresh_directory,
             get_asset_details,

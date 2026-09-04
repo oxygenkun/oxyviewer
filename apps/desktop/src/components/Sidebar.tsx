@@ -1,4 +1,4 @@
-import { useQueries, useQuery } from "@tanstack/react-query";
+import { useQueries, useQueryClient } from "@tanstack/react-query";
 import {
   Check,
   ChevronDown,
@@ -18,7 +18,11 @@ import {
 } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
-import { listDirectories, searchDirectories } from "../lib/api";
+import { getDirectoryTree, searchDirectories, setDirectoryExpanded } from "../lib/api";
+import {
+  acceptDirectoryTreeSnapshot,
+  directoryTreePlaceholder,
+} from "../lib/directoryTreeProjection";
 import { buildDirectorySearchTree, type DirectorySearchTreeNode } from "../lib/directorySearchTree";
 import {
   moveFolderRelative,
@@ -27,7 +31,7 @@ import {
 } from "../lib/folderOrdering";
 import type { MessageKey } from "../lib/i18n";
 import { platformFileManager } from "../lib/folderPaths";
-import type { DirectorySummary, FolderSession } from "../types";
+import type { DirectorySummary, DirectoryTreeNode, DirectoryTreeSnapshot, FolderSession } from "../types";
 import { ConfirmTrashDialog } from "./ConfirmTrashDialog";
 
 interface SidebarProps {
@@ -67,11 +71,11 @@ const FILE_MANAGER_LABEL = {
 
 interface DirectoryNodeProps {
   session: FolderSession;
-  entry: DirectorySummary;
+  node: DirectoryTreeNode;
   currentPath?: string;
   depth: number;
-  initiallyExpanded?: boolean;
   onNavigate: (session: FolderSession, path: string) => void;
+  onExpandedChange: (session: FolderSession, path: string, expanded: boolean) => void;
   onContextMenu: (event: React.MouseEvent, session: FolderSession, entry: DirectorySummary) => void;
   onRemove?: (session: FolderSession) => void;
   removeLabel: string;
@@ -82,11 +86,11 @@ interface DirectoryNodeProps {
 
 function DirectoryNode({
   session,
-  entry,
+  node,
   currentPath,
   depth,
-  initiallyExpanded = false,
   onNavigate,
+  onExpandedChange,
   onContextMenu,
   onRemove,
   removeLabel,
@@ -94,15 +98,9 @@ function DirectoryNode({
   rootDraggable = false,
   onRootPointerDown,
 }: DirectoryNodeProps) {
-  const [expanded, setExpanded] = useState(initiallyExpanded);
-  const children = useQuery({
-    queryKey: ["directories", session.id, entry.path],
-    queryFn: () => listDirectories(session.id, entry.path),
-    enabled: expanded,
-    staleTime: Infinity,
-  });
+  const { entry, expanded, children } = node;
   const isActive = currentPath === entry.path;
-  const hasChildren = children.data ? children.data.length > 0 : entry.hasChildren;
+  const loading = expanded && children === null;
 
   return (
     <div className="directory-node">
@@ -124,13 +122,15 @@ function DirectoryNode({
         ) : null}
         <button
           className="tree-row__toggle"
-          disabled={!hasChildren && !children.isLoading}
-          onClick={() => setExpanded((open) => !open)}
-          aria-label={expanded ? "Collapse folder" : "Expand folder"}
+          disabled={!entry.hasChildren && !loading}
+          onClick={() => onExpandedChange(session, entry.path, !expanded)}
+          aria-label={entry.hasChildren || loading
+            ? expanded ? "Collapse folder" : "Expand folder"
+            : undefined}
         >
-          {children.isLoading ? (
+          {loading ? (
             <LoaderCircle className="tree-row__loader" size={12} />
-          ) : hasChildren ? (
+          ) : entry.hasChildren ? (
             expanded ? <ChevronDown size={13} /> : <ChevronRight size={13} />
           ) : (
             <span />
@@ -138,7 +138,10 @@ function DirectoryNode({
         </button>
         <button
           className="tree-row__main"
-          onClick={() => onNavigate(session, entry.path)}
+          onClick={() => {
+            onNavigate(session, entry.path);
+            if (entry.hasChildren && !expanded) onExpandedChange(session, entry.path, true);
+          }}
           title={entry.path}
         >
           {isActive ? <FolderOpen size={15} /> : <Folder size={15} />}
@@ -158,14 +161,15 @@ function DirectoryNode({
       </div>
       {expanded ? (
         <div className="directory-node__children">
-          {(children.data ?? []).map((child) => (
+          {(children ?? []).map((child) => (
             <DirectoryNode
-              key={child.path}
+              key={child.entry.path}
               session={session}
-              entry={child}
+              node={child}
               currentPath={currentPath}
               depth={depth + 1}
               onNavigate={onNavigate}
+              onExpandedChange={onExpandedChange}
               onContextMenu={onContextMenu}
               removeLabel={removeLabel}
             />
@@ -278,6 +282,7 @@ export function Sidebar({
   onReorderFolders,
   t,
 }: SidebarProps) {
+  const queryClient = useQueryClient();
   const [searchOpen, setSearchOpen] = useState(false);
   const [search, setSearch] = useState("");
   const [debouncedSearch, setDebouncedSearch] = useState("");
@@ -324,6 +329,56 @@ export function Sidebar({
       staleTime: Infinity,
     })),
   });
+  const directoryTreeQueries = useQueries({
+    queries: sessions.map((session) => ({
+      queryKey: ["directory-tree", session.id],
+      queryFn: async () => {
+        const incoming = await getDirectoryTree(session);
+        const current = queryClient.getQueryData<DirectoryTreeSnapshot>([
+          "directory-tree",
+          session.id,
+        ]);
+        return acceptDirectoryTreeSnapshot(current, incoming);
+      },
+      placeholderData: directoryTreePlaceholder(session),
+      staleTime: Infinity,
+    })),
+  });
+  const initializedTreeSessionsRef = useRef(new Set<string>());
+  const syncDirectoryTree = useCallback((snapshot: DirectoryTreeSnapshot) => {
+    queryClient.setQueryData<DirectoryTreeSnapshot>(
+      ["directory-tree", snapshot.sessionId],
+      (current) => acceptDirectoryTreeSnapshot(current, snapshot),
+    );
+  }, [queryClient]);
+  const changeDirectoryExpansion = useCallback((
+    session: FolderSession,
+    path: string,
+    expanded: boolean,
+  ) => {
+    void queryClient.cancelQueries({ queryKey: ["directory-tree", session.id] })
+      .then(() => setDirectoryExpanded(session.id, path, expanded))
+      .then(syncDirectoryTree)
+      .catch(() => queryClient.invalidateQueries({ queryKey: ["directory-tree", session.id] }));
+  }, [queryClient, syncDirectoryTree]);
+
+  const activeTreeQueryIndex = activeSession
+    ? sessions.findIndex((session) => session.id === activeSession.id)
+    : -1;
+  const activeTreeQuery = directoryTreeQueries[activeTreeQueryIndex];
+  useEffect(() => {
+    if (!activeSession || !activeTreeQuery?.isFetched) return;
+    if (initializedTreeSessionsRef.current.has(activeSession.id)) return;
+    initializedTreeSessionsRef.current.add(activeSession.id);
+    if (!activeTreeQuery.data?.root.expanded) {
+      changeDirectoryExpansion(activeSession, activeSession.rootPath, true);
+    }
+  }, [
+    activeSession,
+    activeTreeQuery?.data?.root.expanded,
+    activeTreeQuery?.isFetched,
+    changeDirectoryExpansion,
+  ]);
 
   useEffect(() => {
     const timeout = window.setTimeout(() => setDebouncedSearch(search), 180);
@@ -680,25 +735,28 @@ export function Sidebar({
               </>
             )}
           </div>
-        ) : displayedSessions.map((session) => (
-          <div
-            key={session.rootPath}
-            data-root-path={session.rootPath}
-            className={`folder-root ${draggedRoot === session.rootPath ? "is-dragging" : ""} ${dropTargetRoot === session.rootPath && dropPlacement ? `is-drop-${dropPlacement}` : ""}`}
-          >
-            <DirectoryNode
-              session={session}
-              entry={{ path: session.rootPath, name: session.displayName, hasChildren: true }}
-              currentPath={activeSession?.rootPath === session.rootPath ? currentPath : undefined}
-              depth={0}
-              initiallyExpanded={activeSession?.rootPath === session.rootPath}
-              onNavigate={onNavigate}
-              onContextMenu={showFolderContextMenu}
-              onRemove={onRemove}
-              removeLabel={t("removeFolder")}
-              dragLabel={t("dragFolderToReorder")}
-              rootDraggable={folderDragEnabled && folderSort === "import"}
-              onRootPointerDown={(event) => {
+        ) : displayedSessions.map((session) => {
+          const sessionIndex = sessions.findIndex((item) => item.id === session.id);
+          const tree = directoryTreeQueries[sessionIndex]?.data ?? directoryTreePlaceholder(session);
+          return (
+            <div
+              key={session.rootPath}
+              data-root-path={session.rootPath}
+              className={`folder-root ${draggedRoot === session.rootPath ? "is-dragging" : ""} ${dropTargetRoot === session.rootPath && dropPlacement ? `is-drop-${dropPlacement}` : ""}`}
+            >
+              <DirectoryNode
+                session={session}
+                node={tree.root}
+                currentPath={activeSession?.rootPath === session.rootPath ? currentPath : undefined}
+                depth={0}
+                onNavigate={onNavigate}
+                onExpandedChange={changeDirectoryExpansion}
+                onContextMenu={showFolderContextMenu}
+                onRemove={onRemove}
+                removeLabel={t("removeFolder")}
+                dragLabel={t("dragFolderToReorder")}
+                rootDraggable={folderDragEnabled && folderSort === "import"}
+                onRootPointerDown={(event) => {
                 if (event.button !== 0 || !event.isPrimary) return;
                 event.preventDefault();
                 const initialOrder = sessions.map((item) => item.rootPath);
@@ -718,10 +776,11 @@ export function Sidebar({
                   pointerOffsetY: event.clientY - bounds.top,
                   name: session.displayName,
                 });
-              }}
-            />
-          </div>
-        ))}
+                }}
+              />
+            </div>
+          );
+        })}
 
         {dragPreview ? createPortal(
           <div

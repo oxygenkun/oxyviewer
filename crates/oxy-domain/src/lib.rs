@@ -24,6 +24,24 @@ pub struct DirectorySummary {
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
+pub struct DirectoryTreeNode {
+    pub entry: DirectorySummary,
+    pub expanded: bool,
+    /// `None` means this level has not been loaded yet. An empty vector is an
+    /// authoritative leaf result.
+    pub children: Option<Vec<DirectoryTreeNode>>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct DirectoryTreeSnapshot {
+    pub session_id: SessionId,
+    pub revision: u64,
+    pub root: DirectoryTreeNode,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
 pub struct DirectorySearchMatch {
     pub directory: DirectorySummary,
     pub ancestors: Vec<DirectorySummary>,

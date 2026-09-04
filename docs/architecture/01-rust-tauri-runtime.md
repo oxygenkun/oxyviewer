@@ -165,7 +165,7 @@ async command
 
 适合小型结构化数据。当前 command 包括：
 
-- 文件：`open_folder`、`list_assets`、`list_directories`、`refresh_directory`；
+- 文件：`open_folder`、`list_assets`、`get_directory_tree`、`set_directory_expanded`、`set_active_directory`、`refresh_directory`；
 - 详情/预览：`get_asset_details`、`get_preview`；
 - 写操作：`execute_file_operation`、`patch_metadata`；
 - 资料库：`add_library_root`、`list_library_roots`；

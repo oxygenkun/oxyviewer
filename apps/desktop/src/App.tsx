@@ -18,6 +18,7 @@ import {
   listLibraryRoots,
   openFolder,
   openInFileManager,
+  onDirectoryTreeUpdated,
   onLibraryIndexUpdated,
   onImageProjectionUpdated,
   onMetadataProjectionUpdated,
@@ -25,9 +26,11 @@ import {
   requestMetadata,
   removeLibraryRoot,
   reorderLibraryRoots,
+  setActiveDirectory,
   trashPaths,
 } from "./lib/api";
 import { filterAndSortAssets } from "./lib/assetFiltering";
+import { acceptDirectoryTreeSnapshot } from "./lib/directoryTreeProjection";
 import { acceptImageProjection, invalidateImageDirectory } from "./lib/imageProjection";
 import {
   acceptMetadataProjection,
@@ -50,7 +53,7 @@ import {
   saveWorkspace,
 } from "./lib/workspacePersistence";
 import { useWorkspaceStore } from "./store";
-import type { AssetQuery, FolderSession, PerfScenario } from "./types";
+import type { AssetQuery, DirectoryTreeSnapshot, FolderSession, PerfScenario } from "./types";
 
 async function restoreFolders(): Promise<FolderSession[]> {
   const roots = await listLibraryRoots();
@@ -71,6 +74,7 @@ export function App({ perfScenario }: { perfScenario?: PerfScenario }) {
     leftPanelWidth, inspectorWidth, setLeftPanelWidth, setInspectorWidth,
   } = useWorkspaceStore();
   const appShellRef = useRef<HTMLDivElement>(null);
+  const activeDirectoryNoticeRef = useRef<string | undefined>(undefined);
   const t = useCallback((key: Parameters<typeof translate>[1]) => translate(locale, key), [locale]);
 
   const foldersQuery = useQuery({
@@ -94,15 +98,48 @@ export function App({ perfScenario }: { perfScenario?: PerfScenario }) {
     ? workspace.currentDirectories[activeSession.rootPath] ?? activeSession.rootPath
     : undefined;
 
+  const notifyActiveDirectory = useCallback((session: FolderSession, path: string) => {
+    const noticeKey = `${session.id}\0${path}`;
+    if (activeDirectoryNoticeRef.current === noticeKey) return;
+    activeDirectoryNoticeRef.current = noticeKey;
+    void setActiveDirectory(session.id, path).catch((cause) => {
+      if (activeDirectoryNoticeRef.current === noticeKey) {
+        activeDirectoryNoticeRef.current = undefined;
+      }
+      setError(String(cause));
+    });
+  }, []);
+
   useEffect(() => saveWorkspace(workspace), [workspace]);
+
+  useEffect(() => {
+    if (activeSession && currentPath) notifyActiveDirectory(activeSession, currentPath);
+  }, [activeSession?.id, currentPath, notifyActiveDirectory]);
 
   useEffect(() => {
     let unlisten: (() => void) | undefined;
     let disposed = false;
     void onLibraryIndexUpdated(() => {
       void queryClient.invalidateQueries({ queryKey: ["assets"] });
-      void queryClient.invalidateQueries({ queryKey: ["directories"] });
       void queryClient.invalidateQueries({ queryKey: ["directory-search"] });
+    }).then((dispose) => {
+      if (disposed) dispose();
+      else unlisten = dispose;
+    });
+    return () => {
+      disposed = true;
+      unlisten?.();
+    };
+  }, [queryClient]);
+
+  useEffect(() => {
+    let unlisten: (() => void) | undefined;
+    let disposed = false;
+    void onDirectoryTreeUpdated((snapshot) => {
+      queryClient.setQueryData<DirectoryTreeSnapshot>(
+        ["directory-tree", snapshot.sessionId],
+        (current) => acceptDirectoryTreeSnapshot(current, snapshot),
+      );
     }).then((dispose) => {
       if (disposed) dispose();
       else unlisten = dispose;
@@ -316,13 +353,14 @@ export function App({ perfScenario }: { perfScenario?: PerfScenario }) {
   }, [openPath]);
 
   const handleNavigate = useCallback((session: FolderSession, path: string) => {
+    notifyActiveDirectory(session, path);
     clearSelection();
     setWorkspace((current) => ({
       ...current,
       activeRoot: session.rootPath,
       currentDirectories: { ...current.currentDirectories, [session.rootPath]: path },
     }));
-  }, [clearSelection]);
+  }, [clearSelection, notifyActiveDirectory]);
 
   const handleRemove = useCallback(async (session: FolderSession) => {
     setError(undefined);
@@ -390,9 +428,13 @@ export function App({ perfScenario }: { perfScenario?: PerfScenario }) {
         queryClient.cancelQueries({ queryKey: ["assets", activeSession.id, currentPath] }),
         queryClient.cancelQueries({ queryKey: ["preload-assets", activeSession.id, currentPath] }),
         queryClient.cancelQueries({ queryKey: ["progressive-metadata-assets", activeSession.id, currentPath] }),
-        queryClient.cancelQueries({ queryKey: ["directories", activeSession.id, currentPath] }),
+        queryClient.cancelQueries({ queryKey: ["directory-tree", activeSession.id] }),
       ]);
-      await refreshDirectory(activeSession.id, currentPath);
+      const tree = await refreshDirectory(activeSession.id, currentPath);
+      queryClient.setQueryData<DirectoryTreeSnapshot>(
+        ["directory-tree", activeSession.id],
+        (current) => acceptDirectoryTreeSnapshot(current, tree),
+      );
       invalidateMetadataDirectory(currentPath);
       invalidateImageDirectory(currentPath);
       queryClient.removeQueries({ queryKey: ["asset-render"] });
@@ -400,7 +442,6 @@ export function App({ perfScenario }: { perfScenario?: PerfScenario }) {
         queryClient.invalidateQueries({ queryKey: ["assets", activeSession.id, currentPath] }),
         queryClient.invalidateQueries({ queryKey: ["preload-assets", activeSession.id, currentPath] }),
         queryClient.invalidateQueries({ queryKey: ["progressive-metadata-assets", activeSession.id, currentPath] }),
-        queryClient.invalidateQueries({ queryKey: ["directories", activeSession.id, currentPath] }),
       ]);
     } catch (cause) {
       setError(String(cause));
@@ -438,12 +479,16 @@ export function App({ perfScenario }: { perfScenario?: PerfScenario }) {
           currentDirectories: { ...current.currentDirectories, [session.rootPath]: parent },
         }));
       }
-      await refreshDirectory(session.id, parent);
+      await queryClient.cancelQueries({ queryKey: ["directory-tree", session.id] });
+      const tree = await refreshDirectory(session.id, parent);
+      queryClient.setQueryData<DirectoryTreeSnapshot>(
+        ["directory-tree", session.id],
+        (current) => acceptDirectoryTreeSnapshot(current, tree),
+      );
       await Promise.all([
         queryClient.invalidateQueries({ queryKey: ["assets", session.id] }),
         queryClient.invalidateQueries({ queryKey: ["preload-assets", session.id] }),
         queryClient.invalidateQueries({ queryKey: ["progressive-metadata-assets", session.id] }),
-        queryClient.invalidateQueries({ queryKey: ["directories", session.id] }),
         queryClient.invalidateQueries({ queryKey: ["directory-search", session.id] }),
       ]);
     } catch (cause) {
