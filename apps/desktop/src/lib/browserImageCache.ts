@@ -4,6 +4,7 @@ interface BrowserImageSize {
 }
 
 interface BrowserImageResource extends BrowserImageSize {
+  decodedBytes: number;
   /**
    * Keep the decoded browser resource alive after its virtualized DOM node is
    * unmounted. Without this reference, WebView is free to discard the image
@@ -12,11 +13,35 @@ interface BrowserImageResource extends BrowserImageSize {
   image?: HTMLImageElement;
 }
 
+export const BROWSER_IMAGE_RESOURCE_LIMITS = Object.freeze({
+  maxEntries: 1_024,
+  maxDecodedBytes: 512 * 1024 * 1024,
+});
+
 // The owner of this cache is the WebView session, not an individual virtual
-// row. Entries are only discarded when the application explicitly invalidates
-// image resources (or when the WebView itself goes away).
+// row. The Map's insertion order is also the FIFO eviction order.
 const readyImages = new Map<string, BrowserImageResource>();
 let activeResourceScope: string | undefined;
+let retainedDecodedBytes = 0;
+
+function estimateDecodedBytes(size: BrowserImageSize): number {
+  const width = Number.isFinite(size.width) ? Math.max(0, Math.floor(size.width)) : 0;
+  const height = Number.isFinite(size.height) ? Math.max(0, Math.floor(size.height)) : 0;
+  return width * height * 4;
+}
+
+function evictOldestResourcesUntilWithinBudget(): void {
+  while (
+    readyImages.size > BROWSER_IMAGE_RESOURCE_LIMITS.maxEntries
+    || retainedDecodedBytes > BROWSER_IMAGE_RESOURCE_LIMITS.maxDecodedBytes
+  ) {
+    const oldestUrl = readyImages.keys().next().value;
+    if (!oldestUrl) return;
+    const oldest = readyImages.get(oldestUrl);
+    readyImages.delete(oldestUrl);
+    retainedDecodedBytes -= oldest?.decodedBytes ?? 0;
+  }
+}
 
 export function isBrowserImageReady(url: string): boolean {
   return readyImages.has(url);
@@ -39,15 +64,20 @@ export function markBrowserImageReady(
   image?: HTMLImageElement,
 ): void {
   const current = readyImages.get(url);
+  const decodedBytes = estimateDecodedBytes(size);
+  retainedDecodedBytes += decodedBytes - (current?.decodedBytes ?? 0);
   readyImages.set(url, {
     ...size,
+    decodedBytes,
     image: image ?? current?.image,
   });
+  evictOldestResourcesUntilWithinBudget();
 }
 
-/** Discards retained resources only in response to an explicit app update. */
+/** Discards all retained resources in response to an explicit app update. */
 export function clearBrowserImageResources(): void {
   readyImages.clear();
+  retainedDecodedBytes = 0;
 }
 
 /** Keeps resources across virtual mounts, but not across asset browsers. */
@@ -59,7 +89,11 @@ export function setBrowserImageResourceScope(scope: string): void {
 }
 
 export function discardBrowserImageResource(url: string | undefined): void {
-  if (url) readyImages.delete(url);
+  if (!url) return;
+  const resource = readyImages.get(url);
+  if (!resource) return;
+  readyImages.delete(url);
+  retainedDecodedBytes -= resource.decodedBytes;
 }
 
 /** Loads and decodes an image so a later loupe switch can paint it immediately. */
