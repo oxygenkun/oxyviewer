@@ -1,5 +1,9 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { beginPreviewDebug } from "./previewDebug";
+import {
+  aggregatePreviewDebugSnapshot,
+  beginPreviewDebug,
+  type TrackedPreview,
+} from "./previewDebug";
 
 describe("preview debug lifecycle", () => {
   afterEach(() => {
@@ -32,5 +36,34 @@ describe("preview debug lifecycle", () => {
       expect.stringMatching(/\[DONE\] screen-photo\.CR3.*wait=.*load=.*total=/),
       { backend: "fixture" },
     );
+  });
+
+  it("shows one row with a consumer count for duplicate resource requests", () => {
+    const request = (overrides: Partial<TrackedPreview>): TrackedPreview => ({
+      id: 1,
+      assetName: "DSC04726.HIF",
+      stage: "image-decode",
+      priority: "visible",
+      resourceKey: "image:asset://localhost/preview.jpg",
+      resourceLabel: "thumbnail",
+      queuedAt: 10,
+      ...overrides,
+    });
+
+    const snapshot = aggregatePreviewDebugSnapshot({
+      waiting: [request({ id: 1 })],
+      loading: [request({ id: 2, priority: "loupe", queuedAt: 20, startedAt: 30 })],
+    });
+
+    expect(snapshot.waiting).toEqual([]);
+    expect(snapshot.loading).toHaveLength(1);
+    expect(snapshot.loading[0]).toEqual(expect.objectContaining({
+      assetName: "DSC04726.HIF",
+      priority: "loupe",
+      consumers: 2,
+      resourceLabel: "thumbnail",
+      queuedAt: 10,
+      startedAt: 30,
+    }));
   });
 });

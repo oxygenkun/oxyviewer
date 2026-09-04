@@ -1,4 +1,4 @@
-use oxy_domain::DirectoryTreeSnapshot;
+use oxy_domain::{DebugQueueItem, DebugQueueState, DirectoryTreeSnapshot};
 use oxy_fs::FsCatalog;
 use oxy_runtime::CoalescingPriorityQueue;
 use std::{
@@ -28,6 +28,7 @@ struct WorkState {
     pending_order: HashMap<RequestKey, u64>,
     next_order: u64,
     active: Option<ActiveDirectory>,
+    loading: Option<RequestKey>,
 }
 
 impl WorkState {
@@ -102,6 +103,31 @@ impl DirectoryTreeQueue {
         });
     }
 
+    pub fn debug_snapshot(&self) -> DebugQueueState {
+        let work = self.work.0.lock().expect("directory tree queue poisoned");
+        let pending = work
+            .pending
+            .entries()
+            .map(|(key, _, score)| directory_debug_item(key, score))
+            .collect::<Vec<_>>();
+        let active = work
+            .loading
+            .as_ref()
+            .map(|key| {
+                vec![directory_debug_item(
+                    key,
+                    priority_score(work.active.as_ref(), key, 0),
+                )]
+            })
+            .unwrap_or_default();
+        DebugQueueState {
+            name: "directoryTree".into(),
+            concurrency: 1,
+            pending,
+            active,
+        }
+    }
+
     fn spawn_worker(&self, app: AppHandle) {
         let queue = self.clone();
         std::thread::Builder::new()
@@ -117,7 +143,9 @@ impl DirectoryTreeQueue {
                                 .wait(work)
                                 .expect("directory tree queue poisoned");
                         }
-                        work.pop()
+                        let request = work.pop();
+                        work.loading.clone_from(&request);
+                        request
                     };
                     let Some(key) = key else {
                         continue;
@@ -137,9 +165,39 @@ impl DirectoryTreeQueue {
                             );
                         }
                     }
+                    queue
+                        .work
+                        .0
+                        .lock()
+                        .expect("directory tree queue poisoned")
+                        .loading = None;
                 }
             })
             .expect("failed to start directory tree worker");
+    }
+}
+
+fn directory_debug_item(key: &RequestKey, score: i64) -> DebugQueueItem {
+    let tier = if score > 2_000_000 {
+        3
+    } else if score > 1_000_000 {
+        2
+    } else {
+        1
+    };
+    let rank = tier * 1_000_000 - score;
+    DebugQueueItem {
+        key: format!("{}:{}", key.session_id, key.directory.display()),
+        path: Some(key.directory.clone()),
+        stage: "children".into(),
+        priority: match tier {
+            3 => "active",
+            2 => "session",
+            _ => "background",
+        }
+        .into(),
+        rank: Some(rank),
+        consumers: 1,
     }
 }
 

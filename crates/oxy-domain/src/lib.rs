@@ -283,6 +283,38 @@ pub enum PreviewPriority {
     Loupe,
 }
 
+/// Read-only diagnostics for one queued or running unit of work.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct DebugQueueItem {
+    pub key: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub path: Option<PathBuf>,
+    pub stage: String,
+    pub priority: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub rank: Option<i64>,
+    pub consumers: usize,
+}
+
+/// A point-in-time view of a scheduler. This contract is intentionally
+/// read-only so diagnostics cannot alter production scheduling.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct DebugQueueState {
+    pub name: String,
+    pub concurrency: usize,
+    pub pending: Vec<DebugQueueItem>,
+    pub active: Vec<DebugQueueItem>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct DebugQueueSnapshot {
+    pub captured_at_unix_ms: u64,
+    pub queues: Vec<DebugQueueState>,
+}
+
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub enum SchedulePlacement {

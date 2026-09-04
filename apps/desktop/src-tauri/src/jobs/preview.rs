@@ -1,6 +1,7 @@
 use oxy_domain::{
-    AssetKind, ImageProjection, OmittedScheduleAction, PreviewOmittedPolicy, PreviewPriority,
-    PreviewResult, PreviewScheduleIntent, RenderLevel, ResourceLoadStatus, SchedulePlacement,
+    AssetKind, DebugQueueItem, DebugQueueState, ImageProjection, OmittedScheduleAction,
+    PreviewOmittedPolicy, PreviewPriority, PreviewResult, PreviewScheduleIntent, RenderLevel,
+    ResourceLoadStatus, SchedulePlacement,
 };
 use oxy_library::Library;
 use oxy_runtime::{
@@ -451,6 +452,39 @@ impl PreviewQueue {
             .clear();
     }
 
+    pub fn debug_snapshot(&self) -> DebugQueueState {
+        let work = self.work.0.lock().expect("preview queue lock poisoned");
+        let pending = work
+            .pending
+            .entries()
+            .map(|(key, request, position)| debug_item(key, request, position))
+            .collect::<Vec<_>>();
+        let active = work
+            .active
+            .iter()
+            .map(|(key, request)| {
+                let request = request
+                    .lock()
+                    .expect("active preview request lock poisoned");
+                let schedule_key = PreviewScheduleKey {
+                    path: key.path.clone(),
+                    level: key.level,
+                };
+                let position = work
+                    .schedule
+                    .effective_position(&schedule_key)
+                    .unwrap_or_else(|| schedule_position(PreviewPriority::Preload, usize::MAX));
+                debug_item(key, &request, position)
+            })
+            .collect();
+        DebugQueueState {
+            name: "preview".into(),
+            concurrency: PREVIEW_WORKER_COUNT,
+            pending,
+            active,
+        }
+    }
+
     fn transition(
         &self,
         path: PathBuf,
@@ -621,6 +655,22 @@ impl PreviewQueue {
                 }
             })
             .expect("failed to start image projection worker");
+    }
+}
+
+fn debug_item(
+    key: &RequestKey,
+    request: &WorkRequest,
+    position: SchedulePosition,
+) -> DebugQueueItem {
+    let priority = priority_from_position(position);
+    DebugQueueItem {
+        key: format!("{}:{:?}:{}", key.path.display(), key.level, key.generation),
+        path: Some(key.path.clone()),
+        stage: format!("{:?}", key.level).to_lowercase(),
+        priority: format!("{priority:?}").to_lowercase(),
+        rank: Some(i64::from(position.rank)),
+        consumers: request.waiters.len(),
     }
 }
 

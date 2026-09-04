@@ -1,7 +1,7 @@
 use oxy_domain::{
-    AssetDetails, AssetDetailsResult, AssetKind, AssetSummary, EditableMetadata,
-    MetadataCapability, MetadataProjection, MetadataProvider, MetadataRequestPriority,
-    ResourceLoadStatus,
+    AssetDetails, AssetDetailsResult, AssetKind, AssetSummary, DebugQueueItem, DebugQueueState,
+    EditableMetadata, MetadataCapability, MetadataProjection, MetadataProvider,
+    MetadataRequestPriority, ResourceLoadStatus,
 };
 use oxy_fs::FsCatalog;
 use oxy_library::Library;
@@ -33,6 +33,7 @@ struct Request {
     asset: AssetSummary,
     observation: MetadataObservation,
     detail_waiters: Vec<Sender<AssetDetailsResult>>,
+    priority: MetadataRequestPriority,
 }
 
 #[derive(Default)]
@@ -118,6 +119,31 @@ impl MetadataQueue {
             .retain(|key, _| key.path.parent() != Some(directory));
     }
 
+    pub fn debug_snapshot(&self) -> DebugQueueState {
+        let work = self.work.0.lock().expect("metadata queue lock poisoned");
+        let pending = work
+            .pending
+            .entries()
+            .map(|(key, request, priority)| metadata_debug_item(key, request, priority))
+            .collect::<Vec<_>>();
+        let active = work
+            .active
+            .iter()
+            .map(|(key, request)| {
+                let request = request
+                    .lock()
+                    .expect("active metadata request lock poisoned");
+                metadata_debug_item(key, &request, request.priority)
+            })
+            .collect();
+        DebugQueueState {
+            name: "metadata".into(),
+            concurrency: 1,
+            pending,
+            active,
+        }
+    }
+
     pub fn request_details(
         &self,
         app: &AppHandle,
@@ -170,11 +196,11 @@ impl MetadataQueue {
         let mut work = self.work.0.lock().expect("metadata queue lock poisoned");
         if let Some(active) = work.active.get(&key) {
             if let Some(waiter) = detail_waiter {
-                active
+                let mut active = active
                     .lock()
-                    .expect("active metadata request lock poisoned")
-                    .detail_waiters
-                    .push(waiter);
+                    .expect("active metadata request lock poisoned");
+                active.detail_waiters.push(waiter);
+                active.priority = active.priority.max(priority);
             }
             return self
                 .metadata
@@ -219,6 +245,7 @@ impl MetadataQueue {
             asset,
             observation,
             detail_waiters: detail_waiter.into_iter().collect(),
+            priority,
         };
         work.pending
             .push_or_merge(key, request, priority, |_, _| unreachable!());
@@ -244,7 +271,8 @@ impl MetadataQueue {
                                 .wait(pending)
                                 .expect("metadata queue lock poisoned");
                         }
-                        pending.pending.pop().map(|(key, request, _)| {
+                        pending.pending.pop().map(|(key, mut request, priority)| {
+                            request.priority = priority;
                             let request = Arc::new(Mutex::new(request));
                             pending.active.insert(key.clone(), request.clone());
                             (key, request)
@@ -364,6 +392,25 @@ impl MetadataQueue {
                 }
             })
             .expect("failed to start metadata projection worker");
+    }
+}
+
+fn metadata_debug_item(
+    key: &RequestKey,
+    request: &Request,
+    priority: MetadataRequestPriority,
+) -> DebugQueueItem {
+    DebugQueueItem {
+        key: format!("{}:{}", key.path.display(), key.generation),
+        path: Some(key.path.clone()),
+        stage: if request.detail_waiters.is_empty() {
+            "summary".into()
+        } else {
+            "details".into()
+        },
+        priority: format!("{priority:?}").to_lowercase(),
+        rank: None,
+        consumers: request.detail_waiters.len().max(1),
     }
 }
 

@@ -60,3 +60,39 @@
   box-shadow: 0 10px 30px rgb(0 0 0 / 45%);
 }
 .error-toast span { margin-left: auto; }
+.debug-queue-launcher {
+  position: fixed;
+  z-index: 9999;
+  right: 12px;
+  bottom: 12px;
+  padding: 7px 10px;
+  border: 1px solid #315b48;
+  border-radius: 6px;
+  color: #74f5b5;
+  background: #10251ddd;
+  font: 600 10px ui-monospace, monospace;
+  letter-spacing: 0.08em;
+  cursor: pointer;
+}
+.debug-window-status {
+  display: grid;
+  min-height: 100vh;
+  place-content: center;
+  gap: 14px;
+  padding: 32px;
+  color: #9aa4a7;
+  background: #0b0e10;
+  font: 12px ui-monospace, monospace;
+  text-align: center;
+}
+.debug-window-status h1 { margin: 0; color: #e7ece9; font-size: 18px; }
+.debug-window-status pre { max-width: 720px; white-space: pre-wrap; color: #ef9a8f; }
+.debug-window-status button {
+  justify-self: center;
+  padding: 7px 12px;
+  border: 1px solid #315b48;
+  border-radius: 6px;
+  color: #74f5b5;
+  background: #10251d;
+  cursor: pointer;
+}

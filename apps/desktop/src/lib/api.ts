@@ -32,6 +32,7 @@ import type {
   SchedulePlacement,
   AssetTagAssignment,
   CustomTag,
+  DebugQueueSnapshot,
   TagDeleteImpact,
   TagSyncStatus,
 } from "../types";
@@ -678,6 +679,31 @@ export async function clearPreviewCache(): Promise<CacheSettings> {
   return invoke<CacheSettings>("clear_preview_cache");
 }
 
+export async function getDebugQueueSnapshot(): Promise<DebugQueueSnapshot> {
+  if (!__OXY_DEBUG__) throw new Error("Queue diagnostics require a debug build");
+  if (!isTauri()) {
+    return { capturedAtUnixMs: Date.now(), queues: [] };
+  }
+  return invoke<DebugQueueSnapshot>("get_debug_queue_snapshot");
+}
+
+export async function openDebugQueueWindow(): Promise<void> {
+  if (!__OXY_DEBUG__) return;
+  if (!isTauri()) {
+    window.open("?debug=queues", "oxyviewer-debug-queues", "popup,width=1180,height=760");
+    return;
+  }
+  await invoke("open_debug_queue_window");
+}
+
+export async function closeDebugQueueWindow(): Promise<void> {
+  if (!isTauri()) {
+    window.close();
+    return;
+  }
+  await invoke("close_debug_queue_window");
+}
+
 export function previewUrl(asset: AssetSummary): string | undefined {
   if (!isTauri() || asset.kind === "raw" || asset.kind === "heif" || asset.kind === "tiff") {
     return undefined;
@@ -694,11 +720,13 @@ export async function generatedPreview(
 ): Promise<PreviewResult | undefined> {
   if (!isTauri()) return undefined;
   const debug = __OXY_DEBUG__
-    ? beginPreviewDebug({
-        assetName: asset.name,
-        stage: level,
-        priority,
-      })
+      ? beginPreviewDebug({
+          assetName: asset.name,
+          stage: level,
+          priority,
+          resourceKey: `preview:${asset.path}:${level}`,
+          resourceLabel: level,
+        })
     : undefined;
   if (signal?.aborted) throw signal.reason ?? new DOMException("Aborted", "AbortError");
   debug?.start();

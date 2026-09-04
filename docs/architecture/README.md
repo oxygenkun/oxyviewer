@@ -39,6 +39,7 @@
 | 分页请求 | `FsCatalog::list_assets` | `useInfiniteQuery` in `App.tsx` |
 | 渲染等级 | `render_method_for` / `oxy_media::preview` | `renderPlan` |
 | 预览优先级 | `PreviewQueue` / `DecodeGate` | selection/visibility priority hints |
+| 调试队列观测 | `get_debug_queue_snapshot` | debug-only, read-only scheduler snapshots; see [`DEBUG_QUEUE_OBSERVABILITY.md`](../DEBUG_QUEUE_OBSERVABILITY.md) |
 | HEIF 完整图 | `HeifDecodeService` / `oxy_media::heif_full` | macOS `Thumbnail` full stage；Windows/Linux `HeifTileCanvas` |
 | 资源 projection 状态 | `MetadataQueue` / `PreviewQueue` / SQLite | Zustand 只读镜像 |
 | 原生元数据解析 | `oxy-metadata-parser` + `oxy-metadata` | `AssetDetails` / projection types |

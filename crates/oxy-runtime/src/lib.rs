@@ -471,6 +471,14 @@ where
     pub fn len(&self) -> usize {
         self.pending.len()
     }
+
+    /// Visits the current logical entries without exposing stale heap nodes.
+    /// Intended for low-frequency diagnostics while the caller owns its queue lock.
+    pub fn entries(&self) -> impl Iterator<Item = (&K, &V, P)> {
+        self.pending
+            .iter()
+            .map(|(key, entry)| (key, &entry.value, entry.priority))
+    }
 }
 
 #[derive(Debug, Clone)]

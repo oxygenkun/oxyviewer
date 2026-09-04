@@ -11,7 +11,7 @@ use oxy_runtime::JobRegistry;
 use providers::exiftool::ProviderManager;
 use state::{AppState, cache::CacheManager};
 use std::sync::Arc;
-use tauri::{Manager, http};
+use tauri::{Emitter, Manager, http};
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
@@ -76,10 +76,20 @@ pub fn run() {
             }
         })
         .on_window_event(|window, event| {
-            if matches!(
-                event,
-                tauri::WindowEvent::CloseRequested { .. } | tauri::WindowEvent::Destroyed
-            ) {
+            if window.label() == "debug-queues" {
+                if let tauri::WindowEvent::CloseRequested { api, .. } = event {
+                    api.prevent_close();
+                    let _ = window.hide();
+                    let _ = window.emit("debug-queue-visibility", false);
+                }
+                return;
+            }
+            if window.label() == "main"
+                && matches!(
+                    event,
+                    tauri::WindowEvent::CloseRequested { .. } | tauri::WindowEvent::Destroyed
+                )
+            {
                 window.app_handle().exit(0);
             }
         })
@@ -115,6 +125,8 @@ pub fn run() {
                 directory_tree_queue,
                 metadata_provider,
             });
+
+            create_debug_queue_window(app.handle())?;
 
             Ok(())
         })
@@ -164,6 +176,9 @@ pub fn run() {
             start_heif_decode,
             cancel_heif_decode,
             get_perf_scenario,
+            get_debug_queue_snapshot,
+            open_debug_queue_window,
+            close_debug_queue_window,
             write_perf_report
         ])
         .run(tauri::generate_context!())

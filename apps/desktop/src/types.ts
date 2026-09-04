@@ -175,6 +175,28 @@ export interface AssetDetailsResult {
 
 export type RenderLevel = "thumbnail" | "preview" | "full";
 export type PreviewPriority = "preload" | "nearby" | "visible" | "loupe";
+
+export interface DebugQueueItem {
+  key: string;
+  path?: string;
+  resource?: string;
+  stage: string;
+  priority: string;
+  rank?: number;
+  consumers: number;
+}
+
+export interface DebugQueueState {
+  name: string;
+  concurrency: number;
+  pending: DebugQueueItem[];
+  active: DebugQueueItem[];
+}
+
+export interface DebugQueueSnapshot {
+  capturedAtUnixMs: number;
+  queues: DebugQueueState[];
+}
 export type SchedulePlacement = "front" | "back";
 
 export interface PreviewScheduleIntent {

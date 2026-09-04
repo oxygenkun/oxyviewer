@@ -170,6 +170,9 @@ export function Thumbnail({
   // while its scroll container is moving. Already-decoded browser images can
   // still paint immediately from the local in-memory cache.
   const source = browserImageSourceWhenEnabled(sourceCandidate, enabled);
+  const debugResourceLabel = directSource
+    ? "original"
+    : generatedSource?.renderLevel ?? previewStep.level;
   const pendingSource = source !== visibleImage?.source ? source : undefined;
   const seed = hashSeed(asset.name);
   const style = {
@@ -214,6 +217,8 @@ export function Thumbnail({
             assetName: asset.name,
             stage: directSource ? "image-direct" : "image-decode",
             priority: requestPriority,
+            resourceKey: `image:${source}`,
+            resourceLabel: debugResourceLabel,
           })
         : undefined;
       if (!handle) return;
@@ -227,7 +232,7 @@ export function Thumbnail({
       imageDebug.current.handle.cancel();
       imageDebug.current = undefined;
     };
-  }, [asset.name, directSource, failed, source]);
+  }, [asset.name, debugResourceLabel, directSource, failed, source]);
 
   useEffect(() => {
     imageDebug.current?.handle.updatePriority(requestPriority);
@@ -316,6 +321,8 @@ export function Thumbnail({
             assetName: asset.name,
             stage: directSource ? "image-direct" : "image-decode",
             priority: requestPriority,
+            resourceKey: `image:${source}`,
+            resourceLabel: debugResourceLabel,
           })
         : undefined;
       debug?.start();
@@ -345,6 +352,8 @@ export function Thumbnail({
             assetName: asset.name,
             stage: directSource ? "image-direct" : "image-decode",
             priority: requestPriority,
+            resourceKey: `image:${source}`,
+            resourceLabel: debugResourceLabel,
           })
         : undefined;
       debug?.start();
