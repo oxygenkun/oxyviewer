@@ -2,6 +2,8 @@ import { describe, expect, it } from "vitest";
 import {
   clampPan,
   clampZoom,
+  filmstripItemWidth,
+  filmstripUnloadedWidth,
   fitSize,
   getNavigatorViewport,
   MAX_PIXEL_ZOOM_PERCENT,
@@ -17,6 +19,14 @@ const stage = { width: 800, height: 600 };
 const image = { width: 700, height: 500 };
 
 describe("loupe geometry", () => {
+  it("reserves the full filmstrip width for unloaded assets", () => {
+    expect(filmstripItemWidth(116)).toBe(82);
+    expect(filmstripItemWidth(180)).toBe(146);
+    expect(filmstripItemWidth(300)).toBe(190);
+    expect(filmstripUnloadedWidth(3, 180)).toBe(448);
+    expect(filmstripUnloadedWidth(0, 180)).toBe(0);
+  });
+
   it("uses HEIF full-resolution dimensions instead of the 512 px placeholder", () => {
     expect(resolveLoupeSourceSize(
       "heif",

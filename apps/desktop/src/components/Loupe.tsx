@@ -18,6 +18,9 @@ import {
 import {
   clampPan,
   clampZoom,
+  FILMSTRIP_GAP,
+  filmstripItemWidth,
+  filmstripUnloadedWidth,
   fitSize,
   getNavigatorViewport,
   MAX_PIXEL_ZOOM_PERCENT,
@@ -46,6 +49,7 @@ import { ResizeHandle } from "./ResizeHandle";
 
 interface LoupeProps {
   assets: AssetSummary[];
+  total: number;
   fetchNextPage: () => void;
   hasNextPage: boolean;
   isFetchingNextPage: boolean;
@@ -73,6 +77,7 @@ function elementContentSize(element: HTMLElement): Size {
 
 export function Loupe({
   assets,
+  total,
   fetchNextPage,
   hasNextPage,
   isFetchingNextPage,
@@ -119,6 +124,11 @@ export function Loupe({
   const [heifStatus, setHeifStatus] = useState<HeifDecodeStatus>("probing");
   const [visibleFilmstripIds, setVisibleFilmstripIds] = useState<ReadonlySet<string>>(
     () => new Set(),
+  );
+  const unloadedFilmstripCount = Math.max(0, total - assets.length);
+  const unloadedFilmstripWidth = filmstripUnloadedWidth(
+    unloadedFilmstripCount,
+    filmstripHeight,
   );
   const details = useQuery({
     queryKey: ["asset-details", active.id],
@@ -312,6 +322,17 @@ export function Loupe({
     ),
     [active.id, priorityOrderedAssets, visibleFilmstripIds],
   );
+
+  const fetchFilmstripPageIfNeeded = useCallback((strip: HTMLDivElement) => {
+    if (!hasNextPage || isFetchingNextPage) return;
+    const loadedRight = 9 + assets.length * (filmstripItemWidth(filmstripHeight) + FILMSTRIP_GAP);
+    if (strip.scrollLeft + strip.clientWidth >= loadedRight - 400) fetchNextPage();
+  }, [assets.length, fetchNextPage, filmstripHeight, hasNextPage, isFetchingNextPage]);
+
+  useEffect(() => {
+    const strip = filmstripRef.current;
+    if (strip) fetchFilmstripPageIfNeeded(strip);
+  }, [fetchFilmstripPageIfNeeded]);
 
   const handleWheel = useCallback((event: React.WheelEvent<HTMLDivElement>) => {
     if ((event.target as HTMLElement).closest(".loupe__controls, .loupe__navigator, .loupe__settings")) return;
@@ -646,16 +667,7 @@ export function Loupe({
       <div
         className="filmstrip"
         ref={filmstripRef}
-        onScroll={(event) => {
-          const strip = event.currentTarget;
-          if (
-            hasNextPage
-            && !isFetchingNextPage
-            && strip.scrollLeft + strip.clientWidth >= strip.scrollWidth - 400
-          ) {
-            fetchNextPage();
-          }
-        }}
+        onScroll={(event) => fetchFilmstripPageIfNeeded(event.currentTarget)}
         onWheel={(event) => {
           if (event.deltaY === 0) return;
           event.preventDefault();
@@ -673,6 +685,13 @@ export function Loupe({
             showMetadata={loupeMetadataVisible}
           />
         ))}
+        {unloadedFilmstripCount > 0 ? (
+          <span
+            aria-hidden="true"
+            className="filmstrip__unloaded"
+            style={{ flexBasis: unloadedFilmstripWidth }}
+          />
+        ) : null}
         {isFetchingNextPage ? <span className="filmstrip__loading">Loading...</span> : null}
       </div>
     </div>

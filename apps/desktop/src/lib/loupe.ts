@@ -19,6 +19,23 @@ export interface NavigatorViewport {
 
 export const MIN_ZOOM = 1;
 export const MAX_PIXEL_ZOOM_PERCENT = 400;
+const FILMSTRIP_ITEM_MIN_WIDTH = 82;
+const FILMSTRIP_ITEM_MAX_WIDTH = 190;
+const FILMSTRIP_ITEM_HEIGHT_OFFSET = 34;
+export const FILMSTRIP_GAP = 5;
+
+export function filmstripItemWidth(filmstripHeight: number): number {
+  return Math.min(
+    FILMSTRIP_ITEM_MAX_WIDTH,
+    Math.max(FILMSTRIP_ITEM_MIN_WIDTH, filmstripHeight - FILMSTRIP_ITEM_HEIGHT_OFFSET),
+  );
+}
+
+export function filmstripUnloadedWidth(unloadedCount: number, filmstripHeight: number): number {
+  if (unloadedCount <= 0) return 0;
+  return unloadedCount * filmstripItemWidth(filmstripHeight)
+    + (unloadedCount - 1) * FILMSTRIP_GAP;
+}
 
 export function resolveLoupeSourceSize(
   kind: AssetKind,

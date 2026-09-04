@@ -634,6 +634,13 @@ body {
 }
 .asset-card:hover { background: #15191c; }
 .asset-card.is-selected { border-color: #68734b; background: #1b201d; box-shadow: 0 0 0 1px rgb(216 255 104 / 5%); }
+.asset-card-placeholder {
+  height: calc(100% - 7px);
+  margin: 4px;
+  border-radius: var(--radius);
+  background: #15181b;
+  opacity: .45;
+}
 .asset-card__name {
   display: block;
   margin: 7px 2px 2px;
@@ -848,6 +855,10 @@ body {
 }
 .asset-list-row:hover { background: #15181b; }
 .asset-list-row.is-selected { color: #cdd0ca; background: #1a201c; box-shadow: inset 2px 0 var(--accent); }
+.asset-list-row--placeholder {
+  background: linear-gradient(90deg, transparent 14px, #171a1d 14px, #171a1d 52%, transparent 52%);
+  opacity: .5;
+}
 .asset-list-row .thumbnail { width: 36px; height: 36px; }
 .asset-list-row > .asset-metadata-badges { justify-content: flex-start; }
 .asset-list-row strong { overflow: hidden; color: #d4d5d0; text-overflow: ellipsis; white-space: nowrap; }
@@ -1216,6 +1227,13 @@ body {
 .filmstrip .thumbnail__badge, .filmstrip .thumbnail__fallback span { display: none; }
 .filmstrip__name { overflow: hidden; font-size: 8px; line-height: 12px; text-overflow: ellipsis; white-space: nowrap; }
 .filmstrip button.is-active .filmstrip__name { color: #d4d5d0; }
+.filmstrip__unloaded {
+  align-self: stretch;
+  flex: 0 0 auto;
+  border-radius: 4px;
+  background: #15181b;
+  opacity: .35;
+}
 .filmstrip__loading { flex: 0 0 auto; padding: 0 10px; color: var(--faint); font: 8px ui-monospace, monospace; }
 
 .resize-handle {

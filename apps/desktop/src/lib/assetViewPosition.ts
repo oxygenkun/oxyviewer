@@ -12,3 +12,11 @@ export function activeAssetIndex(
 export function gridRowForAsset(assetIndex: number, columns: number): number {
   return Math.floor(assetIndex / columns);
 }
+
+export function virtualAssetCount(loadedCount: number, total: number): number {
+  return Math.max(loadedCount, total);
+}
+
+export function gridRowCount(assetCount: number, columns: number): number {
+  return Math.ceil(assetCount / columns);
+}

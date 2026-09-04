@@ -2,7 +2,12 @@ import { useVirtualizer } from "@tanstack/react-virtual";
 import { Copy, FileImage, FolderOpen, Trash2 } from "lucide-react";
 import { memo, useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
-import { activeAssetIndex, gridRowForAsset } from "../lib/assetViewPosition";
+import {
+  activeAssetIndex,
+  gridRowCount,
+  gridRowForAsset,
+  virtualAssetCount,
+} from "../lib/assetViewPosition";
 import type { MessageKey } from "../lib/i18n";
 import { platformFileManager } from "../lib/folderPaths";
 import { useWorkspaceStore } from "../store";
@@ -120,6 +125,7 @@ export function AssetBrowser(props: AssetBrowserProps) {
     content = (
       <Loupe
         assets={props.assets}
+        total={props.total}
         fetchNextPage={props.fetchNextPage}
         hasNextPage={props.hasNextPage}
         isFetchingNextPage={props.isFetchingNextPage}
@@ -212,6 +218,7 @@ export function AssetBrowser(props: AssetBrowserProps) {
 
 function VirtualGrid({
   assets,
+  total,
   hasNextPage,
   isFetchingNextPage,
   fetchNextPage,
@@ -230,7 +237,9 @@ function VirtualGrid({
   const portraitPriority = gridPreference === "portrait";
   const rowHeight = portraitPriority ? 274 : 194;
   const columns = Math.max(2, Math.floor(width / (portraitPriority ? 150 : 190)));
-  const rowCount = Math.ceil(assets.length / columns);
+  const assetCount = virtualAssetCount(assets.length, total);
+  const rowCount = gridRowCount(assetCount, columns);
+  const loadedRowCount = gridRowCount(assets.length, columns);
   const restoreActiveId = useRef(activeId).current;
   const restoreAssetIndex = activeAssetIndex(assets, restoreActiveId);
   const restoreRowIndex = restoreAssetIndex === undefined
@@ -262,8 +271,10 @@ function VirtualGrid({
 
   useEffect(() => {
     const last = rows.at(-1);
-    if (last && last.index >= rowCount - 2 && hasNextPage && !isFetchingNextPage) fetchNextPage();
-  }, [fetchNextPage, hasNextPage, isFetchingNextPage, rowCount, rows]);
+    if (last && last.index >= loadedRowCount - 2 && hasNextPage && !isFetchingNextPage) {
+      fetchNextPage();
+    }
+  }, [fetchNextPage, hasNextPage, isFetchingNextPage, loadedRowCount, rows]);
 
   return (
     <div
@@ -281,21 +292,30 @@ function VirtualGrid({
               transform: `translateY(${row.start}px)`,
             }}
           >
-            {assets.slice(row.index * columns, row.index * columns + columns).map((asset) => (
-              <AssetCard
-                key={asset.id}
-                asset={asset}
-                priority={isVisible(row.start, row.end, parentRef.current) ? "visible" : "nearby"}
-                selected={selectedIds.includes(asset.id)}
-                onSelect={(event) => select(asset.id, event.metaKey || event.ctrlKey)}
-                onContextMenu={(event) => onAssetContextMenu(event, asset)}
-                onOpen={() => {
-                  select(asset.id);
-                  setView("loupe");
-                }}
-                showMetadata={gridMetadataVisible}
-              />
-            ))}
+            {Array.from(
+              { length: Math.min(columns, assetCount - row.index * columns) },
+              (_, columnIndex) => {
+                const assetIndex = row.index * columns + columnIndex;
+                const asset = assets[assetIndex];
+                return asset ? (
+                  <AssetCard
+                    key={asset.id}
+                    asset={asset}
+                    priority={isVisible(row.start, row.end, parentRef.current) ? "visible" : "nearby"}
+                    selected={selectedIds.includes(asset.id)}
+                    onSelect={(event) => select(asset.id, event.metaKey || event.ctrlKey)}
+                    onContextMenu={(event) => onAssetContextMenu(event, asset)}
+                    onOpen={() => {
+                      select(asset.id);
+                      setView("loupe");
+                    }}
+                    showMetadata={gridMetadataVisible}
+                  />
+                ) : (
+                  <div className="asset-card-placeholder" key={`placeholder-${assetIndex}`} aria-hidden="true" />
+                );
+              },
+            )}
           </div>
         ))}
       </div>
@@ -306,6 +326,7 @@ function VirtualGrid({
 
 function VirtualList({
   assets,
+  total,
   hasNextPage,
   isFetchingNextPage,
   fetchNextPage,
@@ -319,8 +340,9 @@ function VirtualList({
   const selectedIds = useWorkspaceStore((state) => state.selectedIds);
   const select = useWorkspaceStore((state) => state.select);
   const setView = useWorkspaceStore((state) => state.setView);
+  const assetCount = virtualAssetCount(assets.length, total);
   const virtualizer = useVirtualizer({
-    count: assets.length,
+    count: assetCount,
     getScrollElement: () => parentRef.current,
     estimateSize: () => 58,
     overscan: 8,
@@ -349,6 +371,16 @@ function VirtualList({
       <div className="virtual-list" style={{ height: virtualizer.getTotalSize() }}>
         {rows.map((row) => {
           const asset = assets[row.index];
+          if (!asset) {
+            return (
+              <div
+                aria-hidden="true"
+                className="asset-list-row asset-list-row--placeholder"
+                key={row.key}
+                style={{ transform: `translateY(${row.start}px)` }}
+              />
+            );
+          }
           return (
             <button
               className={`asset-list-row ${selectedIds.includes(asset.id) ? "is-selected" : ""}`}
