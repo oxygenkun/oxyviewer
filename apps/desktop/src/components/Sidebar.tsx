@@ -904,7 +904,6 @@ export function Sidebar({
           <Settings size={15} />
         </button>
       </div>
-      <div className="sidebar__path" title={currentPath}>{currentPath ?? t("noFolderOpen")}</div>
     </aside>
   );
 }
