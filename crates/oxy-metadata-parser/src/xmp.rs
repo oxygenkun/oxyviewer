@@ -75,7 +75,7 @@ impl XmpValue {
                     .map(|(_, v)| v.as_str())
             }
             XmpValue::OrderedArray(items) | XmpValue::UnorderedArray(items) => {
-                items.first().map(|s| s.as_str())
+                items.first().map(std::string::String::as_str)
             }
             XmpValue::Struct(_) => None,
         }
@@ -87,7 +87,7 @@ impl XmpValue {
             XmpValue::Simple(s) => vec![s.as_str()],
             XmpValue::LangAlt(items) => items.iter().map(|(_, v)| v.as_str()).collect(),
             XmpValue::OrderedArray(items) | XmpValue::UnorderedArray(items) => {
-                items.iter().map(|s| s.as_str()).collect()
+                items.iter().map(std::string::String::as_str).collect()
             }
             XmpValue::Struct(_) => vec![],
         }
@@ -147,9 +147,7 @@ pub fn locate_xmp(data: &[u8]) -> Option<&str> {
     for marker in markers {
         if let Some(start) = data.windows(marker.len()).position(|w| w == *marker) {
             // Find end
-            let end = find_xmp_end(&data[start..])
-                .map(|e| start + e)
-                .unwrap_or(data.len());
+            let end = find_xmp_end(&data[start..]).map_or(data.len(), |e| start + e);
             return std::str::from_utf8(&data[start..end]).ok();
         }
     }
@@ -192,8 +190,7 @@ pub fn parse_xmp(xml: &str) -> Result<XmpData> {
         if let Some(meta_start) = xml.find(meta_needle) {
             let meta_end = xml[meta_start..]
                 .find('>')
-                .map(|e| meta_start + e)
-                .unwrap_or(xml.len());
+                .map_or(xml.len(), |e| meta_start + e);
             let meta_tag = &xml[meta_start..meta_end + 1];
             if let Some(tk_pos) = meta_tag.find(tk_needle) {
                 if let Some(value) = extract_quoted_value(&meta_tag[tk_pos + tk_needle.len()..]) {
@@ -221,8 +218,7 @@ pub fn parse_xmp(xml: &str) -> Result<XmpData> {
                 // Extract attributes from the opening tag
                 let tag_end = xml[abs_start..]
                     .find('>')
-                    .map(|e| abs_start + e)
-                    .unwrap_or(desc_end);
+                    .map_or(desc_end, |e| abs_start + e);
                 let opening_tag = &xml[abs_start..tag_end + 1];
 
                 extract_attributes(opening_tag, &ns_map, &mut properties);
@@ -386,10 +382,7 @@ fn extract_namespaces(xml: &str) -> Vec<(String, String)> {
 /// The local name is UNESCAPED on the way out (see [`decode_xml_name_escapes`]),
 /// so every consumer sees the property's real name. Callers that need to match
 /// the closing tag must keep using the raw text - this returns the decoded form.
-fn resolve_prefixed_name<'a>(
-    name: &str,
-    ns_map: &'a [(String, String)],
-) -> Option<(String, String)> {
+fn resolve_prefixed_name(name: &str, ns_map: &[(String, String)]) -> Option<(String, String)> {
     if let Some(colon) = name.find(':') {
         let prefix = &name[..colon];
         let local = &name[colon + 1..];
@@ -489,8 +482,7 @@ fn extract_attributes(tag: &str, ns_map: &[(String, String)], props: &mut Vec<Xm
                 let quote_char = tag.as_bytes().get(abs_eq + 1).copied().unwrap_or(b'"');
                 let value_end = tag[abs_eq + 2..]
                     .find(quote_char as char)
-                    .map(|p| abs_eq + 2 + p + 1)
-                    .unwrap_or(abs_eq + 2);
+                    .map_or(abs_eq + 2, |p| abs_eq + 2 + p + 1);
                 pos = value_end;
             } else {
                 pos = abs_eq + 1;
@@ -525,8 +517,7 @@ fn extract_child_elements(
             // Get tag name
             let tag_name_end = content[abs_lt + 1..]
                 .find(|c: char| c.is_whitespace() || c == '>' || c == '/')
-                .map(|p| abs_lt + 1 + p)
-                .unwrap_or(content.len());
+                .map_or(content.len(), |p| abs_lt + 1 + p);
             let tag_name = &content[abs_lt + 1..tag_name_end];
 
             if tag_name.is_empty() {
@@ -538,8 +529,7 @@ fn extract_child_elements(
                 // Check for rdf:resource or rdf:parseType on the opening tag
                 let tag_close = content[abs_lt..]
                     .find('>')
-                    .map(|e| abs_lt + e)
-                    .unwrap_or(content.len());
+                    .map_or(content.len(), |e| abs_lt + e);
                 let opening_tag = &content[abs_lt..tag_close + 1];
 
                 // Check for rdf:resource attribute (e.g., <xmpMM:DocumentID rdf:resource="..."/>)
@@ -672,8 +662,7 @@ fn parse_element_value(inner: &str, _ns_map: &[(String, String)]) -> XmpValue {
                 // Extract attributes
                 let tag_end = trimmed[desc_start..]
                     .find('>')
-                    .map(|e| desc_start + e)
-                    .unwrap_or(trimmed.len());
+                    .map_or(trimmed.len(), |e| desc_start + e);
                 let opening = &trimmed[desc_start..tag_end + 1];
                 let mut pos = 0;
                 while pos < opening.len() {
@@ -708,8 +697,7 @@ fn parse_element_value(inner: &str, _ns_map: &[(String, String)]) -> XmpValue {
                         }
                         let name_end = desc_inner[abs + 1..]
                             .find(|c: char| c.is_whitespace() || c == '>' || c == '/')
-                            .map(|p| abs + 1 + p)
-                            .unwrap_or(desc_inner.len());
+                            .map_or(desc_inner.len(), |p| abs + 1 + p);
                         let tn = &desc_inner[abs + 1..name_end];
                         if !tn.is_empty() {
                             if let Some((text, end)) = find_element_content(desc_inner, abs, tn) {
@@ -759,8 +747,7 @@ fn extract_struct_attributes(
             // Get the attribute name before '='
             let attr_start = tag[..abs_eq]
                 .rfind(|c: char| c.is_whitespace())
-                .map(|p| p + 1)
-                .unwrap_or(0);
+                .map_or(0, |p| p + 1);
             let attr_name = &tag[attr_start..abs_eq];
 
             // Must be prefixed (contain ':') and not be xmlns:, rdf:, xml:
@@ -819,7 +806,7 @@ fn try_flatten_seq_of_structs(
         let mut item_fields: Vec<(String, String, String)> = Vec::new();
 
         // Extract prefixed attributes from the attrs string (stEvt:action="..." pattern)
-        let dummy_tag = format!("<rdf:li {}>", attrs);
+        let dummy_tag = format!("<rdf:li {attrs}>");
         let struct_attrs = extract_struct_attributes(&dummy_tag, ns_map);
         if !struct_attrs.is_empty() {
             has_struct_attrs = true;
@@ -844,22 +831,19 @@ fn try_flatten_seq_of_structs(
                     let after_lt = abs + 1;
                     let name_end = text[after_lt..]
                         .find(|c: char| c.is_whitespace() || c == '>' || c == '/')
-                        .map(|e| after_lt + e)
-                        .unwrap_or(text.len());
+                        .map_or(text.len(), |e| after_lt + e);
                     let child_tag = &text[after_lt..name_end];
                     if child_tag.contains(':') && !child_tag.starts_with("rdf:") {
                         // First, extract attributes from this child element
                         // (e.g., <Container:Item Item:Mime="image/jpeg"/>)
-                        let tag_end = text[abs..].find('>').map(|e| abs + e).unwrap_or(text.len());
+                        let tag_end = text[abs..].find('>').map_or(text.len(), |e| abs + e);
                         let full_child_tag = &text[abs..tag_end + 1];
                         let child_attrs = extract_struct_attributes(full_child_tag, ns_map);
                         if !child_attrs.is_empty() {
                             // Prepend child element's local name to attribute names
                             // e.g., Container:Item + Item:Mime -> "ItemMime"
-                            let child_local = child_tag
-                                .split_once(':')
-                                .map(|(_, l)| l)
-                                .unwrap_or(child_tag);
+                            let child_local =
+                                child_tag.split_once(':').map_or(child_tag, |(_, l)| l);
                             for (ns, local, val) in child_attrs {
                                 let combined =
                                     format!("{child_local}{}", capitalize_first_char(&local));
@@ -877,10 +861,8 @@ fn try_flatten_seq_of_structs(
                             if !child_content.is_empty() && !child_content.contains('<') {
                                 // Simple text content - resolve namespace
                                 if let Some((ns, _)) = resolve_prefixed_name(child_tag, ns_map) {
-                                    let local = child_tag
-                                        .split_once(':')
-                                        .map(|(_, l)| l)
-                                        .unwrap_or(child_tag);
+                                    let local =
+                                        child_tag.split_once(':').map_or(child_tag, |(_, l)| l);
                                     item_fields.push((
                                         ns,
                                         local.to_string(),
@@ -951,16 +933,12 @@ fn flatten_struct_children(
             }
             let name_end = inner[abs + 1..]
                 .find(|c: char| c.is_whitespace() || c == '>' || c == '/')
-                .map(|p| abs + 1 + p)
-                .unwrap_or(inner.len());
+                .map_or(inner.len(), |p| abs + 1 + p);
             let tn = &inner[abs + 1..name_end];
             if !tn.is_empty() {
                 if let Some((_ns, local)) = resolve_prefixed_name(tn, ns_map) {
                     // Check for rdf:resource on this child
-                    let tag_close = inner[abs..]
-                        .find('>')
-                        .map(|e| abs + e)
-                        .unwrap_or(inner.len());
+                    let tag_close = inner[abs..].find('>').map_or(inner.len(), |e| abs + e);
                     let child_tag = &inner[abs..tag_close + 1];
                     let flat_name = format!("{parent_name}{}", capitalize_first_char(&local));
 
@@ -1048,10 +1026,7 @@ fn extract_rdf_list_items(content: &str, _container: &str) -> Vec<(String, Strin
         if let Some(li_start) = content[pos..].find("<rdf:li") {
             let abs = pos + li_start;
             // Get attributes
-            let tag_end = content[abs..]
-                .find('>')
-                .map(|e| abs + e)
-                .unwrap_or(content.len());
+            let tag_end = content[abs..].find('>').map_or(content.len(), |e| abs + e);
             let attrs = content[abs + 7..tag_end].to_string();
 
             if let Some((inner, end)) = find_element_content(content, abs, "rdf:li") {
@@ -1118,8 +1093,8 @@ fn find_element_content<'a>(
     let mut depth = 1;
 
     // Find the matching closing tag
-    let open_pat = format!("<{}", tag_name);
-    let close_pat = format!("</{}>", tag_name);
+    let open_pat = format!("<{tag_name}");
+    let close_pat = format!("</{tag_name}>");
 
     while pos < xml.len() && depth > 0 {
         if xml[pos..].starts_with(&close_pat) {
@@ -1146,7 +1121,7 @@ fn find_element_content<'a>(
             pos += open_pat.len();
         } else {
             // Advance by one UTF-8 character (may be multi-byte)
-            pos += xml[pos..].chars().next().map_or(1, |c| c.len_utf8());
+            pos += xml[pos..].chars().next().map_or(1, char::len_utf8);
         }
     }
 

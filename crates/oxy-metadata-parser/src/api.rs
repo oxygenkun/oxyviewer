@@ -531,7 +531,7 @@ impl<'a> SiftDocument<'a> {
     pub fn thumbnail(&self) -> Option<Vec<u8>> {
         let tiff_data = self.find_exif_data()?;
         let exif = crate::tiff::exif::ExifData::parse(tiff_data).ok()?;
-        exif.thumbnail.map(|t| t.to_vec())
+        exif.thumbnail.map(<[u8]>::to_vec)
     }
 
     // -- PDF-specific: images and text ------------------------------------
@@ -661,7 +661,9 @@ impl<'a> SiftDocument<'a> {
     fn find_exif_data(&self) -> Option<&'a [u8]> {
         match &self.inner {
             #[cfg(feature = "jpeg")]
-            DocumentInner::Jpeg { segments } => segments.iter().find_map(|s| s.exif_tiff_data()),
+            DocumentInner::Jpeg { segments } => segments
+                .iter()
+                .find_map(super::jpeg::Segment::exif_tiff_data),
             #[cfg(feature = "png")]
             DocumentInner::Png { chunks } => crate::png::find_exif_chunk(chunks),
             #[cfg(feature = "webp")]
@@ -680,7 +682,9 @@ impl<'a> SiftDocument<'a> {
     fn find_xmp_data(&self) -> Option<&'a [u8]> {
         match &self.inner {
             #[cfg(feature = "jpeg")]
-            DocumentInner::Jpeg { segments } => segments.iter().find_map(|s| s.xmp_data()),
+            DocumentInner::Jpeg { segments } => {
+                segments.iter().find_map(super::jpeg::Segment::xmp_data)
+            }
             #[cfg(feature = "png")]
             DocumentInner::Png { chunks } => crate::png::find_xmp_data(chunks),
             #[cfg(feature = "webp")]
@@ -716,9 +720,9 @@ impl<'a> SiftDocument<'a> {
                 })
             }
             #[cfg(feature = "webp")]
-            DocumentInner::WebP { webp } => crate::webp::find_iccp(webp).map(|d| d.to_vec()),
+            DocumentInner::WebP { webp } => crate::webp::find_iccp(webp).map(<[u8]>::to_vec),
             #[cfg(feature = "heif")]
-            DocumentInner::Heif { info } => info.icc_data.map(|d| d.to_vec()),
+            DocumentInner::Heif { info } => info.icc_data.map(<[u8]>::to_vec),
             _ => None,
         }
     }
@@ -753,24 +757,21 @@ impl<'a> SiftDocument<'a> {
     fn collect_xmp_tags(&self, tags: &mut Vec<Tag>) {
         #[cfg(feature = "xmp")]
         {
-            let xmp_bytes = match self.find_xmp_data() {
-                Some(d) => d,
-                None => {
-                    // For PDF, try extracting from metadata
-                    #[cfg(feature = "pdf")]
-                    if let DocumentInner::Pdf { doc } = &self.inner {
-                        if let Ok(meta) = doc.metadata() {
-                            if let Some(ref xmp_data) = meta.xmp {
-                                if let Ok(xml) = std::str::from_utf8(xmp_data) {
-                                    if let Ok(xmp) = crate::xmp::parse_xmp(xml) {
-                                        emit_xmp_tags(&xmp, tags);
-                                    }
+            let Some(xmp_bytes) = self.find_xmp_data() else {
+                // For PDF, try extracting from metadata
+                #[cfg(feature = "pdf")]
+                if let DocumentInner::Pdf { doc } = &self.inner {
+                    if let Ok(meta) = doc.metadata() {
+                        if let Some(ref xmp_data) = meta.xmp {
+                            if let Ok(xml) = std::str::from_utf8(xmp_data) {
+                                if let Ok(xmp) = crate::xmp::parse_xmp(xml) {
+                                    emit_xmp_tags(&xmp, tags);
                                 }
                             }
                         }
                     }
-                    return;
                 }
+                return;
             };
 
             if let Some(xmp) = try_parse_xmp(xmp_bytes) {
@@ -830,9 +831,8 @@ impl<'a> SiftDocument<'a> {
     fn collect_icc_tags(&self, tags: &mut Vec<Tag>) {
         #[cfg(feature = "icc")]
         {
-            let icc_data = match self.find_icc_data() {
-                Some(d) => d,
-                None => return,
+            let Some(icc_data) = self.find_icc_data() else {
+                return;
             };
 
             if let Ok(profile) = crate::icc::parse_icc_profile(&icc_data) {
@@ -993,6 +993,10 @@ impl<'a> SiftDocument<'a> {
     // The body is gated on the feature that provides the parser, so with
     // that feature off there is nothing to push and `tags` goes unread.
     #[cfg_attr(not(feature = "pdf"), allow(unused_variables))]
+    #[allow(
+        clippy::ptr_arg,
+        reason = "the optional PDF implementation appends tags to this collection"
+    )]
     fn collect_pdf_tags(&self, tags: &mut Vec<Tag>) {
         #[cfg(feature = "pdf")]
         {
@@ -1198,7 +1202,10 @@ impl<'a> SiftDocument<'a> {
                     tags.push(Tag::new("HEIF", "Rotation", format!("{rot}")));
                 }
                 if let Some(ref depths) = info.pixel_depths {
-                    let s: Vec<String> = depths.iter().map(|d| d.to_string()).collect();
+                    let s: Vec<String> = depths
+                        .iter()
+                        .map(std::string::ToString::to_string)
+                        .collect();
                     tags.push(Tag::new("HEIF", "ImagePixelDepth", s.join(" ")));
                 }
                 // ISOBMFF container metadata
@@ -1718,9 +1725,8 @@ fn emit_exif_from_tiff(tiff_data: &[u8], tiff_base: usize, tags: &mut Vec<Tag>) 
     use crate::core::TagValue;
     use crate::tiff::tags::{self, TagGroup};
 
-    let exif = match crate::tiff::exif::ExifData::parse(tiff_data) {
-        Ok(e) => e,
-        Err(_) => return,
+    let Ok(exif) = crate::tiff::exif::ExifData::parse(tiff_data) else {
+        return;
     };
 
     let be = exif.header.big_endian;
@@ -1959,7 +1965,7 @@ impl std::fmt::Display for GpsCoordinates {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "{:.6}, {:.6}", self.latitude, self.longitude)?;
         if let Some(alt) = self.altitude {
-            write!(f, ", {:.1}m", alt)?;
+            write!(f, ", {alt:.1}m")?;
         }
         Ok(())
     }

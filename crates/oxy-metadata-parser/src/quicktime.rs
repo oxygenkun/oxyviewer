@@ -284,9 +284,8 @@ fn parse_tkhd(data: &[u8], track: &mut Track, info: &QuickTimeInfo) {
 
 /// Parse mdia (media) box.
 fn parse_mdia(data: &[u8], track: &mut Track) {
-    let children = match crate::heif::parse_boxes(data) {
-        Ok(c) => c,
-        Err(_) => return,
+    let Ok(children) = crate::heif::parse_boxes(data) else {
+        return;
     };
 
     // mdhd - media header
@@ -325,18 +324,17 @@ fn parse_mdhd(data: &[u8], track: &mut Track) {
     let version = data[0];
     let mut r = Reader::new(&data[4..]);
 
-    let media_duration;
-    if version == 1 {
+    let media_duration = if version == 1 {
         let _ = r.read_u64_be(); // creation time
         let _ = r.read_u64_be(); // modification time
         track.media_time_scale = r.read_u32_be().unwrap_or(0);
-        media_duration = r.read_u64_be().unwrap_or(0);
+        r.read_u64_be().unwrap_or(0)
     } else {
         let _ = r.read_u32_be(); // creation time
         let _ = r.read_u32_be(); // modification time
         track.media_time_scale = r.read_u32_be().unwrap_or(0);
-        media_duration = r.read_u32_be().unwrap_or(0) as u64;
-    }
+        r.read_u32_be().unwrap_or(0) as u64
+    };
 
     // Better duration from media header
     if track.media_time_scale > 0 {
@@ -376,7 +374,7 @@ fn parse_hdlr(data: &[u8], track: &mut Track) {
         let desc = &data[24..];
         // May be pascal string (first byte = length) or C string
         if !desc.is_empty() {
-            let s = if desc[0] as usize <= desc.len() - 1 && desc[0] > 0 && desc[0] < 128 {
+            let s = if (desc[0] as usize) < desc.len() && desc[0] > 0 && desc[0] < 128 {
                 // Check if it's a pascal string
                 let len = desc[0] as usize;
                 if len < desc.len() {
@@ -448,9 +446,9 @@ fn parse_stsd(data: &[u8], track: &mut Track) {
                 }
             }
         }
-        TrackType::Audio => {
+        TrackType::Audio
             // Audio sample entry
-            if r.remaining() >= 20 {
+            if r.remaining() >= 20 => {
                 let _ = r.read_bytes(8); // reserved (version(2) + revision(2) + vendor(4))
                 track.audio_channels = r.read_u16_be().unwrap_or(0);
                 track.audio_bps = r.read_u16_be().unwrap_or(0);
@@ -459,7 +457,6 @@ fn parse_stsd(data: &[u8], track: &mut Track) {
                 let sr_fixed = r.read_u32_be().unwrap_or(0);
                 track.audio_sample_rate = sr_fixed >> 16; // 16.16 fixed point
             }
-        }
         _ => {}
     }
 }
@@ -487,9 +484,8 @@ fn estimate_frame_rate(data: &[u8], track: &mut Track) {
 
 /// Parse udta (user data) box.
 fn parse_udta<'a>(data: &[u8], file_data: &'a [u8], info: &mut QuickTimeInfo<'a>) {
-    let children = match crate::heif::parse_boxes(data) {
-        Ok(c) => c,
-        Err(_) => return,
+    let Ok(children) = crate::heif::parse_boxes(data) else {
+        return;
     };
 
     // GPS string: ©xyz
@@ -520,15 +516,15 @@ fn parse_udta<'a>(data: &[u8], file_data: &'a [u8], info: &mut QuickTimeInfo<'a>
         if let Ok(meta_children) = crate::heif::parse_boxes(meta_data) {
             for child in &meta_children {
                 // XMP can be in an 'XMP_' or 'xml ' handler
-                if &child.box_type == b"xml " || &child.box_type == b"XMP_" {
-                    if !child.data.is_empty() {
-                        // Compute offset back into file_data
-                        let ptr = child.data.as_ptr() as usize;
-                        let base = file_data.as_ptr() as usize;
-                        if ptr >= base && ptr + child.data.len() <= base + file_data.len() {
-                            let offset = ptr - base;
-                            info.xmp_data = Some(&file_data[offset..offset + child.data.len()]);
-                        }
+                if (&child.box_type == b"xml " || &child.box_type == b"XMP_")
+                    && !child.data.is_empty()
+                {
+                    // Compute offset back into file_data
+                    let ptr = child.data.as_ptr() as usize;
+                    let base = file_data.as_ptr() as usize;
+                    if ptr >= base && ptr + child.data.len() <= base + file_data.len() {
+                        let offset = ptr - base;
+                        info.xmp_data = Some(&file_data[offset..offset + child.data.len()]);
                     }
                 }
             }
@@ -537,7 +533,7 @@ fn parse_udta<'a>(data: &[u8], file_data: &'a [u8], info: &mut QuickTimeInfo<'a>
 }
 
 /// Look for XMP in a UUID box.
-fn find_xmp_uuid<'a>(data: &'a [u8]) -> Option<&'a [u8]> {
+fn find_xmp_uuid(data: &[u8]) -> Option<&[u8]> {
     // XMP UUID: BE7ACFCB-97A9-42E8-9C71-999491E3AFAC
     const XMP_UUID: [u8; 16] = [
         0xBE, 0x7A, 0xCF, 0xCB, 0x97, 0xA9, 0x42, 0xE8, 0x9C, 0x71, 0x99, 0x94, 0x91, 0xE3, 0xAF,
@@ -546,10 +542,8 @@ fn find_xmp_uuid<'a>(data: &'a [u8]) -> Option<&'a [u8]> {
 
     let boxes = crate::heif::parse_boxes(data).ok()?;
     for b in &boxes {
-        if &b.box_type == b"uuid" && b.data.len() > 16 {
-            if b.data[..16] == XMP_UUID {
-                return Some(&b.data[16..]);
-            }
+        if &b.box_type == b"uuid" && b.data.len() > 16 && b.data[..16] == XMP_UUID {
+            return Some(&b.data[16..]);
         }
     }
     None
@@ -580,19 +574,14 @@ pub fn format_qt_date(secs: u64) -> String {
 
 fn days_to_ymd(mut days: u64) -> (u64, u64, u64) {
     // Algorithm from https://howardhinnant.github.io/date_algorithms.html
-    let era;
-    let doe;
-    let yoe;
-    let doy;
-    let mp;
 
     days += 719468;
-    era = days / 146097;
-    doe = days - era * 146097;
-    yoe = (doe - doe / 1460 + doe / 36524 - doe / 146096) / 365;
+    let era = days / 146097;
+    let doe = days - era * 146097;
+    let yoe = (doe - doe / 1460 + doe / 36524 - doe / 146096) / 365;
     let y = yoe + era * 400;
-    doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
-    mp = (5 * doy + 2) / 153;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    let mp = (5 * doy + 2) / 153;
     let d = doy - (153 * mp + 2) / 5 + 1;
     let m = if mp < 10 { mp + 3 } else { mp - 9 };
     let y = if m <= 2 { y + 1 } else { y };

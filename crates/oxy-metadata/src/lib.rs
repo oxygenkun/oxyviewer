@@ -920,10 +920,7 @@ fn set_xmp_attribute(xml: &str, name: &str, value: Option<&str>) -> Result<Strin
 }
 
 fn insert_description_attribute(opening: &mut String, name: &str, value: &str) {
-    let self_closing_insertion = opening
-        .trim_end()
-        .strip_suffix('/')
-        .map(|without_slash| without_slash.len());
+    let self_closing_insertion = opening.trim_end().strip_suffix('/').map(str::len);
     let insertion = self_closing_insertion.unwrap_or(opening.len());
     let trailing_space = if self_closing_insertion.is_some() {
         " "

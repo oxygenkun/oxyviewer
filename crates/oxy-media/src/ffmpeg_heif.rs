@@ -560,7 +560,7 @@ fn cached_grid(path: &Path) -> Result<TileGrid, MediaError> {
     };
     if let Some(grid) = GRID_CACHE
         .lock()
-        .unwrap_or_else(|error| error.into_inner())
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
         .get(&key)
         .cloned()
     {
@@ -569,7 +569,7 @@ fn cached_grid(path: &Path) -> Result<TileGrid, MediaError> {
     let grid = probe_grid(path)?;
     GRID_CACHE
         .lock()
-        .unwrap_or_else(|error| error.into_inner())
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
         .insert(key, grid.clone());
     Ok(grid)
 }

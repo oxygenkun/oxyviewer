@@ -5,6 +5,9 @@ license.workspace = true
 rust-version.workspace = true
 version.workspace = true
 
+[lints]
+workspace = true
+
 [dependencies]
 oxy-domain = { path = "../oxy-domain" }
 oxy-fs = { path = "../oxy-fs" }

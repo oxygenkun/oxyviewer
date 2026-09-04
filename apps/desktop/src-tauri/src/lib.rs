@@ -96,7 +96,7 @@ pub fn run() {
                 jobs: JobRegistry::default(),
                 library,
                 cache,
-                heif: heif.clone(),
+                heif,
                 metadata,
                 metadata_queue,
                 preview_queue,

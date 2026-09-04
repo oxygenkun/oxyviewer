@@ -183,7 +183,7 @@ impl TagValue {
 
 fn format_array<T: std::fmt::Display>(a: &[T]) -> String {
     a.iter()
-        .map(|v| v.to_string())
+        .map(std::string::ToString::to_string)
         .collect::<Vec<_>>()
         .join(" ")
 }

@@ -248,9 +248,7 @@ fn heif_error(path: &Path, error: impl std::fmt::Display) -> MediaError {
 /// Build [`DecodingOptions`] with an optional workload-specific thread limit.
 fn decoding_options(thread_limit: Option<u32>) -> Option<DecodingOptions> {
     let mut options = DecodingOptions::new()?;
-    let available = std::thread::available_parallelism()
-        .map(|n| n.get() as u32)
-        .unwrap_or(1);
+    let available = std::thread::available_parallelism().map_or(1, |n| n.get() as u32);
     let threads = thread_limit.unwrap_or(available).min(available).max(1);
     options.set_num_codec_threads(threads);
     options.set_num_library_threads(threads);

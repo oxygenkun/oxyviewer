@@ -1,5 +1,3 @@
-#![allow(clippy::all)]
-
 //! OxyViewer's format-neutral image metadata parser.
 //!
 //! # Quick start

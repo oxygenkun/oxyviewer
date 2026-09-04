@@ -20,10 +20,10 @@ struct Case {
 }
 
 fn main() -> Result<(), Box<dyn Error>> {
-    let path = env::args_os()
-        .nth(1)
-        .map(PathBuf::from)
-        .unwrap_or_else(|| PathBuf::from("tests/fixtures/DSC00449.HIF"));
+    let path = env::args_os().nth(1).map_or_else(
+        || PathBuf::from("tests/fixtures/DSC00449.HIF"),
+        PathBuf::from,
+    );
     #[cfg(target_os = "windows")]
     let sink = "NUL";
     #[cfg(any(target_os = "macos", target_os = "linux"))]

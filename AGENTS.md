@@ -40,6 +40,10 @@ cargo test --workspace
 
 Use `pnpm icons` only when intentionally regenerating application icons.
 
+Rust changes must also follow [`docs/RUST_STYLE.md`](docs/RUST_STYLE.md). New
+workspace packages must opt into the shared lint policy with
+`[lints] workspace = true`; do not add crate-wide Clippy exemptions.
+
 ## Architecture Rules
 
 - Keep `src-tauri` thin. Put reusable behavior in the appropriate Rust crate.

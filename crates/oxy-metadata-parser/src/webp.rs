@@ -108,17 +108,11 @@ pub fn parse_webp<'a>(data: &'a [u8]) -> Result<WebP<'a>> {
         }
 
         // W6: Dimensions from VP8L (lossless)
-        if &fourcc == b"VP8L" && chunk_data.len() >= 5 && width == 0 {
-            if chunk_data[0] == 0x2F {
-                let bits = u32::from_le_bytes([
-                    chunk_data[1],
-                    chunk_data[2],
-                    chunk_data[3],
-                    chunk_data[4],
-                ]);
-                width = (bits & 0x3FFF) + 1;
-                height = ((bits >> 14) & 0x3FFF) + 1;
-            }
+        if &fourcc == b"VP8L" && chunk_data.len() >= 5 && width == 0 && chunk_data[0] == 0x2F {
+            let bits =
+                u32::from_le_bytes([chunk_data[1], chunk_data[2], chunk_data[3], chunk_data[4]]);
+            width = (bits & 0x3FFF) + 1;
+            height = ((bits >> 14) & 0x3FFF) + 1;
         }
 
         chunks.push(RiffChunk {

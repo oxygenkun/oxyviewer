@@ -180,7 +180,7 @@ impl<'a> ExifData<'a> {
 
     /// Get an IFD0 entry's ASCII value by tag ID.
     pub fn ifd0_ascii(&self, tag: u16) -> Option<&'a str> {
-        self.ifd0.entry(tag).and_then(|e| e.as_ascii())
+        self.ifd0.entry(tag).and_then(super::IfdEntry::as_ascii)
     }
 
     /// Get an ExifIFD entry's ASCII value by tag ID.
@@ -188,7 +188,7 @@ impl<'a> ExifData<'a> {
         self.exif_ifd
             .as_ref()?
             .entry(tag)
-            .and_then(|e| e.as_ascii())
+            .and_then(super::IfdEntry::as_ascii)
     }
 }
 
@@ -358,8 +358,8 @@ fn detect_maker_note_format(data: &[u8]) -> MakerNoteFormat {
     // Kodak binary maker notes - NOT IFD-based, must detect before the generic IFD check.
     // Type 2 (DC220/DC260/DC265/DC290): starts with 01 00 [00|01] 00 00 00 04 00 + ASCII,
     //   or has "Eastman Kodak" at offset 8
-    if data.len() > 44 {
-        if (data[0] == 0x01
+    if data.len() > 44
+        && ((data[0] == 0x01
             && data[1] == 0x00
             && (data[2] == 0x00 || data[2] == 0x01)
             && data[3] == 0x00
@@ -367,11 +367,10 @@ fn detect_maker_note_format(data: &[u8]) -> MakerNoteFormat {
             && data[5] == 0x00
             && data[6] == 0x04
             && data[7] == 0x00
-            && data[8..12].iter().all(|b| b.is_ascii_alphabetic()))
-            || data.get(8..21) == Some(b"Eastman Kodak")
-        {
-            return MakerNoteFormat::Unknown;
-        }
+            && data[8..12].iter().all(u8::is_ascii_alphabetic))
+            || data.get(8..21) == Some(b"Eastman Kodak"))
+    {
+        return MakerNoteFormat::Unknown;
     }
     // Type 4 (DC200/DC215): bytes 41..44 == "JPG"
     if data.len() > 44 && data.get(41..44) == Some(b"JPG") {
@@ -690,12 +689,14 @@ mod tests {
     use super::*;
     use crate::tiff::DataType;
 
+    type TestEntry = (u16, u16, u32, Vec<u8>);
+
     /// Build minimal TIFF data with IFD0 containing given entries,
     /// plus optional SubIFD entries at ExifIFD pointer.
     fn build_exif_tiff(
-        ifd0_entries: &[(u16, u16, u32, Vec<u8>)],
-        exif_entries: Option<&[(u16, u16, u32, Vec<u8>)]>,
-        gps_entries: Option<&[(u16, u16, u32, Vec<u8>)]>,
+        ifd0_entries: &[TestEntry],
+        exif_entries: Option<&[TestEntry]>,
+        gps_entries: Option<&[TestEntry]>,
     ) -> Vec<u8> {
         let mut data = Vec::new();
 
@@ -975,7 +976,7 @@ mod tests {
 
     /// Build a multi-page TIFF (LE) with the given list of pages.
     /// Each page is a list of (tag, type, count, value_bytes) entries.
-    fn build_multipage_tiff(pages: &[Vec<(u16, u16, u32, Vec<u8>)>]) -> Vec<u8> {
+    fn build_multipage_tiff(pages: &[Vec<TestEntry>]) -> Vec<u8> {
         let mut data = Vec::new();
 
         // Header

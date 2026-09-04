@@ -69,14 +69,14 @@ impl CacheManager {
         let config = self
             .config
             .read()
-            .unwrap_or_else(|error| error.into_inner());
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         resolve_preview_dir(&self.default_preview_dir, config.custom_parent.as_deref())
     }
 
     pub fn max_size_bytes(&self) -> u64 {
         self.config
             .read()
-            .unwrap_or_else(|error| error.into_inner())
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
             .max_size_bytes
     }
 
@@ -84,7 +84,7 @@ impl CacheManager {
         let config = self
             .config
             .read()
-            .unwrap_or_else(|error| error.into_inner());
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         let location =
             resolve_preview_dir(&self.default_preview_dir, config.custom_parent.as_deref());
         let usage = oxy_media::preview_cache_usage(&location).map_err(|error| error.to_string())?;
@@ -122,7 +122,7 @@ impl CacheManager {
         *self
             .config
             .write()
-            .unwrap_or_else(|error| error.into_inner()) = next;
+            .unwrap_or_else(std::sync::PoisonError::into_inner) = next;
         oxy_media::prune_preview_cache(&preview_dir, update.max_size_bytes, None)
             .map_err(|error| error.to_string())?;
         self.settings()
@@ -176,9 +176,10 @@ impl CacheManager {
 }
 
 fn resolve_preview_dir(default: &Path, custom_parent: Option<&Path>) -> PathBuf {
-    custom_parent
-        .map(|parent| parent.join(CUSTOM_CACHE_FOLDER).join("previews"))
-        .unwrap_or_else(|| default.to_owned())
+    custom_parent.map_or_else(
+        || default.to_owned(),
+        |parent| parent.join(CUSTOM_CACHE_FOLDER).join("previews"),
+    )
 }
 
 fn valid_limit(value: u64) -> bool {

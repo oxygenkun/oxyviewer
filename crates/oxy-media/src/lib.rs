@@ -101,7 +101,10 @@ impl DecodeGate {
     }
 
     fn acquire(&self, priority: DecodePriority) -> DecodePermit<'_> {
-        let mut state = self.state.lock().unwrap_or_else(|error| error.into_inner());
+        let mut state = self
+            .state
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         if priority == DecodePriority::Foreground {
             state.foreground_waiters += 1;
         } else if priority == DecodePriority::Visible {
@@ -119,7 +122,7 @@ impl DecodeGate {
             state = self
                 .ready
                 .wait(state)
-                .unwrap_or_else(|error| error.into_inner());
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
         }
         if priority == DecodePriority::Foreground {
             state.foreground_waiters -= 1;
@@ -137,7 +140,7 @@ impl Drop for DecodePermit<'_> {
             .gate
             .state
             .lock()
-            .unwrap_or_else(|error| error.into_inner());
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         state.active = false;
         self.gate.ready.notify_all();
     }
@@ -178,7 +181,9 @@ fn acquire_file_lock(cache_key: &str) -> (Arc<Mutex<()>>, std::sync::MutexGuard<
     // Safety: the Mutex lives inside the static DECODE_LOCKS HashMap behind an
     // Arc that is never removed; the returned Arc keeps it alive.
     let mutex: &'static Mutex<()> = unsafe { &*Arc::as_ptr(&arc) };
-    let guard = mutex.lock().unwrap_or_else(|e| e.into_inner());
+    let guard = mutex
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
     (arc, guard)
 }
 
@@ -452,7 +457,7 @@ pub fn raw_full(path: &Path, cache_dir: &Path) -> Result<PreviewResult, MediaErr
 
     let _decode_guard = RAW_FULL_DECODE_LOCK
         .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner());
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
     if destination.is_file() {
         return preview_result(destination, PreviewKind::Developed);
     }
@@ -1260,7 +1265,10 @@ mod tests {
 
         let started = Instant::now();
         loop {
-            let state = gate.state.lock().unwrap_or_else(|error| error.into_inner());
+            let state = gate
+                .state
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
             if state.foreground_waiters == 1 && state.visible_waiters == 1 {
                 break;
             }
@@ -1309,7 +1317,10 @@ mod tests {
 
         let started = Instant::now();
         loop {
-            let state = gate.state.lock().unwrap_or_else(|error| error.into_inner());
+            let state = gate
+                .state
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
             if state.visible_waiters == 1 {
                 break;
             }
@@ -1625,11 +1636,10 @@ mod tests {
     #[test]
     #[ignore = "requires local ARW/HIF fixtures; run explicitly in release mode"]
     fn fixture_preview_performance_budgets() {
-        let fixture_dir = std::env::var_os("OXY_MEDIA_FIXTURE_DIR")
-            .map(workspace_path)
-            .unwrap_or_else(|| {
-                Path::new(env!("CARGO_MANIFEST_DIR")).join("../../test/fixtures/media")
-            });
+        let fixture_dir = std::env::var_os("OXY_MEDIA_FIXTURE_DIR").map_or_else(
+            || Path::new(env!("CARGO_MANIFEST_DIR")).join("../../test/fixtures/media"),
+            workspace_path,
+        );
         let mut fixtures = fs::read_dir(&fixture_dir)
             .unwrap_or_else(|error| panic!("failed to read {}: {error}", fixture_dir.display()))
             .filter_map(Result::ok)
@@ -1707,11 +1717,10 @@ mod tests {
         let started = Instant::now();
         let full = heif_full(&heif_path, cache_full.path()).unwrap();
         let full_elapsed = started.elapsed();
-        eprintln!("HEIF full decode: {:?}", full_elapsed);
+        eprintln!("HEIF full decode: {full_elapsed:?}");
         assert!(
             full_elapsed < Duration::from_secs(3),
-            "full decode took {:?}",
-            full_elapsed
+            "full decode took {full_elapsed:?}"
         );
 
         // Warm full-detail cache hit.
@@ -1721,11 +1730,10 @@ mod tests {
             full.path
         );
         let warm_full = started.elapsed();
-        eprintln!("HEIF warm full: {:?}", warm_full);
+        eprintln!("HEIF warm full: {warm_full:?}");
         assert!(
             warm_full < Duration::from_millis(100),
-            "warm full took {:?}",
-            warm_full
+            "warm full took {warm_full:?}"
         );
 
         // Cold 512 px thumbnail via decode_scaled (8-bit fast path).
@@ -1733,11 +1741,10 @@ mod tests {
         let started = Instant::now();
         let thumb = heif_preview(&heif_path, cache_thumb.path(), 512).unwrap();
         let thumb_elapsed = started.elapsed();
-        eprintln!("HEIF thumbnail (512): {:?}", thumb_elapsed);
+        eprintln!("HEIF thumbnail (512): {thumb_elapsed:?}");
         assert!(
             thumb_elapsed < Duration::from_millis(800),
-            "thumbnail took {:?}",
-            thumb_elapsed
+            "thumbnail took {thumb_elapsed:?}"
         );
         assert!(thumb.width <= 512 && thumb.height <= 512);
 
@@ -1746,11 +1753,10 @@ mod tests {
         let started = Instant::now();
         let loupe = heif_preview(&heif_path, cache_loupe.path(), 4_096).unwrap();
         let loupe_elapsed = started.elapsed();
-        eprintln!("HEIF loupe (4096): {:?}", loupe_elapsed);
+        eprintln!("HEIF loupe (4096): {loupe_elapsed:?}");
         assert!(
             loupe_elapsed < Duration::from_millis(1_500),
-            "loupe took {:?}",
-            loupe_elapsed
+            "loupe took {loupe_elapsed:?}"
         );
         assert!(loupe.width <= 4_096 && loupe.height <= 4_096);
 
@@ -1763,11 +1769,10 @@ mod tests {
             loupe.path
         );
         let warm_loupe = started.elapsed();
-        eprintln!("HEIF warm loupe: {:?}", warm_loupe);
+        eprintln!("HEIF warm loupe: {warm_loupe:?}");
         assert!(
             warm_loupe < Duration::from_millis(100),
-            "warm loupe took {:?}",
-            warm_loupe
+            "warm loupe took {warm_loupe:?}"
         );
     }
 }

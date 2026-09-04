@@ -389,13 +389,8 @@ pub fn parse_segments<'a>(data: &'a [u8]) -> Result<Vec<Segment<'a>>> {
     });
 
     // J2: Scan segments
-    loop {
+    while let Ok(marker_byte) = find_next_marker(&mut reader) {
         // Find next FF marker, skipping any padding FF bytes
-        let marker_byte = match find_next_marker(&mut reader) {
-            Ok(b) => b,
-            Err(_) => break, // J11: truncated - return what we have
-        };
-
         let marker_offset = reader.position() - 2; // position of the FF byte
 
         // EOI - we're done
@@ -432,8 +427,7 @@ pub fn parse_segments<'a>(data: &'a [u8]) -> Result<Vec<Segment<'a>>> {
 
         if length < 2 {
             return Err(Error::Format(format!(
-                "invalid segment length {} at offset {marker_offset}",
-                length
+                "invalid segment length {length} at offset {marker_offset}"
             )));
         }
 
@@ -442,9 +436,8 @@ pub fn parse_segments<'a>(data: &'a [u8]) -> Result<Vec<Segment<'a>>> {
         // J11: If payload extends past EOF, take what we can
         let available = reader.remaining();
         let actual_len = payload_len.min(available);
-        let payload = match reader.read_bytes(actual_len) {
-            Ok(p) => p,
-            Err(_) => break,
+        let Ok(payload) = reader.read_bytes(actual_len) else {
+            break;
         };
 
         let marker = Marker::from_byte(marker_byte);
@@ -574,7 +567,7 @@ pub fn reassemble_extended_xmp(segments: &[Segment<'_>]) -> Option<String> {
         .iter()
         .filter_map(|s| {
             if s.app1_kind() == Some(App1Kind::ExtendedXmp) {
-                Some(s.data.as_ref())
+                Some(s.data)
             } else {
                 None
             }

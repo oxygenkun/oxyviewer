@@ -6,6 +6,9 @@ rust-version.workspace = true
 version.workspace = true
 publish = false
 
+[lints]
+workspace = true
+
 [features]
 default = ["jpeg", "tiff", "png", "webp", "heif", "gif", "bmp", "xmp", "iptc", "icc", "quicktime"]
 jpeg = []

@@ -58,10 +58,11 @@ impl FileType {
         }
 
         // GIF: GIF87a or GIF89a
-        if data.len() >= 6 && &data[..3] == b"GIF" {
-            if &data[3..6] == b"87a" || &data[3..6] == b"89a" {
-                return Some(FileType::Gif);
-            }
+        if data.len() >= 6
+            && &data[..3] == b"GIF"
+            && (&data[3..6] == b"87a" || &data[3..6] == b"89a")
+        {
+            return Some(FileType::Gif);
         }
 
         // BMP: BM

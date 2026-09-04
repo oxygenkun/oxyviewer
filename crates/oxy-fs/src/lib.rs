@@ -76,8 +76,7 @@ impl FsCatalog {
         let display_name = root_path
             .file_name()
             .and_then(|name| name.to_str())
-            .map(str::to_owned)
-            .unwrap_or_else(|| root_path.to_string_lossy().into_owned());
+            .map_or_else(|| root_path.to_string_lossy().into_owned(), str::to_owned);
 
         let session = FolderSession {
             id,
@@ -420,10 +419,7 @@ pub fn scan_index_directory(root: &Path) -> Result<DirectoryScan, FsError> {
     let mut assets = Vec::new();
     let mut directories = Vec::new();
     for entry in fs::read_dir(root)? {
-        let entry = match entry {
-            Ok(entry) => entry,
-            Err(_) => continue,
-        };
+        let Ok(entry) = entry else { continue };
         let path = entry.path();
         if path.is_dir() {
             let Some(name) = path
@@ -454,10 +450,7 @@ pub fn list_directories(root: &Path) -> Result<Vec<DirectorySummary>, FsError> {
     }
     let mut directories = Vec::new();
     for entry in fs::read_dir(root)? {
-        let entry = match entry {
-            Ok(entry) => entry,
-            Err(_) => continue,
-        };
+        let Ok(entry) = entry else { continue };
         let path = entry.path();
         if path.is_dir() {
             let Some(name) = path
@@ -506,10 +499,7 @@ fn scan_assets(root: &Path) -> Result<Vec<AssetSummary>, FsError> {
     }
     let mut assets = Vec::new();
     for entry in fs::read_dir(root)? {
-        let entry = match entry {
-            Ok(entry) => entry,
-            Err(_) => continue,
-        };
+        let Ok(entry) = entry else { continue };
         if let Some(summary) = summary_for_path(&entry.path())? {
             assets.push(summary);
         }

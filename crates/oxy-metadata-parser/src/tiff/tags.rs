@@ -47,10 +47,10 @@ pub fn print_value(tag_def: &TagDef, value: &TagValue) -> String {
 /// V10: Look up a tag definition by ID and group.
 pub fn find_tag(id: u16, group: TagGroup) -> Option<&'static TagDef> {
     let table = match group {
-        TagGroup::Ifd0 | TagGroup::Ifd1 => &IFD0_TAGS[..],
-        TagGroup::ExifIfd => &EXIF_IFD_TAGS[..],
-        TagGroup::GpsIfd => &GPS_TAGS[..],
-        TagGroup::InteropIfd => &INTEROP_TAGS[..],
+        TagGroup::Ifd0 | TagGroup::Ifd1 => IFD0_TAGS,
+        TagGroup::ExifIfd => EXIF_IFD_TAGS,
+        TagGroup::GpsIfd => GPS_TAGS,
+        TagGroup::InteropIfd => INTEROP_TAGS,
     };
     table.iter().find(|t| t.id == id)
 }
@@ -396,7 +396,7 @@ fn print_color_space(v: &TagValue) -> Option<String> {
         1 => "sRGB".into(),
         2 => "Adobe RGB".into(),
         0xFFFF => "Uncalibrated".into(),
-        _ => format!("Unknown ({})", n),
+        _ => format!("Unknown ({n})"),
     })
 }
 
@@ -433,7 +433,7 @@ fn print_file_source(v: &TagValue) -> Option<String> {
             1 => "Film Scanner",
             2 => "Reflection Print Scanner",
             3 => "Digital Camera",
-            n => return Some(format!("Unknown ({})", n)),
+            n => return Some(format!("Unknown ({n})")),
         }
         .into(),
     )
@@ -447,7 +447,7 @@ fn print_scene_type(v: &TagValue) -> Option<String> {
     };
     Some(match val {
         1 => "Directly photographed".into(),
-        n => format!("Unknown ({})", n),
+        n => format!("Unknown ({n})"),
     })
 }
 
@@ -680,7 +680,7 @@ fn print_gps_speed_ref(v: &TagValue) -> Option<String> {
         Some("K") => Some("km/h".into()),
         Some("M") => Some("mph".into()),
         Some("N") => Some("knots".into()),
-        Some(s) => Some(format!("Unknown ({})", s)),
+        Some(s) => Some(format!("Unknown ({s})")),
         None => None,
     }
 }
@@ -689,7 +689,7 @@ fn print_gps_direction_ref(v: &TagValue) -> Option<String> {
     match v.as_ascii() {
         Some("T") => Some("True North".into()),
         Some("M") => Some("Magnetic North".into()),
-        Some(s) => Some(format!("Unknown ({})", s)),
+        Some(s) => Some(format!("Unknown ({s})")),
         None => None,
     }
 }
@@ -699,7 +699,7 @@ fn print_gps_distance_ref(v: &TagValue) -> Option<String> {
         Some("K") => Some("Kilometers".into()),
         Some("M") => Some("Miles".into()),
         Some("N") => Some("Nautical Miles".into()),
-        Some(s) => Some(format!("Unknown ({})", s)),
+        Some(s) => Some(format!("Unknown ({s})")),
         None => None,
     }
 }
@@ -878,20 +878,20 @@ fn print_exposure_compensation(v: &TagValue) -> Option<String> {
     }
     let iv = val as i64;
     if iv != 0 && (iv as f64 / val).abs() > 0.999 {
-        return Some(format!("{:+}", iv));
+        return Some(format!("{iv:+}"));
     }
     let v2 = (val * 2.0) as i64;
     if v2 != 0 && (v2 as f64 / (val * 2.0)).abs() > 0.999 {
-        return Some(format!("{:+}/2", v2));
+        return Some(format!("{v2:+}/2"));
     }
     let v3 = (val * 3.0) as i64;
     if v3 != 0 && (v3 as f64 / (val * 3.0)).abs() > 0.999 {
-        return Some(format!("{:+}/3", v3));
+        return Some(format!("{v3:+}/3"));
     }
     // Fallback: 3 significant digits with sign (like ExifTool's %+.3g)
     let s = format_sig_digits(val, 3);
     if val > 0.0 && !s.starts_with('+') {
-        Some(format!("+{}", s))
+        Some(format!("+{s}"))
     } else {
         Some(s)
     }
@@ -925,7 +925,7 @@ pub(crate) fn format_exposure_time(f: f64) -> Option<String> {
         Some(format!("1/{recip}"))
     } else if f > 0.0 {
         // >= 0.25s: use 1 decimal place, strip trailing .0
-        let s = format!("{:.1}", f);
+        let s = format!("{f:.1}");
         Some(s.strip_suffix(".0").unwrap_or(&s).to_string())
     } else {
         Some("0".into())
@@ -936,7 +936,7 @@ pub(crate) fn format_exposure_time(f: f64) -> Option<String> {
 fn print_fnumber(v: &TagValue) -> Option<String> {
     let f = v.to_f64()?;
     if f < 1.0 {
-        Some(format!("{:.2}", f))
+        Some(format!("{f:.2}"))
     } else {
         Some(format_decimal(f))
     }
@@ -1037,7 +1037,7 @@ fn print_gps_latitude_ref(v: &TagValue) -> Option<String> {
     match v.as_ascii() {
         Some("N") => Some("North".into()),
         Some("S") => Some("South".into()),
-        Some(s) => Some(format!("Unknown ({})", s)),
+        Some(s) => Some(format!("Unknown ({s})")),
         None => None,
     }
 }
@@ -1046,7 +1046,7 @@ fn print_gps_longitude_ref(v: &TagValue) -> Option<String> {
     match v.as_ascii() {
         Some("E") => Some("East".into()),
         Some("W") => Some("West".into()),
-        Some(s) => Some(format!("Unknown ({})", s)),
+        Some(s) => Some(format!("Unknown ({s})")),
         None => None,
     }
 }
@@ -1109,7 +1109,7 @@ fn print_flash_exiftool(v: &TagValue) -> Option<String> {
             0x59 => "Auto, Fired, Red-eye reduction",
             0x5d => "Auto, Fired, Red-eye reduction, Return not detected",
             0x5f => "Auto, Fired, Red-eye reduction, Return detected",
-            _ => return Some(format!("Unknown (0x{:x})", bits)),
+            _ => return Some(format!("Unknown (0x{bits:x})")),
         }
         .into(),
     )
@@ -1136,7 +1136,7 @@ fn print_focal_plane_res_unit_et(v: &TagValue) -> Option<String> {
 /// Format a float with 1 decimal place, rounding like ExifTool.
 /// 14.0 -> "14.0", 2.8 -> "2.8", 4.25 -> "4.2"
 fn format_decimal(f: f64) -> String {
-    format!("{:.1}", f)
+    format!("{f:.1}")
 }
 
 /// Format a float with full precision like ExifTool does for resolution values.
@@ -1147,7 +1147,7 @@ fn format_sig_digits(f: f64, sig: usize) -> String {
     }
     let magnitude = f.abs().log10().floor() as i32;
     let decimal_places = (sig as i32 - 1 - magnitude).max(0) as usize;
-    let s = format!("{:.prec$}", f, prec = decimal_places);
+    let s = format!("{f:.decimal_places$}");
     if s.contains('.') {
         let s = s.trim_end_matches('0');
         s.trim_end_matches('.').to_string()
@@ -1664,9 +1664,7 @@ pub fn find_tag_by_name_all(name: &str) -> Option<&'static TagDef> {
 
 /// Return the tag name for a given ID and group, or a hex fallback.
 pub fn tag_name(id: u16, group: TagGroup) -> String {
-    find_tag(id, group)
-        .map(|t| t.name.to_string())
-        .unwrap_or_else(|| format!("Tag 0x{id:04X}"))
+    find_tag(id, group).map_or_else(|| format!("Tag 0x{id:04X}"), |t| t.name.to_string())
 }
 
 #[cfg(test)]

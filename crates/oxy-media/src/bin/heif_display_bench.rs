@@ -12,10 +12,10 @@ use std::{
 };
 
 fn main() -> Result<(), Box<dyn Error>> {
-    let path = env::args_os()
-        .nth(1)
-        .map(PathBuf::from)
-        .unwrap_or_else(|| PathBuf::from("tests/fixtures/DSC00449.HIF"));
+    let path = env::args_os().nth(1).map_or_else(
+        || PathBuf::from("tests/fixtures/DSC00449.HIF"),
+        PathBuf::from,
+    );
     let runs = env::args()
         .nth(2)
         .and_then(|value| value.parse::<usize>().ok())

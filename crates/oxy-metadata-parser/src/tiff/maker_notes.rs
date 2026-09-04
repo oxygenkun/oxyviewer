@@ -605,9 +605,8 @@ fn decode_maker_tags_impl<'a>(
         }
     }
 
-    let ifd = match mn.ifd.as_ref() {
-        Some(ifd) => ifd,
-        None => return tags,
+    let Some(ifd) = mn.ifd.as_ref() else {
+        return tags;
     };
     let be = mn.big_endian;
 
@@ -631,7 +630,7 @@ fn decode_maker_tags_impl<'a>(
 
     // Pre-scan Olympus model from Equipment sub-IFD (0x2010) CameraType2 (0x0100)
     let olympus_model = if mn.vendor == Vendor::Olympus {
-        extract_olympus_model(&ifd, mn_data, tiff_data, be)
+        extract_olympus_model(ifd, mn_data, tiff_data, be)
     } else {
         String::new()
     };
@@ -791,7 +790,7 @@ fn decode_maker_tags_impl<'a>(
                     }
                     0x0098 => decode_canon_crop_info(entry.data, be, &mut tags),
                     0x0099 => {
-                        decode_canon_custom_functions2(entry.data, be, &canon_model, &mut tags)
+                        decode_canon_custom_functions2(entry.data, be, &canon_model, &mut tags);
                     }
                     0x4001 => decode_canon_color_data(entry.data, be, &mut tags),
                     0x4013 => decode_canon_af_micro_adj(entry.data, be, &mut tags),
@@ -1076,18 +1075,15 @@ fn decode_maker_tags_impl<'a>(
                         0x0002 => {
                             // CPUVersions: remove trailing nulls/spaces, split at remaining
                             let s = String::from_utf8_lossy(entry.data);
-                            let s = s.trim_end_matches(|c: char| c == '\0' || c == ' ');
-                            s.split(|c: char| c == '\0')
-                                .map(|p| p.trim())
-                                .collect::<Vec<_>>()
-                                .join(", ")
+                            let s = s.trim_end_matches(['\0', ' ']);
+                            s.split('\0').map(str::trim).collect::<Vec<_>>().join(", ")
                         }
                         0x0003 => {
                             // Quality: PrintConv
                             let v = if be {
-                                entry.data.first().map(|&b| b as u16).unwrap_or(0)
+                                entry.data.first().map_or(0, |&b| b as u16)
                             } else {
-                                entry.data.first().map(|&b| b as u16).unwrap_or(0)
+                                entry.data.first().map_or(0, |&b| b as u16)
                             };
                             let v = if entry.data.len() >= 2 {
                                 if be {
@@ -1257,12 +1253,11 @@ fn decode_maker_tags_impl<'a>(
                             Some([entry.data[0], entry.data[1], entry.data[2], entry.data[3]]);
                     }
                 }
-                0x0007 => {
+                0x0007
                     // Time: 3 bytes (hour, minute, second)
-                    if entry.data.len() >= 3 {
+                    if entry.data.len() >= 3 => {
                         pentax_time = Some([entry.data[0], entry.data[1], entry.data[2]]);
                     }
-                }
                 _ => {}
             }
         }
@@ -1488,7 +1483,7 @@ fn entry_u32(entry: &IfdEntry<'_>, be: bool) -> Option<u32> {
 fn format_version_bytes(data: &[u8]) -> String {
     if data.len() >= 4 {
         // Check if bytes are ASCII digits
-        if data[..4].iter().all(|b| b.is_ascii_digit()) {
+        if data[..4].iter().all(u8::is_ascii_digit) {
             return std::str::from_utf8(&data[..4]).unwrap_or("").to_string();
         }
         format!("{}.{}.{}.{}", data[0], data[1], data[2], data[3])
@@ -1560,9 +1555,7 @@ fn format_canon_value(entry: &IfdEntry<'_>, name: &str, be: bool) -> String {
     match name {
         "CanonModelID" => {
             if let Some(v) = entry_u32(entry, be) {
-                canon_model_name(v)
-                    .map(|s| s.to_string())
-                    .unwrap_or_else(|| format!("{v}"))
+                canon_model_name(v).map_or_else(|| format!("{v}"), std::string::ToString::to_string)
             } else {
                 format_ifd_value(entry, be)
             }
@@ -1739,7 +1732,7 @@ fn format_nikon_value(entry: &IfdEntry<'_>, name: &str, be: bool) -> String {
             if entry.data.len() >= 4 {
                 let bytes = &entry.data[..4];
                 // ASCII format: "0210" -> "2.10"
-                if bytes.iter().all(|b| b.is_ascii_digit()) {
+                if bytes.iter().all(u8::is_ascii_digit) {
                     if let Ok(s) = std::str::from_utf8(bytes) {
                         let s = s.trim_start_matches('0');
                         if s.len() >= 2 {
@@ -1913,7 +1906,7 @@ fn format_nikon_value(entry: &IfdEntry<'_>, name: &str, be: bool) -> String {
                     let num = val as i32;
                     let gcd = gcd_i32(num.unsigned_abs(), steps as u32);
                     let n = num / gcd as i32;
-                    let d = steps as i32 / gcd as i32;
+                    let d = steps / gcd as i32;
                     if d == 1 {
                         format!("{n}")
                     } else {
@@ -2399,7 +2392,7 @@ fn fuji_format_internal_serial(s: &str) -> String {
             // Validate month/day
             let mm_val: u32 = mm.parse().unwrap_or(0);
             let dd_val: u32 = dd.parse().unwrap_or(0);
-            if mm_val >= 1 && mm_val <= 12 && dd_val >= 1 && dd_val <= 31 {
+            if (1..=12).contains(&mm_val) && (1..=31).contains(&dd_val) {
                 // Convert hex body to ASCII
                 let body_ascii = hex_to_ascii(hex_body);
                 let yr = if yy < 70 { 2000 + yy } else { 1900 + yy };
@@ -2705,7 +2698,7 @@ fn format_panasonic_value(entry: &IfdEntry<'_>, name: &str, be: bool) -> String 
                     3 => "1-area (high speed)".into(),
                     4 => "Auto or Face detect".into(),
                     16 => "1-area".into(),
-                    _ => format!("{}-area", mode),
+                    _ => format!("{mode}-area"),
                 }
             } else {
                 format_ifd_value(entry, be)
@@ -3040,7 +3033,7 @@ fn format_apple_value(entry: &IfdEntry<'_>, name: &str, be: bool) -> String {
         }
         // bplist tags: decode Apple binary plist
         "SemanticStylePreset" | "SemanticStyleRenderingVer" | "SemanticStyle" => {
-            decode_bplist(&entry.data).unwrap_or_else(|| format_ifd_value(entry, be))
+            decode_bplist(entry.data).unwrap_or_else(|| format_ifd_value(entry, be))
         }
         "AFPerformance" => {
             // int32s[2]: display as "val[0] val[1]>>28 val[1]&0xfffffff"
@@ -3191,11 +3184,7 @@ fn format_olympus_value(entry: &IfdEntry<'_>, name: &str, be: bool) -> String {
                     // Trim trailing zeros after decimal point
                     let s = format!("{mm:.10}");
                     let s = s.trim_end_matches('0');
-                    let s = if s.ends_with('.') {
-                        &s[..s.len() - 1]
-                    } else {
-                        s
-                    };
+                    let s = s.strip_suffix('.').unwrap_or(s);
                     format!("{s} mm")
                 } else {
                     format_ifd_value(entry, be)
@@ -4038,14 +4027,13 @@ fn olympus_camera_type(code: &str) -> Option<String> {
 ///
 /// Decode Olympus TextInfo (tag 0x0208): space/LF-separated "key value" pairs.
 fn decode_olympus_text_info(data: &[u8], tags: &mut Vec<DecodedTag>) {
-    let text = match std::str::from_utf8(data) {
-        Ok(s) => s,
-        Err(_) => return,
+    let Ok(text) = std::str::from_utf8(data) else {
+        return;
     };
     // TextInfo contains sections like "[pictureInfo] Resolution 1 [Camera Info] Type SR951"
     // Parse key-value pairs - skip section headers in brackets
     let mut tokens: Vec<&str> = Vec::new();
-    for part in text.split(|c: char| c == ' ' || c == '\n' || c == '\r') {
+    for part in text.split([' ', '\n', '\r']) {
         let part = part.trim_matches('\0').trim();
         if !part.is_empty() {
             tokens.push(part);
@@ -4090,9 +4078,8 @@ fn extract_olympus_model(
     be: bool,
 ) -> String {
     let equip_entry = ifd.entries.iter().find(|e| e.tag == 0x2010);
-    let equip_entry = match equip_entry {
-        Some(e) => e,
-        None => return String::new(),
+    let Some(equip_entry) = equip_entry else {
+        return String::new();
     };
     let oly_new_style = mn_data.starts_with(b"OLYMPUS\0");
     let sub_ifd_data = if oly_new_style || tiff_data.is_empty() {
@@ -4220,9 +4207,8 @@ fn decode_olympus_sub_ifd(
         (ifd, sub_be)
     };
 
-    let sub_ifd = match sub_ifd {
-        Some(ifd) => ifd,
-        None => return,
+    let Some(sub_ifd) = sub_ifd else {
+        return;
     };
 
     // Decode each tag in the sub-IFD using the effective byte order
@@ -4231,9 +4217,8 @@ fn decode_olympus_sub_ifd(
             .iter()
             .find(|&&(id, _)| id == sub_entry.tag)
             .map(|&(_, n)| n);
-        let tag_name = match tag_name {
-            Some(n) => n,
-            None => continue,
+        let Some(tag_name) = tag_name else {
+            continue;
         };
 
         let val = match entry.tag {
@@ -4936,7 +4921,7 @@ fn format_olympus_camera_settings(
             if let Some(v) = olympus_read_rational(entry, be) {
                 // Format as decimal, stripping trailing zeros
                 let s = format!("{v:.1}");
-                s.to_string()
+                s
             } else {
                 format_ifd_value(entry, be)
             }
@@ -5775,15 +5760,11 @@ fn format_sig_digits(val: f64, sig: usize) -> String {
     }
     let magnitude = val.abs().log10().floor() as i32;
     let decimal_places = (sig as i32 - magnitude - 1).max(0) as usize;
-    let s = format!("{val:.prec$}", prec = decimal_places);
+    let s = format!("{val:.decimal_places$}");
     // Trim trailing zeros
     if s.contains('.') {
         let s = s.trim_end_matches('0');
-        if s.ends_with('.') {
-            s[..s.len() - 1].to_string()
-        } else {
-            s.to_string()
-        }
+        s.strip_suffix('.').unwrap_or(s).to_string()
     } else {
         s
     }
@@ -5970,7 +5951,7 @@ fn read_u16(data: &[u8], index: usize, big_endian: bool) -> Option<u16> {
 /// Handles 1/3 and 2/3 EV correction codes in the low 5 bits.
 fn canon_ev(val: i16) -> f64 {
     let sign: f64 = if val < 0 { -1.0 } else { 1.0 };
-    let abs_val = val.unsigned_abs() as u16;
+    let abs_val = val.unsigned_abs();
     let frac = abs_val & 0x1F;
     let base = abs_val - frac;
     let frac_adj: f64 = match frac {
@@ -6291,7 +6272,7 @@ fn decode_canon_camera_info(
             let fw = std::str::from_utf8(fw_bytes)
                 .unwrap_or("")
                 .trim_end_matches('\0');
-            if !fw.is_empty() && fw.chars().next().map_or(false, |c| c.is_ascii_digit()) {
+            if !fw.is_empty() && fw.chars().next().is_some_and(|c| c.is_ascii_digit()) {
                 tags.push(DecodedTag {
                     name: "FirmwareVersion".to_string(),
                     value: fw.to_string(),
@@ -6942,9 +6923,7 @@ fn decode_canon_color_data(data: &[u8], be: bool, tags: &mut Vec<DecodedTag>) {
     // FlashOutput: exp((val-200)/16*ln(2)), displayed as percentage
     let flash_offset = if is_data4 {
         Some(0x26b)
-    } else if is_data7 {
-        Some(0x198)
-    } else if is_data8 {
+    } else if is_data7 || is_data8 {
         Some(0x198)
     }
     // same as Data7
@@ -6960,7 +6939,7 @@ fn decode_canon_color_data(data: &[u8], be: bool, tags: &mut Vec<DecodedTag>) {
                 push(tags, "FlashOutput", "Strobe or Misfire".into());
             } else {
                 let pct = ((raw as f64 - 200.0) / 16.0 * std::f64::consts::LN_2).exp() * 100.0;
-                push(tags, "FlashOutput", format!("{:.0}%", pct));
+                push(tags, "FlashOutput", format!("{pct:.0}%"));
             }
         }
     }
@@ -7077,7 +7056,7 @@ fn decode_canon_color_data(data: &[u8], be: bool, tags: &mut Vec<DecodedTag>) {
                     } else {
                         u32::from_le_bytes([data[off], data[off + 1], data[off + 2], data[off + 3]])
                     };
-                    (raw >> 16) | (raw << 16)
+                    raw.rotate_left(16)
                 };
                 let vals = format!(
                     "{} {} {} {}",
@@ -7127,7 +7106,7 @@ fn decode_canon_color_data(data: &[u8], be: bool, tags: &mut Vec<DecodedTag>) {
                 } else {
                     u32::from_le_bytes([data[off], data[off + 1], data[off + 2], data[off + 3]])
                 };
-                (raw >> 16) | (raw << 16)
+                raw.rotate_left(16)
             };
             let vals = format!(
                 "{} {} {} {}",
@@ -7412,13 +7391,11 @@ fn decode_canon_camera_settings(data: &[u8], be: bool, tags: &mut Vec<DecodedTag
         push(
             tags,
             "CameraISO",
-            if v == 0x7FFF {
-                "n/a".into()
-            } else if v == 0 {
+            if v == 0x7FFF || v == 0 {
                 "n/a".into()
             }
             // Special encoding for PowerShot models
-            else if v >= 14 && v <= 17 {
+            else if (14..=17).contains(&v) {
                 match v {
                     14 => "Auto High".into(),
                     15 => "Auto".into(),
@@ -7976,11 +7953,7 @@ fn decode_canon_shot_info(data: &[u8], be: bool, tags: &mut Vec<DecodedTag>) {
             // Use enough precision (v/8 gives at most 3 decimal places)
             let s = format!("{ev:.3}");
             let s = s.trim_end_matches('0');
-            let s = if s.ends_with('.') {
-                &s[..s.len() - 1]
-            } else {
-                s
-            };
+            let s = s.strip_suffix('.').unwrap_or(s);
             push(tags, "MeasuredEV2", s.to_string());
         }
     }
@@ -8095,7 +8068,7 @@ fn decode_canon_af_info(data: &[u8], be: bool, tags: &mut Vec<DecodedTag>) {
     let x_off = arrays_start;
     let y_off = x_off + array_size;
     let focus_off = y_off + array_size;
-    let bitmask_words = (num_af + 15) / 16;
+    let bitmask_words = num_af.div_ceil(16);
 
     let min_len = focus_off + bitmask_words * 2;
     if data.len() < min_len || num_af == 0 {
@@ -8262,7 +8235,7 @@ fn decode_canon_af_info2(data: &[u8], be: bool, tags: &mut Vec<DecodedTag>) {
     let y_off = x_off + array_size;
     // AFPointsInFocus bitmask (index 12)
     let focus_off = y_off + array_size;
-    let bitmask_words = (num_af + 15) / 16;
+    let bitmask_words = num_af.div_ceil(16);
 
     // Check we have enough data for all arrays
     let min_len = focus_off + bitmask_words * 2;
@@ -9083,7 +9056,7 @@ fn decode_canon_ambience(data: &[u8], be: bool, tags: &mut Vec<DecodedTag>) {
     if data.len() < 8 {
         return;
     }
-    let off = 1 * 4; // index 1
+    let off = 4; // index 1
     if off + 4 > data.len() {
         return;
     }
@@ -9944,9 +9917,7 @@ fn decode_canon_custom_functions2(data: &[u8], be: bool, model: &str, tags: &mut
                     let aperture_conv = |v: i32| -> String {
                         let x = (((v as f64) / 8.0 - 1.0) * 2.0f64.ln() / 2.0).exp();
                         // Mimic C's %.2g: 2 significant digits
-                        if x >= 100.0 {
-                            format!("{}", x.round() as u32)
-                        } else if x >= 10.0 {
+                        if x >= 10.0 {
                             format!("{}", x.round() as u32)
                         } else if x >= 1.0 {
                             let s = format!("{x:.1}");
@@ -10313,9 +10284,9 @@ fn decode_nikon_picture_control(data: &[u8], tags: &mut Vec<DecodedTag>) {
                 }
             }
         }
-        3 => {
+        3
             // V3: wider spacing, extra MidRangeSharpness
-            if data.len() > adj_off + 19 {
+            if data.len() > adj_off + 19 => {
                 let sharpness = data[adj_off + 3];
                 let mid_sharp = data[adj_off + 5];
                 let clarity = data[adj_off + 7];
@@ -10352,7 +10323,6 @@ fn decode_nikon_picture_control(data: &[u8], tags: &mut Vec<DecodedTag>) {
                     push(tags, "ToningSaturation", nikon_pc_val(toning_sat));
                 }
             }
-        }
         _ => {}
     }
 }
@@ -10976,9 +10946,9 @@ fn nikon_lens_fstops(v: u8) -> String {
     } else {
         let fstops = v as f64 / 12.0;
         if fstops == fstops.round() {
-            format!("{:.0}", fstops)
+            format!("{fstops:.0}")
         } else {
-            format!("{:.2}", fstops)
+            format!("{fstops:.2}")
         }
     }
 }
@@ -11007,7 +10977,7 @@ fn nikon_flash_output(v: u8) -> String {
         if frac >= 0.5 {
             format!("1/{:.0}", 1.0 / frac)
         } else {
-            format!("{:.4}", frac)
+            format!("{frac:.4}")
         }
     }
 }
@@ -11137,9 +11107,8 @@ fn decode_nikon_preview_ifd(
         None
     };
 
-    let sub_ifd = match sub_ifd {
-        Some(ifd) => ifd,
-        None => return,
+    let Some(sub_ifd) = sub_ifd else {
+        return;
     };
 
     for sub_entry in &sub_ifd.entries {
@@ -11249,7 +11218,7 @@ fn decode_nikon_color_balance(
             } else if num == 15 || num == 16 || num == 17 {
                 // D7000/D5200/D3200 - ColorBalance4 = WB_GRBGLevels
                 Some((Some(284), 284 + 4, "WB_GRBGLevels"))
-            } else if num == 19 || (num >= 21 && num <= 24) {
+            } else if num == 19 || (21..=24).contains(&num) {
                 // D4/D800/D3300/D7100/D5300 - ColorBalance2 = WB_RGGBLevels
                 Some((Some(4), 4 + 0x7c, "WB_RGGBLevels"))
             } else {
@@ -11335,13 +11304,11 @@ fn decode_nikon_shot_info(data: &[u8], tags: &mut Vec<DecodedTag>) {
         }
     }
     // Version 0103 (D70s) - unencrypted
-    if data.starts_with(b"0103") && data.len() >= 100 {
-        if data.len() > 9 {
-            let fw = std::str::from_utf8(&data[4..9]).unwrap_or("");
-            let fw = fw.trim_end_matches('\0').trim();
-            if !fw.is_empty() {
-                push(tags, "FirmwareVersion", fw.to_string());
-            }
+    if data.starts_with(b"0103") && data.len() >= 100 && data.len() > 9 {
+        let fw = std::str::from_utf8(&data[4..9]).unwrap_or("");
+        let fw = fw.trim_end_matches('\0').trim();
+        if !fw.is_empty() {
+            push(tags, "FirmwareVersion", fw.to_string());
         }
     }
     // P6000 and similar: ShotInfoVersion all zeros, has DistortionControl at offset 0x10
@@ -13061,8 +13028,7 @@ fn lookup_tag(tag: u16, table: &'static [(u16, &'static str)]) -> &'static str {
     table
         .iter()
         .find(|&&(id, _)| id == tag)
-        .map(|&(_, name)| name)
-        .unwrap_or("Unknown")
+        .map_or("Unknown", |&(_, name)| name)
 }
 
 // -- MN2: Canon tag table ------------------------------------------------
@@ -13957,7 +13923,6 @@ fn decode_kodak_binary(data: &[u8], tags: &mut Vec<DecodedTag>) {
                     name: "SerialNumber".into(),
                     value: serial,
                 });
-                return;
             }
         }
     }
@@ -14103,7 +14068,7 @@ fn decode_kodak_type1(d: &[u8], be: bool, tags: &mut Vec<DecodedTag>) {
     if let Some(v) = u16at(0x1E) {
         let f = v as f64 / 100.0;
         // Format like ExifTool: no trailing zeros beyond one decimal
-        let s = format!("{:.2}", f);
+        let s = format!("{f:.2}");
         let s = s.trim_end_matches('0');
         let s = s.trim_end_matches('.');
         tags.push(DecodedTag {
@@ -14197,7 +14162,7 @@ fn decode_kodak_type1(d: &[u8], be: bool, tags: &mut Vec<DecodedTag>) {
     // 0x62: TotalZoom (u16 / 100)
     if let Some(v) = u16at(0x62) {
         let z = v as f64 / 100.0;
-        let s = format!("{:.1}", z);
+        let s = format!("{z:.1}");
         let s = s.trim_end_matches('0').trim_end_matches('.');
         tags.push(DecodedTag {
             name: "TotalZoom".into(),
@@ -14235,7 +14200,7 @@ fn decode_kodak_type1(d: &[u8], be: bool, tags: &mut Vec<DecodedTag>) {
     // 0x68: DigitalZoom (u16 / 100)
     if let Some(v) = u16at(0x68) {
         let z = v as f64 / 100.0;
-        let s = format!("{:.1}", z);
+        let s = format!("{z:.1}");
         let s = s.trim_end_matches('0').trim_end_matches('.');
         tags.push(DecodedTag {
             name: "DigitalZoom".into(),
@@ -14300,7 +14265,7 @@ fn decode_kodak_type3(d: &[u8], tags: &mut Vec<DecodedTag>) {
     // 0x1E: OpticalZoom (u16 / 100)
     if let Some(v) = u16be(0x1E) {
         let z = v as f64 / 100.0;
-        let s = format!("{:.1}", z);
+        let s = format!("{z:.1}");
         let s = s.trim_end_matches('0').trim_end_matches('.');
         tags.push(DecodedTag {
             name: "OpticalZoom".into(),
@@ -14330,7 +14295,7 @@ fn decode_kodak_type3(d: &[u8], tags: &mut Vec<DecodedTag>) {
     // 0x3C: FNumber (u16 / 100)
     if let Some(v) = u16be(0x3C) {
         let f = v as f64 / 100.0;
-        let s = format!("{:.2}", f);
+        let s = format!("{f:.2}");
         let s = s.trim_end_matches('0');
         let s = s.trim_end_matches('.');
         tags.push(DecodedTag {
@@ -14387,7 +14352,7 @@ fn decode_kodak_type9(d: &[u8], tags: &mut Vec<DecodedTag>) {
     // 0x0C: FNumber (u16 / 100)
     if let Some(v) = u16le(0x0C) {
         let f = v as f64 / 100.0;
-        let s = format!("{:.2}", f);
+        let s = format!("{f:.2}");
         let s = s.trim_end_matches('0').trim_end_matches('.');
         tags.push(DecodedTag {
             name: "FNumber".into(),
@@ -14447,7 +14412,7 @@ fn decode_reconyx_hyperfire(d: &[u8], tags: &mut Vec<DecodedTag>) {
     let ver = u16le(0x00);
     tags.push(DecodedTag {
         name: "MakerNoteVersion".into(),
-        value: format!("0x{:04x}", ver),
+        value: format!("0x{ver:04x}"),
     });
 
     // 0x02: FirmwareVersion (3 x int16u -> "X.Y.Z")
@@ -14523,23 +14488,20 @@ fn decode_reconyx_hyperfire(d: &[u8], tags: &mut Vec<DecodedTag>) {
     // every field but the year zero-padded to two digits.
     if d.len() > 0x21 {
         let mut vals = [0u16; 6];
-        for i in 0..6 {
+        for (i, item) in vals.iter_mut().enumerate() {
             let mut v = u16le(0x16 + i * 2);
             // Byte-swap fix: if high byte set but low byte zero
             if (v & 0xFF) == 0 && (v >> 8) != 0 {
                 v = (v >> 8) | ((v & 0xFF) << 8);
             }
-            vals[i] = v;
+            *item = v;
         }
         // vals = [sec, min, hour, month, day, year]
         let (sec, min, hour, month, day, year) =
             (vals[0], vals[1], vals[2], vals[3], vals[4], vals[5]);
         tags.push(DecodedTag {
             name: "DateTimeOriginal".into(),
-            value: format!(
-                "{:04}:{:02}:{:02} {:02}:{:02}:{:02}",
-                year, month, day, hour, min, sec
-            ),
+            value: format!("{year:04}:{month:02}:{day:02} {hour:02}:{min:02}:{sec:02}"),
         });
     }
 
@@ -14649,7 +14611,7 @@ fn decode_reconyx_hyperfire(d: &[u8], tags: &mut Vec<DecodedTag>) {
         let v = mv as f64 / 1000.0;
         tags.push(DecodedTag {
             name: "BatteryVoltage".into(),
-            value: format!("{:.2} V", v),
+            value: format!("{v:.2} V"),
         });
     }
 
@@ -15076,7 +15038,7 @@ fn format_casio_value(entry: &IfdEntry<'_>, name: &str, be: bool, is_type2: bool
                     .data
                     .iter()
                     .copied()
-                    .filter(|&b| b >= b'0' && b <= b'9')
+                    .filter(|&b| b.is_ascii_digit())
                     .collect();
                 if digits.len() >= 10 {
                     let yr2 = (digits[0] - b'0') as u32 * 10 + (digits[1] - b'0') as u32;
@@ -16093,7 +16055,7 @@ fn bplist_extract_object(
                 let key = bplist_extract_object(data, offsets, ref_size, key_ref, depth + 1)?;
                 let val = bplist_extract_object(data, offsets, ref_size, val_ref, depth + 1)?;
                 // ExifTool prefixes numeric keys with '_'
-                let display_key = if key.chars().next().map_or(false, |c| c.is_ascii_digit()) {
+                let display_key = if key.chars().next().is_some_and(|c| c.is_ascii_digit()) {
                     format!("_{key}")
                 } else {
                     key
@@ -16252,8 +16214,7 @@ fn nikon_af_point_51(v: u32) -> String {
     TABLE
         .iter()
         .find(|&&(id, _)| id == v)
-        .map(|&(_, n)| n.to_string())
-        .unwrap_or_else(|| format!("{v}"))
+        .map_or_else(|| format!("{v}"), |&(_, n)| n.to_string())
 }
 
 fn nikon_af_point_39(v: u32) -> String {
@@ -16301,8 +16262,7 @@ fn nikon_af_point_39(v: u32) -> String {
     TABLE
         .iter()
         .find(|&&(id, _)| id == v)
-        .map(|&(_, n)| n.to_string())
-        .unwrap_or_else(|| format!("{v}"))
+        .map_or_else(|| format!("{v}"), |&(_, n)| n.to_string())
 }
 
 /// Format a fraction value for ExifTool compatibility (e.g., 0 -> "0", 0.333 -> "+1/3")
@@ -17813,10 +17773,8 @@ fn format_pentax_value(entry: &IfdEntry<'_>, name: &str, be: bool) -> String {
             // Format step: integer if whole, else 1 decimal
             let step_s = if step == 0.0 {
                 "0".to_string()
-            } else if step == step.floor() {
-                format!("{:.1}", step)
             } else {
-                format!("{:.1}", step)
+                format!("{step:.1}")
             };
             // Second value: extended bracket
             if entry.data.len() >= 4 {
@@ -18685,17 +18643,15 @@ static CANON_MODELS: &[(u32, &str)] = &[
 /// Decode Google HDR+ MakerNotes from base64-encoded XMP data.
 /// Data flow: base64 -> HDRP\x03 -> XOR decrypt -> gzip decompress -> protobuf parse.
 pub fn decode_google_hdrp(base64_data: &str) -> Vec<DecodedTag> {
-    let raw = match hdrp_base64_decode(base64_data) {
-        Some(v) => v,
-        None => return Vec::new(),
+    let Some(raw) = hdrp_base64_decode(base64_data) else {
+        return Vec::new();
     };
     if raw.len() < 5 || &raw[..4] != b"HDRP" || raw[4] != 0x03 {
         return Vec::new();
     }
     let decrypted = hdrp_xor_decrypt(&raw[5..]);
-    let decompressed = match hdrp_gzip_decompress(&decrypted) {
-        Some(v) => v,
-        None => return Vec::new(),
+    let Some(decompressed) = hdrp_gzip_decompress(&decrypted) else {
+        return Vec::new();
     };
     hdrp_parse_protobuf(&decompressed)
 }
@@ -18811,13 +18767,12 @@ fn hdrp_read_varint(data: &[u8], pos: &mut usize) -> Option<u64> {
     }
 }
 
-fn hdrp_parse_fields<'a>(data: &'a [u8]) -> Vec<(u32, u8, &'a [u8])> {
+fn hdrp_parse_fields(data: &[u8]) -> Vec<(u32, u8, &[u8])> {
     let mut fields = Vec::new();
     let mut pos = 0;
     while pos < data.len() {
-        let tag = match hdrp_read_varint(data, &mut pos) {
-            Some(t) => t,
-            None => break,
+        let Some(tag) = hdrp_read_varint(data, &mut pos) else {
+            break;
         };
         let field_num = (tag >> 3) as u32;
         let wire_type = (tag & 0x07) as u8;
@@ -19042,7 +18997,7 @@ fn hdrp_format_f64(v: f64) -> String {
     // Small magnitudes print in scientific notation, matching how these
     // values are conventionally displayed.
     if v != 0.0 && v.abs() < 0.001 {
-        format!("{:e}", v)
+        format!("{v:e}")
     } else {
         format!("{v}")
     }
@@ -19056,7 +19011,7 @@ fn hdrp_format_millis(ms: u64) -> String {
     let h = day_secs / 3600;
     let m = (day_secs % 3600) / 60;
     let s = day_secs % 60;
-    let (year, month, day) = unix_days_to_date(days as i64);
+    let (year, month, day) = unix_days_to_date(days);
     format!("{year:04}:{month:02}:{day:02} {h:02}:{m:02}:{s:02}.{millis:03}+00:00")
 }
 
@@ -19522,7 +19477,7 @@ fn decode_ciff_tag(tag_id: u16, data: &[u8], _offset: usize, le: bool, tags: &mu
 
                 // ApertureValue: APEX to f-number
                 let f_number = 2.0_f64.powf((aperture_apex as f64) / 2.0);
-                push(tags, "ApertureValue", format!("{:.1}", f_number));
+                push(tags, "ApertureValue", format!("{f_number:.1}"));
             }
         }
 
@@ -19569,7 +19524,6 @@ fn decode_ciff_tag(tag_id: u16, data: &[u8], _offset: usize, le: bool, tags: &mu
 
 /// Read a float from the CIFF data and check for FocalPlane sizes.
 /// CIFF stores some float values at specific offsets that need special handling.
-
 fn ciff_u16(data: &[u8], offset: usize, le: bool) -> u16 {
     if offset + 2 > data.len() {
         return 0;

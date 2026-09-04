@@ -608,7 +608,9 @@ fn parse_text_description(data: &[u8]) -> Option<String> {
             }
             let s = &data[12..12 + count];
             let end = s.iter().position(|&b| b == 0).unwrap_or(s.len());
-            std::str::from_utf8(&s[..end]).ok().map(|s| s.to_string())
+            std::str::from_utf8(&s[..end])
+                .ok()
+                .map(std::string::ToString::to_string)
         }
         // multiLocalizedUnicodeType (ICC v4) - 'mluc'
         b"mluc" => parse_mluc(data),
@@ -630,7 +632,9 @@ fn parse_text_type(data: &[u8]) -> Option<String> {
             // Skip signature(4) + reserved(4) = 8
             let s = &data[8..];
             let end = s.iter().position(|&b| b == 0).unwrap_or(s.len());
-            std::str::from_utf8(&s[..end]).ok().map(|s| s.to_string())
+            std::str::from_utf8(&s[..end])
+                .ok()
+                .map(std::string::ToString::to_string)
         }
         b"desc" => parse_text_description(data),
         b"mluc" => parse_mluc(data),
@@ -638,7 +642,9 @@ fn parse_text_type(data: &[u8]) -> Option<String> {
             // Try as raw text
             let s = &data[8..];
             let end = s.iter().position(|&b| b == 0).unwrap_or(s.len());
-            std::str::from_utf8(&s[..end]).ok().map(|s| s.to_string())
+            std::str::from_utf8(&s[..end])
+                .ok()
+                .map(std::string::ToString::to_string)
         }
     }
 }

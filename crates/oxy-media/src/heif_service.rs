@@ -79,7 +79,10 @@ impl HeifDecodeService {
             "heif-{}",
             self.next_session.fetch_add(1, Ordering::Relaxed) + 1
         );
-        let mut state = self.state.lock().unwrap_or_else(|error| error.into_inner());
+        let mut state = self
+            .state
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         if let Some(active) = state.active.take() {
             active.cancelled.store(true, Ordering::Release);
         }
@@ -161,7 +164,10 @@ impl HeifDecodeService {
     {
         let started = Instant::now();
         let (cancelled, display_sharpening) = {
-            let state = self.state.lock().unwrap_or_else(|error| error.into_inner());
+            let state = self
+                .state
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
             let Some(active) = &state.active else {
                 return Err(MediaError::Cancelled);
             };
@@ -281,7 +287,7 @@ impl HeifDecodeService {
             };
             self.state
                 .lock()
-                .unwrap_or_else(|error| error.into_inner())
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
                 .tiles
                 .insert((session.id.clone(), session.generation, x, y), tile);
             publish(event);
@@ -307,7 +313,10 @@ impl HeifDecodeService {
     }
 
     fn record_diagnostics(&self, session: &HeifDecodeSession, diagnostics: HeifDiagnostics) {
-        let mut state = self.state.lock().unwrap_or_else(|error| error.into_inner());
+        let mut state = self
+            .state
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         if state.active.as_ref().is_some_and(|active| {
             active.id == session.id && active.generation == session.generation
         }) {
@@ -316,7 +325,10 @@ impl HeifDecodeService {
     }
 
     pub fn cancel(&self, session_id: &str) -> bool {
-        let state = self.state.lock().unwrap_or_else(|error| error.into_inner());
+        let state = self
+            .state
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         let Some(active) = &state.active else {
             return false;
         };
@@ -330,7 +342,7 @@ impl HeifDecodeService {
     pub fn tile(&self, session: &str, generation: u64, x: u32, y: u32) -> Option<HeifTile> {
         self.state
             .lock()
-            .unwrap_or_else(|error| error.into_inner())
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
             .tiles
             .get(&(session.to_owned(), generation, x, y))
             .cloned()
@@ -339,7 +351,7 @@ impl HeifDecodeService {
     pub fn diagnostics(&self) -> Option<HeifDiagnostics> {
         self.state
             .lock()
-            .unwrap_or_else(|error| error.into_inner())
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
             .diagnostics
             .clone()
     }
@@ -689,10 +701,10 @@ fn fallback_reason(_path: &Path) -> String {
     {
         let platform = platform_capability();
         if platform.available {
-            return crate::apple_image_io::can_decode(_path)
-                .err()
-                .map(|error| error.to_string())
-                .unwrap_or_else(|| "Apple ImageIO was not selected".into());
+            return crate::apple_image_io::can_decode(_path).err().map_or_else(
+                || "Apple ImageIO was not selected".into(),
+                |error| error.to_string(),
+            );
         }
         platform
             .detail

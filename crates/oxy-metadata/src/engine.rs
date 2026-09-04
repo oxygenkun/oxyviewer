@@ -146,8 +146,7 @@ fn focus_from_tags(tags: &[Tag], display_dimensions: Option<(u32, u32)>) -> Opti
                 .filter(|(display_width, display_height)| {
                     (*width > *height) != (*display_width > *display_height)
                 })
-                .map(|_| 6)
-                .unwrap_or(1)
+                .map_or(1, |_| 6)
         });
 
     Some(crate::orient_focus_info(

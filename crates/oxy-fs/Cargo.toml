@@ -5,6 +5,9 @@ license.workspace = true
 rust-version.workspace = true
 version.workspace = true
 
+[lints]
+workspace = true
+
 [dependencies]
 oxy-domain = { path = "../oxy-domain" }
 parking_lot.workspace = true
@@ -13,4 +16,3 @@ trash.workspace = true
 
 [dev-dependencies]
 tempfile.workspace = true
-

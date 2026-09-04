@@ -7,10 +7,10 @@ use oxy_media::{raw_dimensions, raw_full, raw_preview};
 use std::{env, error::Error, path::PathBuf, time::Instant};
 
 fn main() -> Result<(), Box<dyn Error>> {
-    let path = env::args_os()
-        .nth(1)
-        .map(PathBuf::from)
-        .unwrap_or_else(|| PathBuf::from("test/fixtures/media/DSC00529.ARW"));
+    let path = env::args_os().nth(1).map_or_else(
+        || PathBuf::from("test/fixtures/media/DSC00529.ARW"),
+        PathBuf::from,
+    );
     let include_full = env::args().any(|argument| argument == "--full");
 
     let source = raw_dimensions(&path)?;

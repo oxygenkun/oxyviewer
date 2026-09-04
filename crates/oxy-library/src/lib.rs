@@ -1324,7 +1324,7 @@ mod tests {
         std::fs::create_dir_all(&shallow).unwrap();
         std::fs::create_dir_all(&deep).unwrap();
         let canonical_root = root.path().canonicalize().unwrap();
-        let mut queue = DirectoryPriorityQueue::new(canonical_root.clone());
+        let mut queue = DirectoryPriorityQueue::new(canonical_root);
         queue.pop_next();
 
         queue.enqueue_children(

@@ -420,7 +420,7 @@ pub fn parse_heif<'a>(data: &'a [u8]) -> Result<HeifInfo<'a>> {
 ///   4 bytes: tiff_header_offset (big-endian) - offset from start of payload to TIFF header
 ///   N bytes: prefix data (usually "Exif\0\0" when offset=6, or empty when offset=0)
 ///   TIFF header + IFDs
-fn find_exif_in_heif<'a>(data: &'a [u8]) -> Option<&'a [u8]> {
+fn find_exif_in_heif(data: &[u8]) -> Option<&[u8]> {
     // Strategy 1: Look for "Exif\0\0" followed by TIFF header
     let exif_marker = b"Exif\x00\x00";
     for i in 0..data.len().saturating_sub(14) {
@@ -462,7 +462,7 @@ fn find_exif_in_heif<'a>(data: &'a [u8]) -> Option<&'a [u8]> {
 }
 
 /// Simplified XMP finder for HEIF - scans for XMP data (H5).
-fn find_xmp_in_heif<'a>(data: &'a [u8]) -> Option<&'a [u8]> {
+fn find_xmp_in_heif(data: &[u8]) -> Option<&[u8]> {
     // Look for "<?xpacket" or "<x:xmpmeta"
     let markers: &[&[u8]] = &[b"<?xpacket", b"<x:xmpmeta"];
     for marker in markers {
@@ -494,8 +494,7 @@ fn find_xmp_in_heif<'a>(data: &'a [u8]) -> Option<&'a [u8]> {
             let end = data[pos..pos + max_len]
                 .iter()
                 .position(|&b| b == 0)
-                .map(|p| pos + p)
-                .unwrap_or(pos + max_len);
+                .map_or(pos + max_len, |p| pos + p);
             return Some(&data[pos..end]);
         }
     }
