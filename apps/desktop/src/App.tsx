@@ -1,6 +1,6 @@
 import { useInfiniteQuery, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Aperture, CircleAlert, FolderPlus, RectangleHorizontal, RectangleVertical } from "lucide-react";
-import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties } from "react";
 import { AssetBrowser } from "./components/AssetBrowser";
 import { BackgroundPreviewPreloader } from "./components/BackgroundPreviewPreloader";
 import { Inspector } from "./components/Inspector";
@@ -73,11 +73,18 @@ export function App({ perfScenario }: { perfScenario?: PerfScenario }) {
   const {
     view, gridPreference, activeId, selectedIds, inspectorOpen, leftPanelOpen, settingsOpen, locale,
     search, kind, minimumRating, colorLabels, sort, direction, clearSelection, select, setGridPreference, toggleSettings,
-    leftPanelWidth, inspectorWidth, setLeftPanelWidth, setInspectorWidth,
+    leftPanelWidth, inspectorWidth, setLeftPanelWidth, setInspectorWidth, uiFontScale,
   } = useWorkspaceStore();
   const appShellRef = useRef<HTMLDivElement>(null);
   const activeDirectoryNoticeRef = useRef<string | undefined>(undefined);
   const t = useCallback((key: Parameters<typeof translate>[1]) => translate(locale, key), [locale]);
+
+  useLayoutEffect(() => {
+    document.documentElement.style.fontSize = `${uiFontScale * 100}%`;
+    return () => {
+      document.documentElement.style.removeProperty("font-size");
+    };
+  }, [uiFontScale]);
 
   const foldersQuery = useQuery({
     queryKey: ["open-folders"],

@@ -5,6 +5,9 @@ const WORKSPACE_KEY = "oxyviewer.workspace.v1";
 const ONBOARDING_KEY = "oxyviewer.folder-onboarding.v1";
 const FOCUS_AREAS_KEY = "oxyviewer.focus-areas-visible.v1";
 const LOUPE_CONTROLS_AUTO_HIDE_KEY = "oxyviewer.loupe-controls-auto-hide.v1";
+const UI_FONT_SCALE_KEY = "oxyviewer.ui-font-scale.v1";
+export const UI_FONT_SCALES = [0.8, 1, 1.25, 1.5, 1.75] as const;
+export type UiFontScale = (typeof UI_FONT_SCALES)[number];
 const LAYOUT_SIZE_KEYS: Record<LayoutRegion, string> = {
   leftPanel: "oxyviewer.left-panel-width.v1",
   inspector: "oxyviewer.inspector-width.v1",
@@ -122,6 +125,30 @@ export function saveLoupeControlsAutoHide(enabled: boolean, storage?: StorageLik
   if (!resolved) return;
   try {
     resolved.setItem(LOUPE_CONTROLS_AUTO_HIDE_KEY, String(enabled));
+  } catch {
+    // Display preferences must never prevent the viewer from opening.
+  }
+}
+
+export function loadUiFontScale(storage?: StorageLike): UiFontScale {
+  const resolved = storage ?? (typeof window === "undefined" ? undefined : window.localStorage);
+  if (!resolved) return 1;
+  try {
+    const stored = Number(resolved.getItem(UI_FONT_SCALE_KEY));
+    if (stored === 0.85) return 0.8;
+    if (stored === 1.15) return 1.25;
+    if (stored === 2) return 1.75;
+    return UI_FONT_SCALES.find((scale) => scale === stored) ?? 1;
+  } catch {
+    return 1;
+  }
+}
+
+export function saveUiFontScale(scale: UiFontScale, storage?: StorageLike): void {
+  const resolved = storage ?? (typeof window === "undefined" ? undefined : window.localStorage);
+  if (!resolved) return;
+  try {
+    resolved.setItem(UI_FONT_SCALE_KEY, String(scale));
   } catch {
     // Display preferences must never prevent the viewer from opening.
   }

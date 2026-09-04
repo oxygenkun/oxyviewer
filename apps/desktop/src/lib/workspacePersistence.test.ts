@@ -4,12 +4,14 @@ import {
   loadLoupeControlsAutoHide,
   loadLayoutSize,
   loadMetadataVisibility,
+  loadUiFontScale,
   parseWorkspaceSnapshot,
   recoverMissingCurrentDirectory,
   saveFocusAreasVisible,
   saveLoupeControlsAutoHide,
   saveLayoutSize,
   saveMetadataVisibility,
+  saveUiFontScale,
 } from "./workspacePersistence";
 
 describe("workspace persistence", () => {
@@ -82,6 +84,23 @@ describe("workspace persistence", () => {
     expect(loadLoupeControlsAutoHide(storage)).toBe(true);
     saveLoupeControlsAutoHide(false, storage);
     expect(loadLoupeControlsAutoHide(storage)).toBe(false);
+  });
+
+  it("persists a supported UI font scale and rejects obsolete values", () => {
+    const values = new Map<string, string>();
+    const storage = {
+      getItem: (key: string) => values.get(key) ?? null,
+      setItem: (key: string, value: string) => { values.set(key, value); },
+    };
+    expect(loadUiFontScale(storage)).toBe(1);
+    saveUiFontScale(1.5, storage);
+    expect(loadUiFontScale(storage)).toBe(1.5);
+    values.set("oxyviewer.ui-font-scale.v1", "1.15");
+    expect(loadUiFontScale(storage)).toBe(1.25);
+    values.set("oxyviewer.ui-font-scale.v1", "2");
+    expect(loadUiFontScale(storage)).toBe(1.75);
+    values.set("oxyviewer.ui-font-scale.v1", "9");
+    expect(loadUiFontScale(storage)).toBe(1);
   });
 
   it("persists and clamps layout sizes", () => {

@@ -19,6 +19,7 @@ import {
   validCacheLimitGb,
 } from "../lib/cacheSettings";
 import type { Locale, MessageKey } from "../lib/i18n";
+import { UI_FONT_SCALES } from "../lib/workspacePersistence";
 import { useWorkspaceStore } from "../store";
 
 interface SettingsPanelProps {
@@ -40,11 +41,13 @@ export function SettingsPanel({ t }: SettingsPanelProps) {
     hardwareAcceleration,
     locale,
     loupeMetadataVisible,
+    uiFontScale,
     setDisplaySharpening,
     setGridMetadataVisible,
     setHardwareAcceleration,
     setLocale,
     setLoupeMetadataVisible,
+    setUiFontScale,
     toggleSettings,
   } = useWorkspaceStore();
   const capabilities = useQuery({
@@ -294,6 +297,23 @@ export function SettingsPanel({ t }: SettingsPanelProps) {
 
         <div className="settings-panel__section">
           <span className="settings-panel__label">{t("appearance")}</span>
+          <div className="settings-panel__field">
+            <span>{t("uiFontSize")}</span>
+            <div className="settings-panel__font-size-options">
+              {UI_FONT_SCALES.map((scale) => (
+                <button
+                  key={scale}
+                  aria-label={`${t("uiFontSize")} ${Math.round(scale * 100)}%`}
+                  aria-pressed={uiFontScale === scale}
+                  className={uiFontScale === scale ? "is-active" : ""}
+                  onClick={() => setUiFontScale(scale)}
+                >
+                  {Math.round(scale * 100)}%
+                </button>
+              ))}
+            </div>
+          </div>
+          <p className="settings-panel__scale-hint">{t("uiFontSizeHint")}</p>
           <div className="settings-panel__theme-row">
             <span className="settings-panel__theme-swatch settings-panel__theme-swatch--dark" />
             <span>{t("theme")}</span>

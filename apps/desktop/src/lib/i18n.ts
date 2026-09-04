@@ -208,6 +208,8 @@ const messages = {
     unavailable: "不可用",
     language: "语言",
     appearance: "外观",
+    uiFontSize: "UI 文字大小",
+    uiFontSizeHint: "低分辨率可用 80–100%；高 DPI 屏幕可用 125–175%。此设置会与系统显示缩放叠加。",
     theme: "主题",
   },
   en: {
@@ -417,6 +419,8 @@ const messages = {
     unavailable: "Unavailable",
     language: "Language",
     appearance: "Appearance",
+    uiFontSize: "UI text size",
+    uiFontSizeHint: "Use 80–100% on lower-resolution displays and 125–175% on high-DPI displays. This is applied in addition to system scaling.",
     theme: "Theme",
   },
 } as const;

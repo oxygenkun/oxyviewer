@@ -5,10 +5,13 @@ import {
   loadLayoutSize,
   loadLoupeControlsAutoHide,
   loadMetadataVisibility,
+  loadUiFontScale,
   saveFocusAreasVisible,
   saveLayoutSize,
   saveLoupeControlsAutoHide,
   saveMetadataVisibility,
+  saveUiFontScale,
+  type UiFontScale,
 } from "./lib/workspacePersistence";
 import type {
   AssetKind,
@@ -36,6 +39,7 @@ interface WorkspaceState {
   gridMetadataVisible: boolean;
   loupeMetadataVisible: boolean;
   loupeControlsAutoHide: boolean;
+  uiFontScale: UiFontScale;
   leftPanelWidth: number;
   inspectorWidth: number;
   filmstripHeight: number;
@@ -61,6 +65,7 @@ interface WorkspaceState {
   setGridMetadataVisible: (visible: boolean) => void;
   setLoupeMetadataVisible: (visible: boolean) => void;
   setLoupeControlsAutoHide: (enabled: boolean) => void;
+  setUiFontScale: (scale: UiFontScale) => void;
   setLeftPanelWidth: (width: number) => void;
   setInspectorWidth: (width: number) => void;
   setFilmstripHeight: (height: number) => void;
@@ -88,6 +93,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set) => ({
   gridMetadataVisible: loadMetadataVisibility("grid"),
   loupeMetadataVisible: loadMetadataVisibility("loupe"),
   loupeControlsAutoHide: loadLoupeControlsAutoHide(),
+  uiFontScale: loadUiFontScale(),
   leftPanelWidth: loadLayoutSize("leftPanel"),
   inspectorWidth: loadLayoutSize("inspector"),
   filmstripHeight: loadLayoutSize("filmstrip"),
@@ -129,6 +135,10 @@ export const useWorkspaceStore = create<WorkspaceState>((set) => ({
   setLoupeControlsAutoHide: (loupeControlsAutoHide) => {
     saveLoupeControlsAutoHide(loupeControlsAutoHide);
     set({ loupeControlsAutoHide });
+  },
+  setUiFontScale: (uiFontScale) => {
+    saveUiFontScale(uiFontScale);
+    set({ uiFontScale });
   },
   setLeftPanelWidth: (leftPanelWidth) => {
     saveLayoutSize("leftPanel", leftPanelWidth);
