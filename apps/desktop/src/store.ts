@@ -2,9 +2,11 @@ import { create } from "zustand";
 import type { Locale } from "./lib/i18n";
 import {
   loadFocusAreasVisible,
+  loadLayoutSize,
   loadLoupeControlsAutoHide,
   loadMetadataVisibility,
   saveFocusAreasVisible,
+  saveLayoutSize,
   saveLoupeControlsAutoHide,
   saveMetadataVisibility,
 } from "./lib/workspacePersistence";
@@ -34,6 +36,9 @@ interface WorkspaceState {
   gridMetadataVisible: boolean;
   loupeMetadataVisible: boolean;
   loupeControlsAutoHide: boolean;
+  leftPanelWidth: number;
+  inspectorWidth: number;
+  filmstripHeight: number;
   search: string;
   kind?: AssetKind;
   minimumRating?: number;
@@ -56,6 +61,9 @@ interface WorkspaceState {
   setGridMetadataVisible: (visible: boolean) => void;
   setLoupeMetadataVisible: (visible: boolean) => void;
   setLoupeControlsAutoHide: (enabled: boolean) => void;
+  setLeftPanelWidth: (width: number) => void;
+  setInspectorWidth: (width: number) => void;
+  setFilmstripHeight: (height: number) => void;
   setSearch: (search: string) => void;
   setKind: (kind?: AssetKind) => void;
   setMinimumRating: (rating?: number) => void;
@@ -80,6 +88,9 @@ export const useWorkspaceStore = create<WorkspaceState>((set) => ({
   gridMetadataVisible: loadMetadataVisibility("grid"),
   loupeMetadataVisible: loadMetadataVisibility("loupe"),
   loupeControlsAutoHide: loadLoupeControlsAutoHide(),
+  leftPanelWidth: loadLayoutSize("leftPanel"),
+  inspectorWidth: loadLayoutSize("inspector"),
+  filmstripHeight: loadLayoutSize("filmstrip"),
   search: "",
   colorLabels: [],
   sort: "name",
@@ -118,6 +129,18 @@ export const useWorkspaceStore = create<WorkspaceState>((set) => ({
   setLoupeControlsAutoHide: (loupeControlsAutoHide) => {
     saveLoupeControlsAutoHide(loupeControlsAutoHide);
     set({ loupeControlsAutoHide });
+  },
+  setLeftPanelWidth: (leftPanelWidth) => {
+    saveLayoutSize("leftPanel", leftPanelWidth);
+    set({ leftPanelWidth });
+  },
+  setInspectorWidth: (inspectorWidth) => {
+    saveLayoutSize("inspector", inspectorWidth);
+    set({ inspectorWidth });
+  },
+  setFilmstripHeight: (filmstripHeight) => {
+    saveLayoutSize("filmstrip", filmstripHeight);
+    set({ filmstripHeight });
   },
   setSearch: (search) => set({ search }),
   setKind: (kind) => set({ kind }),

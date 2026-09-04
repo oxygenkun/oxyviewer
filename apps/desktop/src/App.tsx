@@ -1,12 +1,13 @@
 import { useInfiniteQuery, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Aperture, CircleAlert, FolderPlus, RectangleHorizontal, RectangleVertical } from "lucide-react";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
 import { AssetBrowser } from "./components/AssetBrowser";
 import { BackgroundPreviewPreloader } from "./components/BackgroundPreviewPreloader";
 import { Inspector } from "./components/Inspector";
 import { PerfHarness } from "./components/PerfHarness";
 import { SettingsPanel } from "./components/SettingsPanel";
 import { Sidebar } from "./components/Sidebar";
+import { ResizeHandle } from "./components/ResizeHandle";
 import { Toolbar } from "./components/Toolbar";
 import {
   addLibraryRoot,
@@ -36,6 +37,7 @@ import {
 } from "./lib/metadataProjection";
 import { isSameOrDescendantPath, parentFolderPath, relativeFolderPath } from "./lib/folderPaths";
 import { translate } from "./lib/i18n";
+import { LAYOUT_SIZE_LIMITS } from "./lib/layoutSizing";
 import {
   mergeVisibleFolderOrder,
   sortFolderSessions,
@@ -66,7 +68,9 @@ export function App({ perfScenario }: { perfScenario?: PerfScenario }) {
   const {
     view, gridPreference, activeId, selectedIds, inspectorOpen, leftPanelOpen, settingsOpen, locale,
     search, kind, minimumRating, colorLabels, sort, direction, clearSelection, setGridPreference, toggleSettings,
+    leftPanelWidth, inspectorWidth, setLeftPanelWidth, setInspectorWidth,
   } = useWorkspaceStore();
+  const appShellRef = useRef<HTMLDivElement>(null);
   const t = useCallback((key: Parameters<typeof translate>[1]) => translate(locale, key), [locale]);
 
   const foldersQuery = useQuery({
@@ -471,7 +475,12 @@ export function App({ perfScenario }: { perfScenario?: PerfScenario }) {
 
   return (
     <div
+      ref={appShellRef}
       className={`app-shell ${leftPanelOpen ? "" : "sidebar-collapsed"} ${inspectorOpen ? "" : "inspector-collapsed"}`}
+      style={{
+        "--left-panel-width": `${leftPanelWidth}px`,
+        "--inspector-width": `${inspectorWidth}px`,
+      } as CSSProperties}
     >
       <Sidebar
         sessions={sortedSessions}
@@ -494,6 +503,19 @@ export function App({ perfScenario }: { perfScenario?: PerfScenario }) {
         onFolderDragEnabledChange={handleFolderDragEnabledChange}
         onReorderFolders={(rootPaths) => void handleReorderFolders(rootPaths)}
         t={t}
+      />
+      <ResizeHandle
+        axis="x"
+        className="resize-handle--left"
+        cssVariable="--left-panel-width"
+        defaultValue={LAYOUT_SIZE_LIMITS.leftPanel.defaultValue}
+        direction={1}
+        label={t("resizeLeftPanel")}
+        max={LAYOUT_SIZE_LIMITS.leftPanel.max}
+        min={LAYOUT_SIZE_LIMITS.leftPanel.min}
+        onCommit={setLeftPanelWidth}
+        targetRef={appShellRef}
+        value={leftPanelWidth}
       />
       <section className="workspace">
         <Toolbar total={total} t={t} />
@@ -557,6 +579,19 @@ export function App({ perfScenario }: { perfScenario?: PerfScenario }) {
           <span>{selectedIds.length} {t("selected")}</span>
         </footer>
       </section>
+      <ResizeHandle
+        axis="x"
+        className="resize-handle--right"
+        cssVariable="--inspector-width"
+        defaultValue={LAYOUT_SIZE_LIMITS.inspector.defaultValue}
+        direction={-1}
+        label={t("resizeInspector")}
+        max={LAYOUT_SIZE_LIMITS.inspector.max}
+        min={LAYOUT_SIZE_LIMITS.inspector.min}
+        onCommit={setInspectorWidth}
+        targetRef={appShellRef}
+        value={inspectorWidth}
+      />
       <Inspector
         asset={activeAsset}
         selectedPaths={assets.filter((asset) => selectedIds.includes(asset.id)).map((asset) => asset.path)}

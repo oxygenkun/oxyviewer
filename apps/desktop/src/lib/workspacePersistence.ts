@@ -1,9 +1,15 @@
 import type { FolderSort } from "./folderOrdering";
+import { clampLayoutSize, LAYOUT_SIZE_LIMITS, type LayoutRegion } from "./layoutSizing";
 
 const WORKSPACE_KEY = "oxyviewer.workspace.v1";
 const ONBOARDING_KEY = "oxyviewer.folder-onboarding.v1";
 const FOCUS_AREAS_KEY = "oxyviewer.focus-areas-visible.v1";
 const LOUPE_CONTROLS_AUTO_HIDE_KEY = "oxyviewer.loupe-controls-auto-hide.v1";
+const LAYOUT_SIZE_KEYS: Record<LayoutRegion, string> = {
+  leftPanel: "oxyviewer.left-panel-width.v1",
+  inspector: "oxyviewer.inspector-width.v1",
+  filmstrip: "oxyviewer.loupe-filmstrip-height.v1",
+};
 const METADATA_VISIBILITY_KEYS = {
   grid: "oxyviewer.grid-metadata-visible.v1",
   loupe: "oxyviewer.loupe-metadata-visible.v1",
@@ -106,6 +112,33 @@ export function saveLoupeControlsAutoHide(enabled: boolean, storage?: StorageLik
     resolved.setItem(LOUPE_CONTROLS_AUTO_HIDE_KEY, String(enabled));
   } catch {
     // Display preferences must never prevent the viewer from opening.
+  }
+}
+
+export function loadLayoutSize(region: LayoutRegion, storage?: StorageLike): number {
+  const resolved = storage ?? (typeof window === "undefined" ? undefined : window.localStorage);
+  if (!resolved) return LAYOUT_SIZE_LIMITS[region].defaultValue;
+  try {
+    const stored = resolved.getItem(LAYOUT_SIZE_KEYS[region]);
+    return stored === null
+      ? LAYOUT_SIZE_LIMITS[region].defaultValue
+      : clampLayoutSize(region, Number(stored));
+  } catch {
+    return LAYOUT_SIZE_LIMITS[region].defaultValue;
+  }
+}
+
+export function saveLayoutSize(
+  region: LayoutRegion,
+  value: number,
+  storage?: StorageLike,
+): void {
+  const resolved = storage ?? (typeof window === "undefined" ? undefined : window.localStorage);
+  if (!resolved) return;
+  try {
+    resolved.setItem(LAYOUT_SIZE_KEYS[region], String(clampLayoutSize(region, value)));
+  } catch {
+    // Layout preferences must never prevent the viewer from opening.
   }
 }
 

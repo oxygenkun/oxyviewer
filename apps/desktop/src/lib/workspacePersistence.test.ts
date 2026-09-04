@@ -2,10 +2,12 @@ import { describe, expect, it } from "vitest";
 import {
   loadFocusAreasVisible,
   loadLoupeControlsAutoHide,
+  loadLayoutSize,
   loadMetadataVisibility,
   parseWorkspaceSnapshot,
   saveFocusAreasVisible,
   saveLoupeControlsAutoHide,
+  saveLayoutSize,
   saveMetadataVisibility,
 } from "./workspacePersistence";
 
@@ -66,5 +68,18 @@ describe("workspace persistence", () => {
     expect(loadLoupeControlsAutoHide(storage)).toBe(true);
     saveLoupeControlsAutoHide(false, storage);
     expect(loadLoupeControlsAutoHide(storage)).toBe(false);
+  });
+
+  it("persists and clamps layout sizes", () => {
+    const values = new Map<string, string>();
+    const storage = {
+      getItem: (key: string) => values.get(key) ?? null,
+      setItem: (key: string, value: string) => { values.set(key, value); },
+    };
+    expect(loadLayoutSize("leftPanel", storage)).toBe(224);
+    saveLayoutSize("leftPanel", 320, storage);
+    expect(loadLayoutSize("leftPanel", storage)).toBe(320);
+    saveLayoutSize("filmstrip", 10_000, storage);
+    expect(loadLayoutSize("filmstrip", storage)).toBe(300);
   });
 });

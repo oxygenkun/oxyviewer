@@ -29,6 +29,7 @@ import {
   type Point,
   type Size,
 } from "../lib/loupe";
+import { LAYOUT_SIZE_LIMITS } from "../lib/layoutSizing";
 import { getAssetDetails } from "../lib/api";
 import { mapFocusRegions } from "../lib/focusArea";
 import type { MessageKey } from "../lib/i18n";
@@ -41,6 +42,7 @@ import { AssetMetadataBadges } from "./AssetMetadataBadges";
 import { FilmstripPreviewPreloader } from "./FilmstripPreviewPreloader";
 import { HeifTileCanvas } from "./HeifTileCanvas";
 import { Thumbnail } from "./Thumbnail";
+import { ResizeHandle } from "./ResizeHandle";
 
 interface LoupeProps {
   assets: AssetSummary[];
@@ -85,10 +87,12 @@ export function Loupe({
   const focusAreasVisible = useWorkspaceStore((state) => state.focusAreasVisible);
   const loupeMetadataVisible = useWorkspaceStore((state) => state.loupeMetadataVisible);
   const loupeControlsAutoHide = useWorkspaceStore((state) => state.loupeControlsAutoHide);
+  const filmstripHeight = useWorkspaceStore((state) => state.filmstripHeight);
   const setNavigatorVisible = useWorkspaceStore((state) => state.setNavigatorVisible);
   const setNavigatorPosition = useWorkspaceStore((state) => state.setNavigatorPosition);
   const setFocusAreasVisible = useWorkspaceStore((state) => state.setFocusAreasVisible);
   const setLoupeControlsAutoHide = useWorkspaceStore((state) => state.setLoupeControlsAutoHide);
+  const setFilmstripHeight = useWorkspaceStore((state) => state.setFilmstripHeight);
   const active = assets.find((asset) => asset.id === activeId) ?? assets[0];
   const stageRef = useRef<HTMLDivElement>(null);
   const imageRef = useRef<HTMLDivElement>(null);
@@ -96,6 +100,7 @@ export function Loupe({
   const settingsRef = useRef<HTMLDivElement>(null);
   const settingsButtonRef = useRef<HTMLButtonElement>(null);
   const filmstripRef = useRef<HTMLDivElement>(null);
+  const loupeRef = useRef<HTMLDivElement>(null);
   const dragRef = useRef<{ pointerId: number; start: Point; offset: Point } | undefined>(undefined);
   const navigatorDragRef = useRef<{ pointerId: number; last: Point } | undefined>(undefined);
   const [zoom, setZoom] = useState(1);
@@ -398,7 +403,11 @@ export function Loupe({
   };
 
   return (
-    <div className="loupe">
+    <div
+      className="loupe"
+      ref={loupeRef}
+      style={{ "--filmstrip-height": `${filmstripHeight}px` } as React.CSSProperties}
+    >
       <FilmstripPreviewPreloader assets={visibleFilmstripAssets} />
       <div
         className={`loupe__stage ${zoom > 1 ? "is-zoomed" : ""} ${dragging ? "is-dragging" : ""}`}
@@ -621,6 +630,19 @@ export function Loupe({
           </div>
         ) : null}
       </div>
+      <ResizeHandle
+        axis="y"
+        className="resize-handle--filmstrip"
+        cssVariable="--filmstrip-height"
+        defaultValue={LAYOUT_SIZE_LIMITS.filmstrip.defaultValue}
+        direction={-1}
+        label={t("resizeFilmstrip")}
+        max={LAYOUT_SIZE_LIMITS.filmstrip.max}
+        min={LAYOUT_SIZE_LIMITS.filmstrip.min}
+        onCommit={setFilmstripHeight}
+        targetRef={loupeRef}
+        value={filmstripHeight}
+      />
       <div
         className="filmstrip"
         ref={filmstripRef}
