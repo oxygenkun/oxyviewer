@@ -37,6 +37,7 @@ interface AssetBrowserProps {
 
 interface AssetCardProps {
   asset: AssetSummary;
+  resourcesEnabled: boolean;
   priority: "nearby" | "visible";
   queueOrder: number;
   selected: boolean;
@@ -52,8 +53,14 @@ const FILE_MANAGER_LABEL = {
   generic: "openInFileManager",
 } as const satisfies Record<ReturnType<typeof platformFileManager>, MessageKey>;
 
+// Keep filesystem fetches and webview image decodes out of active scroll
+// frames. The virtualizer still paints summaries/placeholders immediately and
+// re-enables resource work once the viewport has settled.
+const RESOURCE_LOAD_SCROLL_IDLE_MS = 160;
+
 const AssetCard = memo(function AssetCard({
   asset,
+  resourcesEnabled,
   priority,
   queueOrder,
   selected,
@@ -71,6 +78,7 @@ const AssetCard = memo(function AssetCard({
     >
       <Thumbnail
         asset={asset}
+        enabled={resourcesEnabled}
         priority={priority}
         queueOrder={queueOrder}
         onContextMenu={onContextMenu}
@@ -262,8 +270,10 @@ function VirtualGrid({
     getScrollElement: () => parentRef.current,
     estimateSize: () => rowHeight,
     overscan: 3,
+    isScrollingResetDelay: RESOURCE_LOAD_SCROLL_IDLE_MS,
   });
   const rows = virtualizer.getVirtualItems();
+  const resourcesEnabled = !virtualizer.isScrolling;
   const viewportCenter = (parentRef.current?.scrollTop ?? 0)
     + (parentRef.current?.clientHeight ?? rowHeight) / 2;
   const selectedAsset = assets.find((asset) => asset.id === activeId);
@@ -285,8 +295,8 @@ function VirtualGrid({
     [scheduleCandidates, selectedAsset],
   );
   useEffect(() => {
-    viewportSchedule.reconcile(viewportIntents);
-  }, [viewportIntents, viewportSchedule]);
+    viewportSchedule.reconcile(resourcesEnabled ? viewportIntents : []);
+  }, [resourcesEnabled, viewportIntents, viewportSchedule]);
 
   useEffect(() => {
     const timer = window.setTimeout(() => {
@@ -363,6 +373,7 @@ function VirtualGrid({
                       setView("loupe");
                     }}
                     showMetadata={gridMetadataVisible}
+                    resourcesEnabled={resourcesEnabled}
                   />
                 ) : (
                   <div className="asset-card-placeholder" key={`placeholder-${assetIndex}`} aria-hidden="true" />
@@ -399,8 +410,10 @@ function VirtualList({
     getScrollElement: () => parentRef.current,
     estimateSize: () => 58,
     overscan: 8,
+    isScrollingResetDelay: RESOURCE_LOAD_SCROLL_IDLE_MS,
   });
   const rows = virtualizer.getVirtualItems();
+  const resourcesEnabled = !virtualizer.isScrolling;
   const viewportCenter = (parentRef.current?.scrollTop ?? 0)
     + (parentRef.current?.clientHeight ?? 58) / 2;
   const selectedAsset = assets.find((asset) => asset.id === activeId);
@@ -422,8 +435,8 @@ function VirtualList({
     [scheduleCandidates, selectedAsset],
   );
   useEffect(() => {
-    viewportSchedule.reconcile(viewportIntents);
-  }, [viewportIntents, viewportSchedule]);
+    viewportSchedule.reconcile(resourcesEnabled ? viewportIntents : []);
+  }, [resourcesEnabled, viewportIntents, viewportSchedule]);
 
   useEffect(() => {
     const timer = window.setTimeout(() => {
@@ -479,6 +492,7 @@ function VirtualList({
             >
               <Thumbnail
                 asset={asset}
+                enabled={resourcesEnabled}
                 priority={isVisible(row.start, row.end, parentRef.current) ? "visible" : "nearby"}
                 queueOrder={Math.round(Math.abs((row.start + row.end) / 2 - viewportCenter) / 58)}
                 onContextMenu={(event) => onAssetContextMenu(event, asset)}

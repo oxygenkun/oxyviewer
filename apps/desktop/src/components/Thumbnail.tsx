@@ -6,6 +6,7 @@ import {
   previewUrl,
 } from "../lib/api";
 import {
+  browserImageSourceWhenEnabled,
   getBrowserImageSize,
   isBrowserImageReady,
   markBrowserImageReady,
@@ -150,7 +151,11 @@ export function Thumbnail({
     previewSource,
     !fullImageFailed ? fullSource : undefined,
   ]);
-  const source = directSource ?? generatedSource?.url;
+  const sourceCandidate = directSource ?? generatedSource?.url;
+  // A mounted virtual row must not begin filesystem I/O or image decoding
+  // while its scroll container is moving. Already-decoded browser images can
+  // still paint immediately from the local in-memory cache.
+  const source = browserImageSourceWhenEnabled(sourceCandidate, enabled);
   const pendingSource = source !== visibleImage?.source ? source : undefined;
   const seed = hashSeed(asset.name);
   const style = {

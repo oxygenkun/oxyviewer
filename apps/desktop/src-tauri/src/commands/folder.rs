@@ -10,20 +10,21 @@ use std::path::PathBuf;
 use tauri::{Emitter, State};
 
 #[tauri::command]
-pub(crate) fn open_folder(
+pub(crate) async fn open_folder(
     path: PathBuf,
     app: tauri::AppHandle,
     state: State<'_, AppState>,
 ) -> Result<FolderSession, String> {
-    let session = state
-        .files
-        .open_folder(path)
-        .map_err(|error| error.to_string())?;
-    if state
-        .library
-        .contains_root(&session.root_path)
-        .unwrap_or(false)
-    {
+    let files = state.files.clone();
+    let library = state.library.clone();
+    let (session, should_index) = tauri::async_runtime::spawn_blocking(move || {
+        let session = files.open_folder(path).map_err(|error| error.to_string())?;
+        let should_index = library.contains_root(&session.root_path).unwrap_or(false);
+        Ok::<_, String>((session, should_index))
+    })
+    .await
+    .map_err(|error| error.to_string())??;
+    if should_index {
         schedule_library_index(app, state.library.clone(), session.root_path.clone());
     }
     Ok(session)

@@ -16,6 +16,18 @@ end-to-end regression harness that enforces these budgets is described in
 
 ## Verification Log
 
+- 2026-09-04: Grid and list rendering now enter a presentation-only phase
+  during active scrolling. Virtual rows, cheap summaries, placeholders, and
+  already-decoded browser images continue painting, while new filesystem image
+  loads, WebView decodes, and viewport preview intents wait until the viewport
+  has been idle for 160 ms. Folder open, preview cache lookup/enqueue/wait, and
+  preview scheduling commands now move their blocking filesystem, SQLite, and
+  queue-lock work onto Tauri's blocking pool; the command executor no longer
+  performs those operations inline. The Rust preview data path remains the
+  persisted resource-projection table plus SSD artifacts, a four-tier
+  coalescing pending queue (`loupe`, `visible`, `nearby`, `preload`), an active
+  request map, and two decode workers.
+
 - 2026-09-04: Grid, list, and the loupe filmstrip now rank thumbnail work around
   the current selection when it is visible, otherwise from the viewport center.
   When an item leaves the overscan area,

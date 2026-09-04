@@ -10,6 +10,13 @@ export function isBrowserImageReady(url: string): boolean {
   return readyImages.has(url);
 }
 
+export function browserImageSourceWhenEnabled(
+  url: string | undefined,
+  enabled: boolean,
+): string | undefined {
+  return url && (enabled || readyImages.has(url)) ? url : undefined;
+}
+
 export function getBrowserImageSize(url: string): BrowserImageSize | undefined {
   return readyImages.get(url);
 }

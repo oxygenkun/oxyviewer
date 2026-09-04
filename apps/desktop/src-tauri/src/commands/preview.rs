@@ -20,30 +20,30 @@ pub(crate) async fn get_preview(
     app: tauri::AppHandle,
     state: State<'_, AppState>,
 ) -> Result<oxy_domain::ImageProjection, String> {
-    let asset = state
-        .files
-        .get_asset(&path)
-        .map_err(|error| error.to_string())?;
+    let files = state.files.clone();
+    let preview_queue = state.preview_queue.clone();
+    let preview_dir = state.cache.preview_dir();
     let cache = state.cache.clone();
-    let (projection, receiver) = state.preview_queue.request(
-        &app,
-        PreviewRequest {
-            request_id,
-            path: asset.path.clone(),
-            preview_dir: state.cache.preview_dir(),
-            kind: asset.kind,
-            size_bytes: asset.size_bytes,
-            modified_at_ms: asset.modified_at_ms,
-            level,
-            priority,
-            queue_order: queue_order.unwrap_or_default(),
-        },
-    )?;
-    let _ = app.emit(
-        crate::jobs::preview::IMAGE_PROJECTION_UPDATED_EVENT,
-        projection,
-    );
     let projection = tauri::async_runtime::spawn_blocking(move || {
+        let asset = files.get_asset(&path).map_err(|error| error.to_string())?;
+        let (projection, receiver) = preview_queue.request(
+            &app,
+            PreviewRequest {
+                request_id,
+                path: asset.path.clone(),
+                preview_dir,
+                kind: asset.kind,
+                size_bytes: asset.size_bytes,
+                modified_at_ms: asset.modified_at_ms,
+                level,
+                priority,
+                queue_order: queue_order.unwrap_or_default(),
+            },
+        )?;
+        let _ = app.emit(
+            crate::jobs::preview::IMAGE_PROJECTION_UPDATED_EVENT,
+            projection,
+        );
         receiver
             .recv()
             .map_err(|error| format!("preview queue stopped: {error}"))?
@@ -68,7 +68,7 @@ pub(crate) async fn get_preview(
 }
 
 #[tauri::command]
-pub(crate) fn reprioritize_preview(
+pub(crate) async fn reprioritize_preview(
     path: PathBuf,
     level: RenderLevel,
     request_id: String,
@@ -76,37 +76,43 @@ pub(crate) fn reprioritize_preview(
     queue_order: Option<usize>,
     state: State<'_, AppState>,
 ) -> Result<bool, String> {
-    let asset = state
-        .files
-        .get_asset(&path)
-        .map_err(|error| error.to_string())?;
-    let identity = PreviewIdentity {
-        path: asset.path,
-        level,
-    };
-    Ok(state.preview_queue.reprioritize_pending(
-        identity,
-        &request_id,
-        priority,
-        queue_order.unwrap_or_default(),
-    ))
+    let files = state.files.clone();
+    let preview_queue = state.preview_queue.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        let asset = files.get_asset(&path).map_err(|error| error.to_string())?;
+        let identity = PreviewIdentity {
+            path: asset.path,
+            level,
+        };
+        Ok(preview_queue.reprioritize_pending(
+            identity,
+            &request_id,
+            priority,
+            queue_order.unwrap_or_default(),
+        ))
+    })
+    .await
+    .map_err(|error| error.to_string())?
 }
 
 #[tauri::command]
-pub(crate) fn reconcile_preview_schedule(
+pub(crate) async fn reconcile_preview_schedule(
     scope_id: String,
     epoch: u64,
     intents: Vec<PreviewScheduleIntent>,
     omitted_policy: PreviewOmittedPolicy,
     state: State<'_, AppState>,
 ) -> Result<bool, String> {
-    state
-        .preview_queue
-        .reconcile_schedule(scope_id, epoch, intents, omitted_policy)
+    let preview_queue = state.preview_queue.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        preview_queue.reconcile_schedule(scope_id, epoch, intents, omitted_policy)
+    })
+    .await
+    .map_err(|error| error.to_string())?
 }
 
 #[tauri::command]
-pub(crate) fn upsert_preview_schedule(
+pub(crate) async fn upsert_preview_schedule(
     scope_id: String,
     epoch: u64,
     path: PathBuf,
@@ -114,29 +120,39 @@ pub(crate) fn upsert_preview_schedule(
     priority: PreviewPriority,
     placement: SchedulePlacement,
     state: State<'_, AppState>,
-) -> bool {
-    state.preview_queue.upsert_schedule(
-        scope_id,
-        epoch,
-        crate::jobs::preview::PreviewScheduleKey { path, level },
-        priority,
-        placement,
-    )
+) -> Result<bool, String> {
+    let preview_queue = state.preview_queue.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        preview_queue.upsert_schedule(
+            scope_id,
+            epoch,
+            crate::jobs::preview::PreviewScheduleKey { path, level },
+            priority,
+            placement,
+        )
+    })
+    .await
+    .map_err(|error| error.to_string())
 }
 
 #[tauri::command]
-pub(crate) fn release_preview_schedule(
+pub(crate) async fn release_preview_schedule(
     scope_id: String,
     epoch: u64,
     path: PathBuf,
     level: RenderLevel,
     state: State<'_, AppState>,
-) -> bool {
-    state.preview_queue.release_schedule(
-        &scope_id,
-        epoch,
-        &crate::jobs::preview::PreviewScheduleKey { path, level },
-    )
+) -> Result<bool, String> {
+    let preview_queue = state.preview_queue.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        preview_queue.release_schedule(
+            &scope_id,
+            epoch,
+            &crate::jobs::preview::PreviewScheduleKey { path, level },
+        )
+    })
+    .await
+    .map_err(|error| error.to_string())
 }
 
 #[tauri::command]
