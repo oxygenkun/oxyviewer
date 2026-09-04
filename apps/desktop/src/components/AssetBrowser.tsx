@@ -100,17 +100,15 @@ export function AssetBrowser(props: AssetBrowserProps) {
     y: number;
   }>();
   const [pendingTrash, setPendingTrash] = useState<AssetSummary>();
-  const select = useWorkspaceStore((state) => state.select);
   const showContextMenu = useCallback((event: React.MouseEvent, asset: AssetSummary) => {
     event.preventDefault();
     event.stopPropagation();
-    select(asset.id);
     setContextMenu({
       asset,
       x: Math.max(8, Math.min(event.clientX, window.innerWidth - 224)),
       y: Math.max(8, Math.min(event.clientY, window.innerHeight - 132)),
     });
-  }, [select]);
+  }, []);
 
   useEffect(() => {
     if (!contextMenu) return;
@@ -149,6 +147,7 @@ export function AssetBrowser(props: AssetBrowserProps) {
         fetchNextPage={props.fetchNextPage}
         hasNextPage={props.hasNextPage}
         isFetchingNextPage={props.isFetchingNextPage}
+        onAssetContextMenu={showContextMenu}
         t={props.t}
       />
     );

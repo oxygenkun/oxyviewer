@@ -58,6 +58,7 @@ interface LoupeProps {
   fetchNextPage: () => void;
   hasNextPage: boolean;
   isFetchingNextPage: boolean;
+  onAssetContextMenu: (event: React.MouseEvent, asset: AssetSummary) => void;
   t: (key: MessageKey) => string;
 }
 
@@ -86,6 +87,7 @@ export function Loupe({
   fetchNextPage,
   hasNextPage,
   isFetchingNextPage,
+  onAssetContextMenu,
   t,
 }: LoupeProps) {
   const activeId = useWorkspaceStore((state) => state.activeId);
@@ -753,6 +755,7 @@ export function Loupe({
             active={active.id === asset.id}
             asset={asset}
             onClick={() => select(asset.id)}
+            onContextMenu={(event) => onAssetContextMenu(event, asset)}
             queueOrder={viewportRankById.get(asset.id)
               ?? visibleFilmstripIds.length + (priorityRankById.get(asset.id) ?? assets.length)}
             root={filmstripRef}
@@ -777,6 +780,7 @@ interface FilmstripItemProps {
   active: boolean;
   asset: AssetSummary;
   onClick: () => void;
+  onContextMenu: (event: React.MouseEvent) => void;
   queueOrder: number;
   root: React.RefObject<HTMLDivElement | null>;
   showMetadata: boolean;
@@ -787,6 +791,7 @@ function FilmstripItem({
   active,
   asset,
   onClick,
+  onContextMenu,
   queueOrder,
   root,
   showMetadata,
@@ -824,6 +829,7 @@ function FilmstripItem({
       data-filmstrip-asset-id={asset.id}
       className={active ? "is-active" : ""}
       onClick={onClick}
+      onContextMenu={onContextMenu}
       title={asset.name}
     >
       {nearby || visible || active ? (
