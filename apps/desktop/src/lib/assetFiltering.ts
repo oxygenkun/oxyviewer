@@ -22,8 +22,8 @@ export function filterAndSortAssets(
   return assets
     .filter((asset) => !query.kind || asset.kind === query.kind)
     .filter((asset) => !query.minimumRating || (asset.rating ?? 0) >= query.minimumRating)
-    .filter((asset) => !query.colorLabel ||
-      asset.colorLabel?.toLocaleLowerCase() === query.colorLabel.toLocaleLowerCase())
+    .filter((asset) => !query.colorLabels?.length || query.colorLabels.some((label) =>
+      asset.colorLabel?.toLocaleLowerCase() === label.toLocaleLowerCase()))
     .filter((asset) => !search || asset.name.toLocaleLowerCase().includes(search))
     .sort((left, right) => compareAssets(left, right, query));
 }

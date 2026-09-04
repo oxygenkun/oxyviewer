@@ -1,6 +1,7 @@
 import {
   ArrowDownAZ,
   ArrowDownUp,
+  Check,
   Columns3,
   Grid3X3,
   List,
@@ -8,7 +9,6 @@ import {
   PanelLeftOpen,
   PanelRightClose,
   PanelRightOpen,
-  Palette,
   Search,
   Star,
   SlidersHorizontal,
@@ -19,6 +19,8 @@ import { useWorkspaceStore } from "../store";
 import type { AssetKind, AssetSort, ViewMode } from "../types";
 
 const kinds: Array<AssetKind | undefined> = [undefined, "raw", "jpeg", "heif"];
+const ratings = [1, 2, 3, 4, 5] as const;
+const colorLabels = ["Red", "Yellow", "Green", "Blue", "Purple"] as const;
 const views: Array<[ViewMode, typeof Grid3X3, MessageKey]> = [
   ["grid", Grid3X3, "viewGrid"],
   ["list", List, "viewList"],
@@ -34,7 +36,7 @@ export function Toolbar({ total, t }: ToolbarProps) {
   const {
     view, setView, search, setSearch, kind, setKind, sort, setSort, direction,
     toggleDirection, inspectorOpen, toggleInspector, leftPanelOpen, toggleLeftPanel,
-    minimumRating, setMinimumRating, colorLabel, setColorLabel,
+    minimumRating, setMinimumRating, colorLabels: selectedColorLabels, toggleColorLabel,
   } = useWorkspaceStore();
 
   return (
@@ -86,38 +88,55 @@ export function Toolbar({ total, t }: ToolbarProps) {
             </button>
           ))}
         </div>
-        <div className="filterbar__sort">
-          <Star size={13} />
-          <select
-            value={minimumRating ?? ""}
-            onChange={(event) => setMinimumRating(event.target.value ? Number(event.target.value) : undefined)}
-            aria-label={t("ratingFilter")}
-          >
-            <option value="">{t("anyRating")}</option>
-            {[1, 2, 3, 4, 5].map((rating) => (
-              <option key={rating} value={rating}>{rating}★+</option>
-            ))}
-          </select>
-          <Palette size={13} />
-          <select
-            value={colorLabel ?? ""}
-            onChange={(event) => setColorLabel(event.target.value || undefined)}
-            aria-label={t("colorFilter")}
-          >
-            <option value="">{t("anyColor")}</option>
-            {["Red", "Yellow", "Green", "Blue", "Purple"].map((label) => (
-              <option key={label} value={label}>{t(label.toLowerCase() as MessageKey)}</option>
-            ))}
-          </select>
-          <SlidersHorizontal size={14} />
-          <select value={sort} onChange={(event) => setSort(event.target.value as AssetSort)}>
-            <option value="name">{t("sortName")}</option>
-            <option value="modified">{t("sortModified")}</option>
-            <option value="size">{t("sortSize")}</option>
-          </select>
-          <button onClick={toggleDirection} title={direction}>
-            {sort === "name" ? <ArrowDownAZ size={15} /> : <ArrowDownUp size={15} />}
-          </button>
+        <div className="filterbar__controls">
+          <div className="filterbar__metadata-filters">
+            <div className="filterbar__rating" role="group" aria-label={t("ratingFilter")}>
+              {ratings.map((rating) => {
+                const active = (minimumRating ?? 0) >= rating;
+                return (
+                  <button
+                    key={rating}
+                    className={active ? "is-active" : ""}
+                    onClick={() => setMinimumRating(minimumRating === rating ? undefined : rating)}
+                    aria-label={`${rating}★+`}
+                    aria-pressed={active}
+                    title={`${t("ratingFilter")}: ${rating}★+`}
+                  >
+                    <Star size={13} />
+                  </button>
+                );
+              })}
+            </div>
+            <div className="filterbar__colors" role="group" aria-label={t("colorFilter")}>
+              {colorLabels.map((label) => {
+                const active = selectedColorLabels.includes(label);
+                return (
+                  <button
+                    key={label}
+                    className={active ? "is-active" : ""}
+                    style={{ "--filter-color": `var(--label-${label.toLowerCase()})` } as React.CSSProperties}
+                    onClick={() => toggleColorLabel(label)}
+                    aria-label={t(label.toLowerCase() as MessageKey)}
+                    aria-pressed={active}
+                    title={t(label.toLowerCase() as MessageKey)}
+                  >
+                    {active ? <Check size={9} strokeWidth={3} /> : null}
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+          <div className="filterbar__sort">
+            <SlidersHorizontal size={14} />
+            <select value={sort} onChange={(event) => setSort(event.target.value as AssetSort)}>
+              <option value="name">{t("sortName")}</option>
+              <option value="modified">{t("sortModified")}</option>
+              <option value="size">{t("sortSize")}</option>
+            </select>
+            <button onClick={toggleDirection} title={direction}>
+              {sort === "name" ? <ArrowDownAZ size={15} /> : <ArrowDownUp size={15} />}
+            </button>
+          </div>
         </div>
       </div>
     </>

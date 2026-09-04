@@ -627,7 +627,7 @@ impl Library {
         query: &AssetQuery,
         offset: usize,
     ) -> Result<Option<Page<AssetSummary>>, LibraryError> {
-        if query.minimum_rating.is_some() || query.color_label.is_some() {
+        if query.minimum_rating.is_some() || !query.color_labels.is_empty() {
             return Ok(None);
         }
         let root = root.to_string_lossy();

@@ -37,7 +37,7 @@ interface WorkspaceState {
   search: string;
   kind?: AssetKind;
   minimumRating?: number;
-  colorLabel?: string;
+  colorLabels: string[];
   sort: AssetSort;
   direction: SortDirection;
   setView: (view: ViewMode) => void;
@@ -59,7 +59,7 @@ interface WorkspaceState {
   setSearch: (search: string) => void;
   setKind: (kind?: AssetKind) => void;
   setMinimumRating: (rating?: number) => void;
-  setColorLabel: (label?: string) => void;
+  toggleColorLabel: (label: string) => void;
   setSort: (sort: AssetSort) => void;
   toggleDirection: () => void;
 }
@@ -81,6 +81,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set) => ({
   loupeMetadataVisible: loadMetadataVisibility("loupe"),
   loupeControlsAutoHide: loadLoupeControlsAutoHide(),
   search: "",
+  colorLabels: [],
   sort: "name",
   direction: "ascending",
   setView: (view) => set({ view }),
@@ -121,7 +122,11 @@ export const useWorkspaceStore = create<WorkspaceState>((set) => ({
   setSearch: (search) => set({ search }),
   setKind: (kind) => set({ kind }),
   setMinimumRating: (minimumRating) => set({ minimumRating }),
-  setColorLabel: (colorLabel) => set({ colorLabel }),
+  toggleColorLabel: (label) => set((state) => ({
+    colorLabels: state.colorLabels.includes(label)
+      ? state.colorLabels.filter((colorLabel) => colorLabel !== label)
+      : [...state.colorLabels, label],
+  })),
   setSort: (sort) => set({ sort }),
   toggleDirection: () =>
     set((state) => ({

@@ -80,7 +80,7 @@ async fn list_assets(
     let metadata = state.metadata.clone();
     let library = state.library.clone();
     tauri::async_runtime::spawn_blocking(move || {
-        if query.minimum_rating.is_some() || query.color_label.is_some() {
+        if query.minimum_rating.is_some() || !query.color_labels.is_empty() {
             let mut assets = files
                 .list_asset_candidates(&session_id, directory.as_deref())
                 .map_err(|error| error.to_string())?;

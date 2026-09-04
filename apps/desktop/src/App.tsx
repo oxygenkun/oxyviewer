@@ -65,7 +65,7 @@ export function App({ perfScenario }: { perfScenario?: PerfScenario }) {
   const metadataRecords = useMetadataProjectionStore((state) => state.records);
   const {
     view, gridPreference, activeId, selectedIds, inspectorOpen, leftPanelOpen, settingsOpen, locale,
-    search, kind, minimumRating, colorLabel, sort, direction, clearSelection, setGridPreference, toggleSettings,
+    search, kind, minimumRating, colorLabels, sort, direction, clearSelection, setGridPreference, toggleSettings,
   } = useWorkspaceStore();
   const t = useCallback((key: Parameters<typeof translate>[1]) => translate(locale, key), [locale]);
 
@@ -139,13 +139,13 @@ export function App({ perfScenario }: { perfScenario?: PerfScenario }) {
     search: search || undefined,
     kind,
     minimumRating,
-    colorLabel,
+    colorLabels: colorLabels.length ? colorLabels : undefined,
     sort,
     direction,
     pageSize: 250,
-  }), [colorLabel, direction, kind, minimumRating, search, sort]);
-  const progressivelyFilterMetadata = Boolean(!search && (minimumRating || colorLabel));
-  const shouldPreloadFilteredAssets = Boolean(!search && (kind || minimumRating || colorLabel));
+  }), [colorLabels, direction, kind, minimumRating, search, sort]);
+  const progressivelyFilterMetadata = Boolean(!search && (minimumRating || colorLabels.length));
+  const shouldPreloadFilteredAssets = Boolean(!search && (kind || minimumRating || colorLabels.length));
   const preloadQuery = useMemo<AssetQuery>(() => ({
     sort: "name",
     direction: "ascending",

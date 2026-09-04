@@ -406,7 +406,8 @@ pub struct AssetQuery {
     pub search: Option<String>,
     pub kind: Option<AssetKind>,
     pub minimum_rating: Option<u8>,
-    pub color_label: Option<String>,
+    #[serde(default)]
+    pub color_labels: Vec<String>,
     pub sort: AssetSort,
     pub direction: SortDirection,
     pub page_size: Option<usize>,

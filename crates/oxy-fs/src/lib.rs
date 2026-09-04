@@ -321,12 +321,14 @@ pub fn page_assets(
         {
             continue;
         }
-        if query.color_label.as_ref().is_some_and(|label| {
-            summary
-                .color_label
-                .as_deref()
-                .is_none_or(|value| !value.eq_ignore_ascii_case(label))
-        }) {
+        if !query.color_labels.is_empty()
+            && summary.color_label.as_deref().is_none_or(|value| {
+                !query
+                    .color_labels
+                    .iter()
+                    .any(|label| value.eq_ignore_ascii_case(label))
+            })
+        {
             continue;
         }
         items.push(summary.clone());
@@ -714,7 +716,7 @@ mod tests {
     }
 
     #[test]
-    fn filters_enriched_summaries_by_minimum_rating_and_color() {
+    fn filters_enriched_summaries_by_minimum_rating_and_colors_with_or_logic() {
         let directory = tempdir().unwrap();
         for name in ["a.jpg", "b.jpg", "c.jpg"] {
             File::create(directory.path().join(name)).unwrap();
@@ -734,13 +736,14 @@ mod tests {
         b.color_label = Some("Red".into());
         let query = AssetQuery {
             minimum_rating: Some(4),
-            color_label: Some("blue".into()),
+            color_labels: vec!["blue".into(), "red".into()],
             ..AssetQuery::default()
         };
 
         let page = page_assets(&assets, &query, 0);
-        assert_eq!(page.total, 1);
+        assert_eq!(page.total, 2);
         assert_eq!(page.items[0].name, "a.jpg");
+        assert_eq!(page.items[1].name, "b.jpg");
     }
 
     #[test]

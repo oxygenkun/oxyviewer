@@ -173,7 +173,7 @@ export interface AssetQuery {
   search?: string;
   kind?: AssetKind;
   minimumRating?: number;
-  colorLabel?: string;
+  colorLabels?: string[];
   sort: AssetSort;
   direction: SortDirection;
   pageSize: number;

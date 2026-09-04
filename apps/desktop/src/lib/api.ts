@@ -110,7 +110,8 @@ export async function listAssets(
       .filter((asset) => needle || asset.path.slice(0, asset.path.lastIndexOf("/")) === directory)
       .filter((asset) => !query.kind || asset.kind === query.kind)
       .filter((asset) => !query.minimumRating || (asset.rating ?? 0) >= query.minimumRating)
-      .filter((asset) => !query.colorLabel || asset.colorLabel === query.colorLabel)
+      .filter((asset) => !query.colorLabels?.length ||
+        query.colorLabels.some((label) => asset.colorLabel?.toLowerCase() === label.toLowerCase()))
       .filter((asset) => !needle || asset.name.toLowerCase().includes(needle))
       .sort((left, right) => {
         const multiplier = query.direction === "ascending" ? 1 : -1;
