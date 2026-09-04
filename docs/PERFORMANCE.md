@@ -16,6 +16,18 @@ end-to-end regression harness that enforces these budgets is described in
 
 ## Verification Log
 
+- 2026-09-04: Adopted Rust-owned versioned resource projections for metadata
+  and image state (ADR 0008). Selected, visible, filter, and background work
+  share stale-result rejection and priority semantics. Pending and in-flight
+  requests for one resource revision coalesce in Rust; frontend stores only
+  render mirrors and WebView preload results rather than competing authorities.
+  Metadata source observation stays off the UI thread, and directory listing
+  remains cheap. Accepted projections and their WAL-ordered observation revisions
+  are persisted in SQLite, allowing restart cache hits and preventing late results
+  from another database connection from overwriting newer state. Migration
+  measurements continue to enforce the existing first-page and selected-preview
+  budgets.
+
 - 2026-09-04: Restored progressive HEIF loupe tiles on a Windows cold full-image
   cache miss after the single full-JPEG display path regressed perceived loading
   to about two seconds. The embedded JPEG remains visible immediately; the first

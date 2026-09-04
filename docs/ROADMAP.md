@@ -52,7 +52,7 @@ performance gate has not yet been measured.
 - [x] Pass a real camera RAW smoke test on macOS
 - [ ] Validate ARW, CR2, CR3, NEF, DNG, RAF, RW2, and ORF fixtures
 - [ ] Validate LibRaw builds and RAW preview behavior in Windows and Linux CI
-- [~] Add full priority scheduling and request cancellation — unified two-tier scheduler (frontend `previewQueue` + backend `DecodeGate`) landed in ADR 0005; cooperative mid-decode cancellation is still outstanding
+- [~] Add full priority scheduling and request cancellation — the Rust-owned projection queue plus backend `DecodeGate` landed in ADR 0008; consumer cancellation does not discard accepted cache work, and cooperative mid-decode cancellation is still outstanding
 
 ### Milestone RAW-2: macOS Native Full-Size Rendering
 

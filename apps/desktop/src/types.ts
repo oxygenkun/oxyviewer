@@ -104,6 +104,25 @@ export interface AssetDetails {
   focusInfo?: FocusInfo;
 }
 
+export type ResourceLoadStatus = "loading" | "ready" | "error";
+export type MetadataRequestPriority = "background" | "filter" | "visible" | "selected";
+
+export interface MetadataProjection {
+  path: string;
+  sourceRevision: string;
+  projectionRevision: number;
+  validAt: number;
+  status: ResourceLoadStatus;
+  rating?: number;
+  colorLabel?: string;
+  error?: string;
+}
+
+export interface AssetDetailsResult {
+  details: AssetDetails;
+  metadataProjection: MetadataProjection;
+}
+
 export type RenderLevel = "thumbnail" | "preview" | "full";
 export type PreviewPriority = "preload" | "nearby" | "visible" | "loupe";
 export type PreviewKind = "embedded" | "developed" | "decoded" | "system" | "original";
@@ -128,6 +147,17 @@ export interface PreviewResult {
   kind: PreviewKind;
   renderLevel?: RenderLevel;
   diagnostics?: PreviewDiagnostics;
+}
+
+export interface ImageProjection {
+  path: string;
+  sourceRevision: string;
+  projectionRevision: number;
+  validAt: number;
+  status: ResourceLoadStatus;
+  level: RenderLevel;
+  result?: Omit<PreviewResult, "url">;
+  error?: string;
 }
 
 export interface CacheSettings {

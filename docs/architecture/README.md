@@ -38,9 +38,10 @@
 | Command 注册 | `apps/desktop/src-tauri/src/lib.rs` | `invoke(...)` wrappers in `api.ts` |
 | 分页请求 | `FsCatalog::list_assets` | `useInfiniteQuery` in `App.tsx` |
 | 渲染等级 | `render_method_for` / `oxy_media::preview` | `renderPlan` |
-| 预览优先级 | `DecodeGate` | `previewQueue` |
+| 预览优先级 | `PreviewQueue` / `DecodeGate` | selection/visibility priority hints |
 | HEIF 完整图 | `HeifDecodeService` / `oxy_media::heif_full` | macOS `Thumbnail` full stage；Windows/Linux `HeifTileCanvas` |
-| UI 服务端状态 | 不适用 | React Query |
+| 资源 projection 状态 | `MetadataQueue` / `PreviewQueue` / SQLite | Zustand 只读镜像 |
+| UI 请求生命周期 | 不适用 | React Query |
 | UI 交互状态 | 不适用 | Zustand `useWorkspaceStore` |
 | 资料库 | `oxy-library::Library` | library query in `App.tsx` |
 
@@ -50,7 +51,7 @@
 | --- | --- |
 | asset | 一张受支持的媒体文件，而不是文件内容本身 |
 | summary | 列表首屏需要的便宜字段，如路径、名称、大小、修改时间 |
-| details | 选中后才构造的详情；当前读取尺寸，元数据字段暂为默认值 |
+| details | 选中后才构造的尺寸、拍摄参数、焦点与可编辑 metadata 投影 |
 | preview | 为 UI 生成或直接提供的可显示图片 |
 | loupe | 放大镜/单图查看模式 |
 | stage | 渐进预览的质量级别：512、4096、full |

@@ -3,6 +3,7 @@ import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { open } from "@tauri-apps/plugin-dialog";
 import type {
   AssetDetails,
+  AssetDetailsResult,
   AssetKind,
   AssetQuery,
   AssetSummary,
@@ -13,9 +14,12 @@ import type {
   HeifCapabilities,
   HeifDecodeSession,
   HeifDiagnostics,
+  ImageProjection,
   LibraryIndexUpdate,
   ExiftoolStatus,
   MetadataPatch,
+  MetadataProjection,
+  MetadataRequestPriority,
   Page,
   PerfScenario,
   PreviewPriority,
@@ -23,7 +27,9 @@ import type {
   RenderLevel,
 } from "../types";
 import { preloadBrowserImage } from "./browserImageCache";
-import { orderedPriorityWeight, previewQueue, priorityWeight } from "./previewQueue";
+import { browserPreloadQueue, priorityWeight } from "./previewQueue";
+import { acceptImageProjection } from "./imageProjection";
+import { acceptMetadataProjection } from "./metadataProjection";
 import { perfMark } from "./perfProbe";
 import { beginPreviewDebug } from "./previewDebug";
 
@@ -268,12 +274,41 @@ export async function getAssetDetails(asset: AssetSummary): Promise<AssetDetails
       } : undefined,
     };
   }
-  return invoke<AssetDetails>("get_asset_details", { path: asset.path });
+  const result = await invoke<AssetDetailsResult>("get_asset_details", { path: asset.path });
+  acceptMetadataProjection(result.metadataProjection);
+  return result.details;
 }
 
-export async function enrichAssetMetadata(paths: string[]): Promise<AssetSummary[]> {
-  if (!isTauri()) return demoAssets.filter((asset) => paths.includes(asset.path));
-  return invoke<AssetSummary[]>("enrich_asset_metadata", { paths });
+export async function requestMetadata(
+  paths: string[],
+  priority: MetadataRequestPriority,
+): Promise<MetadataProjection[]> {
+  if (!isTauri()) {
+    return demoAssets.filter((asset) => paths.includes(asset.path)).map((asset, index) => ({
+      path: asset.path,
+      sourceRevision: `${asset.modifiedAtMs}:${asset.sizeBytes}:${asset.hasSidecar ? 1 : 0}`,
+      projectionRevision: Date.now() + index,
+      validAt: Date.now() + index,
+      status: "ready",
+      rating: asset.rating,
+      colorLabel: asset.colorLabel,
+    }));
+  }
+  return invoke<MetadataProjection[]>("request_metadata", { paths, priority });
+}
+
+export async function onMetadataProjectionUpdated(
+  callback: (projection: MetadataProjection) => void,
+): Promise<UnlistenFn> {
+  if (!isTauri()) return () => {};
+  return listen<MetadataProjection>("metadata-projection-updated", (event) => callback(event.payload));
+}
+
+export async function onImageProjectionUpdated(
+  callback: (projection: ImageProjection) => void,
+): Promise<UnlistenFn> {
+  if (!isTauri()) return () => {};
+  return listen<ImageProjection>("image-projection-updated", (event) => callback(event.payload));
 }
 
 export async function patchMetadata(paths: string[], patch: MetadataPatch): Promise<string> {
@@ -425,30 +460,24 @@ export async function generatedPreview(
         priority,
       })
     : undefined;
-  let submittedPriority = priority;
-  const request = (effectiveWeight: number) => {
-    const effectivePriority = previewPriorityForWeight(effectiveWeight);
-    submittedPriority = effectivePriority;
-    debug?.updatePriority(effectivePriority);
-    debug?.start();
-    perfMark("preview:queued", { assetName: asset.name, level, priority: effectivePriority });
-    return invoke<Omit<PreviewResult, "url">>("get_preview", {
+  if (signal?.aborted) throw signal.reason ?? new DOMException("Aborted", "AbortError");
+  debug?.start();
+  perfMark("preview:queued", { assetName: asset.name, level, priority });
+  try {
+    const projection = await invoke<ImageProjection>("get_preview", {
       path: asset.path,
       level,
-      priority: effectivePriority,
+      priority,
+      queueOrder,
     });
-  };
-  try {
-    const result = await previewQueue.enqueue(
-      orderedPriorityWeight(priority, queueOrder),
-      signal,
-      request,
-      generatedPreviewTaskKey(asset, level),
-    );
+    if (signal?.aborted) throw signal.reason ?? new DOMException("Aborted", "AbortError");
+    acceptImageProjection(projection);
+    const result = projection.result;
+    if (!result) throw new Error("Ready image projection has no artifact");
     perfMark("preview:result", {
       assetName: asset.name,
       level,
-      priority: submittedPriority,
+      priority,
       width: result.width,
       height: result.height,
       kind: result.kind,
@@ -471,27 +500,20 @@ export async function generatedPreview(
   }
 }
 
-function generatedPreviewTaskKey(asset: AssetSummary, level: RenderLevel): string {
-  return `${asset.id}:${asset.modifiedAtMs}:${level}`;
-}
-
-function previewPriorityForWeight(weight: number): PreviewPriority {
-  if (weight > priorityWeight("visible")) return "loupe";
-  if (weight > priorityWeight("nearby")) return "visible";
-  if (weight > priorityWeight("preload")) return "nearby";
-  return "preload";
-}
-
 export function raiseGeneratedPreviewPriority(
   asset: AssetSummary,
   level: RenderLevel,
   priority: PreviewPriority,
   queueOrder = 0,
 ): boolean {
-  return previewQueue.raisePriority(
-    generatedPreviewTaskKey(asset, level),
-    orderedPriorityWeight(priority, queueOrder),
-  );
+  if (!isTauri()) return false;
+  void invoke("get_preview", {
+    path: asset.path,
+    level,
+    priority,
+    queueOrder,
+  }).catch(() => undefined);
+  return true;
 }
 
 /**
@@ -506,7 +528,7 @@ export async function preloadAssetThumbnail(
   if (!isTauri()) return;
   const directSource = previewUrl(asset);
   if (directSource) {
-    await previewQueue.enqueue(
+    await browserPreloadQueue.enqueue(
       priorityWeight("preload"),
       signal,
       () => preloadBrowserImage(directSource, signal),

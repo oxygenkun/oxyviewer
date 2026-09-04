@@ -13,8 +13,9 @@ flowchart TD
     app --> persistentState["本地持久状态"]
 
     uiState --> zustand["Zustand"]
-    requestState --> reactQuery["React Query"]
-    runtimeState --> appState["AppState services"]
+    requestState --> reactQuery["React Query transport lifecycle"]
+    requestState --> projectionMirror["Zustand read-only projection mirror"]
+    runtimeState --> appState["AppState resource coordinators"]
     persistentState --> sqlite[("SQLite")]
     persistentState --> previews[("预览缓存")]
     persistentState --> xmp[("用户 XMP sidecar")]
@@ -46,14 +47,16 @@ React Query 保存通过 Tauri 或 demo API 得到的数据：
 - assets 的多页结果；
 - 普通目录子节点和按名称命中的目录搜索结果；
 - library roots；
-- asset details；
-- 各 stage preview result。
+- asset details transport；
+- 各 stage preview request 的 loading/error 生命周期。
 
-query key 是缓存身份的一部分。典型 key 包含 asset ID、修改时间、size/stage 和 priority。
-修改时间变化会让旧预览 query 不再匹配；priority 变化允许建立高优先级请求。
+query key 是请求身份的一部分。典型 key 包含 asset ID、修改时间和 semantic render level；
+priority 是可提升的调度提示，不是 artifact 身份。
 
-React Query 管理 loading/error/retry/cache/abort lifecycle，但它不是 Rust 缓存的替代品。刷新
-目录时要同时让 Rust snapshot 和相关 React Query 失效，否则任一层都可能继续返回旧数据。
+React Query 管理 loading/error/retry/abort lifecycle，但不决定 metadata/image artifact 哪个
+版本有效。`metadataProjection` 和 `imageProjection` Zustand store 只镜像 Rust 已接受的递增
+`projectionRevision`；grid、loupe、inspector 和过滤从这份镜像派生显示。刷新目录时同时使
+Rust projection 与前端显示镜像失效。
 
 ## 4. Rust `AppState`：共享服务状态
 
@@ -63,14 +66,16 @@ React Query 管理 loading/error/retry/cache/abort lifecycle，但它不是 Rust
 - `JobRegistry` 的作业取消 flags；
 - `Library` 的 SQLite connection；
 - `CacheManager`（当前 preview cache directory、容量策略和配置文件）；
+- `MetadataQueue` / `PreviewQueue` 的 priority、pending/in-flight consumer 与 live projection；
 - `HeifDecodeService` 当前 session、tiles 和 diagnostics。
 
-这些状态只活在 Rust 进程内，除了明确写入 SQLite/文件的部分。关闭应用后 sessions、jobs、
-目录快照和 HEIF tiles 全部消失。
+队列和 HEIF tiles 只活在 Rust 进程内；已接受的 metadata/image projection 写入 SQLite，图片
+像素写入 preview cache。关闭应用后 sessions、jobs、目录快照和 HEIF tiles 消失，projection
+可按 source revision 在重启后恢复。
 
 ## 5. SQLite 资料库
 
-`oxy-library::Library::open` 在 app data 目录创建 `oxyviewer.sqlite`，启用 WAL，并确保三张逻辑
+`oxy-library::Library::open` 在 app data 目录创建 `oxyviewer.sqlite`，启用 WAL，并确保以下逻辑
 结构存在：
 
 ```mermaid
@@ -99,6 +104,19 @@ erDiagram
         text parent_path
         text name
     }
+    RESOURCE_PROJECTIONS {
+        text path PK
+        text projection_kind PK
+        text source_revision
+        integer valid_at
+        integer projection_revision
+        text status
+        text result_json
+    }
+    RESOURCE_PROJECTION_SEQUENCE {
+        integer id PK
+        integer next_revision
+    }
 ```
 
 Mermaid 图没有画关系线，因为 cache schema 不用外键约束事实来源。只有用户明确添加的 canonical
@@ -110,7 +128,15 @@ root 才会持久化和索引；同一路径可分别属于父、子两个显式
 目录搜索不会触发递归磁盘回退。
 
 SQLite connection 放在 `Mutex` 内，因为 `rusqlite::Connection` 的访问需要串行化。WAL 改善
-读写并存和崩溃恢复，但不会自动使单个 connection 并发执行。
+读写并存和崩溃恢复，但不会自动使单个 connection 并发执行。资源请求和接受结果均在
+`BEGIN IMMEDIATE` 事务中从同一序列取得 revision；另一个 connection 的旧 worker 结果会
+得到当前较新的 row，而不会覆盖它。显式刷新写入 revision tombstone，阻止刷新前已开始的
+任务把旧结果重新写回。
+
+重启后的 metadata cache 采用两阶段恢复：先用 `AssetSummary` 已有的 size/mtime 逐项发布
+SQLite ready snapshot，再在 Rust worker 中核验 sidecar/嵌入 XMP digest。完整 revision 不同
+时，旧评级只在 loading 期间充当显示占位，核验结果会以新的事务 revision 同时更新 grid、
+loupe、inspector 和过滤。
 
 ## 6. 预览缓存
 

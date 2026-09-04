@@ -2393,6 +2393,7 @@ dependencies = [
  "oxy-fs",
  "parking_lot",
  "rusqlite",
+ "serde_json",
  "tempfile",
  "thiserror 2.0.20",
 ]
@@ -2421,6 +2422,7 @@ dependencies = [
  "oxy-fs",
  "oxy-metadata-parser",
  "serde_json",
+ "sha2",
  "tempfile",
  "thiserror 2.0.20",
 ]

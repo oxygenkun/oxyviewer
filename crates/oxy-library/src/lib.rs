@@ -1,9 +1,9 @@
 use oxy_domain::{
-    AssetKind, AssetQuery, AssetSort, AssetSummary, DirectorySearchMatch, DirectorySummary, Page,
-    SortDirection,
+    AssetKind, AssetQuery, AssetSort, AssetSummary, DirectorySearchMatch, DirectorySummary,
+    ImageProjection, MetadataProjection, Page, RenderLevel, ResourceLoadStatus, SortDirection,
 };
 use parking_lot::Mutex;
-use rusqlite::{Connection, OptionalExtension, Transaction, params};
+use rusqlite::{Connection, OptionalExtension, Transaction, TransactionBehavior, params};
 use std::{
     cmp::Ordering,
     collections::{BinaryHeap, HashSet},
@@ -22,6 +22,8 @@ pub enum LibraryError {
     Io(#[from] std::io::Error),
     #[error(transparent)]
     Filesystem(#[from] oxy_fs::FsError),
+    #[error(transparent)]
+    Json(#[from] serde_json::Error),
     #[error("folder order must contain every library root exactly once")]
     InvalidRootOrder,
 }
@@ -203,6 +205,27 @@ impl Library {
               directory,
               tokenize = 'unicode61 remove_diacritics 2'
             );
+            CREATE TABLE IF NOT EXISTS resource_projection_sequence (
+              id INTEGER PRIMARY KEY CHECK(id = 1),
+              next_revision INTEGER NOT NULL
+            );
+            INSERT OR IGNORE INTO resource_projection_sequence(id, next_revision) VALUES (1, 1);
+            CREATE TABLE IF NOT EXISTS resource_projections (
+              path TEXT NOT NULL,
+              parent_path TEXT NOT NULL,
+              projection_kind TEXT NOT NULL,
+              source_revision TEXT NOT NULL,
+              valid_at INTEGER NOT NULL,
+              projection_revision INTEGER NOT NULL,
+              status TEXT NOT NULL,
+              rating INTEGER,
+              color_label TEXT,
+              result_json TEXT,
+              error TEXT,
+              PRIMARY KEY(path, projection_kind)
+            );
+            CREATE INDEX IF NOT EXISTS resource_projections_parent
+              ON resource_projections(parent_path);
             ",
         )?;
         let has_sort_order = connection
@@ -278,6 +301,26 @@ impl Library {
               directory,
               tokenize = 'unicode61 remove_diacritics 2'
             );
+            CREATE TABLE resource_projection_sequence (
+              id INTEGER PRIMARY KEY CHECK(id = 1),
+              next_revision INTEGER NOT NULL
+            );
+            INSERT INTO resource_projection_sequence(id, next_revision) VALUES (1, 1);
+            CREATE TABLE resource_projections (
+              path TEXT NOT NULL,
+              parent_path TEXT NOT NULL,
+              projection_kind TEXT NOT NULL,
+              source_revision TEXT NOT NULL,
+              valid_at INTEGER NOT NULL,
+              projection_revision INTEGER NOT NULL,
+              status TEXT NOT NULL,
+              rating INTEGER,
+              color_label TEXT,
+              result_json TEXT,
+              error TEXT,
+              PRIMARY KEY(path, projection_kind)
+            );
+            CREATE INDEX resource_projections_parent ON resource_projections(parent_path);
             ",
         )?;
         normalize_root_order(&mut connection)?;
@@ -372,6 +415,192 @@ impl Library {
                 |row| row.get(0),
             )
             .map_err(Into::into)
+    }
+
+    /// Allocates a revision in SQLite so observations from separate native
+    /// processes share one comparable acceptance order.
+    pub fn next_resource_revision(&self) -> Result<u64, LibraryError> {
+        let mut connection = self.connection.lock();
+        let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
+        let revision = next_resource_revision(&transaction)?;
+        transaction.commit()?;
+        Ok(revision)
+    }
+
+    pub fn metadata_projection(
+        &self,
+        path: &Path,
+        source_revision: &str,
+    ) -> Result<Option<MetadataProjection>, LibraryError> {
+        let connection = self.connection.lock();
+        let projection = read_metadata_projection(&connection, path)?;
+        Ok(projection.filter(|projection| projection.source_revision == source_revision))
+    }
+
+    /// Returns a stale-while-revalidate snapshot using only the source stat
+    /// already present in an `AssetSummary`. Callers must still validate the
+    /// complete revision, including sidecar or embedded metadata fingerprints.
+    pub fn metadata_projection_for_asset(
+        &self,
+        asset: &AssetSummary,
+    ) -> Result<Option<MetadataProjection>, LibraryError> {
+        let connection = self.connection.lock();
+        let prefix = format!("{}:{}:", asset.modified_at_ms, asset.size_bytes);
+        Ok(
+            read_metadata_projection(&connection, &asset.path)?.filter(|projection| {
+                projection.status == ResourceLoadStatus::Ready
+                    && projection.source_revision.starts_with(&prefix)
+            }),
+        )
+    }
+
+    /// Atomically accepts a metadata observation or returns the newer state
+    /// that already won. The returned revision is the only revision sent to UI.
+    pub fn accept_metadata_projection(
+        &self,
+        mut candidate: MetadataProjection,
+    ) -> Result<MetadataProjection, LibraryError> {
+        let mut connection = self.connection.lock();
+        let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
+        if let Some(current) = read_metadata_projection(&transaction, &candidate.path)?
+            && current.valid_at > candidate.valid_at
+        {
+            transaction.commit()?;
+            return Ok(current);
+        }
+        candidate.projection_revision = next_resource_revision(&transaction)?;
+        transaction.execute(
+            "INSERT INTO resource_projections(
+               path, parent_path, projection_kind, source_revision, valid_at,
+               projection_revision, status, rating, color_label, result_json, error
+             ) VALUES (?1, ?2, 'metadata', ?3, ?4, ?5, ?6, ?7, ?8, NULL, ?9)
+             ON CONFLICT(path, projection_kind) DO UPDATE SET
+               parent_path=excluded.parent_path,
+               source_revision=excluded.source_revision,
+               valid_at=excluded.valid_at,
+               projection_revision=excluded.projection_revision,
+               status=excluded.status,
+               rating=excluded.rating,
+               color_label=excluded.color_label,
+               result_json=NULL,
+               error=excluded.error",
+            params![
+                candidate.path.to_string_lossy(),
+                parent_string(&candidate.path),
+                candidate.source_revision,
+                candidate.valid_at as i64,
+                candidate.projection_revision as i64,
+                status_name(candidate.status),
+                candidate.rating,
+                candidate.color_label,
+                candidate.error,
+            ],
+        )?;
+        transaction.commit()?;
+        Ok(candidate)
+    }
+
+    pub fn image_projection(
+        &self,
+        path: &Path,
+        level: RenderLevel,
+        source_revision: &str,
+    ) -> Result<Option<ImageProjection>, LibraryError> {
+        let connection = self.connection.lock();
+        let projection = read_image_projection(&connection, path, level)?;
+        Ok(projection.filter(|projection| projection.source_revision == source_revision))
+    }
+
+    /// Atomically accepts an image artifact observation using the same
+    /// transaction sequence as metadata projections.
+    pub fn accept_image_projection(
+        &self,
+        mut candidate: ImageProjection,
+    ) -> Result<ImageProjection, LibraryError> {
+        let mut connection = self.connection.lock();
+        let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
+        if let Some(current) =
+            read_image_projection(&transaction, &candidate.path, candidate.level)?
+            && current.valid_at > candidate.valid_at
+        {
+            transaction.commit()?;
+            return Ok(current);
+        }
+        candidate.projection_revision = next_resource_revision(&transaction)?;
+        let result_json = candidate
+            .result
+            .as_ref()
+            .map(serde_json::to_string)
+            .transpose()?;
+        transaction.execute(
+            "INSERT INTO resource_projections(
+               path, parent_path, projection_kind, source_revision, valid_at,
+               projection_revision, status, rating, color_label, result_json, error
+             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, NULL, NULL, ?8, ?9)
+             ON CONFLICT(path, projection_kind) DO UPDATE SET
+               parent_path=excluded.parent_path,
+               source_revision=excluded.source_revision,
+               valid_at=excluded.valid_at,
+               projection_revision=excluded.projection_revision,
+               status=excluded.status,
+               rating=NULL,
+               color_label=NULL,
+               result_json=excluded.result_json,
+               error=excluded.error",
+            params![
+                candidate.path.to_string_lossy(),
+                parent_string(&candidate.path),
+                image_projection_kind(candidate.level),
+                candidate.source_revision,
+                candidate.valid_at as i64,
+                candidate.projection_revision as i64,
+                status_name(candidate.status),
+                result_json,
+                candidate.error,
+            ],
+        )?;
+        transaction.commit()?;
+        Ok(candidate)
+    }
+
+    pub fn invalidate_resource_projections(&self, directory: &Path) -> Result<(), LibraryError> {
+        let mut connection = self.connection.lock();
+        let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
+        let revision = next_resource_revision(&transaction)?;
+        transaction.execute(
+            "UPDATE resource_projections SET
+               source_revision = 'invalidated:' || CAST(?1 AS TEXT),
+               valid_at = ?1,
+               projection_revision = ?1,
+               status = 'error',
+               rating = NULL,
+               color_label = NULL,
+               result_json = NULL,
+               error = 'invalidated'
+             WHERE parent_path = ?2",
+            params![revision as i64, directory.to_string_lossy()],
+        )?;
+        transaction.commit()?;
+        Ok(())
+    }
+
+    pub fn invalidate_image_projections(&self) -> Result<(), LibraryError> {
+        let mut connection = self.connection.lock();
+        let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
+        let revision = next_resource_revision(&transaction)?;
+        transaction.execute(
+            "UPDATE resource_projections SET
+               source_revision = 'invalidated:' || CAST(?1 AS TEXT),
+               valid_at = ?1,
+               projection_revision = ?1,
+               status = 'error',
+               result_json = NULL,
+               error = 'invalidated'
+             WHERE projection_kind LIKE 'image:%'",
+            params![revision as i64],
+        )?;
+        transaction.commit()?;
+        Ok(())
     }
 
     /// Rebuilds one root in low-cost directory batches. Existing completed
@@ -731,6 +960,136 @@ impl Library {
         )?;
         transaction.commit()?;
         Ok(())
+    }
+}
+
+fn next_resource_revision(transaction: &Transaction<'_>) -> Result<u64, rusqlite::Error> {
+    let revision = transaction.query_row(
+        "SELECT next_revision FROM resource_projection_sequence WHERE id = 1",
+        [],
+        |row| row.get::<_, i64>(0),
+    )?;
+    transaction.execute(
+        "UPDATE resource_projection_sequence SET next_revision = next_revision + 1 WHERE id = 1",
+        [],
+    )?;
+    Ok(revision.max(0) as u64)
+}
+
+fn read_metadata_projection(
+    connection: &Connection,
+    path: &Path,
+) -> Result<Option<MetadataProjection>, LibraryError> {
+    let row = connection
+        .query_row(
+            "SELECT source_revision, projection_revision, valid_at, status,
+                    rating, color_label, error
+             FROM resource_projections
+             WHERE path = ?1 AND projection_kind = 'metadata'",
+            params![path.to_string_lossy()],
+            |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, i64>(1)?,
+                    row.get::<_, i64>(2)?,
+                    row.get::<_, String>(3)?,
+                    row.get::<_, Option<u8>>(4)?,
+                    row.get::<_, Option<String>>(5)?,
+                    row.get::<_, Option<String>>(6)?,
+                ))
+            },
+        )
+        .optional()?;
+    row.map(
+        |(source_revision, projection_revision, valid_at, status, rating, color_label, error)| {
+            Ok(MetadataProjection {
+                path: path.to_path_buf(),
+                source_revision,
+                projection_revision: projection_revision.max(0) as u64,
+                valid_at: valid_at.max(0) as u64,
+                status: parse_status(&status)?,
+                rating,
+                color_label,
+                error,
+            })
+        },
+    )
+    .transpose()
+}
+
+fn read_image_projection(
+    connection: &Connection,
+    path: &Path,
+    level: RenderLevel,
+) -> Result<Option<ImageProjection>, LibraryError> {
+    let row = connection
+        .query_row(
+            "SELECT source_revision, projection_revision, valid_at, status,
+                    result_json, error
+             FROM resource_projections
+             WHERE path = ?1 AND projection_kind = ?2",
+            params![path.to_string_lossy(), image_projection_kind(level)],
+            |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, i64>(1)?,
+                    row.get::<_, i64>(2)?,
+                    row.get::<_, String>(3)?,
+                    row.get::<_, Option<String>>(4)?,
+                    row.get::<_, Option<String>>(5)?,
+                ))
+            },
+        )
+        .optional()?;
+    row.map(
+        |(source_revision, projection_revision, valid_at, status, result_json, error)| {
+            Ok(ImageProjection {
+                path: path.to_path_buf(),
+                source_revision,
+                projection_revision: projection_revision.max(0) as u64,
+                valid_at: valid_at.max(0) as u64,
+                status: parse_status(&status)?,
+                level,
+                result: result_json
+                    .as_deref()
+                    .map(serde_json::from_str)
+                    .transpose()?,
+                error,
+            })
+        },
+    )
+    .transpose()
+}
+
+fn parent_string(path: &Path) -> String {
+    path.parent()
+        .unwrap_or_else(|| Path::new(""))
+        .to_string_lossy()
+        .into_owned()
+}
+
+fn image_projection_kind(level: RenderLevel) -> &'static str {
+    match level {
+        RenderLevel::Thumbnail => "image:thumbnail",
+        RenderLevel::Preview => "image:preview",
+        RenderLevel::Full => "image:full",
+    }
+}
+
+fn status_name(status: ResourceLoadStatus) -> &'static str {
+    match status {
+        ResourceLoadStatus::Loading => "loading",
+        ResourceLoadStatus::Ready => "ready",
+        ResourceLoadStatus::Error => "error",
+    }
+}
+
+fn parse_status(status: &str) -> Result<ResourceLoadStatus, rusqlite::Error> {
+    match status {
+        "loading" => Ok(ResourceLoadStatus::Loading),
+        "ready" => Ok(ResourceLoadStatus::Ready),
+        "error" => Ok(ResourceLoadStatus::Error),
+        _ => Err(rusqlite::Error::InvalidQuery),
     }
 }
 
@@ -1135,5 +1494,243 @@ mod tests {
             .unwrap()
             .unwrap();
         assert_eq!(page.total, 0);
+    }
+
+    #[test]
+    fn metadata_projection_survives_database_reopen() {
+        let state = tempdir().unwrap();
+        let database = state.path().join("library.sqlite");
+        let path = state.path().join("rated.HIF");
+        let source_revision = "100:200:xmp-a";
+        {
+            let library = Library::open(&database).unwrap();
+            let valid_at = library.next_resource_revision().unwrap();
+            let accepted = library
+                .accept_metadata_projection(MetadataProjection {
+                    path: path.clone(),
+                    source_revision: source_revision.into(),
+                    projection_revision: 0,
+                    valid_at,
+                    status: ResourceLoadStatus::Ready,
+                    rating: Some(4),
+                    color_label: Some("Red".into()),
+                    error: None,
+                })
+                .unwrap();
+            assert!(accepted.projection_revision > valid_at);
+        }
+
+        let reopened = Library::open(&database).unwrap();
+        let cached = reopened
+            .metadata_projection(&path, source_revision)
+            .unwrap()
+            .unwrap();
+        assert_eq!(cached.rating, Some(4));
+        assert_eq!(cached.color_label.as_deref(), Some("Red"));
+    }
+
+    #[test]
+    fn cheap_asset_stat_can_publish_a_snapshot_before_full_revision_validation() {
+        let library = Library::in_memory().unwrap();
+        let path = PathBuf::from("C:/photos/rated.HIF");
+        let asset = AssetSummary {
+            id: "rated".into(),
+            path: path.clone(),
+            name: "rated.HIF".into(),
+            extension: "HIF".into(),
+            kind: AssetKind::Heif,
+            size_bytes: 200,
+            modified_at_ms: 100,
+            has_sidecar: false,
+            rating: None,
+            color_label: None,
+        };
+        let valid_at = library.next_resource_revision().unwrap();
+        library
+            .accept_metadata_projection(MetadataProjection {
+                path,
+                source_revision: "100:200:0:0:embedded-xmp-digest".into(),
+                projection_revision: 0,
+                valid_at,
+                status: ResourceLoadStatus::Ready,
+                rating: Some(3),
+                color_label: Some("Yellow".into()),
+                error: None,
+            })
+            .unwrap();
+
+        assert_eq!(
+            library
+                .metadata_projection_for_asset(&asset)
+                .unwrap()
+                .unwrap()
+                .rating,
+            Some(3)
+        );
+        assert!(
+            library
+                .metadata_projection_for_asset(&AssetSummary {
+                    modified_at_ms: 101,
+                    ..asset
+                })
+                .unwrap()
+                .is_none()
+        );
+    }
+
+    #[test]
+    fn sqlite_order_rejects_an_older_result_from_another_connection() {
+        let state = tempdir().unwrap();
+        let database = state.path().join("library.sqlite");
+        let first = Library::open(&database).unwrap();
+        let second = Library::open(&database).unwrap();
+        let path = state.path().join("shared.HIF");
+        let source_revision = "shared-source";
+        let older = first.next_resource_revision().unwrap();
+        let newer = second.next_resource_revision().unwrap();
+
+        second
+            .accept_metadata_projection(MetadataProjection {
+                path: path.clone(),
+                source_revision: source_revision.into(),
+                projection_revision: 0,
+                valid_at: newer,
+                status: ResourceLoadStatus::Ready,
+                rating: Some(5),
+                color_label: None,
+                error: None,
+            })
+            .unwrap();
+        let winner = first
+            .accept_metadata_projection(MetadataProjection {
+                path: path.clone(),
+                source_revision: source_revision.into(),
+                projection_revision: 0,
+                valid_at: older,
+                status: ResourceLoadStatus::Ready,
+                rating: Some(1),
+                color_label: None,
+                error: None,
+            })
+            .unwrap();
+
+        assert_eq!(winner.valid_at, newer);
+        assert_eq!(winner.rating, Some(5));
+        assert_eq!(
+            first
+                .metadata_projection(&path, source_revision)
+                .unwrap()
+                .unwrap()
+                .rating,
+            Some(5)
+        );
+    }
+
+    #[test]
+    fn image_projection_round_trips_artifact_without_pixel_payload() {
+        let library = Library::in_memory().unwrap();
+        let path = PathBuf::from("C:/photos/one.HIF");
+        let artifact = PathBuf::from("C:/cache/one-preview.jpg");
+        let valid_at = library.next_resource_revision().unwrap();
+        let accepted = library
+            .accept_image_projection(ImageProjection {
+                path: path.clone(),
+                source_revision: "image-source".into(),
+                projection_revision: 0,
+                valid_at,
+                status: ResourceLoadStatus::Ready,
+                level: RenderLevel::Preview,
+                result: Some(oxy_domain::PreviewResult {
+                    path: artifact.clone(),
+                    width: 1600,
+                    height: 1067,
+                    kind: oxy_domain::PreviewKind::Decoded,
+                    render_level: Some(RenderLevel::Preview),
+                    diagnostics: None,
+                }),
+                error: None,
+            })
+            .unwrap();
+
+        assert!(accepted.projection_revision > valid_at);
+        let cached = library
+            .image_projection(&path, RenderLevel::Preview, "image-source")
+            .unwrap()
+            .unwrap();
+        assert_eq!(cached.result.unwrap().path, artifact);
+    }
+
+    #[test]
+    fn directory_invalidation_blocks_a_late_worker_result() {
+        let library = Library::in_memory().unwrap();
+        let directory = PathBuf::from("C:/photos");
+        let path = directory.join("late.HIF");
+        let valid_at = library.next_resource_revision().unwrap();
+        let loading = MetadataProjection {
+            path: path.clone(),
+            source_revision: "source-before-refresh".into(),
+            projection_revision: 0,
+            valid_at,
+            status: ResourceLoadStatus::Loading,
+            rating: None,
+            color_label: None,
+            error: None,
+        };
+        library.accept_metadata_projection(loading.clone()).unwrap();
+        library.invalidate_resource_projections(&directory).unwrap();
+
+        let rejected = library
+            .accept_metadata_projection(MetadataProjection {
+                status: ResourceLoadStatus::Ready,
+                rating: Some(5),
+                ..loading
+            })
+            .unwrap();
+
+        assert_eq!(rejected.error.as_deref(), Some("invalidated"));
+        assert!(
+            library
+                .metadata_projection(&path, "source-before-refresh")
+                .unwrap()
+                .is_none()
+        );
+    }
+
+    #[test]
+    fn sqlite_order_also_rejects_an_older_image_result() {
+        let state = tempdir().unwrap();
+        let database = state.path().join("library.sqlite");
+        let first = Library::open(&database).unwrap();
+        let second = Library::open(&database).unwrap();
+        let path = state.path().join("shared.HIF");
+        let older = first.next_resource_revision().unwrap();
+        let newer = second.next_resource_revision().unwrap();
+        let make_projection = |valid_at, artifact: &str| ImageProjection {
+            path: path.clone(),
+            source_revision: "same-image-source".into(),
+            projection_revision: 0,
+            valid_at,
+            status: ResourceLoadStatus::Ready,
+            level: RenderLevel::Thumbnail,
+            result: Some(oxy_domain::PreviewResult {
+                path: PathBuf::from(artifact),
+                width: 160,
+                height: 120,
+                kind: oxy_domain::PreviewKind::Embedded,
+                render_level: Some(RenderLevel::Thumbnail),
+                diagnostics: None,
+            }),
+            error: None,
+        };
+
+        second
+            .accept_image_projection(make_projection(newer, "new.jpg"))
+            .unwrap();
+        let winner = first
+            .accept_image_projection(make_projection(older, "old.jpg"))
+            .unwrap();
+
+        assert_eq!(winner.valid_at, newer);
+        assert_eq!(winner.result.unwrap().path, PathBuf::from("new.jpg"));
     }
 }

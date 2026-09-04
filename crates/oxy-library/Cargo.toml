@@ -10,6 +10,7 @@ oxy-domain = { path = "../oxy-domain" }
 oxy-fs = { path = "../oxy-fs" }
 parking_lot.workspace = true
 rusqlite.workspace = true
+serde_json.workspace = true
 thiserror.workspace = true
 
 [dev-dependencies]

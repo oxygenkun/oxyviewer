@@ -1,8 +1,7 @@
-import type { QueryClient } from "@tanstack/react-query";
 import type { AssetSummary } from "../types";
 import { generatedPreview, isTauri, previewUrl } from "./api";
 import { preloadBrowserImage } from "./browserImageCache";
-import { assetRenderQueryKey, renderPlan } from "./preview";
+import { renderPlan } from "./preview";
 
 /**
  * Warms the first useful loupe stage in both React Query and the WebView image
@@ -10,7 +9,6 @@ import { assetRenderQueryKey, renderPlan } from "./preview";
  * expensive for RAW and HEIF files.
  */
 export async function preloadAssetLoupePreview(
-  queryClient: QueryClient,
   asset: AssetSummary,
   queueOrder = 0,
 ): Promise<void> {
@@ -25,17 +23,12 @@ export async function preloadAssetLoupePreview(
   }
   if (previewMethod.type !== "generatedImage") return;
 
-  const result = await queryClient.fetchQuery({
-    queryKey: assetRenderQueryKey(asset, previewMethod),
-    queryFn: ({ signal }) => generatedPreview(
-      asset,
-      previewMethod.requestLevel,
-      signal,
-      "visible",
-      queueOrder,
-    ),
-    staleTime: Infinity,
-    retry: 0,
-  });
+  const result = await generatedPreview(
+    asset,
+    previewMethod.requestLevel,
+    undefined,
+    "visible",
+    queueOrder,
+  );
   if (result) await preloadBrowserImage(result.url);
 }

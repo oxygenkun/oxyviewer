@@ -2,6 +2,7 @@ use crate::{MetadataError, normalize_color_label, xmp_value};
 use libheif_rs::HeifContext;
 use oxy_domain::{CaptureMetadata, EditableMetadata, FocusInfo};
 use oxy_metadata_parser::{Tag, core::TagValue};
+use sha2::{Digest, Sha256};
 use std::{fs, io::Read, path::Path};
 
 /// A format-neutral metadata tag retained alongside OxyViewer's normalized
@@ -208,6 +209,15 @@ fn read_heif_xmp(path: &Path) -> Result<Option<String>, MetadataError> {
         }
     }
     Ok(None)
+}
+
+pub(crate) fn heif_metadata_digest(path: &Path) -> Option<u64> {
+    let xmp = read_heif_xmp(path)
+        .ok()
+        .flatten()
+        .or_else(|| read_bounded_xmp_fallback(path).ok().flatten())?;
+    let digest = Sha256::digest(xmp.as_bytes());
+    Some(u64::from_be_bytes(digest[..8].try_into().ok()?))
 }
 
 /// Compatibility path for damaged and synthetic BMFF files that libheif

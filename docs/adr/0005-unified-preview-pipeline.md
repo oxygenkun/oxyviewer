@@ -5,7 +5,10 @@ Date: 2026-06-15
 ## Status
 
 Accepted. The size-based stage vocabulary and IPC signature in this ADR were
-refined by [ADR 0006](0006-semantic-render-level-graph.md).
+refined by [ADR 0006](0006-semantic-render-level-graph.md). The frontend
+`previewQueue` ownership described below was superseded by the Rust-owned
+projection queue in [ADR 0008](0008-rust-owned-resource-projections.md);
+the frontend retains only WebView decode preloading.
 
 ## Context
 

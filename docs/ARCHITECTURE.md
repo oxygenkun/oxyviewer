@@ -1,11 +1,16 @@
 # OxyViewer 架构设计
 
+资源加载与状态归属遵循
+[ADR 0008](adr/0008-rust-owned-resource-projections.md)：Rust 持有带版本的权威资源投影和
+优先级队列，React 只镜像已提交 revision。该规则同时适用于 metadata 与 image，目录首屏
+仍只返回便宜摘要。
+
 本文是 OxyViewer 架构文档的入口。它先给出一张完整地图，再把读者带到各个专题。
 即使你没有 Rust 或 Tauri 经验，也可以从本页开始；如果你已经熟悉桌面应用开发，
 可以直接跳到感兴趣的实现章节。
 
 > 文档描述的是当前仓库中的实现。尚未实现的能力会明确标记为“规划中”，不会把路线图
-> 当成现状。最后核对日期：2026-09-01。
+> 当成现状。最后核对日期：2026-09-04。
 
 ## 1. 一句话理解 OxyViewer
 
@@ -73,8 +78,7 @@ OxyViewer 通过三种通道传递不同数据：
 flowchart LR
     subgraph uiLayer["React WebView"]
         reactUi["组件与交互"]
-        queryState["React Query 与 Zustand"]
-        previewQueue["预览优先级队列"]
+        queryState["分页查询与只读投影镜像"]
     end
 
     subgraph bridgeLayer["Tauri 边界"]
@@ -82,6 +86,7 @@ flowchart LR
         events["Events"]
         mediaProtocol["oxy-media 自定义协议"]
         appState["AppState"]
+        resourceCoordinator["资源状态与优先级队列"]
     end
 
     subgraph coreLayer["Rust 领域能力"]
@@ -101,14 +106,15 @@ flowchart LR
     end
 
     reactUi --> queryState
-    queryState --> previewQueue
     queryState --> commands
     events --> reactUi
     mediaProtocol --> reactUi
     commands --> appState
+    appState --> resourceCoordinator
+    resourceCoordinator --> events
     appState --> fsCrate
-    appState --> mediaCrate
-    appState --> metadataCrate
+    resourceCoordinator --> mediaCrate
+    resourceCoordinator --> metadataCrate
     appState --> libraryCrate
     appState --> runtimeCrate
     domain --> commands
@@ -189,10 +195,9 @@ flowchart LR
     visible["资源进入可见区域"] --> stage512["请求 512 px"]
     stage512 --> direct{WebView 可直接显示?}
     direct -->|是| original["返回原文件 URL"]
-    direct -->|否| frontendQueue["前端优先级队列"]
-    frontendQueue --> command["get_preview command"]
-    command --> blocking["spawn_blocking"]
-    blocking --> dispatcher["oxy_media::preview"]
+    direct -->|否| command["get_preview command"]
+    command --> rustQueue["Rust projection 优先级队列"]
+    rustQueue --> dispatcher["oxy_media::preview"]
     dispatcher --> cache{缓存命中?}
     cache -->|是| previewUrl["返回缓存 URL"]
     cache -->|否| decodeGate["后端 DecodeGate"]
@@ -256,7 +261,8 @@ Tauri command 只负责：取状态、校验/转换参数、把阻塞工作转�
 | 排序、搜索、类型过滤、虚拟滚动 | 已实现 |
 | RAW `preview → full`（当前映射 4096 → full） | 已实现 |
 | Windows HIF 160×120 `preview` 底图 → 全分辨率瓦片 | 已实现 |
-| 统一前端预览队列和后端解码门 | 已实现；不抢占运行中的解码 |
+| Rust 资源 projection 队列和后端解码门 | 已实现；同源 pending/in-flight 合并，不抢占运行中的解码 |
+| metadata/image projection SQLite 重启缓存 | 已实现；WAL 事务 revision 拒绝迟到结果 |
 | XMP sidecar 写入 | RAW 已实现基础版本 |
 | SQLite 显式资料库根目录 | 已实现 |
 | SQLite 后台资产索引 | 数据表已存在，完整索引流程仍在规划中 |

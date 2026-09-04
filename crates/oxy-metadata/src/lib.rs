@@ -1,4 +1,7 @@
-use oxy_domain::{AssetKind, CaptureMetadata, EditableMetadata, FocusInfo, FocusRegion};
+use oxy_domain::{
+    AssetKind, CaptureMetadata, EditableMetadata, FocusInfo, FocusRegion, MetadataProjection,
+    ResourceLoadStatus,
+};
 use oxy_fs::sidecar_path;
 use serde_json::Value;
 #[cfg(target_os = "windows")]
@@ -10,7 +13,10 @@ use std::{
     io::Write,
     path::{Path, PathBuf},
     process::{Command, Output},
-    sync::{Arc, RwLock},
+    sync::{
+        Arc, RwLock,
+        atomic::{AtomicU64, Ordering},
+    },
 };
 use thiserror::Error;
 
@@ -41,13 +47,19 @@ pub enum MetadataError {
 pub struct MetadataFacade {
     exiftool: Arc<RwLock<Option<PathBuf>>>,
     summary_cache: Arc<RwLock<HashMap<PathBuf, CachedSummaryMetadata>>>,
+    next_observation: Arc<AtomicU64>,
+    next_projection_revision: Arc<AtomicU64>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct CachedSummaryMetadata {
     fingerprint: SummaryMetadataFingerprint,
+    valid_at: u64,
+    projection_revision: u64,
     rating: Option<u8>,
     color_label: Option<String>,
+    status: ResourceLoadStatus,
+    error: Option<String>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -56,6 +68,16 @@ struct SummaryMetadataFingerprint {
     source_size_bytes: u64,
     sidecar_modified_at_ns: Option<u128>,
     sidecar_size_bytes: Option<u64>,
+    metadata_digest: Option<u64>,
+}
+
+/// Read lease bound to the source identity and logical time observed when the
+/// request entered the coordinator, rather than when its worker completes.
+#[derive(Debug, Clone)]
+pub struct MetadataObservation {
+    asset: oxy_domain::AssetSummary,
+    fingerprint: SummaryMetadataFingerprint,
+    valid_at: u64,
 }
 
 impl MetadataFacade {
@@ -63,6 +85,8 @@ impl MetadataFacade {
         Self {
             exiftool: Arc::new(RwLock::new(exiftool)),
             summary_cache: Arc::new(RwLock::new(HashMap::new())),
+            next_observation: Arc::new(AtomicU64::new(1)),
+            next_projection_revision: Arc::new(AtomicU64::new(1)),
         }
     }
 
@@ -103,10 +127,159 @@ impl MetadataFacade {
         Ok(document)
     }
 
+    /// Reads a document and publishes its editable projection into the same
+    /// versioned state used by grid enrichment and metadata filtering.
+    pub fn read_document_for_asset(
+        &self,
+        asset: &oxy_domain::AssetSummary,
+        display_dimensions: Option<(u32, u32)>,
+    ) -> Result<(MetadataDocument, MetadataProjection), MetadataError> {
+        let observation = self.observe_asset(asset);
+        self.read_document_observation(&observation, display_dimensions)
+    }
+
+    pub fn observe_asset(&self, asset: &oxy_domain::AssetSummary) -> MetadataObservation {
+        self.observe_asset_at(asset, self.begin_observation())
+    }
+
+    pub fn observe_asset_at(
+        &self,
+        asset: &oxy_domain::AssetSummary,
+        valid_at: u64,
+    ) -> MetadataObservation {
+        MetadataObservation {
+            asset: asset.clone(),
+            fingerprint: summary_metadata_fingerprint(asset),
+            valid_at,
+        }
+    }
+
+    pub fn restore_projection(
+        &self,
+        observation: &MetadataObservation,
+        projection: &MetadataProjection,
+    ) {
+        self.next_projection_revision.fetch_max(
+            projection.projection_revision.saturating_add(1),
+            Ordering::Relaxed,
+        );
+        self.summary_cache
+            .write()
+            .expect("metadata summary cache lock poisoned")
+            .insert(
+                observation.asset.path.clone(),
+                CachedSummaryMetadata {
+                    fingerprint: observation.fingerprint,
+                    valid_at: projection.valid_at,
+                    projection_revision: projection.projection_revision,
+                    rating: projection.rating,
+                    color_label: projection.color_label.clone(),
+                    status: projection.status,
+                    error: projection.error.clone(),
+                },
+            );
+    }
+
+    pub fn read_document_observation(
+        &self,
+        observation: &MetadataObservation,
+        display_dimensions: Option<(u32, u32)>,
+    ) -> Result<(MetadataDocument, MetadataProjection), MetadataError> {
+        let document = self.read_document(
+            &observation.asset.path,
+            observation.asset.kind,
+            display_dimensions,
+        )?;
+        let projection = self.merge_summary_observation(
+            &observation.asset,
+            observation.fingerprint,
+            observation.valid_at,
+            document.editable.rating,
+            document.editable.color_label.clone(),
+        );
+        Ok((document, projection))
+    }
+
+    pub fn read_summary_observation(
+        &self,
+        observation: &MetadataObservation,
+    ) -> Result<MetadataProjection, MetadataError> {
+        self.read_document_observation(observation, None)
+            .map(|(_, projection)| projection)
+    }
+
+    pub fn mark_observation_loading(
+        &self,
+        observation: &MetadataObservation,
+    ) -> MetadataProjection {
+        self.transition_observation(observation, ResourceLoadStatus::Loading, None)
+    }
+
+    pub fn fail_observation(
+        &self,
+        observation: &MetadataObservation,
+        error: String,
+    ) -> MetadataProjection {
+        self.transition_observation(observation, ResourceLoadStatus::Error, Some(error))
+    }
+
+    fn transition_observation(
+        &self,
+        observation: &MetadataObservation,
+        status: ResourceLoadStatus,
+        error: Option<String>,
+    ) -> MetadataProjection {
+        let mut cache = self
+            .summary_cache
+            .write()
+            .expect("metadata summary cache lock poisoned");
+        if let Some(current) = cache
+            .get(&observation.asset.path)
+            .filter(|current| current.valid_at > observation.valid_at)
+        {
+            return projection_from_cache(&observation.asset, current);
+        }
+        let (rating, color_label) = cache
+            .get(&observation.asset.path)
+            .filter(|current| current.fingerprint == observation.fingerprint)
+            .map(|current| (current.rating, current.color_label.clone()))
+            .unwrap_or_default();
+        let projection_revision = self
+            .next_projection_revision
+            .fetch_add(1, Ordering::Relaxed);
+        cache.insert(
+            observation.asset.path.clone(),
+            CachedSummaryMetadata {
+                fingerprint: observation.fingerprint,
+                valid_at: observation.valid_at,
+                projection_revision,
+                rating,
+                color_label,
+                status,
+                error,
+            },
+        );
+        projection_from_cache(
+            &observation.asset,
+            cache
+                .get(&observation.asset.path)
+                .expect("inserted projection transition"),
+        )
+    }
+
     pub fn enrich_summaries(
         &self,
         assets: &mut [oxy_domain::AssetSummary],
     ) -> Result<(), MetadataError> {
+        self.enrich_summaries_with_projections(assets).map(|_| ())
+    }
+
+    /// Enriches summaries and returns the accepted authoritative projection
+    /// for every asset in input order.
+    pub fn enrich_summaries_with_projections(
+        &self,
+        assets: &mut [oxy_domain::AssetSummary],
+    ) -> Result<Vec<MetadataProjection>, MetadataError> {
         let fingerprints = assets
             .iter()
             .map(summary_metadata_fingerprint)
@@ -116,45 +289,107 @@ impl MetadataFacade {
             .read()
             .expect("metadata summary cache lock poisoned");
         let mut misses = Vec::new();
+        let mut projections = vec![None; assets.len()];
         for (index, asset) in assets.iter_mut().enumerate() {
             match cached.get(&asset.path) {
-                Some(entry) if entry.fingerprint == fingerprints[index] => {
+                Some(entry)
+                    if entry.fingerprint == fingerprints[index]
+                        && entry.status == ResourceLoadStatus::Ready =>
+                {
                     asset.rating = entry.rating;
                     asset.color_label.clone_from(&entry.color_label);
+                    projections[index] = Some(projection_from_cache(asset, entry));
                 }
-                _ => misses.push((index, asset.clone())),
+                _ => misses.push((index, asset.clone(), self.begin_observation())),
             }
         }
         drop(cached);
 
         if misses.is_empty() {
-            return Ok(());
+            return Ok(projections.into_iter().flatten().collect());
         }
 
         let executable = self.exiftool();
         let mut uncached_assets = misses
             .iter()
-            .map(|(_, asset)| asset.clone())
+            .map(|(_, asset, _)| asset.clone())
             .collect::<Vec<_>>();
         enrich_summaries_with_exiftool(&mut uncached_assets, executable.as_deref())?;
 
+        for ((index, original, valid_at), enriched) in misses.into_iter().zip(uncached_assets) {
+            let projection = self.merge_summary_observation(
+                &original,
+                fingerprints[index],
+                valid_at,
+                enriched.rating,
+                enriched.color_label,
+            );
+            projections[index] = Some(projection);
+            if let Some(current) = self
+                .summary_cache
+                .read()
+                .expect("metadata summary cache lock poisoned")
+                .get(&original.path)
+                .filter(|entry| entry.fingerprint == fingerprints[index])
+            {
+                assets[index].rating = current.rating;
+                assets[index].color_label.clone_from(&current.color_label);
+            }
+        }
+        Ok(projections.into_iter().flatten().collect())
+    }
+
+    fn begin_observation(&self) -> u64 {
+        self.next_observation.fetch_add(1, Ordering::Relaxed)
+    }
+
+    fn merge_summary_observation(
+        &self,
+        asset: &oxy_domain::AssetSummary,
+        fingerprint: SummaryMetadataFingerprint,
+        valid_at: u64,
+        rating: Option<u8>,
+        color_label: Option<String>,
+    ) -> MetadataProjection {
         let mut cache = self
             .summary_cache
             .write()
             .expect("metadata summary cache lock poisoned");
-        for ((index, _), enriched) in misses.into_iter().zip(uncached_assets) {
-            assets[index].rating = enriched.rating;
-            assets[index].color_label.clone_from(&enriched.color_label);
-            cache.insert(
-                enriched.path,
-                CachedSummaryMetadata {
-                    fingerprint: fingerprints[index],
-                    rating: enriched.rating,
-                    color_label: enriched.color_label,
-                },
-            );
+        if let Some(current) = cache
+            .get(&asset.path)
+            .filter(|current| current.valid_at > valid_at)
+        {
+            return projection_from_cache(asset, current);
         }
-        Ok(())
+        let projection_revision = self
+            .next_projection_revision
+            .fetch_add(1, Ordering::Relaxed);
+        cache.insert(
+            asset.path.clone(),
+            CachedSummaryMetadata {
+                fingerprint,
+                valid_at,
+                projection_revision,
+                rating,
+                color_label,
+                status: ResourceLoadStatus::Ready,
+                error: None,
+            },
+        );
+        projection_from_cache(asset, cache.get(&asset.path).expect("inserted projection"))
+    }
+
+    pub fn cached_projection(
+        &self,
+        asset: &oxy_domain::AssetSummary,
+    ) -> Option<MetadataProjection> {
+        let fingerprint = summary_metadata_fingerprint(asset);
+        self.summary_cache
+            .read()
+            .expect("metadata summary cache lock poisoned")
+            .get(&asset.path)
+            .filter(|entry| entry.fingerprint == fingerprint)
+            .map(|entry| projection_from_cache(asset, entry))
     }
 
     /// Drops cached rating/color projections for one directory. The cache is
@@ -206,7 +441,17 @@ impl MetadataFacade {
 }
 
 fn summary_metadata_fingerprint(asset: &oxy_domain::AssetSummary) -> SummaryMetadataFingerprint {
-    let sidecar_metadata = fs::metadata(sidecar_path(&asset.path)).ok();
+    let sidecar = sidecar_path(&asset.path);
+    let sidecar_metadata = fs::metadata(&sidecar).ok();
+    let metadata_digest = if sidecar_metadata.is_some() {
+        fs::read(&sidecar)
+            .ok()
+            .map(|bytes| stable_bytes_digest(&bytes))
+    } else if is_sony_hif(&asset.path) {
+        engine::heif_metadata_digest(&asset.path)
+    } else {
+        None
+    };
     SummaryMetadataFingerprint {
         source_modified_at_ms: asset.modified_at_ms,
         source_size_bytes: asset.size_bytes,
@@ -216,6 +461,48 @@ fn summary_metadata_fingerprint(asset: &oxy_domain::AssetSummary) -> SummaryMeta
             .and_then(|modified| modified.duration_since(std::time::UNIX_EPOCH).ok())
             .map(|duration| duration.as_nanos()),
         sidecar_size_bytes: sidecar_metadata.map(|metadata| metadata.len()),
+        metadata_digest,
+    }
+}
+
+pub fn metadata_source_revision(asset: &oxy_domain::AssetSummary) -> String {
+    source_revision_from_fingerprint(summary_metadata_fingerprint(asset))
+}
+
+fn source_revision_from_fingerprint(fingerprint: SummaryMetadataFingerprint) -> String {
+    format!(
+        "{}:{}:{}:{}:{}",
+        fingerprint.source_modified_at_ms,
+        fingerprint.source_size_bytes,
+        fingerprint.sidecar_modified_at_ns.unwrap_or_default(),
+        fingerprint.sidecar_size_bytes.unwrap_or_default(),
+        fingerprint.metadata_digest.unwrap_or_default()
+    )
+}
+
+fn stable_bytes_digest(bytes: &[u8]) -> u64 {
+    use sha2::{Digest, Sha256};
+    let digest = Sha256::digest(bytes);
+    u64::from_be_bytes(
+        digest[..8]
+            .try_into()
+            .expect("SHA-256 prefix is eight bytes"),
+    )
+}
+
+fn projection_from_cache(
+    asset: &oxy_domain::AssetSummary,
+    cached: &CachedSummaryMetadata,
+) -> MetadataProjection {
+    MetadataProjection {
+        path: asset.path.clone(),
+        source_revision: source_revision_from_fingerprint(cached.fingerprint),
+        projection_revision: cached.projection_revision,
+        valid_at: cached.valid_at,
+        status: cached.status,
+        rating: cached.rating,
+        color_label: cached.color_label.clone(),
+        error: cached.error.clone(),
     }
 }
 
@@ -878,6 +1165,65 @@ mod tests {
 
         shared_caller.invalidate_summary_directory(directory.path());
         assert!(facade.summary_cache.read().unwrap().is_empty());
+    }
+
+    #[test]
+    fn older_observation_cannot_overwrite_a_newer_projection() {
+        let directory = tempdir().unwrap();
+        let raw = directory.path().join("photo.nef");
+        fs::write(&raw, b"camera image bytes").unwrap();
+        let asset = oxy_fs::scan_directory(directory.path(), &oxy_domain::AssetQuery::default(), 0)
+            .unwrap()
+            .items
+            .remove(0);
+        let facade = MetadataFacade::default();
+        let old_valid_at = facade.begin_observation();
+        let new_valid_at = facade.begin_observation();
+        let fingerprint = summary_metadata_fingerprint(&asset);
+
+        let selected = facade.merge_summary_observation(
+            &asset,
+            fingerprint,
+            new_valid_at,
+            Some(5),
+            Some("Red".into()),
+        );
+        let late_background = facade.merge_summary_observation(
+            &asset,
+            fingerprint,
+            old_valid_at,
+            Some(1),
+            Some("Blue".into()),
+        );
+
+        assert_eq!(
+            late_background.projection_revision,
+            selected.projection_revision
+        );
+        assert_eq!(late_background.rating, Some(5));
+        assert_eq!(late_background.color_label.as_deref(), Some("Red"));
+    }
+
+    #[test]
+    fn hif_source_revision_tracks_embedded_xmp_when_file_stat_is_unchanged() {
+        let directory = tempdir().unwrap();
+        let hif = directory.path().join("photo.HIF");
+        let content = |rating| {
+            format!(
+                "....ftypSHIF....<x:xmpmeta><rdf:RDF><rdf:Description xmp:Rating='{rating}' /></rdf:RDF></x:xmpmeta>"
+            )
+        };
+        fs::write(&hif, content(1)).unwrap();
+        let asset = oxy_fs::scan_directory(directory.path(), &oxy_domain::AssetQuery::default(), 0)
+            .unwrap()
+            .items
+            .remove(0);
+        let first = metadata_source_revision(&asset);
+
+        fs::write(&hif, content(2)).unwrap();
+        let second = metadata_source_revision(&asset);
+
+        assert_ne!(first, second);
     }
 
     #[test]

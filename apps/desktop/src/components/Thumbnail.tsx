@@ -12,6 +12,7 @@ import {
   markBrowserImageReady,
 } from "../lib/browserImageCache";
 import { perfMark } from "../lib/perfProbe";
+import { imageProjectionKey, useImageProjectionStore } from "../lib/imageProjection";
 import {
   assetRenderQueryKey,
   renderMethodKey,
@@ -84,6 +85,12 @@ export function Thumbnail({
   const previewMethodIdentity = renderMethodKey(previewMethod);
   const fullMethodIdentity = fullMethod ? renderMethodKey(fullMethod) : undefined;
   const distinctFullLevel = fullMethodIdentity !== previewMethodIdentity ? fullLevel : undefined;
+  const previewProjection = useImageProjectionStore((state) => previewLevel
+    ? state.records[imageProjectionKey(asset.path, previewLevel)]
+    : undefined);
+  const fullProjection = useImageProjectionStore((state) => distinctFullLevel
+    ? state.records[imageProjectionKey(asset.path, distinctFullLevel)]
+    : undefined);
   const ownsFullDetailStage = asset.kind === "raw"
     || (asset.kind === "heif" && fullMethod?.type === "generatedImage");
   const directSource = useMemo(
@@ -93,13 +100,15 @@ export function Thumbnail({
   const requestPriority = large ? "loupe" : priority;
   const previewQuery = useQuery({
     queryKey: assetRenderQueryKey(asset, previewMethod),
-    queryFn: ({ signal }) => generatedPreview(
-      asset,
-      previewLevel ?? previewStep.level,
-      signal,
-      requestPriority,
-      queueOrder,
-    ),
+    queryFn: async ({ signal }) => {
+      await generatedPreview(
+        asset,
+        previewLevel ?? previewStep.level,
+        signal,
+        requestPriority,
+        queueOrder,
+      );
+    },
     enabled: enabled && isTauri() && Boolean(previewLevel),
     staleTime: Infinity,
     retry: 0,
@@ -108,22 +117,25 @@ export function Thumbnail({
     queryKey: fullMethod
       ? assetRenderQueryKey(asset, fullMethod)
       : ["asset-render", asset.id, asset.modifiedAtMs, "no-full-image"],
-    queryFn: ({ signal }) => generatedPreview(
-      asset,
-      distinctFullLevel ?? "full",
-      signal,
-      "loupe",
-      queueOrder,
-    ),
+    queryFn: async ({ signal }) => {
+      await generatedPreview(
+        asset,
+        distinctFullLevel ?? "full",
+        signal,
+        "loupe",
+        queueOrder,
+      );
+    },
     enabled: enabled
       && isTauri()
       && large
       && Boolean(distinctFullLevel)
-      && Boolean(previewQuery.data || previewQuery.isError || directSource),
+      && Boolean(previewProjection?.result || previewQuery.isError || directSource),
     staleTime: Infinity,
     retry: 0,
   });
-  const previewSource = previewQuery.data;
+  const previewSource = previewProjection?.result;
+  const fullSource = fullProjection?.result;
   const preparedSource = directSource && isBrowserImageReady(directSource)
     ? directSource
     : previewSource && isBrowserImageReady(previewSource.url)
@@ -137,7 +149,7 @@ export function Thumbnail({
       : undefined;
   const generatedSource = nextProgressiveStage(Boolean(visibleImage), [
     previewSource,
-    !fullImageFailed ? fullQuery.data : undefined,
+    !fullImageFailed ? fullSource : undefined,
   ]);
   const source = directSource ?? generatedSource?.url;
   const pendingSource = source !== visibleImage?.source ? source : undefined;
@@ -216,12 +228,12 @@ export function Thumbnail({
     if (
       loaded?.assetId === asset.id
       && loaded.mode === "preview"
-      && fullQuery.data?.path
-      && fullQuery.data.path === previewSource?.path
+      && fullSource?.path
+      && fullSource.path === previewSource?.path
     ) {
       setLoaded({ assetId: asset.id, mode: "full" });
     }
-  }, [asset.id, fullQuery.data?.path, loaded, previewSource?.path]);
+  }, [asset.id, fullSource?.path, loaded, previewSource?.path]);
 
   useEffect(() => {
     // Windows/Linux HEIF status is owned by the tile canvas. macOS HEIF and
@@ -230,14 +242,15 @@ export function Thumbnail({
     onRawPreviewStatus(rawPreviewStatus({
       assetId: asset.id,
       loaded,
-      fullError: fullQuery.isError || fullImageFailed,
-      fullSize: fullQuery.data,
+      fullError: fullQuery.isError || fullProjection?.status === "error" || fullImageFailed,
+      fullSize: fullSource,
     }));
   }, [
     asset.id,
     asset.kind,
-    fullQuery.data?.height,
-    fullQuery.data?.width,
+    fullSource?.height,
+    fullSource?.width,
+    fullProjection?.status,
     fullQuery.isError,
     fullImageFailed,
     large,
@@ -247,7 +260,7 @@ export function Thumbnail({
   ]);
 
   const handleLoad = (size: { width: number; height: number }, result?: PreviewResult) => {
-    const loadedLevel = result && result === fullQuery.data
+    const loadedLevel = result && result === fullSource
       ? fullStep?.level ?? "full"
       : previewStep.level;
     perfMark("image:loaded", {
@@ -276,7 +289,7 @@ export function Thumbnail({
     debug?.complete();
     if (source) markBrowserImageReady(source, size);
     if (ownsFullDetailStage && large && result) {
-      setLoaded({ assetId: asset.id, mode: result === fullQuery.data ? "full" : "preview" });
+      setLoaded({ assetId: asset.id, mode: result === fullSource ? "full" : "preview" });
     }
     if (source) setDisplayedImage({ assetId: asset.id, source });
     onImageLoad?.(size);
@@ -303,7 +316,7 @@ export function Thumbnail({
       if (debug) imageDebug.current = { source, handle: debug };
     }
     debug?.fail();
-    if (result && result === fullQuery.data) {
+    if (result && result === fullSource) {
       setFullImageFailed(true);
     } else {
       setFailed(true);

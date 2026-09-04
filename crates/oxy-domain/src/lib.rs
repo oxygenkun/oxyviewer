@@ -145,7 +145,48 @@ pub struct AssetDetails {
     pub focus_info: Option<FocusInfo>,
 }
 
+/// Rust-owned, versioned metadata read model shared by every UI surface.
+/// A missing rating or color label is an authoritative empty value when
+/// `status` is `Ready`, rather than a field that a caller may freely replace.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct MetadataProjection {
+    pub path: PathBuf,
+    pub source_revision: String,
+    pub projection_revision: u64,
+    pub valid_at: u64,
+    pub status: ResourceLoadStatus,
+    pub rating: Option<u8>,
+    pub color_label: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub error: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct AssetDetailsResult {
+    pub details: AssetDetails,
+    pub metadata_projection: MetadataProjection,
+}
+
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub enum ResourceLoadStatus {
+    Loading,
+    Ready,
+    Error,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, PartialOrd, Ord)]
+#[serde(rename_all = "camelCase")]
+pub enum MetadataRequestPriority {
+    Background,
+    Filter,
+    Visible,
+    Selected,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, PartialOrd, Ord, Hash)]
 #[serde(rename_all = "camelCase")]
 pub enum RenderLevel {
     /// Fastest representation used by grids, lists, and filmstrips.
@@ -156,13 +197,29 @@ pub enum RenderLevel {
     Full,
 }
 
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, PartialOrd, Ord)]
 #[serde(rename_all = "camelCase")]
 pub enum PreviewPriority {
     Preload,
     Nearby,
     Visible,
     Loupe,
+}
+
+/// Rust-owned state for one semantic render level of an asset.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct ImageProjection {
+    pub path: PathBuf,
+    pub source_revision: String,
+    pub projection_revision: u64,
+    pub valid_at: u64,
+    pub status: ResourceLoadStatus,
+    pub level: RenderLevel,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub result: Option<PreviewResult>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub error: Option<String>,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]

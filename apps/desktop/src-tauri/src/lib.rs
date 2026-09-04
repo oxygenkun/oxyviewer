@@ -1,12 +1,15 @@
 mod cache;
 mod exiftool;
+mod metadata_queue;
+mod preview_queue;
 
 use oxy_domain::{
-    AssetDetails, AssetKind, AssetQuery, AssetSummary, CacheSettings, CacheSettingsUpdate,
+    AssetDetailsResult, AssetKind, AssetQuery, AssetSummary, CacheSettings, CacheSettingsUpdate,
     DirectorySearchMatch, DirectorySummary, EditableMetadata, FileOperation, FileOperationResult,
     FolderSession, HeifCapabilities, HeifDecodeSession, HeifDecodeStatus, HeifDiagnostics, JobId,
-    JobPriority, LibraryIndexUpdate, MetadataCapability, MetadataPatch, MetadataProvider, Page,
-    PerfScenario, PreviewPriority, PreviewResult, RenderLevel,
+    JobPriority, LibraryIndexUpdate, MetadataCapability, MetadataPatch, MetadataProjection,
+    MetadataProvider, MetadataRequestPriority, Page, PerfScenario, PreviewPriority, PreviewResult,
+    RenderLevel,
 };
 use oxy_fs::FsCatalog;
 use oxy_library::Library;
@@ -21,6 +24,8 @@ struct AppState {
     cache: Arc<cache::CacheManager>,
     heif: Arc<oxy_media::HeifDecodeService>,
     metadata: oxy_metadata::MetadataFacade,
+    metadata_queue: metadata_queue::MetadataQueue,
+    preview_queue: preview_queue::PreviewQueue,
     metadata_provider: Arc<exiftool::ProviderManager>,
 }
 
@@ -174,8 +179,15 @@ fn refresh_directory(
         .refresh_directory(&session_id, directory.as_deref())
         .map_err(|error| error.to_string())?;
     state
-        .metadata
-        .invalidate_summary_directory(&resolved_directory);
+        .library
+        .invalidate_resource_projections(&resolved_directory)
+        .map_err(|error| error.to_string())?;
+    state
+        .metadata_queue
+        .invalidate_directory(&resolved_directory);
+    state
+        .preview_queue
+        .invalidate_directory(&resolved_directory);
     state
         .library
         .invalidate_index(&root)
@@ -187,36 +199,15 @@ fn refresh_directory(
 #[tauri::command]
 async fn get_asset_details(
     path: PathBuf,
+    app: tauri::AppHandle,
     state: State<'_, AppState>,
-) -> Result<AssetDetails, String> {
-    let files = state.files.clone();
-    let metadata_facade = state.metadata.clone();
+) -> Result<AssetDetailsResult, String> {
+    let queue = state.metadata_queue.clone();
     tauri::async_runtime::spawn_blocking(move || {
-        let asset = files.get_asset(&path).map_err(|error| error.to_string())?;
-        let kind = asset.kind;
-        let dimensions = oxy_media::dimensions(&path).ok();
-        let display_dimensions = dimensions.map(|value| (value.width, value.height));
-        let sidecar_path = asset.has_sidecar.then(|| oxy_fs::sidecar_path(&path));
-        let document = metadata_facade.read_document(&path, kind, display_dimensions);
-        let (capture_metadata, focus_info) = document
-            .as_ref()
-            .map(|document| (document.capture.clone(), document.focus.clone()))
-            .unwrap_or_default();
-        let (metadata, metadata_capability) = metadata_for_details(
-            kind,
-            asset.has_sidecar,
-            document.map(|document| document.editable),
-        );
-        Ok(AssetDetails {
-            asset,
-            width: dimensions.map(|value| value.width),
-            height: dimensions.map(|value| value.height),
-            metadata,
-            metadata_capability,
-            sidecar_path,
-            capture_metadata,
-            focus_info,
-        })
+        let receiver = queue.request_details(&app, path)?;
+        receiver
+            .recv()
+            .map_err(|error| format!("metadata queue stopped: {error}"))
     })
     .await
     .map_err(|error| error.to_string())?
@@ -257,24 +248,16 @@ fn metadata_for_details(
 }
 
 #[tauri::command]
-async fn enrich_asset_metadata(
+async fn request_metadata(
     paths: Vec<PathBuf>,
+    priority: MetadataRequestPriority,
+    app: tauri::AppHandle,
     state: State<'_, AppState>,
-) -> Result<Vec<AssetSummary>, String> {
-    let files = state.files.clone();
-    let metadata = state.metadata.clone();
-    tauri::async_runtime::spawn_blocking(move || {
-        let mut assets = paths
-            .iter()
-            .map(|path| files.get_asset(path).map_err(|error| error.to_string()))
-            .collect::<Result<Vec<_>, _>>()?;
-        metadata
-            .enrich_summaries(&mut assets)
-            .map_err(|error| error.to_string())?;
-        Ok(assets)
-    })
-    .await
-    .map_err(|error| error.to_string())?
+) -> Result<Vec<MetadataProjection>, String> {
+    let queue = state.metadata_queue.clone();
+    tauri::async_runtime::spawn_blocking(move || queue.request_summaries(&app, paths, priority))
+        .await
+        .map_err(|error| error.to_string())?
 }
 
 #[tauri::command]
@@ -282,23 +265,41 @@ async fn get_preview(
     path: PathBuf,
     level: RenderLevel,
     priority: PreviewPriority,
+    queue_order: Option<usize>,
+    app: tauri::AppHandle,
     state: State<'_, AppState>,
-) -> Result<PreviewResult, String> {
+) -> Result<oxy_domain::ImageProjection, String> {
     let asset = state
         .files
         .get_asset(&path)
         .map_err(|error| error.to_string())?;
-    let preview_dir = state.cache.preview_dir();
     let cache = state.cache.clone();
-    let decode_priority = oxy_media::decode_priority_for(priority);
-    let kind = asset.kind;
-    let result = tauri::async_runtime::spawn_blocking(move || {
-        oxy_media::preview(&path, &preview_dir, level, decode_priority, kind)
-            .map_err(|error| error.to_string())
+    let (projection, receiver) = state.preview_queue.request(
+        &app,
+        preview_queue::PreviewRequest {
+            path: asset.path.clone(),
+            preview_dir: state.cache.preview_dir(),
+            kind: asset.kind,
+            size_bytes: asset.size_bytes,
+            modified_at_ms: asset.modified_at_ms,
+            level,
+            priority,
+            queue_order: queue_order.unwrap_or_default(),
+        },
+    )?;
+    let _ = app.emit(preview_queue::IMAGE_PROJECTION_UPDATED_EVENT, projection);
+    let projection = tauri::async_runtime::spawn_blocking(move || {
+        receiver
+            .recv()
+            .map_err(|error| format!("preview queue stopped: {error}"))?
     })
     .await
     .map_err(|error| error.to_string())??;
-    let protected_path = result.path.clone();
+    let protected_path = projection
+        .result
+        .as_ref()
+        .map(|result| result.path.clone())
+        .ok_or_else(|| "ready image projection has no artifact".to_owned())?;
     cache.mark_used(&protected_path);
     if cache.try_start_prune() {
         tauri::async_runtime::spawn_blocking(move || {
@@ -308,7 +309,7 @@ async fn get_preview(
             cache.finish_prune();
         });
     }
-    Ok(result)
+    Ok(projection)
 }
 
 #[tauri::command]
@@ -333,9 +334,14 @@ async fn update_cache_settings(
 #[tauri::command]
 async fn clear_preview_cache(state: State<'_, AppState>) -> Result<CacheSettings, String> {
     let cache = state.cache.clone();
-    tauri::async_runtime::spawn_blocking(move || cache.clear())
-        .await
-        .map_err(|error| error.to_string())?
+    let preview_queue = state.preview_queue.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        let settings = cache.clear()?;
+        preview_queue.invalidate_all();
+        Ok(settings)
+    })
+    .await
+    .map_err(|error| error.to_string())?
 }
 
 #[tauri::command]
@@ -360,12 +366,14 @@ async fn open_in_file_manager(path: PathBuf) -> Result<(), String> {
 async fn patch_metadata(
     paths: Vec<PathBuf>,
     patch: MetadataPatch,
+    app: tauri::AppHandle,
     state: State<'_, AppState>,
 ) -> Result<JobId, String> {
     let ticket = state.jobs.register(JobPriority::SelectedMetadata);
     let job_id = ticket.id.clone();
     let files = state.files.clone();
     let metadata = state.metadata.clone();
+    let requested_paths = paths.clone();
     let result = tauri::async_runtime::spawn_blocking(move || {
         for path in paths {
             let asset = files.get_asset(&path).map_err(|error| error.to_string())?;
@@ -382,18 +390,26 @@ async fn patch_metadata(
     .map_err(|error| error.to_string());
     state.jobs.finish(&job_id);
     result??;
+    let queue = state.metadata_queue.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        queue.request_summaries(&app, requested_paths, MetadataRequestPriority::Selected)
+    })
+    .await
+    .map_err(|error| error.to_string())??;
     Ok(job_id)
 }
 
 #[tauri::command]
 async fn sync_metadata_to_embedded(
     paths: Vec<PathBuf>,
+    app: tauri::AppHandle,
     state: State<'_, AppState>,
 ) -> Result<JobId, String> {
     let ticket = state.jobs.register(JobPriority::SelectedMetadata);
     let job_id = ticket.id.clone();
     let files = state.files.clone();
     let metadata = state.metadata.clone();
+    let requested_paths = paths.clone();
     let result = tauri::async_runtime::spawn_blocking(move || {
         for path in paths {
             let asset = files.get_asset(&path).map_err(|error| error.to_string())?;
@@ -413,6 +429,12 @@ async fn sync_metadata_to_embedded(
     .map_err(|error| error.to_string());
     state.jobs.finish(&job_id);
     result??;
+    let queue = state.metadata_queue.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        queue.request_summaries(&app, requested_paths, MetadataRequestPriority::Selected)
+    })
+    .await
+    .map_err(|error| error.to_string())??;
     Ok(job_id)
 }
 
@@ -704,15 +726,27 @@ pub fn run() {
                 preview_dir,
                 data_dir.join("cache-settings.json"),
             )?);
-            let library = Library::open(&data_dir.join("oxyviewer.sqlite"))?;
+            let library = Arc::new(Library::open(&data_dir.join("oxyviewer.sqlite"))?);
             let metadata_provider = Arc::new(exiftool::ProviderManager::load(data_dir));
+            let files = Arc::new(FsCatalog::default());
+            let metadata = metadata_provider.facade();
+            let metadata_queue = metadata_queue::MetadataQueue::new(
+                app.handle().clone(),
+                files.clone(),
+                metadata.clone(),
+                library.clone(),
+            );
+            let preview_queue =
+                preview_queue::PreviewQueue::new(app.handle().clone(), library.clone());
             app.manage(AppState {
-                files: Arc::new(FsCatalog::default()),
+                files,
                 jobs: JobRegistry::default(),
-                library: Arc::new(library),
+                library,
                 cache,
                 heif: heif.clone(),
-                metadata: metadata_provider.facade(),
+                metadata,
+                metadata_queue,
+                preview_queue,
                 metadata_provider,
             });
 
@@ -725,7 +759,7 @@ pub fn run() {
             search_directories,
             refresh_directory,
             get_asset_details,
-            enrich_asset_metadata,
+            request_metadata,
             get_preview,
             get_cache_settings,
             update_cache_settings,

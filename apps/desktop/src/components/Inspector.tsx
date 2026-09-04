@@ -1,4 +1,4 @@
-import { useMutation, useQuery, useQueryClient, type InfiniteData } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
 import { Circle, Download, FileCog, FolderSearch, Image, Star, Tag, X } from "lucide-react";
 import {
@@ -10,9 +10,9 @@ import {
   syncMetadataToEmbedded,
 } from "../lib/api";
 import type { MessageKey } from "../lib/i18n";
-import { patchAssetDetails, patchAssetPages, patchAssetSummaries } from "../lib/metadataCache";
+import { useMetadataProjectionStore } from "../lib/metadataProjection";
 import { requiresExiftoolSetup } from "../lib/metadataProvider";
-import type { AssetDetails, AssetSummary, MetadataPatch, Page } from "../types";
+import type { AssetSummary, MetadataPatch } from "../types";
 import { formatBytes } from "./AssetBrowser";
 import { Thumbnail } from "./Thumbnail";
 
@@ -29,6 +29,7 @@ const sonyHifColorLabels = colorLabels.filter((label) => label !== "Purple");
 export function Inspector({ asset, selectedCount, selectedPaths, t }: InspectorProps) {
   const queryClient = useQueryClient();
   const [syncPending, setSyncPending] = useState(false);
+  const projection = useMetadataProjectionStore((state) => asset ? state.records[asset.path] : undefined);
   const details = useQuery({
     queryKey: ["asset-details", asset?.id],
     queryFn: () => getAssetDetails(asset!),
@@ -37,45 +38,17 @@ export function Inspector({ asset, selectedCount, selectedPaths, t }: InspectorP
   const patch = useMutation({
     mutationFn: (value: MetadataPatch) =>
       patchMetadata(selectedPaths.length ? selectedPaths : [asset!.path], value),
-    onMutate: async (value) => {
-      const paths = new Set(selectedPaths.length ? selectedPaths : [asset!.path]);
-      const filters = [
-        { queryKey: ["asset-details"] },
-        { queryKey: ["assets"] },
-        { queryKey: ["asset-metadata"] },
-        { queryKey: ["preload-assets"] },
-        { queryKey: ["progressive-metadata-assets"] },
-      ];
-      await Promise.all(filters.map((filter) => queryClient.cancelQueries(filter)));
-      const snapshots = filters.flatMap((filter) => queryClient.getQueriesData(filter));
-
-      queryClient.setQueriesData<AssetDetails>({ queryKey: ["asset-details"] }, (current) =>
-        patchAssetDetails(current, paths, value));
-      queryClient.setQueriesData<AssetSummary[]>({ queryKey: ["asset-metadata"] }, (current) =>
-        patchAssetSummaries(current, paths, value));
-      for (const queryKey of [["assets"], ["preload-assets"], ["progressive-metadata-assets"]] as const) {
-        queryClient.setQueriesData<InfiniteData<Page<AssetSummary>>>({ queryKey }, (current) =>
-          patchAssetPages(current, paths, value));
-      }
-      return { snapshots };
-    },
-    onError: (_error, _value, context) => {
-      for (const [queryKey, data] of context?.snapshots ?? []) {
-        queryClient.setQueryData(queryKey, data);
-      }
-    },
     onSettled: async () => {
       await Promise.all([
         queryClient.invalidateQueries({ queryKey: ["asset-details"] }),
         queryClient.invalidateQueries({ queryKey: ["assets"] }),
-        queryClient.invalidateQueries({ queryKey: ["asset-metadata"] }),
         queryClient.invalidateQueries({ queryKey: ["preload-assets"] }),
         queryClient.invalidateQueries({ queryKey: ["progressive-metadata-assets"] }),
       ]);
     },
   });
-  const currentRating = details.data?.metadata.rating;
-  const currentColor = details.data?.metadata.colorLabel;
+  const currentRating = projection ? projection.rating : asset?.rating;
+  const currentColor = projection ? projection.colorLabel : asset?.colorLabel;
   const metadataPaths = selectedPaths.length ? selectedPaths : asset ? [asset.path] : [];
   const syncEmbedded = useMutation({
     mutationFn: () => syncMetadataToEmbedded(metadataPaths),
@@ -83,7 +56,6 @@ export function Inspector({ asset, selectedCount, selectedPaths, t }: InspectorP
       await Promise.all([
         queryClient.invalidateQueries({ queryKey: ["asset-details"] }),
         queryClient.invalidateQueries({ queryKey: ["assets"] }),
-        queryClient.invalidateQueries({ queryKey: ["asset-metadata"] }),
         queryClient.invalidateQueries({ queryKey: ["progressive-metadata-assets"] }),
       ]);
     },
@@ -196,8 +168,8 @@ export function Inspector({ asset, selectedCount, selectedPaths, t }: InspectorP
                 title={t("clearColor")}
               ><X size={11} /></button>
             </div>
-            {patch.isError || details.isError ? (
-              <small className="metadata-error">{String(patch.error ?? details.error)}</small>
+            {patch.isError || details.isError || projection?.status === "error" ? (
+              <small className="metadata-error">{String(patch.error ?? details.error ?? projection?.error)}</small>
             ) : null}
             {asset.kind !== "raw" && details.data?.asset.hasSidecar ? (
               <button

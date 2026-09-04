@@ -10,11 +10,8 @@ type PendingTask<T> = {
 };
 
 /**
- * Numeric priority used by the serial queue. Higher runs first. The frontend
- * queue is the first layer of the two-tier scheduler: it orders pending work
- * so on-screen (visible) and loupe thumbnails jump ahead of off-screen
- * (nearby) overscan work, and drops requests that scroll out of view before
- * they start.
+ * Numeric priority retained for WebView-side transfer and image decode
+ * preloading. Native render/decode scheduling is owned by Rust.
  */
 export function priorityWeight(priority: PreviewPriority): number {
   switch (priority) {
@@ -92,10 +89,7 @@ export class SerialTaskQueue {
 }
 
 /**
- * Unified preview queue. Covers every format and every preview stage so that a
- * visible RAW/HEIF/TIFF thumbnail is never stuck behind unrelated work. The
- * backend decode gate is the second layer; this queue ensures only one preview
- * request is in flight at a time and that pending requests are both prioritized
- * and droppable via AbortSignal.
+ * Presentation-only queue for bytes that already have a Rust-owned artifact.
+ * It does not decide resource validity or schedule native decode work.
  */
-export const previewQueue = new SerialTaskQueue();
+export const browserPreloadQueue = new SerialTaskQueue();

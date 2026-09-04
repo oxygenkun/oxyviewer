@@ -1,4 +1,3 @@
-import { useQueryClient } from "@tanstack/react-query";
 import { useEffect, useRef } from "react";
 import { preloadAssetLoupePreview } from "../lib/loupePreload";
 import type { AssetSummary } from "../types";
@@ -9,7 +8,6 @@ interface FilmstripPreviewPreloaderProps {
 
 /** Sequentially prepares visible filmstrip items in the supplied priority order. */
 export function FilmstripPreviewPreloader({ assets }: FilmstripPreviewPreloaderProps) {
-  const queryClient = useQueryClient();
   const completed = useRef(new Set<string>());
   const candidates = useRef(assets);
   const running = useRef(false);
@@ -31,7 +29,7 @@ export function FilmstripPreviewPreloader({ assets }: FilmstripPreviewPreloaderP
         running.current = false;
         return;
       }
-      void preloadAssetLoupePreview(queryClient, asset, queueOrder)
+      void preloadAssetLoupePreview(asset, queueOrder)
         .then(() => completed.current.add(key))
         .catch((error) => {
           console.warn(`[OxyPreview] filmstrip preload failed for ${asset.name}`, error);

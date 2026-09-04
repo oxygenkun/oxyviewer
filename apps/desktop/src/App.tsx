@@ -12,19 +12,28 @@ import {
   addLibraryRoot,
   chooseFolder,
   copyText,
-  enrichAssetMetadata,
   isTauri,
   listAssets,
   listLibraryRoots,
   openFolder,
   openInFileManager,
   onLibraryIndexUpdated,
+  onImageProjectionUpdated,
+  onMetadataProjectionUpdated,
   refreshDirectory,
+  requestMetadata,
   removeLibraryRoot,
   reorderLibraryRoots,
   trashPaths,
 } from "./lib/api";
 import { filterAndSortAssets } from "./lib/assetFiltering";
+import { acceptImageProjection, invalidateImageDirectory } from "./lib/imageProjection";
+import {
+  acceptMetadataProjection,
+  invalidateMetadataDirectory,
+  projectAssetMetadata,
+  useMetadataProjectionStore,
+} from "./lib/metadataProjection";
 import { isSameOrDescendantPath, parentFolderPath, relativeFolderPath } from "./lib/folderPaths";
 import { translate } from "./lib/i18n";
 import {
@@ -53,6 +62,7 @@ export function App({ perfScenario }: { perfScenario?: PerfScenario }) {
   const [error, setError] = useState<string>();
   const [isRefreshing, setIsRefreshing] = useState(false);
   const queryClient = useQueryClient();
+  const metadataRecords = useMetadataProjectionStore((state) => state.records);
   const {
     view, gridPreference, activeId, selectedIds, inspectorOpen, leftPanelOpen, settingsOpen, locale,
     search, kind, minimumRating, colorLabel, sort, direction, clearSelection, setGridPreference, toggleSettings,
@@ -98,6 +108,32 @@ export function App({ perfScenario }: { perfScenario?: PerfScenario }) {
       unlisten?.();
     };
   }, [queryClient]);
+
+  useEffect(() => {
+    let unlisten: (() => void) | undefined;
+    let disposed = false;
+    void onMetadataProjectionUpdated(acceptMetadataProjection).then((dispose) => {
+      if (disposed) dispose();
+      else unlisten = dispose;
+    });
+    return () => {
+      disposed = true;
+      unlisten?.();
+    };
+  }, []);
+
+  useEffect(() => {
+    let unlisten: (() => void) | undefined;
+    let disposed = false;
+    void onImageProjectionUpdated(acceptImageProjection).then((dispose) => {
+      if (disposed) dispose();
+      else unlisten = dispose;
+    });
+    return () => {
+      disposed = true;
+      unlisten?.();
+    };
+  }, []);
 
   const query = useMemo<AssetQuery>(() => ({
     search: search || undefined,
@@ -155,8 +191,9 @@ export function App({ perfScenario }: { perfScenario?: PerfScenario }) {
         progressiveMetadataBatchQuery,
         pageParam,
       );
-      const items = await enrichAssetMetadata(page.items.map((asset) => asset.path));
-      return { ...page, items };
+      const snapshots = await requestMetadata(page.items.map((asset) => asset.path), "filter");
+      snapshots.forEach(acceptMetadataProjection);
+      return page;
     },
     initialPageParam: 0,
     getNextPageParam: (page) => page.nextCursor,
@@ -167,31 +204,25 @@ export function App({ perfScenario }: { perfScenario?: PerfScenario }) {
     () => assetsQuery.data?.pages.flatMap((page) => page.items) ?? [],
     [assetsQuery.data],
   );
-  const metadataQuery = useQuery({
-    queryKey: [
-      "asset-metadata",
-      activeSession?.id,
-      currentPath,
-      cheapAssets.map((asset) => [asset.path, asset.modifiedAtMs]),
-    ],
-    queryFn: () => enrichAssetMetadata(cheapAssets.map((asset) => asset.path)),
-    enabled: cheapAssets.length > 0 && !progressivelyFilterMetadata,
-    staleTime: Infinity,
-  });
+  useEffect(() => {
+    if (progressivelyFilterMetadata || cheapAssets.length === 0) return;
+    void requestMetadata(cheapAssets.map((asset) => asset.path), "visible")
+      .then((snapshots) => snapshots.forEach(acceptMetadataProjection))
+      .catch(() => undefined);
+  }, [cheapAssets, progressivelyFilterMetadata]);
+
   const enrichedAssets = useMemo(() => {
-    if (!metadataQuery.data) return cheapAssets;
-    const metadataByPath = new Map(metadataQuery.data.map((asset) => [asset.path, asset]));
-    return cheapAssets.map((asset) => {
-      const enriched = metadataByPath.get(asset.path);
-      return enriched
-        ? { ...asset, rating: enriched.rating, colorLabel: enriched.colorLabel }
-        : asset;
-    });
-  }, [cheapAssets, metadataQuery.data]);
+    return cheapAssets.map((asset) => projectAssetMetadata(asset, metadataRecords[asset.path]));
+  }, [cheapAssets, metadataRecords]);
   const progressivelyEnrichedAssets = useMemo(
-    () => progressiveMetadataQuery.data?.pages.flatMap((page) => page.items) ?? [],
-    [progressiveMetadataQuery.data],
+    () => progressiveMetadataQuery.data?.pages.flatMap((page) =>
+      page.items.map((asset) => projectAssetMetadata(asset, metadataRecords[asset.path]))) ?? [],
+    [metadataRecords, progressiveMetadataQuery.data],
   );
+  const metadataProjectionPending = progressivelyEnrichedAssets.some((asset) => {
+    const projection = metadataRecords[asset.path];
+    return !projection || projection.status === "loading";
+  });
   const assets = useMemo(
     () => progressivelyFilterMetadata
       ? filterAndSortAssets(progressivelyEnrichedAssets, query)
@@ -212,7 +243,8 @@ export function App({ perfScenario }: { perfScenario?: PerfScenario }) {
   const progressiveWorkPending = progressivelyFilterMetadata && (
     progressiveMetadataQuery.isLoading ||
     progressiveMetadataQuery.isFetchingNextPage ||
-    progressiveMetadataQuery.hasNextPage
+    progressiveMetadataQuery.hasNextPage ||
+    metadataProjectionPending
   );
   const assetsLoading = progressivelyFilterMetadata
     ? assets.length === 0 && progressiveWorkPending
@@ -352,15 +384,16 @@ export function App({ perfScenario }: { perfScenario?: PerfScenario }) {
     try {
       await Promise.all([
         queryClient.cancelQueries({ queryKey: ["assets", activeSession.id, currentPath] }),
-        queryClient.cancelQueries({ queryKey: ["asset-metadata", activeSession.id, currentPath] }),
         queryClient.cancelQueries({ queryKey: ["preload-assets", activeSession.id, currentPath] }),
         queryClient.cancelQueries({ queryKey: ["progressive-metadata-assets", activeSession.id, currentPath] }),
         queryClient.cancelQueries({ queryKey: ["directories", activeSession.id, currentPath] }),
       ]);
       await refreshDirectory(activeSession.id, currentPath);
+      invalidateMetadataDirectory(currentPath);
+      invalidateImageDirectory(currentPath);
+      queryClient.removeQueries({ queryKey: ["asset-render"] });
       await Promise.all([
         queryClient.invalidateQueries({ queryKey: ["assets", activeSession.id, currentPath] }),
-        queryClient.invalidateQueries({ queryKey: ["asset-metadata", activeSession.id, currentPath] }),
         queryClient.invalidateQueries({ queryKey: ["preload-assets", activeSession.id, currentPath] }),
         queryClient.invalidateQueries({ queryKey: ["progressive-metadata-assets", activeSession.id, currentPath] }),
         queryClient.invalidateQueries({ queryKey: ["directories", activeSession.id, currentPath] }),
@@ -404,7 +437,6 @@ export function App({ perfScenario }: { perfScenario?: PerfScenario }) {
       await refreshDirectory(session.id, parent);
       await Promise.all([
         queryClient.invalidateQueries({ queryKey: ["assets", session.id] }),
-        queryClient.invalidateQueries({ queryKey: ["asset-metadata", session.id] }),
         queryClient.invalidateQueries({ queryKey: ["preload-assets", session.id] }),
         queryClient.invalidateQueries({ queryKey: ["progressive-metadata-assets", session.id] }),
         queryClient.invalidateQueries({ queryKey: ["directories", session.id] }),

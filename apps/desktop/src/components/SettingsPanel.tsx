@@ -9,6 +9,7 @@ import {
   getHeifDiagnostics,
   updateCacheSettings,
 } from "../lib/api";
+import { clearImageProjections } from "../lib/imageProjection";
 import {
   GIB,
   MAX_CACHE_GB,
@@ -68,6 +69,8 @@ export function SettingsPanel({ t }: SettingsPanelProps) {
     mutationFn: clearPreviewCache,
     onSuccess: (settings) => {
       setClearArmed(false);
+      clearImageProjections();
+      queryClient.removeQueries({ queryKey: ["asset-render"] });
       queryClient.setQueryData(["cache-settings"], settings);
     },
   });

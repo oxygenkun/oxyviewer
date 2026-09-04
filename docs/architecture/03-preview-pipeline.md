@@ -4,7 +4,8 @@
 这是 OxyViewer 最性能敏感的路径，也是格式差异最多的部分。
 
 统一调度见 [ADR 0005](../adr/0005-unified-preview-pipeline.md)，语义等级图见
-[ADR 0006](../adr/0006-semantic-render-level-graph.md)。
+[ADR 0006](../adr/0006-semantic-render-level-graph.md)，状态归属见
+[ADR 0008](../adr/0008-rust-owned-resource-projections.md)。
 
 ## 1. 为什么需要预览，而不是总显示原文件
 
@@ -38,23 +39,26 @@ HEVC 解码器或操作系统预览服务。即使原文件可解码，也不应
 sequenceDiagram
     participant Thumbnail
     participant ReactQuery
-    participant PreviewQueue
+    participant ProjectionMirror
     participant TauriCommand
+    participant RustPreviewQueue
     participant MediaDispatcher
     participant DecodeGate
     participant Decoder
     participant Cache
 
     Thumbnail->>ReactQuery: 请求当前 render level
-    ReactQuery->>PreviewQueue: enqueue priority + signal
-    PreviewQueue->>TauriCommand: invoke get_preview
-    TauriCommand->>MediaDispatcher: spawn_blocking preview
+    ReactQuery->>TauriCommand: invoke get_preview + priority
+    TauriCommand->>RustPreviewQueue: request(path, source revision, level)
+    RustPreviewQueue->>RustPreviewQueue: 合并 pending/in-flight consumer
+    RustPreviewQueue->>MediaDispatcher: preview
     MediaDispatcher->>Cache: 查询同级或更高质量缓存
     Cache-->>MediaDispatcher: miss
     MediaDispatcher->>DecodeGate: acquire priority
     DecodeGate->>Decoder: 允许一个待解码任务运行
     Decoder->>Cache: 原子写入结果
-    Cache-->>Thumbnail: 返回文件 URL 与尺寸
+    RustPreviewQueue->>ProjectionMirror: 发布已接受 revision 与缓存路径
+    ProjectionMirror-->>Thumbnail: 显示文件 URL 与尺寸
     Thumbnail->>ReactQuery: 前一 level 可见后请求下一 level
 ```
 
@@ -78,9 +82,10 @@ HEIF 的 `preview` renderer 复用 `thumbnail` 的 160×120 JPEG。macOS 的 `fu
 结束后写入完整 JPEG供下次 loupe 加载。Windows/Linux full 工作不进入串行 preview queue，
 因此不会阻塞屏内缩略图。
 
-## 5. 第一层调度：前端 `previewQueue`
+## 5. 第一层调度：Rust `PreviewQueue`
 
-所有需要生成的格式和 stage 共用一个串行队列。权重为：
+所有需要生成的格式和 stage 共用一个 Rust 串行队列。前端只提交由选择和可见性产生的
+priority hint，并可在拿到 artifact URL 后预热 WebView 图片解码。权重为：
 
 ```text
 loupe  = 2   当前单图查看
@@ -89,15 +94,15 @@ nearby  = 0  overscan 预加载
 preload = -1 过滤后未显示的同目录图片
 ```
 
-队列每次从 pending 中选最高权重，只允许一个 `invoke` 在途。`AbortSignal` 若在任务开始前已
-取消，任务直接丢弃。React Query key 只描述产物身份，不包含 priority；同一产物从 sidebar
-进入 loupe 时通过 `raisePriority` 原地提升 pending task，并把提升后的 priority 传给后端。
-这既避免重复解码，也保留 `loupe > visible > nearby > preload` 的调度顺序。
+队列每次从 pending 中选最高权重。身份由 canonical path、source revision 和 semantic level
+组成；相同请求无论尚在等待还是已经运行，都只挂接新的 consumer，不启动第二次解码。
+同一产物从 sidebar 进入 loupe 时会提升尚未开始任务的 priority。这既避免重复解码，也保留
+`loupe > visible > nearby > preload` 的调度顺序。调用方取消后，已开始工作可继续完成并温热
+可重建缓存，但前端不再消费该 promise。
 
 开启搜索、格式、评级或颜色过滤时，另一个无过滤的廉价分页查询会继续枚举当前目录。未出现在
 可见结果中的图片由 `BackgroundPreviewPreloader` 串行提交，每次只放入一个 `preload`
-请求；追加下一页、改变过滤或图片重新可见时会取消尚未开始的旧请求。这样过滤不再终止缓存
-预热，同时不会一次把整个目录塞进 preview queue。
+请求。这样过滤不再终止缓存预热，同时不会一次把整个目录塞进 Rust queue。
 
 ```mermaid
 flowchart LR
@@ -112,8 +117,8 @@ flowchart LR
     aborted -->|是| nearbyRun["运行 nearby A"]
 ```
 
-前端串行不是媒体库的理论最大吞吐方案，而是防止快速滚动时堆积大量无法及时显示的本地
-decode command。并发度若要提高，必须用基准证明不会恶化 UI、内存和磁盘压力。
+Rust 串行不是媒体库的理论最大吞吐方案，而是防止快速滚动时堆积大量无法及时显示的本地
+decode。并发度若要提高，必须用基准证明不会恶化 UI、内存和磁盘压力。
 
 ## 6. 第二层调度：后端 `DecodeGate`
 
@@ -129,8 +134,8 @@ Rust `DecodeGate` 有三档优先级：
 gate 只允许一个参与统一 gate 的 decode 活跃。高优先级可以插队等待者，但**不能抢占已经运行
 的 decode**。permit 离开作用域时由 Rust `Drop` 自动释放并通知等待者。
 
-为什么前后端都要调度：前端知道视口和请求是否仍有意义；后端知道原生解码资源是否正在被
-占用，也防御来自多个 command 的竞争。两层当前都偏保守串行。
+为什么有两层 Rust 调度：projection queue 负责资源身份、consumer 合并、优先级和状态提交；
+`DecodeGate` 负责跨格式原生解码资源竞争。前端只提供视口/选择提示和浏览器预加载。
 
 RAW full development 是例外。它可能耗时数十秒，使用独立 `RAW_FULL_DECODE_LOCK`，不进入
 统一 gate，否则一张 full RAW 会阻塞所有缩略图。
@@ -141,8 +146,9 @@ Tauri `get_preview` 的逻辑是：
 
 1. 通过 `oxy-fs` 取得 asset kind；
 2. 接收 `RenderLevel` 和 priority；
-3. 映射 priority；
-4. 在线程池调用 `oxy_media::preview(...)`。
+3. 向 Rust `PreviewQueue` 提交或挂接同源请求；
+4. worker 调用 `oxy_media::preview(...)` 并把 artifact path 提交给 SQLite；
+5. command 返回已接受、带 revision 的 `ImageProjection`，而不是另一份裸图片结果。
 
 `oxy_media::preview` 根据 `(platform, kind, level)` 查表分派。IPC 不接收像素尺寸：
 
