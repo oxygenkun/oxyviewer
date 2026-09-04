@@ -576,6 +576,16 @@ fn hlg_to_linear(value: f32) -> f32 {
 mod tests {
     use super::*;
 
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn linked_libheif_meets_security_baseline() {
+        let version = LibHeif::new().version();
+        assert!(
+            version >= [1, 23, 3],
+            "linked libheif {version:?} is older than the required 1.23.3"
+        );
+    }
+
     #[test]
     fn normalizes_high_bit_depth_samples_without_truncation() {
         assert_eq!(normalize_to_u16(0, 10), 0);

@@ -64,9 +64,9 @@ jobs:
         uses: actions/cache@v5
         with:
           path: vcpkg-binary-cache
-          key: vcpkg-${{ runner.os }}-${{ runner.arch }}-libheif-aom-x64-windows-static-md-v1
+          key: vcpkg-${{ runner.os }}-${{ runner.arch }}-libheif-1.23.3-aom-x64-windows-static-md-v1
           restore-keys: |
-            vcpkg-${{ runner.os }}-${{ runner.arch }}-libheif-aom-x64-windows-static-md-
+            vcpkg-${{ runner.os }}-${{ runner.arch }}-libheif-1.23.3-aom-x64-windows-static-md-
       - name: Windows system dependencies
         if: runner.os == 'Windows'
         shell: pwsh
@@ -74,7 +74,7 @@ jobs:
           VCPKG_DEFAULT_BINARY_CACHE: ${{ github.workspace }}\vcpkg-binary-cache
         run: |
           New-Item -ItemType Directory -Force "$env:VCPKG_DEFAULT_BINARY_CACHE" | Out-Null
-          & "$env:VCPKG_INSTALLATION_ROOT\vcpkg.exe" install "libheif[aom]:x64-windows-static-md"
+          & "$env:VCPKG_INSTALLATION_ROOT\vcpkg.exe" install "libheif[aom]:x64-windows-static-md" --overlay-ports="${{ github.workspace }}\3rdpart\vcpkg-ports"
           "VCPKG_ROOT=$env:VCPKG_INSTALLATION_ROOT" >> $env:GITHUB_ENV
       - uses: pnpm/action-setup@v4
         with:

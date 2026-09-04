@@ -21,6 +21,13 @@ You will need:
 - Rust 1.85 or newer with `rustfmt` and `clippy` (the workspace uses edition 2024)
 - The platform prerequisites required by Tauri 2
 
+On Windows, install the repository-pinned libheif before building the Rust
+workspace (replace `C:\vcpkg` if `VCPKG_ROOT` points elsewhere):
+
+```powershell
+C:\vcpkg\vcpkg.exe install "libheif[aom]:x64-windows-static-md" --overlay-ports="$PWD\3rdpart\vcpkg-ports"
+```
+
 Clone the repository with its submodules, then install the frontend
 dependencies:
 

@@ -54,3 +54,7 @@ working HEVC decoder such as libde265. libheif and libde265 LGPL distribution
 and relinking obligations, plus HEVC patent/licensing requirements, must be
 checked per release platform. LittleCMS performs ICC conversion and is linked
 statically under its MIT license.
+
+Windows builds pin libheif 1.23.3 through the repository's vcpkg overlay port.
+This is the minimum accepted Windows version because it contains the September
+2026 security fixes; the Rust test suite rejects an older linked library.
