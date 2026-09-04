@@ -206,6 +206,53 @@ const ICC_HEADER: &[u8] = b"ICC_PROFILE\0";
 const PHOTOSHOP_HEADER: &[u8] = b"Photoshop 3.0\0";
 
 impl<'a> Segment<'a> {
+    /// Return the chroma subsampling declared by a Start Of Frame segment.
+    ///
+    /// JPEG stores this in the per-component horizontal/vertical sampling
+    /// factors, not reliably in EXIF. The first component is the luma plane
+    /// for the conventional YCbCr JPEGs handled by the application.
+    pub fn chroma_subsampling(&self) -> Option<&'static str> {
+        if !self.marker.is_sof() || self.data.len() < 6 {
+            return None;
+        }
+
+        let component_count = usize::from(self.data[5]);
+        if component_count == 1 {
+            return Some("4:0:0");
+        }
+        if component_count < 3 || self.data.len() < 6 + component_count * 3 {
+            return None;
+        }
+
+        let sampling = |index: usize| {
+            let value = self.data[6 + index * 3 + 1];
+            (value >> 4, value & 0x0f)
+        };
+        let (luma_h, luma_v) = sampling(0);
+        let (cb_h, cb_v) = sampling(1);
+        let (cr_h, cr_v) = sampling(2);
+        if luma_h == 0
+            || luma_v == 0
+            || cb_h == 0
+            || cb_v == 0
+            || (cb_h, cb_v) != (cr_h, cr_v)
+            || luma_h % cb_h != 0
+            || luma_v % cb_v != 0
+        {
+            return None;
+        }
+
+        match (luma_h / cb_h, luma_v / cb_v) {
+            (1, 1) => Some("4:4:4"),
+            (2, 1) => Some("4:2:2"),
+            (2, 2) => Some("4:2:0"),
+            (1, 2) => Some("4:4:0"),
+            (4, 1) => Some("4:1:1"),
+            (4, 2) => Some("4:1:0"),
+            _ => None,
+        }
+    }
+
     /// For APP1 segments, detect whether this is EXIF, XMP, or Extended XMP.
     pub fn app1_kind(&self) -> Option<App1Kind> {
         if self.marker != Marker::App1 {
@@ -626,6 +673,44 @@ mod tests {
         let segs = parse_segments(&data).unwrap();
         let com = segs.iter().find(|s| s.marker == Marker::Com).unwrap();
         assert_eq!(com.data, b"hello");
+    }
+
+    #[test]
+    fn reads_chroma_subsampling_from_sof_components() {
+        let cases = [
+            (0x22, "4:2:0"),
+            (0x21, "4:2:2"),
+            (0x11, "4:4:4"),
+            (0x12, "4:4:0"),
+            (0x41, "4:1:1"),
+        ];
+
+        for (luma_sampling, expected) in cases {
+            let sof = [
+                8,
+                0,
+                16,
+                0,
+                16,
+                3,
+                1,
+                luma_sampling,
+                0,
+                2,
+                0x11,
+                1,
+                3,
+                0x11,
+                1,
+            ];
+            let data = build_jpeg(&[(0xC0, &sof)]);
+            let segments = parse_segments(&data).unwrap();
+            let frame = segments
+                .iter()
+                .find(|segment| segment.marker.is_sof())
+                .unwrap();
+            assert_eq!(frame.chroma_subsampling(), Some(expected));
+        }
     }
 
     #[test]

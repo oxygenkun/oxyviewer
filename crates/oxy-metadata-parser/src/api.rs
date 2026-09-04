@@ -352,6 +352,7 @@ impl<'a> SiftDocument<'a> {
         self.collect_icc_tags(&mut tags);
         self.collect_pdf_tags(&mut tags);
         self.collect_quicktime_tags(&mut tags);
+        self.collect_jpeg_tags(&mut tags);
         self.collect_heif_tags(&mut tags);
         self.collect_composite_tags(&mut tags);
         tags
@@ -1388,6 +1389,17 @@ impl<'a> SiftDocument<'a> {
         }
     }
 
+    fn collect_jpeg_tags(&self, tags: &mut Vec<Tag>) {
+        #[cfg(feature = "jpeg")]
+        if let DocumentInner::Jpeg { segments } = &self.inner
+            && let Some(subsampling) = segments
+                .iter()
+                .find_map(crate::jpeg::Segment::chroma_subsampling)
+        {
+            tags.push(Tag::new("JPEG", "ChromaSubsampling", subsampling));
+        }
+    }
+
     fn collect_composite_tags(&self, tags: &mut Vec<Tag>) {
         // Build an owned lookup map from existing tags (avoids borrow issues)
         let lookup: std::collections::HashMap<String, String> = tags
@@ -2014,8 +2026,8 @@ fn parse_xmp_gps_coord(s: &str) -> Option<f64> {
 #[derive(Debug, Clone, PartialEq)]
 pub struct Tag {
     /// Tag group: `"EXIF"`, `"MakerNotes"`, `"XMP"`, `"IPTC"`, `"ICC"`,
-    /// `"PDF"`, `"QuickTime"`, `"HEIF"`, `"Composite"` (values we derive) or
-    /// `"File"` (container facts like byte order).
+    /// `"PDF"`, `"QuickTime"`, `"JPEG"`, `"HEIF"`, `"Composite"` (values we
+    /// derive) or `"File"` (container facts like byte order).
     ///
     /// A group is a namespace: the same NAME may legitimately appear in two
     /// groups (a PDF states CreateDate in both its Info dictionary and its

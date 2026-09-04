@@ -262,6 +262,9 @@ export async function getAssetDetails(asset: AssetSummary): Promise<AssetDetails
         lensMake: "Sony",
         lensModel: "FE 50mm F1.4 GM",
         chromaSubsampling: asset.kind === "heif" ? "4:2:0" : "4:2:2",
+        colorTemperature: "Auto",
+        tint: "0",
+        dynamicRangeOptimizer: "Auto",
       },
       focusInfo: ["raw", "heif", "jpeg"].includes(asset.kind) ? {
         coordinateWidth: 6_240,

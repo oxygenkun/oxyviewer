@@ -1,5 +1,5 @@
 use crate::{MetadataError, normalize_color_label, xmp_value};
-use libheif_rs::HeifContext;
+use libheif_rs::{Chroma, ColorSpace, HeifContext};
 use oxy_domain::{CaptureMetadata, EditableMetadata, FocusInfo};
 use oxy_metadata_parser::{Tag, core::TagValue};
 use sha2::{Digest, Sha256};
@@ -49,15 +49,19 @@ impl MetadataReader for NativeMetadataReader {
     ) -> Result<MetadataDocument, MetadataError> {
         let tags = oxy_metadata_parser::tags(path)
             .map_err(|error| MetadataError::Read(error.to_string()))?;
-        let mut document = document_from_tags(&tags, display_dimensions);
+        let mut document = document_from_tags(&tags, path, display_dimensions);
 
-        if is_heif_path(path) {
-            match read_heif_xmp(path) {
-                Ok(Some(xmp)) => {
-                    overlay_xmp(&mut document.editable, &xmp);
-                    append_xmp_raw_tags(&mut document.raw, &xmp);
+        if crate::capture::is_heif_path(path) {
+            match read_heif_container_metadata(path) {
+                Ok((xmp, chroma_subsampling)) => {
+                    if let Some(chroma_subsampling) = chroma_subsampling {
+                        document.capture.chroma_subsampling = Some(chroma_subsampling);
+                    }
+                    if let Some(xmp) = xmp {
+                        overlay_xmp(&mut document.editable, &xmp);
+                        append_xmp_raw_tags(&mut document.raw, &xmp);
+                    }
                 }
-                Ok(None) => {}
                 Err(error) => {
                     document.diagnostics.push(error.to_string());
                     if let Some(xmp) = read_bounded_xmp_fallback(path)? {
@@ -72,7 +76,11 @@ impl MetadataReader for NativeMetadataReader {
     }
 }
 
-fn document_from_tags(tags: &[Tag], display_dimensions: Option<(u32, u32)>) -> MetadataDocument {
+fn document_from_tags(
+    tags: &[Tag],
+    path: &Path,
+    display_dimensions: Option<(u32, u32)>,
+) -> MetadataDocument {
     let value = |group: &str, name: &str| {
         tags.iter()
             .find(|tag| tag.group == group && tag.name == name)
@@ -93,26 +101,7 @@ fn document_from_tags(tags: &[Tag], display_dimensions: Option<(u32, u32)>) -> M
         keywords: value("XMP", "Subject").map(split_list).unwrap_or_default(),
     };
 
-    let capture = CaptureMetadata {
-        aperture: value("EXIF", "FNumber")
-            .or_else(|| value("Composite", "Aperture"))
-            .map(|value| format!("f/{}", trim_fraction(value))),
-        exposure_time: value("EXIF", "ExposureTime")
-            .or_else(|| value("Composite", "ShutterSpeed"))
-            .map(|value| format!("{} s", trim_seconds(value))),
-        focal_length: value("EXIF", "FocalLength").map(normalize_focal_length),
-        iso: value("EXIF", "ISO").map(str::to_owned),
-        exposure_compensation: value("EXIF", "ExposureCompensation")
-            .map(normalize_exposure_compensation),
-        captured_at: value("EXIF", "DateTimeOriginal").map(str::to_owned),
-        camera_make: value("EXIF", "Make").map(str::to_owned),
-        camera_model: value("EXIF", "Model").map(str::to_owned),
-        lens_make: value("EXIF", "LensMake").map(str::to_owned),
-        lens_model: value("EXIF", "LensModel").map(str::to_owned),
-        chroma_subsampling: value("EXIF", "YCbCrSubSampling")
-            .or_else(|| value("HEIF", "ChromaFormat"))
-            .map(str::to_owned),
-    };
+    let capture = crate::capture::from_tags(tags, path);
 
     MetadataDocument {
         editable,
@@ -196,19 +185,35 @@ fn parse_frame_size(tag: &Tag) -> Option<(u32, u32)> {
 }
 
 fn read_heif_xmp(path: &Path) -> Result<Option<String>, MetadataError> {
+    read_heif_container_metadata(path).map(|(xmp, _)| xmp)
+}
+
+fn read_heif_container_metadata(
+    path: &Path,
+) -> Result<(Option<String>, Option<String>), MetadataError> {
     let context = HeifContext::read_from_file(&path.to_string_lossy())
         .map_err(|error| MetadataError::Read(error.to_string()))?;
     let handle = context
         .primary_image_handle()
         .map_err(|error| MetadataError::Read(error.to_string()))?;
+    let chroma_subsampling = handle
+        .preferred_decoding_colorspace()
+        .ok()
+        .and_then(|color_space| match color_space {
+            ColorSpace::YCbCr(Chroma::C420) => Some("4:2:0".to_owned()),
+            ColorSpace::YCbCr(Chroma::C422) => Some("4:2:2".to_owned()),
+            ColorSpace::YCbCr(Chroma::C444) => Some("4:4:4".to_owned()),
+            ColorSpace::Monochrome => Some("4:0:0".to_owned()),
+            _ => None,
+        });
     for item in handle.all_metadata() {
         if item.content_type == "application/rdf+xml" {
             return String::from_utf8(item.raw_data)
-                .map(Some)
+                .map(|xmp| (Some(xmp), chroma_subsampling))
                 .map_err(|error| MetadataError::Read(format!("invalid HEIF XMP: {error}")));
         }
     }
-    Ok(None)
+    Ok((None, chroma_subsampling))
 }
 
 pub(crate) fn heif_metadata_digest(path: &Path) -> Option<u64> {
@@ -274,16 +279,6 @@ fn append_xmp_raw_tags(tags: &mut Vec<RawMetadataTag>, xml: &str) {
     }
 }
 
-fn is_heif_path(path: &Path) -> bool {
-    path.extension()
-        .and_then(|extension| extension.to_str())
-        .is_some_and(|extension| {
-            ["heif", "heic", "hif", "avif"]
-                .iter()
-                .any(|candidate| extension.eq_ignore_ascii_case(candidate))
-        })
-}
-
 fn split_list(value: &str) -> Vec<String> {
     value
         .split(',')
@@ -291,40 +286,6 @@ fn split_list(value: &str) -> Vec<String> {
         .filter(|value| !value.is_empty())
         .map(str::to_owned)
         .collect()
-}
-
-fn trim_fraction(value: &str) -> String {
-    let Some((numerator, denominator)) = value.split_once('/') else {
-        return value.to_owned();
-    };
-    match (numerator.parse::<f64>(), denominator.parse::<f64>()) {
-        (Ok(numerator), Ok(denominator)) if denominator != 0.0 => {
-            crate::format_number(numerator / denominator)
-        }
-        _ => value.to_owned(),
-    }
-}
-
-fn trim_seconds(value: &str) -> &str {
-    value.trim().strip_suffix(" s").unwrap_or(value.trim())
-}
-
-fn normalize_focal_length(value: &str) -> String {
-    let value = value.trim().strip_suffix(" mm").unwrap_or(value.trim());
-    format!("{} mm", trim_fraction(value))
-}
-
-fn normalize_exposure_compensation(value: &str) -> String {
-    let number = trim_fraction(value);
-    format!(
-        "{}{} EV",
-        if number.starts_with('-') || number == "0" {
-            ""
-        } else {
-            "+"
-        },
-        number
-    )
 }
 
 #[cfg(test)]
@@ -339,11 +300,68 @@ mod tests {
             Tag::new("XMP", "Rating", "4"),
             Tag::new("XMP", "Label", "red"),
         ];
-        let document = document_from_tags(&tags, None);
+        let document = document_from_tags(&tags, Path::new("photo.jpg"), None);
         assert_eq!(document.capture.camera_make.as_deref(), Some("SONY"));
         assert_eq!(document.capture.aperture.as_deref(), Some("f/2.8"));
         assert_eq!(document.editable.rating, Some(4));
         assert_eq!(document.editable.color_label.as_deref(), Some("Red"));
         assert_eq!(document.raw.len(), 4);
+    }
+
+    #[test]
+    fn prefers_structural_chroma_subsampling_and_normalizes_exif_values() {
+        let tags = vec![
+            Tag::new("EXIF", "YCbCrSubSampling", "2 1"),
+            Tag::new("JPEG", "ChromaSubsampling", "4:2:0"),
+        ];
+        let document = document_from_tags(&tags, Path::new("photo.jpg"), None);
+        assert_eq!(
+            document.capture.chroma_subsampling.as_deref(),
+            Some("4:2:0")
+        );
+
+        let exif_only = document_from_tags(
+            &[Tag::new("EXIF", "YCbCrSubSampling", "2, 1")],
+            Path::new("photo.jpg"),
+            None,
+        );
+        assert_eq!(
+            exif_only.capture.chroma_subsampling.as_deref(),
+            Some("4:2:2")
+        );
+    }
+
+    #[test]
+    fn reads_chroma_subsampling_from_repository_hif() {
+        let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/DSC00449.HIF");
+        let document = NativeMetadataReader.read(&path, None).unwrap();
+        assert_eq!(
+            document.capture.chroma_subsampling.as_deref(),
+            Some("4:2:2")
+        );
+        assert_eq!(document.capture.color_temperature.as_deref(), Some("Auto"));
+        assert_eq!(document.capture.tint.as_deref(), Some("0"));
+        assert_eq!(
+            document.capture.dynamic_range_optimizer.as_deref(),
+            Some("Lv5")
+        );
+    }
+
+    #[test]
+    fn reads_chroma_subsampling_from_jpeg_frame() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("photo.jpg");
+        let sof = [8, 0, 16, 0, 16, 3, 1, 0x22, 0, 2, 0x11, 1, 3, 0x11, 1];
+        let mut jpeg = vec![0xff, 0xd8, 0xff, 0xc0];
+        jpeg.extend_from_slice(&u16::try_from(sof.len() + 2).unwrap().to_be_bytes());
+        jpeg.extend_from_slice(&sof);
+        jpeg.extend_from_slice(&[0xff, 0xd9]);
+        fs::write(&path, jpeg).unwrap();
+
+        let document = NativeMetadataReader.read(&path, None).unwrap();
+        assert_eq!(
+            document.capture.chroma_subsampling.as_deref(),
+            Some("4:2:0")
+        );
     }
 }

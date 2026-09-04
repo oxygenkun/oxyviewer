@@ -141,7 +141,7 @@ apps/desktop/src-tauri/       Tauri 启动、命令、状态和协议注册
 crates/oxy-domain/            跨 Rust/TypeScript 边界的公共数据契约
 crates/oxy-fs/                文件发现、会话、分页、路径校验、文件操作
 crates/oxy-media/             尺寸读取、预览生成、RAW/HEIF/native adapters
-crates/oxy-metadata/          XMP 写入和未来 ExifTool 边界
+crates/oxy-metadata/          XMP/ExifTool 边界与按格式、厂商分派的拍摄元数据
 crates/oxy-library/           SQLite 资料库和显式根目录
 crates/oxy-runtime/           作业 ID、优先级和取消标记
 docs/adr/                     重要且难以逆转的架构决策
@@ -156,7 +156,7 @@ docs/adr/                     重要且难以逆转的架构决策
 | `oxy-domain` | 可序列化契约和共享词汇 | 文件 IO、解码、数据库操作 |
 | `oxy-fs` | 安全路径、非递归扫描、分页、文件操作 | UI 状态、图片解码 |
 | `oxy-media` | 解码、预览、缓存、HEIF 会话 | React/Tauri 组件逻辑 |
-| `oxy-metadata` | XMP/ExifTool 策略 | 任意文件浏览 |
+| `oxy-metadata` | XMP/ExifTool 策略；通用 EXIF、图片格式与厂商 MakerNotes 分层归一化 | 任意文件浏览、跨厂商复用私有标签数值表 |
 | `oxy-library` | 可重建索引、显式资料库根目录 | 成为照片的唯一事实来源 |
 | `oxy-runtime` | 后台作业的通用控制词汇 | 具体媒体算法 |
 

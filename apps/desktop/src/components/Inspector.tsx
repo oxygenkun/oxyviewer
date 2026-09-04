@@ -127,6 +127,9 @@ export function Inspector({ asset, selectedCount, selectedPaths, t }: InspectorP
               details.data?.width ? `${details.data.width} × ${details.data.height}` : "—"
             } />
             <DataRow label={t("chromaSubsampling")} value={capture?.chromaSubsampling ?? "—"} />
+            <DataRow label={t("colorTemperature")} value={capture?.colorTemperature ?? "—"} />
+            <DataRow label={t("tint")} value={capture?.tint ?? "—"} />
+            <DataRow label={t("droStatus")} value={capture?.dynamicRangeOptimizer ?? "—"} />
             <DataRow label={t("capturedAt")} value={formatExifDate(capture?.capturedAt)} />
             <DataRow label={t("modified")} value={new Date(asset.modifiedAtMs).toLocaleString()} />
             <DataRow label={t("cameraMake")} value={capture?.cameraMake ?? "—"} />

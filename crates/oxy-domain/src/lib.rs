@@ -115,7 +115,7 @@ pub struct FocusInfo {
 /// Values are kept display-ready because EXIF permits multiple underlying
 /// representations for the same field (for example ISO and exposure time).
 #[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq, Eq)]
-#[serde(rename_all = "camelCase")]
+#[serde(default, rename_all = "camelCase")]
 pub struct CaptureMetadata {
     pub aperture: Option<String>,
     pub exposure_time: Option<String>,
@@ -128,6 +128,9 @@ pub struct CaptureMetadata {
     pub lens_make: Option<String>,
     pub lens_model: Option<String>,
     pub chroma_subsampling: Option<String>,
+    pub color_temperature: Option<String>,
+    pub tint: Option<String>,
+    pub dynamic_range_optimizer: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]

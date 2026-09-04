@@ -20,6 +20,7 @@ use std::{
 };
 use thiserror::Error;
 
+mod capture;
 mod engine;
 
 pub use engine::{MetadataDocument, MetadataReader, NativeMetadataReader, RawMetadataTag};

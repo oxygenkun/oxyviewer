@@ -91,6 +91,9 @@ export interface CaptureMetadata {
   lensMake?: string;
   lensModel?: string;
   chromaSubsampling?: string;
+  colorTemperature?: string;
+  tint?: string;
+  dynamicRangeOptimizer?: string;
 }
 
 export interface AssetDetails {

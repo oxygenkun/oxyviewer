@@ -157,7 +157,15 @@ preview cache 默认位于 Tauri `app_cache_dir()/previews`。用户可以在设
 切换缓存位置只影响后续请求，不自动搬迁或删除旧位置中的缓存。这样切换是快速且可恢复的，
 同时不会把目录迁移 I/O 放进照片浏览关键路径。旧位置可由用户切回后显式清空。
 
-## 7. XMP sidecar：用户数据，不是缓存
+## 7. 元数据读取与 XMP sidecar
+
+拍摄参数先读取跨厂商通用 EXIF，再经过两个独立维度归一化：`capture/format.rs` 处理
+JPEG、HEIF、RAW、TIFF 等容器或编码字段，`capture/vendor/` 下的厂商模块处理各自
+MakerNotes。厂商路由同时接收图片类型，因此同一厂商在 JPEG、HEIF 和 RAW 中采用不同私有
+标签时可以局部处理。不得把 Sony、Canon、Nikon、Fujifilm 等厂商的同名私有标签和值表互相
+复用；未知厂商只返回通用 EXIF。
+
+### XMP sidecar：用户数据，不是缓存
 
 `oxy-metadata` 对所有格式的 rating/color 默认读写同名 XMP sidecar；更新时只替换
 `rdf:Description` 上对应的 `xmp:Rating` / `xmp:Label` 属性，保留其他 XMP 字段。首次写入时
