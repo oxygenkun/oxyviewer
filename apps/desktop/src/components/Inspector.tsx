@@ -116,9 +116,13 @@ export function Inspector({ asset, selectedCount, selectedPaths, t }: InspectorP
               <CaptureValue label={t("aperture")} value={capture?.aperture} />
               <CaptureValue label={t("shutterSpeed")} value={capture?.exposureTime} />
               <CaptureValue label={t("focalLength")} value={capture?.focalLength} />
-              <CaptureValue label={t("iso")} value={capture?.iso ? `ISO ${capture.iso}` : undefined} />
+              <CaptureIsoValue
+                label={t("iso")}
+                value={capture?.iso ? `ISO ${capture.iso}` : undefined}
+                exposureCompensation={capture?.exposureCompensation}
+                exposureLabel={t("exposureCompensation")}
+              />
             </div>
-            <DataRow label={t("exposureCompensation")} value={capture?.exposureCompensation ?? "—"} />
             <DataRow label={t("pixelDimensions")} value={
               details.data?.width ? `${details.data.width} × ${details.data.height}` : "—"
             } />
@@ -262,6 +266,34 @@ function CaptureValue({ label, value }: { label: string; value?: string }) {
     <div className="capture-value">
       <strong>{value ?? "—"}</strong>
       <span>{label}</span>
+    </div>
+  );
+}
+
+function CaptureIsoValue({
+  label,
+  value,
+  exposureCompensation,
+  exposureLabel,
+}: {
+  label: string;
+  value?: string;
+  exposureCompensation?: string;
+  exposureLabel: string;
+}) {
+  return (
+    <div className="capture-value capture-value--iso">
+      <strong>{value ?? "—"}</strong>
+      <div className="capture-value__meta">
+        <span>{label}</span>
+        <small
+          className="capture-value__ev"
+          aria-label={`${exposureLabel}: ${exposureCompensation ?? "—"}`}
+          title={exposureLabel}
+        >
+          {exposureCompensation ?? "—"}
+        </small>
+      </div>
     </div>
   );
 }
