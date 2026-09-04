@@ -14,7 +14,6 @@ import { useMetadataProjectionStore } from "../lib/metadataProjection";
 import { requiresExiftoolSetup } from "../lib/metadataProvider";
 import type { AssetSummary, MetadataPatch } from "../types";
 import { formatBytes } from "./AssetBrowser";
-import { Thumbnail } from "./Thumbnail";
 
 interface InspectorProps {
   asset?: AssetSummary;
@@ -106,7 +105,6 @@ export function Inspector({ asset, selectedCount, selectedPaths, t }: InspectorP
         </div>
       ) : (
         <div className="inspector__body">
-          <Thumbnail asset={asset} />
           <div className="inspector__asset-title">
             <strong>{asset.name}</strong>
             <span>{asset.path}</span>

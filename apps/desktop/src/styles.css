@@ -1294,8 +1294,7 @@ body {
 .inspector__header strong { color: #d6d6d1; font-size: 10px; letter-spacing: 1.2px; text-transform: uppercase; }
 .inspector__header span { color: var(--faint); font-size: 8px; }
 .inspector__body { padding: 11px; overflow-y: auto; scrollbar-width: thin; }
-.inspector__body > .thumbnail { height: 150px; }
-.inspector__asset-title { display: grid; gap: 4px; padding: 10px 2px 14px; }
+.inspector__asset-title { display: grid; gap: 4px; padding: 2px 2px 14px; }
 .inspector__asset-title strong { overflow: hidden; font-size: 11px; text-overflow: ellipsis; white-space: nowrap; }
 .inspector__asset-title span { overflow: hidden; color: var(--faint); font: 8px ui-monospace, monospace; text-overflow: ellipsis; white-space: nowrap; }
 .inspector__empty { display: grid; place-items: center; align-content: center; gap: 10px; padding: 35px; color: var(--faint); font-size: 10px; line-height: 1.6; text-align: center; }
