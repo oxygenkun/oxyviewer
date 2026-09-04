@@ -50,6 +50,7 @@ import {
   completeFolderOnboarding,
   hasSeenFolderOnboarding,
   loadWorkspace,
+  recoverMissingCurrentDirectory,
   saveWorkspace,
 } from "./lib/workspacePersistence";
 import { useWorkspaceStore } from "./store";
@@ -105,8 +106,11 @@ export function App({ perfScenario }: { perfScenario?: PerfScenario }) {
     void setActiveDirectory(session.id, path).catch((cause) => {
       if (activeDirectoryNoticeRef.current === noticeKey) {
         activeDirectoryNoticeRef.current = undefined;
+        setWorkspace((current) =>
+          recoverMissingCurrentDirectory(current, session.rootPath, path)
+        );
       }
-      setError(String(cause));
+      if (__OXY_DEBUG__) console.warn("Active directory no longer exists", cause);
     });
   }, []);
 

@@ -5,6 +5,7 @@ import {
   loadLayoutSize,
   loadMetadataVisibility,
   parseWorkspaceSnapshot,
+  recoverMissingCurrentDirectory,
   saveFocusAreasVisible,
   saveLoupeControlsAutoHide,
   saveLayoutSize,
@@ -29,6 +30,19 @@ describe("workspace persistence", () => {
   it("fails closed for malformed or obsolete data", () => {
     expect(parseWorkspaceSnapshot("not json")).toEqual({ currentDirectories: {} });
     expect(parseWorkspaceSnapshot('{"currentDirectories":[]}')).toEqual({ currentDirectories: {} });
+  });
+
+  it("falls back to the root when a restored current directory disappeared", () => {
+    const snapshot = {
+      activeRoot: "/photos",
+      currentDirectories: { "/photos": "/photos/renamed", "/archive": "/archive/2025" },
+    };
+
+    expect(recoverMissingCurrentDirectory(snapshot, "/photos", "/photos/renamed")).toEqual({
+      activeRoot: "/photos",
+      currentDirectories: { "/photos": "/photos", "/archive": "/archive/2025" },
+    });
+    expect(recoverMissingCurrentDirectory(snapshot, "/photos", "/photos/older")).toBe(snapshot);
   });
 
   it("persists the focus-area button state", () => {

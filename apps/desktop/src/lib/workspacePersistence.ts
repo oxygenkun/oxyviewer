@@ -66,6 +66,18 @@ export function saveWorkspace(
   storage.setItem(WORKSPACE_KEY, JSON.stringify(snapshot));
 }
 
+export function recoverMissingCurrentDirectory(
+  snapshot: WorkspaceSnapshot,
+  rootPath: string,
+  failedDirectory: string,
+): WorkspaceSnapshot {
+  if (snapshot.currentDirectories[rootPath] !== failedDirectory) return snapshot;
+  return {
+    ...snapshot,
+    currentDirectories: { ...snapshot.currentDirectories, [rootPath]: rootPath },
+  };
+}
+
 export function hasSeenFolderOnboarding(storage: StorageLike = window.localStorage): boolean {
   return storage.getItem(ONBOARDING_KEY) === "done";
 }

@@ -107,16 +107,22 @@ pub(crate) fn set_directory_expanded(
 }
 
 #[tauri::command]
-pub(crate) fn set_active_directory(
+pub(crate) async fn set_active_directory(
     session_id: String,
     directory: PathBuf,
     state: State<'_, AppState>,
 ) -> Result<(), String> {
-    let directory = state
-        .files
-        .known_directory_tree_path(&session_id, &directory)
-        .map_err(|error| error.to_string())?;
-    state.directory_tree_queue.set_active(session_id, directory);
+    let files = state.files.clone();
+    let queue = state.directory_tree_queue.clone();
+    let (session_id, directory) = tauri::async_runtime::spawn_blocking(move || {
+        files
+            .session_directory(&session_id, Some(&directory))
+            .map(|directory| (session_id, directory))
+            .map_err(|error| error.to_string())
+    })
+    .await
+    .map_err(|error| error.to_string())??;
+    queue.set_active(session_id, directory);
     Ok(())
 }
 
