@@ -2,7 +2,7 @@ export type AssetKind = "raw" | "jpeg" | "heif" | "png" | "tiff" | "webp";
 export type AssetSort = "name" | "modified" | "size" | "kind";
 export type SortDirection = "ascending" | "descending";
 export type ViewMode = "grid" | "list" | "loupe";
-export type GridPreference = "landscape" | "portrait";
+export type ThumbnailOrientation = "landscape" | "portrait";
 export type NavigatorPosition = "top-left" | "top-right" | "bottom-left" | "bottom-right";
 export type PickLabel = "rejected" | "pending" | "accepted";
 

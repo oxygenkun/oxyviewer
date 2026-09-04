@@ -251,11 +251,11 @@ function VirtualGrid({
   const selectedIds = useWorkspaceStore((state) => state.selectedIds);
   const select = useWorkspaceStore((state) => state.select);
   const setView = useWorkspaceStore((state) => state.setView);
-  const gridPreference = useWorkspaceStore((state) => state.gridPreference);
+  const thumbnailOrientation = useWorkspaceStore((state) => state.thumbnailOrientation);
   const gridMetadataVisible = useWorkspaceStore((state) => state.gridMetadataVisible);
-  const portraitPriority = gridPreference === "portrait";
-  const rowHeight = portraitPriority ? 274 : 194;
-  const columns = Math.max(2, Math.floor(width / (portraitPriority ? 150 : 190)));
+  const usesPortraitThumbnails = thumbnailOrientation === "portrait";
+  const rowHeight = usesPortraitThumbnails ? 274 : 194;
+  const columns = Math.max(2, Math.floor(width / (usesPortraitThumbnails ? 150 : 190)));
   const assetCount = virtualAssetCount(assets.length, total);
   const rowCount = gridRowCount(assetCount, columns);
   const loadedRowCount = gridRowCount(assets.length, columns);
@@ -337,7 +337,7 @@ function VirtualGrid({
 
   return (
     <div
-      className={`asset-scroll virtual-grid--${gridPreference}`}
+      className={`asset-scroll virtual-grid--${thumbnailOrientation}`}
       ref={parentRef}
     >
       <div className="virtual-grid" style={{ height: virtualizer.getTotalSize() }}>
@@ -406,18 +406,20 @@ function VirtualList({
   const selectedIds = useWorkspaceStore((state) => state.selectedIds);
   const select = useWorkspaceStore((state) => state.select);
   const setView = useWorkspaceStore((state) => state.setView);
+  const thumbnailOrientation = useWorkspaceStore((state) => state.thumbnailOrientation);
+  const rowHeight = thumbnailOrientation === "portrait" ? 68 : 58;
   const assetCount = virtualAssetCount(assets.length, total);
   const virtualizer = useVirtualizer({
     count: assetCount,
     getScrollElement: () => parentRef.current,
-    estimateSize: () => 58,
+    estimateSize: () => rowHeight,
     overscan: 8,
     isScrollingResetDelay: RESOURCE_LOAD_SCROLL_IDLE_MS,
   });
   const rows = virtualizer.getVirtualItems();
   const resourcesEnabled = !virtualizer.isScrolling;
   const viewportCenter = (parentRef.current?.scrollTop ?? 0)
-    + (parentRef.current?.clientHeight ?? 58) / 2;
+    + (parentRef.current?.clientHeight ?? rowHeight) / 2;
   const selectedAsset = assets.find((asset) => asset.id === activeId);
   const [viewportSchedule] = useState(() => new PreviewScheduleScope("list-viewport"));
   const [backgroundSchedule] = useState(() => new PreviewScheduleScope(
@@ -463,6 +465,10 @@ function VirtualList({
   }, [restoreAssetIndex, virtualizer]);
 
   useEffect(() => {
+    virtualizer.measure();
+  }, [rowHeight, virtualizer]);
+
+  useEffect(() => {
     const last = rows.at(-1);
     if (last && last.index >= assets.length - 10 && hasNextPage && !isFetchingNextPage) {
       fetchNextPage();
@@ -470,7 +476,10 @@ function VirtualList({
   }, [assets.length, fetchNextPage, hasNextPage, isFetchingNextPage, rows]);
 
   return (
-    <div className="asset-scroll asset-scroll--list" ref={parentRef}>
+    <div
+      className={`asset-scroll asset-scroll--list virtual-list--${thumbnailOrientation}`}
+      ref={parentRef}
+    >
       <div className="list-header">
         <span>Name</span><span>{t("ratingAndTag")}</span><span>Type</span><span>Size</span><span>Modified</span>
       </div>
@@ -483,7 +492,7 @@ function VirtualList({
                 aria-hidden="true"
                 className="asset-list-row asset-list-row--placeholder"
                 key={row.key}
-                style={{ transform: `translateY(${row.start}px)` }}
+                style={{ height: rowHeight, transform: `translateY(${row.start}px)` }}
               />
             );
           }
@@ -491,7 +500,7 @@ function VirtualList({
             <button
               className={`asset-list-row ${selectedIds.includes(asset.id) ? "is-selected" : ""}`}
               key={row.key}
-              style={{ transform: `translateY(${row.start}px)` }}
+              style={{ height: rowHeight, transform: `translateY(${row.start}px)` }}
               onClick={(event) => select(asset.id, event.metaKey || event.ctrlKey)}
               onDoubleClick={() => setView("loupe")}
             >
@@ -499,7 +508,7 @@ function VirtualList({
                 asset={asset}
                 enabled={resourcesEnabled}
                 priority={isVisible(row.start, row.end, parentRef.current) ? "visible" : "nearby"}
-                queueOrder={Math.round(Math.abs((row.start + row.end) / 2 - viewportCenter) / 58)}
+                queueOrder={Math.round(Math.abs((row.start + row.end) / 2 - viewportCenter) / rowHeight)}
                 onContextMenu={(event) => onAssetContextMenu(event, asset)}
               />
               <strong>{asset.name}</strong>

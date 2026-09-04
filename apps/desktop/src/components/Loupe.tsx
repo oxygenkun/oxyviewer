@@ -100,6 +100,7 @@ export function Loupe({
   const loupeMetadataVisible = useWorkspaceStore((state) => state.loupeMetadataVisible);
   const loupeControlsAutoHide = useWorkspaceStore((state) => state.loupeControlsAutoHide);
   const filmstripHeight = useWorkspaceStore((state) => state.filmstripHeight);
+  const thumbnailOrientation = useWorkspaceStore((state) => state.thumbnailOrientation);
   const setNavigatorVisible = useWorkspaceStore((state) => state.setNavigatorVisible);
   const setNavigatorPosition = useWorkspaceStore((state) => state.setNavigatorPosition);
   const setFocusAreasVisible = useWorkspaceStore((state) => state.setFocusAreasVisible);
@@ -140,6 +141,7 @@ export function Loupe({
   const unloadedFilmstripWidth = filmstripUnloadedWidth(
     unloadedFilmstripCount,
     filmstripHeight,
+    thumbnailOrientation,
   );
   const details = useQuery({
     queryKey: ["asset-details", active.id],
@@ -333,7 +335,7 @@ export function Loupe({
         filmstripMeasureFrame.current = undefined;
       }
     };
-  }, [assets, filmstripHeight, scheduleFilmstripMeasurement]);
+  }, [assets, filmstripHeight, scheduleFilmstripMeasurement, thumbnailOrientation]);
 
   const priorityOrderedAssets = useMemo(
     () => orderBySelectionPriority(assets, active.id, (asset) => asset.id),
@@ -400,9 +402,10 @@ export function Loupe({
 
   const fetchFilmstripPageIfNeeded = useCallback((strip: HTMLDivElement) => {
     if (!hasNextPage || isFetchingNextPage) return;
-    const loadedRight = 9 + assets.length * (filmstripItemWidth(filmstripHeight) + FILMSTRIP_GAP);
+    const loadedRight = 9 + assets.length
+      * (filmstripItemWidth(filmstripHeight, thumbnailOrientation) + FILMSTRIP_GAP);
     if (strip.scrollLeft + strip.clientWidth >= loadedRight - 400) fetchNextPage();
-  }, [assets.length, fetchNextPage, filmstripHeight, hasNextPage, isFetchingNextPage]);
+  }, [assets.length, fetchNextPage, filmstripHeight, hasNextPage, isFetchingNextPage, thumbnailOrientation]);
 
   useEffect(() => {
     const strip = filmstripRef.current;
@@ -737,7 +740,7 @@ export function Loupe({
         value={filmstripHeight}
       />
       <div
-        className="filmstrip"
+        className={`filmstrip filmstrip--${thumbnailOrientation}`}
         ref={filmstripRef}
         onScroll={(event) => {
           fetchFilmstripPageIfNeeded(event.currentTarget);

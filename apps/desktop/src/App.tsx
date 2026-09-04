@@ -71,8 +71,8 @@ export function App({ perfScenario }: { perfScenario?: PerfScenario }) {
   const queryClient = useQueryClient();
   const metadataRecords = useMetadataProjectionStore((state) => state.records);
   const {
-    view, gridPreference, activeId, selectedIds, inspectorOpen, leftPanelOpen, settingsOpen, locale,
-    search, kind, minimumRating, colorLabels, sort, direction, clearSelection, select, setGridPreference, toggleSettings,
+    view, thumbnailOrientation, activeId, selectedIds, inspectorOpen, leftPanelOpen, settingsOpen, locale,
+    search, kind, minimumRating, colorLabels, sort, direction, clearSelection, select, setThumbnailOrientation, toggleSettings,
     leftPanelWidth, inspectorWidth, setLeftPanelWidth, setInspectorWidth, uiFontScale,
   } = useWorkspaceStore();
   const appShellRef = useRef<HTMLDivElement>(null);
@@ -615,26 +615,28 @@ export function App({ perfScenario }: { perfScenario?: PerfScenario }) {
             currentPath?.split(/[\\/]/).filter(Boolean).at(-1) ?? t("noFolderOpen")
           }</span>
           <span>{assets.length.toLocaleString()} / {total.toLocaleString()} {t("photos")}</span>
-          {view === "grid" ? (
-            <span className="statusbar__grid-preference" role="group" aria-label={t("gridPreference")}>
-              <button
-                className={gridPreference === "landscape" ? "is-active" : ""}
-                onClick={() => setGridPreference("landscape")}
-                title={t("landscapePriority")}
-                aria-label={t("landscapePriority")}
-              >
-                <RectangleHorizontal size={11} />
-              </button>
-              <button
-                className={gridPreference === "portrait" ? "is-active" : ""}
-                onClick={() => setGridPreference("portrait")}
-                title={t("portraitPriority")}
-                aria-label={t("portraitPriority")}
-              >
-                <RectangleVertical size={11} />
-              </button>
-            </span>
-          ) : null}
+          <span
+            className="statusbar__thumbnail-orientation"
+            role="group"
+            aria-label={t("thumbnailOrientation")}
+          >
+            <button
+              className={thumbnailOrientation === "landscape" ? "is-active" : ""}
+              onClick={() => setThumbnailOrientation("landscape")}
+              title={t("landscapePriority")}
+              aria-label={t("landscapePriority")}
+            >
+              <RectangleHorizontal size={14} />
+            </button>
+            <button
+              className={thumbnailOrientation === "portrait" ? "is-active" : ""}
+              onClick={() => setThumbnailOrientation("portrait")}
+              title={t("portraitPriority")}
+              aria-label={t("portraitPriority")}
+            >
+              <RectangleVertical size={14} />
+            </button>
+          </span>
           <span>{selectedIds.length} {t("selected")}</span>
         </footer>
       </section>

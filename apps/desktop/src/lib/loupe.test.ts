@@ -21,10 +21,14 @@ const image = { width: 700, height: 500 };
 
 describe("loupe geometry", () => {
   it("reserves the full filmstrip width for unloaded assets", () => {
-    expect(filmstripItemWidth(116)).toBe(82);
-    expect(filmstripItemWidth(180)).toBe(146);
-    expect(filmstripItemWidth(300)).toBe(190);
-    expect(filmstripUnloadedWidth(3, 180)).toBe(448);
+    expect(filmstripItemWidth(116)).toBe(129);
+    expect(filmstripItemWidth(180)).toBe(209);
+    expect(filmstripItemWidth(300)).toBe(359);
+    expect(filmstripItemWidth(116, "portrait")).toBe(70);
+    expect(filmstripItemWidth(180, "portrait")).toBe(114);
+    expect(filmstripItemWidth(300, "portrait")).toBe(195);
+    expect(filmstripUnloadedWidth(3, 180)).toBe(637);
+    expect(filmstripUnloadedWidth(3, 180, "portrait")).toBe(352);
     expect(filmstripUnloadedWidth(0, 180)).toBe(0);
   });
 

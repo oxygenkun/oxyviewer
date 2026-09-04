@@ -354,8 +354,9 @@
 .filmstrip button {
   display: grid;
   grid-template-rows: minmax(0, 1fr) auto auto;
-  flex: 0 0 clamp(82px, calc(var(--filmstrip-height) - 34px), 190px);
+  flex: 0 0 auto;
   gap: 3px;
+  width: auto;
   height: 100%;
   padding: 2px;
   overflow: hidden;
@@ -364,6 +365,8 @@
   color: var(--muted);
   background: transparent;
 }
+.filmstrip--landscape button { min-width: 90px; aspect-ratio: 1.25; }
+.filmstrip--portrait button { min-width: 48px; aspect-ratio: .68; }
 .filmstrip__metadata { display: flex; align-items: center; justify-content: center; height: 14px; }
 .filmstrip__metadata .asset-metadata-badges { gap: 4px; }
 .filmstrip button.is-active { border-color: var(--accent); }

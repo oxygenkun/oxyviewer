@@ -413,5 +413,9 @@
   opacity: .5;
 }
 .asset-list-row .thumbnail { width: 36px; height: 36px; }
+.virtual-list--landscape .list-header { padding-left: 74px; }
+.virtual-list--landscape .asset-list-row { grid-template-columns: 52px minmax(200px, 1fr) 72px 100px 120px 150px; }
+.virtual-list--landscape .asset-list-row .thumbnail { width: 52px; height: 34px; }
+.virtual-list--portrait .asset-list-row .thumbnail { width: 34px; height: 52px; }
 .asset-list-row > .asset-metadata-badges { justify-content: flex-start; }
 .asset-list-row strong { overflow: hidden; color: #d4d5d0; text-overflow: ellipsis; white-space: nowrap; }

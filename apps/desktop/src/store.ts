@@ -16,15 +16,15 @@ import {
 import type {
   AssetKind,
   AssetSort,
-  GridPreference,
   NavigatorPosition,
   SortDirection,
+  ThumbnailOrientation,
   ViewMode,
 } from "./types";
 
 interface WorkspaceState {
   view: ViewMode;
-  gridPreference: GridPreference;
+  thumbnailOrientation: ThumbnailOrientation;
   selectedIds: string[];
   activeId?: string;
   inspectorOpen: boolean;
@@ -50,7 +50,7 @@ interface WorkspaceState {
   sort: AssetSort;
   direction: SortDirection;
   setView: (view: ViewMode) => void;
-  setGridPreference: (preference: GridPreference) => void;
+  setThumbnailOrientation: (orientation: ThumbnailOrientation) => void;
   select: (id: string, additive?: boolean) => void;
   clearSelection: () => void;
   toggleInspector: () => void;
@@ -79,7 +79,7 @@ interface WorkspaceState {
 
 export const useWorkspaceStore = create<WorkspaceState>((set) => ({
   view: "grid",
-  gridPreference: "landscape",
+  thumbnailOrientation: "landscape",
   selectedIds: [],
   inspectorOpen: true,
   leftPanelOpen: true,
@@ -102,7 +102,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set) => ({
   sort: "name",
   direction: "ascending",
   setView: (view) => set({ view }),
-  setGridPreference: (gridPreference) => set({ gridPreference }),
+  setThumbnailOrientation: (thumbnailOrientation) => set({ thumbnailOrientation }),
   select: (id, additive = false) =>
     set((state) => {
       if (!additive) return { selectedIds: [id], activeId: id };

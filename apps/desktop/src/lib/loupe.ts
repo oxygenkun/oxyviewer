@@ -1,4 +1,4 @@
-import type { AssetKind } from "../types";
+import type { AssetKind, ThumbnailOrientation } from "../types";
 
 export interface Point {
   x: number;
@@ -19,21 +19,26 @@ export interface NavigatorViewport {
 
 export const MIN_ZOOM = 1;
 export const MAX_PIXEL_ZOOM_PERCENT = 400;
-const FILMSTRIP_ITEM_MIN_WIDTH = 82;
-const FILMSTRIP_ITEM_MAX_WIDTH = 190;
-const FILMSTRIP_ITEM_HEIGHT_OFFSET = 34;
+const FILMSTRIP_VERTICAL_CHROME = 13;
 export const FILMSTRIP_GAP = 5;
 
-export function filmstripItemWidth(filmstripHeight: number): number {
-  return Math.min(
-    FILMSTRIP_ITEM_MAX_WIDTH,
-    Math.max(FILMSTRIP_ITEM_MIN_WIDTH, filmstripHeight - FILMSTRIP_ITEM_HEIGHT_OFFSET),
-  );
+export function filmstripItemWidth(
+  filmstripHeight: number,
+  orientation: ThumbnailOrientation = "landscape",
+): number {
+  const itemHeight = filmstripHeight - FILMSTRIP_VERTICAL_CHROME;
+  const ratio = orientation === "portrait" ? 0.68 : 1.25;
+  const minWidth = orientation === "portrait" ? 48 : 90;
+  return Math.max(minWidth, Math.round(itemHeight * ratio));
 }
 
-export function filmstripUnloadedWidth(unloadedCount: number, filmstripHeight: number): number {
+export function filmstripUnloadedWidth(
+  unloadedCount: number,
+  filmstripHeight: number,
+  orientation: ThumbnailOrientation = "landscape",
+): number {
   if (unloadedCount <= 0) return 0;
-  return unloadedCount * filmstripItemWidth(filmstripHeight)
+  return unloadedCount * filmstripItemWidth(filmstripHeight, orientation)
     + (unloadedCount - 1) * FILMSTRIP_GAP;
 }
 
