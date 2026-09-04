@@ -1,0 +1,62 @@
+.statusbar {
+  display: flex;
+  align-items: center;
+  gap: 18px;
+  padding: 0 13px;
+  border-top: 1px solid var(--line-soft);
+  color: var(--faint);
+  background: #101215;
+  font: 0.5rem ui-monospace, monospace;
+}
+.statusbar span:first-child { margin-right: auto; }
+.statusbar__grid-preference {
+  display: flex;
+  gap: 1px;
+  padding: 1px;
+  border: 1px solid #282e32;
+  border-radius: 4px;
+  background: var(--surface-input);
+}
+.statusbar__grid-preference button {
+  display: grid;
+  place-items: center;
+  width: 19px;
+  height: 16px;
+  border-radius: 3px;
+  color: #626a70;
+  background: transparent;
+}
+.statusbar__grid-preference button:hover { color: var(--text); background: #1c2125; }
+.statusbar__grid-preference button.is-active { color: var(--accent); background: #252b2e; }
+.status-dot { display: inline-block; width: 5px; height: 5px; margin-right: 5px; border-radius: 50%; background: var(--accent); box-shadow: 0 0 8px var(--accent); }
+.no-results, .workspace-loading, .workspace-error {
+  display: grid;
+  place-items: center;
+  align-content: center;
+  gap: 10px;
+  color: var(--faint);
+  font-size: 0.625rem;
+}
+.no-results strong, .workspace-error strong { color: #c5c7c4; font-size: 0.8125rem; }
+.workspace-loading svg { color: var(--accent); animation: rotate 1.7s linear infinite; }
+.workspace-error button { display: flex; align-items: center; gap: 6px; padding: 7px 10px; border-radius: 4px; color: #12150e; background: var(--accent); font-size: 0.5625rem; }
+
+.demo-pill { position: absolute; top: 14px; right: 14px; padding: 4px 7px; border: 1px solid #30373a; border-radius: 20px; color: #727a7b; font-size: 0.5rem; }
+.error-toast {
+  position: fixed;
+  z-index: 10;
+  right: 14px;
+  bottom: 34px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  max-width: 420px;
+  padding: 9px 10px;
+  border: 1px solid #74443e;
+  border-radius: 5px;
+  color: #e5b1a7;
+  background: #281b1a;
+  font-size: 0.5625rem;
+  box-shadow: 0 10px 30px rgb(0 0 0 / 45%);
+}
+.error-toast span { margin-left: auto; }

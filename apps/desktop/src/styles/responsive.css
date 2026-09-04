@@ -1,0 +1,9 @@
+@keyframes rotate { to { transform: rotate(360deg); } }
+
+@media (prefers-reduced-motion: reduce) {
+  .settings-panel__meter span { transition: none; }
+}
+
+@media (max-width: 1180px) {
+  .search-field { width: min(310px, 34vw); }
+}
