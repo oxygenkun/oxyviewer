@@ -634,10 +634,7 @@ export function Loupe({
         <div
           className={`loupe__controls ${loupeControlsAutoHide ? "is-auto-hidden" : ""} ${hideControlsImmediately ? "is-hide-immediate" : ""} ${settingsOpen ? "is-settings-open" : ""}`}
           onPointerEnter={() => setHideControlsImmediately(false)}
-          onPointerLeave={(event) => {
-            const opacity = Number.parseFloat(window.getComputedStyle(event.currentTarget).opacity);
-            setHideControlsImmediately(opacity < 0.999);
-          }}
+          onPointerLeave={() => setHideControlsImmediately(true)}
         >
           <button onClick={() => setZoomAroundPoint(zoom / 1.25, { x: 0, y: 0 })} title={t("zoomOut")}>
             <Minus size={14} />
