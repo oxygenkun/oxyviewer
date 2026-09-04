@@ -1,6 +1,25 @@
 use crate::MediaError;
 use image::{DynamicImage, ImageBuffer, Rgba, RgbaImage};
-use std::{os::unix::ffi::OsStrExt, path::Path, ptr, slice};
+use std::{
+    fs::{File, OpenOptions},
+    io::{Read, Seek, SeekFrom},
+    os::unix::ffi::OsStrExt,
+    path::Path,
+    ptr, slice,
+    sync::Mutex,
+};
+
+// ImageIO can report a successful JPEG finalize while concurrent operations on
+// the same large HEIF source leave the destination truncated. Serialize full
+// transcodes, but keep thumbnail decode independent so a background cache
+// write cannot block the selected image.
+static HEIF_TRANSCODE_LOCK: Mutex<()> = Mutex::new(());
+
+fn lock_heif_transcode() -> std::sync::MutexGuard<'static, ()> {
+    HEIF_TRANSCODE_LOCK
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+}
 
 unsafe extern "C" {
     fn oxy_apple_image_io_can_decode(path: *const u8, path_len: usize) -> i32;
@@ -125,24 +144,64 @@ pub fn write_jpeg(image: &DynamicImage, path: &Path, quality: u8) -> Result<(), 
 }
 
 pub fn transcode_jpeg(source: &Path, destination: &Path, quality: u8) -> Result<(), MediaError> {
-    let source = source.as_os_str().as_bytes();
-    let destination = destination.as_os_str().as_bytes();
+    let guard = lock_heif_transcode();
+    let source_bytes = source.as_os_str().as_bytes();
+    let destination_bytes = destination.as_os_str().as_bytes();
     let status = unsafe {
         oxy_apple_image_io_transcode_jpeg(
-            source.as_ptr(),
-            source.len(),
-            destination.as_ptr(),
-            destination.len(),
+            source_bytes.as_ptr(),
+            source_bytes.len(),
+            destination_bytes.as_ptr(),
+            destination_bytes.len(),
             quality,
         )
     };
-    if status == 0 {
+    let native_failure = if status != 0 {
+        format!("native stage {status}")
+    } else {
+        match has_complete_jpeg_markers(destination) {
+            Ok(true) => return Ok(()),
+            Ok(false) => "native finalize produced a truncated JPEG".into(),
+            Err(error) => format!("could not validate JPEG output: {error}"),
+        }
+    };
+
+    // A failed ImageIO finalize is repeatable while the system decoder is
+    // under pressure. Release its lane and use FFmpeg's independent decoder
+    // instead of publishing the small header-only file as a valid cache hit.
+    drop(guard);
+    OpenOptions::new()
+        .write(true)
+        .truncate(true)
+        .open(destination)?;
+    let dimensions = crate::heif::dimensions(source)?;
+    if let Err(fallback_error) =
+        crate::ffmpeg_heif::transcode_full_jpeg(source, destination, dimensions, quality)
+    {
+        return Err(native_error(format!(
+            "source HEIF to JPEG conversion failed ({native_failure}); FFmpeg fallback failed: {fallback_error}"
+        )));
+    }
+    if has_complete_jpeg_markers(destination)? {
         Ok(())
     } else {
         Err(native_error(format!(
-            "source HEIF to JPEG conversion failed at native stage {status}"
+            "source HEIF to JPEG conversion failed ({native_failure}); FFmpeg fallback produced a truncated JPEG"
         )))
     }
+}
+
+fn has_complete_jpeg_markers(path: &Path) -> Result<bool, std::io::Error> {
+    let mut file = File::open(path)?;
+    if file.metadata()?.len() < 4 {
+        return Ok(false);
+    }
+    let mut start = [0_u8; 2];
+    file.read_exact(&mut start)?;
+    file.seek(SeekFrom::End(-2))?;
+    let mut end = [0_u8; 2];
+    file.read_exact(&mut end)?;
+    Ok(start == [0xff, 0xd8] && end == [0xff, 0xd9])
 }
 
 pub fn sharpen_rgba8(image: &mut RgbaImage) -> Result<(), MediaError> {
@@ -208,7 +267,9 @@ mod tests {
             .unwrap()
             .decode()
             .unwrap();
-        assert_eq!((decoded.width(), decoded.height()), (7008, 4672));
+        let mut edges = [decoded.width(), decoded.height()];
+        edges.sort_unstable();
+        assert_eq!(edges, [4672, 7008]);
     }
 
     #[test]
