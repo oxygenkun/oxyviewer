@@ -63,6 +63,18 @@ pub fn run() {
         })
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_log::Builder::new().build())
+        .on_page_load(|webview, _payload| {
+            let window = webview.window();
+
+            // Dev reloads can occasionally leave the webview underneath the native title bar.
+            // Reapplying decorations forces the native client area to be recalculated.
+            let _ = window.set_decorations(true);
+
+            #[cfg(target_os = "macos")]
+            {
+                let _ = window.set_title_bar_style(tauri::TitleBarStyle::Visible);
+            }
+        })
         .on_window_event(|window, event| {
             if matches!(
                 event,
