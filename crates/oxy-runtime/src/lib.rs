@@ -472,6 +472,24 @@ where
         self.pending.len()
     }
 
+    /// Removes matching logical entries and returns their payloads. Heap nodes
+    /// are left stale and discarded by `pop`, matching priority updates.
+    pub fn remove_if(&mut self, mut predicate: impl FnMut(&K, &V) -> bool) -> Vec<(K, V, P)> {
+        let keys = self
+            .pending
+            .iter()
+            .filter(|(key, entry)| predicate(key, &entry.value))
+            .map(|(key, _)| key.clone())
+            .collect::<Vec<_>>();
+        keys.into_iter()
+            .filter_map(|key| {
+                self.pending
+                    .remove(&key)
+                    .map(|entry| (key, entry.value, entry.priority))
+            })
+            .collect()
+    }
+
     /// Visits the current logical entries without exposing stale heap nodes.
     /// Intended for low-frequency diagnostics while the caller owns its queue lock.
     pub fn entries(&self) -> impl Iterator<Item = (&K, &V, P)> {
@@ -719,6 +737,22 @@ mod tests {
         }));
         assert_eq!(queue.len(), 1);
         assert_eq!(queue.pop(), Some(("new", vec!["viewport"], 2)));
+        assert!(queue.pop().is_none());
+    }
+
+    #[test]
+    fn matching_pending_work_can_be_removed_in_bulk() {
+        let mut queue = CoalescingPriorityQueue::default();
+        queue.push("active", 1, 3);
+        queue.push("inactive-a", 2, 2);
+        queue.push("inactive-b", 3, 1);
+
+        let mut removed = queue.remove_if(|key, _| key.starts_with("inactive"));
+        removed.sort_by_key(|(_, value, _)| *value);
+
+        assert_eq!(removed, vec![("inactive-a", 2, 2), ("inactive-b", 3, 1)]);
+        assert_eq!(queue.len(), 1);
+        assert_eq!(queue.pop(), Some(("active", 1, 3)));
         assert!(queue.pop().is_none());
     }
 }

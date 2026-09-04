@@ -1,6 +1,10 @@
 import { convertFileSrc } from "@tauri-apps/api/core";
 import { create } from "zustand";
 import type { ImageProjection, PreviewResult, RenderLevel } from "../types";
+import {
+  clearBrowserImageResources,
+  discardBrowserImageResource,
+} from "./browserImageCache";
 
 export interface ImageProjectionMirror extends Omit<ImageProjection, "result"> {
   result?: PreviewResult;
@@ -47,13 +51,26 @@ export const useImageProjectionStore = create<ImageProjectionState>((set) => ({
 }));
 
 export function acceptImageProjection(projection: ImageProjection) {
+  const current = useImageProjectionStore.getState().records[
+    imageProjectionKey(projection.path, projection.level)
+  ];
+  if (current && current.projectionRevision < projection.projectionRevision) {
+    // A projection update may overwrite the same cache path. Drop both URL
+    // identities so the WebView cannot repaint a retained stale decode.
+    discardBrowserImageResource(current.result?.url);
+    discardBrowserImageResource(
+      projection.result ? convertFileSrc(projection.result.path) : undefined,
+    );
+  }
   useImageProjectionStore.getState().accept(projection);
 }
 
 export function invalidateImageDirectory(directory: string) {
+  clearBrowserImageResources();
   useImageProjectionStore.getState().invalidateDirectory(directory);
 }
 
 export function clearImageProjections() {
+  clearBrowserImageResources();
   useImageProjectionStore.getState().clear();
 }

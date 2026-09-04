@@ -309,7 +309,11 @@ export function Thumbnail({
     ownsFullDetailStage,
   ]);
 
-  const handleLoad = (size: { width: number; height: number }, result?: PreviewResult) => {
+  const handleLoad = (
+    size: { width: number; height: number },
+    result: PreviewResult | undefined,
+    image: HTMLImageElement,
+  ) => {
     if (source) reportImageLoaded(size, result, source);
     const currentDebug = imageDebug.current;
     let debug: PreviewDebugHandle | undefined;
@@ -329,7 +333,7 @@ export function Thumbnail({
       if (debug) imageDebug.current = { source, handle: debug };
     }
     debug?.complete();
-    if (source) markBrowserImageReady(source, size);
+    if (source) markBrowserImageReady(source, size, image);
     if (ownsFullDetailStage && large && result && result !== thumbnailSource) {
       setLoaded({ assetId: asset.id, mode: result === fullSource ? "full" : "preview" });
     }
@@ -398,7 +402,7 @@ export function Thumbnail({
           onLoad={(event) => handleLoad({
             width: event.currentTarget.naturalWidth,
             height: event.currentTarget.naturalHeight,
-          }, generatedSource)}
+          }, generatedSource, event.currentTarget)}
         />
       ) : null}
       {asset.kind === "raw" ? <span className="thumbnail__badge">RAW</span> : null}

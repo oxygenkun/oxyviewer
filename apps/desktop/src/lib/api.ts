@@ -719,6 +719,9 @@ export async function generatedPreview(
   queueOrder = 0,
 ): Promise<PreviewResult | undefined> {
   if (!isTauri()) return undefined;
+  // Do not register a debug WAIT entry for work React Query has already
+  // cancelled. There is no lifecycle handle to clean up if we throw first.
+  if (signal?.aborted) throw signal.reason ?? new DOMException("Aborted", "AbortError");
   const debug = __OXY_DEBUG__
       ? beginPreviewDebug({
           assetName: asset.name,
@@ -728,7 +731,6 @@ export async function generatedPreview(
           resourceLabel: level,
         })
     : undefined;
-  if (signal?.aborted) throw signal.reason ?? new DOMException("Aborted", "AbortError");
   debug?.start();
   perfMark("preview:queued", { assetName: asset.name, level, priority });
   const requestId = crypto.randomUUID();

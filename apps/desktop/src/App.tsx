@@ -31,6 +31,7 @@ import {
 } from "./lib/api";
 import { filterAndSortAssets } from "./lib/assetFiltering";
 import { replacementAssetIdAfterRemoval } from "./lib/assetViewPosition";
+import { setBrowserImageResourceScope } from "./lib/browserImageCache";
 import { acceptDirectoryTreeSnapshot } from "./lib/directoryTreeProjection";
 import { acceptImageProjection, invalidateImageDirectory } from "./lib/imageProjection";
 import {
@@ -106,6 +107,12 @@ export function App({ perfScenario }: { perfScenario?: PerfScenario }) {
   const currentPath = activeSession
     ? workspace.currentDirectories[activeSession.rootPath] ?? activeSession.rootPath
     : undefined;
+
+  useEffect(() => {
+    if (activeSession && currentPath) {
+      setBrowserImageResourceScope(`${activeSession.id}\0${currentPath}`);
+    }
+  }, [activeSession, currentPath]);
 
   const notifyActiveDirectory = useCallback((session: FolderSession, path: string) => {
     const noticeKey = `${session.id}\0${path}`;

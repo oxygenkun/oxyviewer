@@ -119,7 +119,6 @@ pub(crate) async fn set_active_directory(
     state: State<'_, AppState>,
 ) -> Result<(), String> {
     let files = state.files.clone();
-    let queue = state.directory_tree_queue.clone();
     let (session_id, directory) = tauri::async_runtime::spawn_blocking(move || {
         files
             .session_directory(&session_id, Some(&directory))
@@ -128,7 +127,13 @@ pub(crate) async fn set_active_directory(
     })
     .await
     .map_err(|error| error.to_string())??;
-    queue.set_active(session_id, directory);
+    state
+        .metadata_queue
+        .clear_pending_outside_directory(&directory);
+    state
+        .preview_queue
+        .clear_pending_outside_directory(&directory);
+    state.directory_tree_queue.set_active(session_id, directory);
     Ok(())
 }
 

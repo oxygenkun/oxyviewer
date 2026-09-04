@@ -3,8 +3,20 @@ interface BrowserImageSize {
   height: number;
 }
 
-const readyImages = new Map<string, BrowserImageSize>();
-const MAX_READY_IMAGES = 512;
+interface BrowserImageResource extends BrowserImageSize {
+  /**
+   * Keep the decoded browser resource alive after its virtualized DOM node is
+   * unmounted. Without this reference, WebView is free to discard the image
+   * and the next mount can hit the Tauri asset protocol again.
+   */
+  image?: HTMLImageElement;
+}
+
+// The owner of this cache is the WebView session, not an individual virtual
+// row. Entries are only discarded when the application explicitly invalidates
+// image resources (or when the WebView itself goes away).
+const readyImages = new Map<string, BrowserImageResource>();
+let activeResourceScope: string | undefined;
 
 export function isBrowserImageReady(url: string): boolean {
   return readyImages.has(url);
@@ -21,12 +33,33 @@ export function getBrowserImageSize(url: string): BrowserImageSize | undefined {
   return readyImages.get(url);
 }
 
-export function markBrowserImageReady(url: string, size: BrowserImageSize): void {
-  readyImages.delete(url);
-  readyImages.set(url, size);
-  if (readyImages.size <= MAX_READY_IMAGES) return;
-  const oldest = readyImages.keys().next().value;
-  if (oldest) readyImages.delete(oldest);
+export function markBrowserImageReady(
+  url: string,
+  size: BrowserImageSize,
+  image?: HTMLImageElement,
+): void {
+  const current = readyImages.get(url);
+  readyImages.set(url, {
+    ...size,
+    image: image ?? current?.image,
+  });
+}
+
+/** Discards retained resources only in response to an explicit app update. */
+export function clearBrowserImageResources(): void {
+  readyImages.clear();
+}
+
+/** Keeps resources across virtual mounts, but not across asset browsers. */
+export function setBrowserImageResourceScope(scope: string): void {
+  if (activeResourceScope !== undefined && activeResourceScope !== scope) {
+    clearBrowserImageResources();
+  }
+  activeResourceScope = scope;
+}
+
+export function discardBrowserImageResource(url: string | undefined): void {
+  if (url) readyImages.delete(url);
 }
 
 /** Loads and decodes an image so a later loupe switch can paint it immediately. */
@@ -56,7 +89,7 @@ export function preloadBrowserImage(url: string, signal?: AbortSignal): Promise<
           markBrowserImageReady(url, {
             width: image.naturalWidth,
             height: image.naturalHeight,
-          });
+          }, image);
           cleanup();
           resolve();
         });

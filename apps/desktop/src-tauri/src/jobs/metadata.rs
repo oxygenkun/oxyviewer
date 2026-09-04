@@ -40,6 +40,7 @@ struct Request {
 struct WorkState {
     pending: CoalescingPriorityQueue<RequestKey, Request, MetadataRequestPriority>,
     active: HashMap<RequestKey, Arc<Mutex<Request>>>,
+    active_directory: Option<PathBuf>,
 }
 
 #[derive(Clone)]
@@ -119,6 +120,17 @@ impl MetadataQueue {
             .retain(|key, _| key.path.parent() != Some(directory));
     }
 
+    /// Drops work that has not started for assets outside the directory the
+    /// user is currently viewing. Active reads are allowed to finish so cache
+    /// and projection transitions remain consistent.
+    pub fn clear_pending_outside_directory(&self, directory: &std::path::Path) -> usize {
+        let mut work = self.work.0.lock().expect("metadata queue lock poisoned");
+        work.active_directory = Some(directory.to_owned());
+        work.pending
+            .remove_if(|key, _| key.path.parent() != Some(directory))
+            .len()
+    }
+
     pub fn debug_snapshot(&self) -> DebugQueueState {
         let work = self.work.0.lock().expect("metadata queue lock poisoned");
         let pending = work
@@ -194,6 +206,13 @@ impl MetadataQueue {
             generation: self.request_generation.load(Ordering::Relaxed),
         };
         let mut work = self.work.0.lock().expect("metadata queue lock poisoned");
+        if work
+            .active_directory
+            .as_deref()
+            .is_some_and(|directory| key.path.parent() != Some(directory))
+        {
+            return Err("metadata request left the active directory".into());
+        }
         if let Some(active) = work.active.get(&key) {
             if let Some(waiter) = detail_waiter {
                 let mut active = active

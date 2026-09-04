@@ -3,6 +3,7 @@ import type { AssetSummary } from "../types";
 
 const mocks = vi.hoisted(() => ({
   invoke: vi.fn(),
+  beginPreviewDebug: vi.fn(() => undefined),
 }));
 
 vi.mock("@tauri-apps/api/core", () => ({
@@ -19,7 +20,7 @@ vi.mock("@tauri-apps/plugin-dialog", () => ({
 }));
 
 vi.mock("./previewDebug", () => ({
-  beginPreviewDebug: vi.fn(() => undefined),
+  beginPreviewDebug: mocks.beginPreviewDebug,
 }));
 
 import { generatedPreview } from "./api";
@@ -38,6 +39,7 @@ const asset: AssetSummary = {
 describe("generated preview cancellation", () => {
   afterEach(() => {
     mocks.invoke.mockReset();
+    mocks.beginPreviewDebug.mockClear();
     vi.unstubAllGlobals();
   });
 
@@ -59,5 +61,17 @@ describe("generated preview cancellation", () => {
       level: "thumbnail",
       requestId: expect.any(String),
     });
+  });
+
+  it("does not leave a debug WAIT entry for an already-cancelled request", async () => {
+    vi.stubGlobal("window", { __TAURI_INTERNALS__: {} });
+    const controller = new AbortController();
+    controller.abort();
+
+    await expect(generatedPreview(asset, "thumbnail", controller.signal))
+      .rejects.toMatchObject({ name: "AbortError" });
+
+    expect(mocks.beginPreviewDebug).not.toHaveBeenCalled();
+    expect(mocks.invoke).not.toHaveBeenCalled();
   });
 });

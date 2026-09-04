@@ -83,6 +83,7 @@ struct WorkState {
     pending_keys: HashMap<PreviewScheduleKey, HashSet<RequestKey>>,
     active: HashMap<RequestKey, Arc<Mutex<WorkRequest>>>,
     schedule: ScopedIntentScheduler<PreviewScheduleKey, String>,
+    active_directory: Option<PathBuf>,
 }
 
 impl WorkState {
@@ -197,6 +198,13 @@ impl PreviewQueue {
             level,
         };
         let mut work = self.work.0.lock().expect("preview queue lock poisoned");
+        if work
+            .active_directory
+            .as_deref()
+            .is_some_and(|directory| path.parent() != Some(directory))
+        {
+            return Err("preview request left the active directory".into());
+        }
         work.schedule.reconcile(
             request_id.clone(),
             0,
@@ -431,6 +439,42 @@ impl PreviewQueue {
         };
         work.apply_schedule_changes(changes);
         true
+    }
+
+    /// Drops work that has not started for assets outside the directory the
+    /// user is currently viewing. Active decodes are allowed to finish.
+    pub fn clear_pending_outside_directory(&self, directory: &std::path::Path) -> usize {
+        let mut work = self.work.0.lock().expect("preview queue lock poisoned");
+        work.active_directory = Some(directory.to_owned());
+        let removed = work
+            .pending
+            .remove_if(|key, _| key.path.parent() != Some(directory));
+        for (key, request, _) in &removed {
+            let schedule_key = PreviewScheduleKey {
+                path: key.path.clone(),
+                level: key.level,
+            };
+            if let Some(keys) = work.pending_keys.get_mut(&schedule_key) {
+                keys.remove(key);
+                if keys.is_empty() {
+                    work.pending_keys.remove(&schedule_key);
+                }
+            }
+            for waiter in &request.waiters {
+                let changes = work.schedule.release_scope(&waiter.id);
+                work.apply_schedule_changes(changes);
+            }
+        }
+        let removed_count = removed.len();
+        drop(work);
+        for (_, request, _) in removed {
+            for waiter in request.waiters {
+                let _ = waiter
+                    .sender
+                    .send(Err("preview request left the active directory".into()));
+            }
+        }
+        removed_count
     }
 
     pub fn invalidate_directory(&self, directory: &std::path::Path) {

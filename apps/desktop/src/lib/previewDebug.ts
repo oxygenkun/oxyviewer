@@ -31,7 +31,10 @@ export interface PreviewDebugSnapshot {
   loading: TrackedPreview[];
 }
 
-const DEBUG_STORAGE_KEY = "oxyviewer.previewDebugSnapshot";
+// Versioned because snapshots can outlive a debug WebView reload. Bumping the
+// key prevents lifecycle bugs fixed in a newer build from resurfacing as
+// persisted ghost rows.
+const DEBUG_STORAGE_KEY = "oxyviewer.previewDebugSnapshot.v2";
 
 const waiting = new Map<number, TrackedPreview>();
 const loading = new Map<number, TrackedPreview>();
