@@ -74,7 +74,9 @@ export function viewportPreviewIntents(
     ),
   );
   const visibleWithSelection = candidates.filter((candidate) => candidate.visible);
-  const visible = visibleWithSelection.filter((candidate) => candidate.asset.id !== selected?.id);
+  const visible = visibleWithSelection.filter(
+    (candidate) => !selectedVisible || candidate.asset.id !== selected?.id,
+  );
   const orderedVisible = selectedVisible && selected
     ? orderBySelectionPriority(
         visibleWithSelection,
@@ -83,11 +85,11 @@ export function viewportPreviewIntents(
       ).filter((candidate) => candidate.asset.id !== selected.id)
     : [...visible].sort((left, right) => left.distance - right.distance);
   const nearby = candidates
-    .filter((candidate) => !candidate.visible && candidate.asset.id !== selected?.id)
+    .filter((candidate) => !candidate.visible)
     .sort((left, right) => left.distance - right.distance);
 
   return [
-    ...(selected ? [{
+    ...(selectedVisible && selected ? [{
       path: selected.path,
       level,
       priority: "loupe" as const,

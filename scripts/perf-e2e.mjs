@@ -8,6 +8,8 @@
  * Usage:
  *   node scripts/perf-e2e.mjs [--scenario <name>]... [--runs N]
  *                             [--update-baseline] [--verbose] [--app <path>]
+ *   node scripts/perf-e2e.mjs --folder <path> --select-name <file>
+ *                             [--scroll-end] [--cold-cache] [--await-mark <token>]
  *
  * Requires an embedded release build: pnpm tauri build --no-bundle
  */
@@ -31,7 +33,18 @@ const BUNDLE_ID = "app.oxyviewer.desktop";
 // ---------------------------------------------------------------------------
 
 function parseArgs(argv) {
-  const args = { scenarios: [], runs: undefined, updateBaseline: false, verbose: false, app: undefined };
+  const args = {
+    scenarios: [],
+    runs: undefined,
+    updateBaseline: false,
+    verbose: false,
+    app: undefined,
+    folder: undefined,
+    selectName: undefined,
+    scrollEnd: false,
+    coldCache: false,
+    awaitMarks: [],
+  };
   for (let index = 0; index < argv.length; index += 1) {
     const arg = argv[index];
     if (arg === "--scenario") args.scenarios.push(argv[++index]);
@@ -39,8 +52,14 @@ function parseArgs(argv) {
     else if (arg === "--update-baseline") args.updateBaseline = true;
     else if (arg === "--verbose") args.verbose = true;
     else if (arg === "--app") args.app = argv[++index];
+    else if (arg === "--folder") args.folder = argv[++index];
+    else if (arg === "--select-name") args.selectName = argv[++index];
+    else if (arg === "--scroll-end") args.scrollEnd = true;
+    else if (arg === "--cold-cache") args.coldCache = true;
+    else if (arg === "--await-mark") args.awaitMarks.push(argv[++index]);
     else if (arg === "--help" || arg === "-h") {
       console.log("Usage: node scripts/perf-e2e.mjs [--scenario name]... [--runs N] [--update-baseline] [--verbose] [--app path]");
+      console.log("       node scripts/perf-e2e.mjs --folder path --select-name file [--scroll-end] [--cold-cache] [--await-mark token]");
       process.exit(0);
     } else {
       console.error(`Unknown argument: ${arg}`);
@@ -153,6 +172,13 @@ function prepareFileFixture(name, fixture) {
 }
 
 function prepareFixture(name, fixture) {
+  if (fixture.type === "directory") {
+    const directory = path.resolve(fixture.path);
+    if (!fs.statSync(directory, { throwIfNoEntry: false })?.isDirectory()) {
+      throw new Error(`Fixture directory not found: ${directory}`);
+    }
+    return directory;
+  }
   fs.mkdirSync(GENERATED_DIR, { recursive: true });
   return fixture.type === "synthetic"
     ? prepareSyntheticFixture(name, fixture)
@@ -283,6 +309,15 @@ function computeMetrics(report, selectName) {
     );
     if (previewResult) metrics.previewResultMs = previewResult.t - select;
   }
+  const viewportJump = markTime(report, "harness:viewport-jump");
+  if (viewportJump !== undefined && selectName) {
+    const loaded = report.marks.find((mark) =>
+      mark.name === "image:loaded"
+      && mark.detail?.assetName === selectName
+      && mark.detail?.large === false
+    );
+    if (loaded) metrics.viewportJumpPreviewMs = loaded.t - viewportJump;
+  }
   // Backend-reported durations (recorded only, no absolute budgets).
   for (const mark of report.marks) {
     if (mark.name === "preview:result" && mark.detail?.diagnostics?.totalMs !== undefined) {
@@ -316,6 +351,30 @@ function p95(values) {
 async function main() {
   const args = parseArgs(process.argv.slice(2));
   const config = JSON.parse(fs.readFileSync(SCENARIOS_PATH, "utf8"));
+  if (args.folder) {
+    if (args.scrollEnd && !args.selectName) {
+      throw new Error("--scroll-end requires --select-name so the painted target can be verified");
+    }
+    config.scenarios["manual-folder"] = {
+      fixture: { type: "directory", path: args.folder },
+      selectName: args.selectName,
+      enterLoupe: !args.scrollEnd,
+      scrollToEnd: args.scrollEnd,
+      awaitMarks: args.awaitMarks.length > 0
+        ? args.awaitMarks
+        : args.selectName
+          ? ["image:loaded"]
+          : ["harness:first-page-painted"],
+      coldCache: args.coldCache,
+      runs: 1,
+      timeoutMs: 60_000,
+      budgets: args.scrollEnd
+        ? { viewportJumpPreviewMs: 800 }
+        : args.selectName
+          ? { firstPreviewMs: 800 }
+          : {},
+    };
+  }
   const baseline = fs.existsSync(BASELINE_PATH)
     ? JSON.parse(fs.readFileSync(BASELINE_PATH, "utf8"))
     : { scenarios: {} };
@@ -328,7 +387,11 @@ async function main() {
   }
   fs.mkdirSync(REPORTS_DIR, { recursive: true });
 
-  const names = args.scenarios.length > 0 ? args.scenarios : Object.keys(config.scenarios);
+  const names = args.folder
+    ? ["manual-folder"]
+    : args.scenarios.length > 0
+      ? args.scenarios
+      : Object.keys(config.scenarios);
   const failures = [];
   const newBaseline = { meta: baseline.meta ?? null, scenarios: { ...baseline.scenarios } };
 
@@ -356,6 +419,7 @@ async function main() {
       folder,
       selectName,
       enterLoupe: scenario.enterLoupe,
+      scrollToEnd: scenario.scrollToEnd,
       awaitMarks: awaitMarks ?? ["harness:first-page-painted"],
       timeoutMs: scenario.timeoutMs,
       reportPath: path.join(REPORTS_DIR, reportName),

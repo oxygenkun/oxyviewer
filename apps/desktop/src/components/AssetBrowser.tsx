@@ -295,8 +295,11 @@ function VirtualGrid({
     [scheduleCandidates, selectedAsset],
   );
   useEffect(() => {
-    viewportSchedule.reconcile(resourcesEnabled ? viewportIntents : []);
-  }, [resourcesEnabled, viewportIntents, viewportSchedule]);
+    // Keep the cheap native schedule synchronized while scrolling. Thumbnail
+    // queries and WebView image decodes remain paused by `resourcesEnabled`,
+    // but the latest viewport is already prioritized when scrolling settles.
+    viewportSchedule.reconcile(viewportIntents);
+  }, [viewportIntents, viewportSchedule]);
 
   useEffect(() => {
     const timer = window.setTimeout(() => {
@@ -435,8 +438,11 @@ function VirtualList({
     [scheduleCandidates, selectedAsset],
   );
   useEffect(() => {
-    viewportSchedule.reconcile(resourcesEnabled ? viewportIntents : []);
-  }, [resourcesEnabled, viewportIntents, viewportSchedule]);
+    // Keep the cheap native schedule synchronized while scrolling. Thumbnail
+    // queries and WebView image decodes remain paused by `resourcesEnabled`,
+    // but the latest viewport is already prioritized when scrolling settles.
+    viewportSchedule.reconcile(viewportIntents);
+  }, [viewportIntents, viewportSchedule]);
 
   useEffect(() => {
     const timer = window.setTimeout(() => {

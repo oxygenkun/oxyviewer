@@ -42,19 +42,15 @@ import { acceptMetadataProjection } from "./metadataProjection";
 import { perfMark } from "./perfProbe";
 import { beginPreviewDebug } from "./previewDebug";
 
-function setGeneratedPreviewPriority(
+function cancelGeneratedPreviewRequest(
   asset: AssetSummary,
   level: RenderLevel,
   requestId: string,
-  priority: PreviewPriority,
-  queueOrder = 0,
 ): void {
-  void invoke("reprioritize_preview", {
+  void invoke("cancel_preview_request", {
     path: asset.path,
     level,
     requestId,
-    priority,
-    queueOrder,
   }).catch(() => undefined);
 }
 
@@ -720,7 +716,7 @@ export async function generatedPreview(
     rejectAbort = reject;
   });
   const stopWaiting = () => {
-    setGeneratedPreviewPriority(asset, level, requestId, "preload");
+    cancelGeneratedPreviewRequest(asset, level, requestId);
     rejectAbort?.(signal?.reason ?? new DOMException("Aborted", "AbortError"));
   };
   signal?.addEventListener("abort", stopWaiting, { once: true });

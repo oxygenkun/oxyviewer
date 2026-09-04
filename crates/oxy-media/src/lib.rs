@@ -28,7 +28,7 @@ use std::{
 use tempfile::NamedTempFile;
 use thiserror::Error;
 
-const LIBRAW_CACHE_VERSION: &str = "libraw-0.22.2-v5";
+const LIBRAW_CACHE_VERSION: &str = "libraw-0.22.2-v6";
 const LIBRAW_FULL_CACHE_VERSION: &str = "libraw-0.22.2-full-detail-v2";
 // Bumped from `libheif-1.23-sdr-v1` (16-bit PNG) to an 8-bit sRGB JPEG with an
 // embedded ICC profile, unifying the cache format across every preview stage
@@ -36,7 +36,6 @@ const LIBRAW_FULL_CACHE_VERSION: &str = "libraw-0.22.2-full-detail-v2";
 const HEIF_FULL_CACHE_VERSION: &str = "heif-source-jpeg-v2";
 const HEIF_CACHE_VERSION: &str = "heif-native-preview-v7";
 const SYSTEM_CACHE_VERSION: &str = "system-preview-v2";
-const LOUPE_PREVIEW_THRESHOLD: u32 = 2_048;
 /// Cache sizes shared by every format's progressive pipeline. A request for a
 /// smaller size may be satisfied by any larger cached entry (see
 /// [`larger_cached_preview`]).
@@ -400,12 +399,12 @@ pub fn raw_preview_with_priority(
         return Ok(result);
     }
 
-    let preserve_embedded_jpeg = max_size >= LOUPE_PREVIEW_THRESHOLD;
-    let preview = libraw::preview(path, max_size, preserve_embedded_jpeg).map_err(|message| {
-        MediaError::LibRaw {
-            path: path.to_owned(),
-            message,
-        }
+    // Preserve the size-selected camera JPEG at every semantic level. Decoding,
+    // resizing, and re-encoding it would serialize a cold ARW grid for no
+    // visual benefit; the WebView can scale the artifact like the HEIF path.
+    let preview = libraw::preview(path, max_size, true).map_err(|message| MediaError::LibRaw {
+        path: path.to_owned(),
+        message,
     })?;
     let (destination, kind) = match preview {
         libraw::Preview::EmbeddedJpeg(data) => {
@@ -1400,7 +1399,7 @@ mod tests {
         let directory = tempfile::tempdir().unwrap();
         let path = directory.path().join("image.arw");
         fs::write(&path, b"raw").unwrap();
-        let raw_tag = "libraw-0.22.2-v5";
+        let raw_tag = "libraw-0.22.2-v6";
         let key = preview_cache_key(&path, raw_tag, 4_096).unwrap();
         let cached = directory.path().join(format!("{key}.jpg"));
         write_jpeg_atomically(&DynamicImage::new_rgb8(48, 24), &cached, 90).unwrap();
@@ -1549,10 +1548,10 @@ mod tests {
 
         assert!(
             matches!(
-                libraw::preview(&raw_path, 512, false).unwrap(),
-                libraw::Preview::Image(_)
+                libraw::preview(&raw_path, 512, true).unwrap(),
+                libraw::Preview::EmbeddedJpeg(_)
             ),
-            "thumbnail requests must keep the resize and re-encode path"
+            "thumbnail requests must preserve the selected embedded JPEG"
         );
     }
 

@@ -16,6 +16,30 @@ end-to-end regression harness that enforces these budgets is described in
 
 ## Verification Log
 
+- 2026-09-04: Fast scrolling now keeps the cheap viewport schedule current
+  while filesystem reads and WebView image decode remain paused. Cancelling an
+  off-screen React Query also releases its Rust request consumer and removes
+  work that has not started and has no remaining consumer, instead of leaving
+  a stale preload request in front of a newly visible cold ARW region. Native
+  decode that has already begun remains non-preemptive and may finish into the
+  rebuildable cache.
+
+- 2026-09-04: RAW thumbnails now preserve LibRaw's size-selected embedded JPEG
+  bytes instead of decoding, resizing to exactly 512 px, and re-encoding each
+  file. This aligns cold ARW grids with the HEIF embedded-preview fast path;
+  non-JPEG embedded images and missing-preview development remain fallbacks. A
+  Windows release benchmark of `DSC02905.ARW` improved the 512 request from
+  187.6 ms to 12.3 ms. Three real-App cold-cache runs against a 106-file ARW
+  folder painted the jumped-to last viewport in 554 ms median / 564 ms P95,
+  down from the reproduced 4.11 s. Three cold loupe runs painted the full
+  embedded JPEG in 278 ms median / 290 ms P95.
+
+- 2026-09-04: Windows release linking now declares the AOM archive at the
+  `oxy-media` boundary. The pinned vcpkg libheif port enables AOM but its Rust
+  discovery helper omits that transitive static library; keeping the link
+  directive scoped to the media crate also avoids copying AOM into every
+  downstream Rust staticlib.
+
 - 2026-09-04: Grid and list rendering now enter a presentation-only phase
   during active scrolling. Virtual rows, cheap summaries, placeholders, and
   already-decoded browser images continue painting, while new filesystem image

@@ -42,7 +42,7 @@ function markSatisfied(token: string, scenario: PerfScenario): boolean {
   return perfSnapshot().some((mark) =>
     mark.name === name
     && (!scenario.selectName || mark.detail?.assetName === scenario.selectName)
-    && (name !== "image:loaded" || mark.detail?.large === true)
+    && (name !== "image:loaded" || mark.detail?.large === !scenario.scrollToEnd)
     && (key === undefined || String(mark.detail?.[key]) === String(value))
   );
 }
@@ -83,18 +83,27 @@ export function PerfHarness({
         if (cancelled || doneRef.current) return;
         firstPageRef.current = true;
         perfMark("harness:first-page-painted");
+        if (scenario.scrollToEnd) {
+          const scroller = document.querySelector<HTMLElement>(".asset-scroll");
+          if (scroller) {
+            perfMark("harness:viewport-jump", { assetName: scenario.selectName });
+            scroller.scrollTop = scroller.scrollHeight;
+            scroller.dispatchEvent(new Event("scroll", { bubbles: true }));
+          }
+        }
       })
     );
     return () => {
       cancelled = true;
     };
-  }, [session, assetsLoading]);
+  }, [assetsLoading, scenario.scrollToEnd, scenario.selectName, session]);
 
   useEffect(() => {
     if (
       selectedRef.current
       || doneRef.current
       || !scenario.selectName
+      || scenario.scrollToEnd
       || !session
       || assetsLoading
     ) return;

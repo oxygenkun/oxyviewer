@@ -73,6 +73,7 @@ export function Thumbnail({
   const [loaded, setLoaded] = useState<{ assetId: string; mode: "preview" | "full" }>();
   const [displayedImage, setDisplayedImage] = useState<DisplayedImage>();
   const imageDebug = useRef<{ source: string; handle: PreviewDebugHandle } | undefined>(undefined);
+  const reportedLoads = useRef(new Set<string>());
   const plan = useMemo(
     () => renderPlan(asset.kind, large ? "loupe" : "thumbnail"),
     [asset.kind, large],
@@ -176,6 +177,29 @@ export function Thumbnail({
     "--thumb-hue-two": `${(seed + 72) % 360}`,
   } as React.CSSProperties;
 
+  const reportImageLoaded = (
+    size: { width: number; height: number },
+    result: PreviewResult | undefined,
+    loadedSource: string,
+  ) => {
+    const loadedLevel = result && result === fullSource
+      ? fullStep?.level ?? "full"
+      : result && result === thumbnailSource
+        ? "thumbnail"
+        : previewStep.level;
+    const reportKey = `${asset.id}\u0000${loadedSource}\u0000${loadedLevel}`;
+    if (reportedLoads.current.has(reportKey)) return;
+    reportedLoads.current.add(reportKey);
+    perfMark("image:loaded", {
+      assetName: asset.name,
+      large,
+      stage: directSource ? "direct" : loadedLevel,
+      renderLevel: loadedLevel,
+      width: size.width,
+      height: size.height,
+    });
+  };
+
   useEffect(() => setFailed(false), [source]);
   useEffect(() => {
     if (!source || failed) return;
@@ -217,6 +241,14 @@ export function Thumbnail({
 
   useLayoutEffect(() => {
     if (!large || !preparedSize) return;
+    const preparedResult = fullSource?.url === preparedSource
+      ? fullSource
+      : previewSource?.url === preparedSource
+        ? previewSource
+        : thumbnailSource?.url === preparedSource
+          ? thumbnailSource
+          : undefined;
+    if (preparedSource) reportImageLoaded(preparedSize, preparedResult, preparedSource);
     onImageLoad?.(preparedSize);
     if (!ownsFullDetailStage || previewSource?.url !== preparedSource) return;
     setLoaded((current) => current?.assetId === asset.id
@@ -230,6 +262,8 @@ export function Thumbnail({
     ownsFullDetailStage,
     preparedSize,
     preparedSource,
+    fullSource,
+    thumbnailSource,
     previewSource?.url,
   ]);
 
@@ -271,19 +305,7 @@ export function Thumbnail({
   ]);
 
   const handleLoad = (size: { width: number; height: number }, result?: PreviewResult) => {
-    const loadedLevel = result && result === fullSource
-      ? fullStep?.level ?? "full"
-      : result && result === thumbnailSource
-        ? "thumbnail"
-      : previewStep.level;
-    perfMark("image:loaded", {
-      assetName: asset.name,
-      large,
-      stage: directSource ? "direct" : loadedLevel,
-      renderLevel: loadedLevel,
-      width: size.width,
-      height: size.height,
-    });
+    if (source) reportImageLoaded(size, result, source);
     const currentDebug = imageDebug.current;
     let debug: PreviewDebugHandle | undefined;
     if (currentDebug && currentDebug.source === source) debug = currentDebug.handle;

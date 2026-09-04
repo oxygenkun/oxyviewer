@@ -19183,7 +19183,7 @@ pub fn decode_ciff(data: &[u8]) -> Vec<DecodedTag> {
         return tags;
     }
     let le = data[0] == b'I' && data[1] == b'I';
-    if !le && !(data[0] == b'M' && data[1] == b'M') {
+    if !(le || data[0] == b'M' && data[1] == b'M') {
         return tags;
     }
     // Header length

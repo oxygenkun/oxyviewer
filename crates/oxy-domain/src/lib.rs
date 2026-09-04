@@ -642,6 +642,8 @@ pub struct PerfScenario {
     #[serde(default)]
     pub enter_loupe: Option<bool>,
     #[serde(default)]
+    pub scroll_to_end: bool,
+    #[serde(default)]
     pub await_marks: Vec<String>,
     #[serde(default)]
     pub timeout_ms: Option<u64>,

@@ -96,6 +96,29 @@ pub(crate) async fn reprioritize_preview(
 }
 
 #[tauri::command]
+pub(crate) async fn cancel_preview_request(
+    path: PathBuf,
+    level: RenderLevel,
+    request_id: String,
+    state: State<'_, AppState>,
+) -> Result<bool, String> {
+    let files = state.files.clone();
+    let preview_queue = state.preview_queue.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        let asset = files.get_asset(&path).map_err(|error| error.to_string())?;
+        Ok(preview_queue.cancel_request(
+            PreviewIdentity {
+                path: asset.path,
+                level,
+            },
+            &request_id,
+        ))
+    })
+    .await
+    .map_err(|error| error.to_string())?
+}
+
+#[tauri::command]
 pub(crate) async fn reconcile_preview_schedule(
     scope_id: String,
     epoch: u64,

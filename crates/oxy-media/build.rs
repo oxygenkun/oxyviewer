@@ -8,6 +8,7 @@ fn main() {
     let libraw_dir = manifest_dir.join("../../3rdpart/libraw");
     let wrapper = manifest_dir.join("src/libraw_wrapper.cpp");
 
+    link_windows_libheif_dependencies();
     build_apple_image_io(&manifest_dir);
 
     println!("cargo:rerun-if-changed={}", wrapper.display());
@@ -40,6 +41,18 @@ fn main() {
 
     add_cpp_sources(&mut build, &libraw_dir.join("src"));
     build.compile("oxy_libraw");
+}
+
+fn link_windows_libheif_dependencies() {
+    if env::var("CARGO_CFG_TARGET_OS").as_deref() != Ok("windows") {
+        return;
+    }
+
+    // libheif-sys discovers the vcpkg libheif port, but its Windows helper
+    // currently omits the AOM archive enabled by that port. Declare it at the
+    // media crate boundary instead of injecting a global RUSTFLAGS link, which
+    // would copy the large archive into every downstream Rust staticlib.
+    println!("cargo:rustc-link-lib=static=aom");
 }
 
 fn build_apple_image_io(manifest_dir: &Path) {

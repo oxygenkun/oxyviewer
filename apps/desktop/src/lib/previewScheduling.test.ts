@@ -64,6 +64,19 @@ describe("preview scheduling policy", () => {
     ]);
   });
 
+  it("does not keep an off-screen selection ahead of the new viewport", () => {
+    const selected = asset("old-selection");
+    const intents = viewportPreviewIntents([
+      { asset: asset("new-visible"), visible: true, distance: 0 },
+      { asset: selected, visible: false, distance: 100 },
+    ], selected);
+
+    expect(intents.map((intent) => [intent.path, intent.priority, intent.rank])).toEqual([
+      ["/photos/new-visible.arw", "visible", 0],
+      ["/photos/old-selection.arw", "nearby", 0],
+    ]);
+  });
+
   it("uses balanced selection-relative ordering for background work", () => {
     const intents = backgroundPreviewIntents(
       [asset("l2"), asset("l1"), asset("selected"), asset("r1")],

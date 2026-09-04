@@ -59,6 +59,7 @@ runner 汇总 N 次运行 → median/p95 → 绝对预算 + 基线回归判定 �
 | `assets:first-page-returned` | api.listAssets | 第一页（250 条）摘要返回 |
 | `harness:first-page-painted` | PerfHarness | 首屏数据提交后双 rAF，近似"开始渲染" |
 | `harness:select` | PerfHarness | 选中目标图片（冷/热预览计时起点） |
+| `harness:viewport-jump` | PerfHarness | 网格快速跳到目录末端（冷区域计时起点） |
 | `preview:queued` / `preview:result` | api.generatedPreview | 预览请求入队 / 后端返回（含 `diagnostics`） |
 | `image:loaded` | Thumbnail.onLoad | 某一语义等级上屏（detail 含 `stage` / `renderLevel`） |
 | `image:loaded@full` | Thumbnail | HEIF/RAW 完整 JPEG 上屏 |
@@ -73,6 +74,7 @@ Runner 由 mark 对计算出命名指标，`scenarios.json` 的 `budgets` 引用
 | `previewMs` | `image:loaded`（stage=preview）− `harness:select` |
 | `fullMs` | `image:loaded`（stage=full）− `harness:select`（仅记录，不计入 800 ms 预算） |
 | `heifFirstTileMs` / `heifAllTilesMs` | 对应 mark − `harness:select` |
+| `viewportJumpPreviewMs` | 目标网格缩略图上屏 − `harness:viewport-jump` |
 | `backendDecodeMs` 等 | 取自 `preview:result` / `heif:backend-*` 的 diagnostics，仅记录 |
 
 ## 场景与图片矩阵
@@ -135,9 +137,16 @@ pnpm perf:e2e
 # 单场景、自定义次数、查看每次明细
 node scripts/perf-e2e.mjs --scenario cold-preview-arw --runs 5 --verbose
 
+# 用真实本机目录验收快速跳到未缓存区域（目标文件应位于末屏）
+node scripts/perf-e2e.mjs --folder /path/to/arw-folder --select-name DSC09999.ARW \
+  --scroll-end --cold-cache --runs 1 --verbose
+
 # 重建基线（换参考机或有意的性能变化后）
 node scripts/perf-e2e.mjs --update-baseline
 ```
+
+本机目录模式沿用冷预览的 800 ms 交互预算：滚动到末屏时检查
+`viewportJumpPreviewMs`，仅选择文件时检查 `firstPreviewMs`。
 
 ## 重构防回归工作流
 

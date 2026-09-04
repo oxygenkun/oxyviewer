@@ -417,6 +417,38 @@ where
         true
     }
 
+    /// Updates a pending payload and either assigns its replacement priority
+    /// or removes it entirely. Stale heap entries are discarded by `pop`.
+    pub fn update_or_remove_if_present(
+        &mut self,
+        key: &K,
+        update: impl FnOnce(&mut V) -> Option<P>,
+    ) -> bool {
+        let Some(current) = self.pending.get_mut(key) else {
+            return false;
+        };
+        let replacement = update(&mut current.value);
+        let Some(priority) = replacement else {
+            self.pending.remove(key);
+            return true;
+        };
+        let current = self
+            .pending
+            .get_mut(key)
+            .expect("pending entry disappeared during update");
+        current.priority = priority;
+        current.generation = current.generation.wrapping_add(1);
+        current.sequence = self.next_sequence;
+        self.next_sequence = self.next_sequence.wrapping_add(1);
+        self.heap.push(HeapEntry {
+            key: key.clone(),
+            priority,
+            generation: current.generation,
+            sequence: current.sequence,
+        });
+        true
+    }
+
     /// Replaces a pending entry's priority, allowing a coordinator to demote
     /// work that is no longer active as well as promote newly active work.
     pub fn reprioritize_if_present(&mut self, key: &K, priority: P) -> bool {
@@ -665,5 +697,20 @@ mod tests {
             *priorities.iter().max().unwrap()
         }));
         assert_eq!(queue.pop(), Some(("asset", vec![0, 2], 2)));
+    }
+
+    #[test]
+    fn pending_work_can_be_removed_while_stale_heap_entries_remain() {
+        let mut queue = CoalescingPriorityQueue::default();
+        queue.push("old", vec!["viewport"], 3);
+        queue.push("new", vec!["viewport"], 2);
+
+        assert!(queue.update_or_remove_if_present(&"old", |consumers| {
+            consumers.clear();
+            None
+        }));
+        assert_eq!(queue.len(), 1);
+        assert_eq!(queue.pop(), Some(("new", vec!["viewport"], 2)));
+        assert!(queue.pop().is_none());
     }
 }

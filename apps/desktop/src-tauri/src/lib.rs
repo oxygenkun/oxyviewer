@@ -130,6 +130,7 @@ pub fn run() {
             request_metadata,
             get_preview,
             reprioritize_preview,
+            cancel_preview_request,
             reconcile_preview_schedule,
             upsert_preview_schedule,
             release_preview_schedule,

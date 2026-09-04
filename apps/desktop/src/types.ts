@@ -332,6 +332,7 @@ export interface PerfScenario {
   folder: string;
   selectName?: string;
   enterLoupe?: boolean;
+  scrollToEnd?: boolean;
   awaitMarks: string[];
   timeoutMs?: number;
   reportPath: string;

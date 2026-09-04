@@ -324,6 +324,59 @@ impl PreviewQueue {
         true
     }
 
+    pub fn cancel_request(&self, identity: PreviewIdentity, request_id: &str) -> bool {
+        let schedule_key = PreviewScheduleKey {
+            path: identity.path,
+            level: identity.level,
+        };
+        let mut work = self.work.0.lock().expect("preview queue lock poisoned");
+        let changes = work.schedule.release_scope(&request_id.to_owned());
+        let mut changed = !changes.is_empty();
+        work.apply_schedule_changes(changes);
+        let remaining_position = work
+            .schedule
+            .effective_position(&schedule_key)
+            .unwrap_or_else(|| schedule_position(PreviewPriority::Preload, usize::MAX));
+
+        let pending_keys = work
+            .pending_keys
+            .get(&schedule_key)
+            .cloned()
+            .unwrap_or_default();
+        for key in pending_keys {
+            let mut remove_key = false;
+            let updated = work.pending.update_or_remove_if_present(&key, |request| {
+                let previous_len = request.waiters.len();
+                request.waiters.retain(|waiter| waiter.id != request_id);
+                changed |= request.waiters.len() != previous_len;
+                remove_key = request.waiters.is_empty();
+                (!remove_key).then_some(remaining_position)
+            });
+            if updated
+                && remove_key
+                && let Some(keys) = work.pending_keys.get_mut(&schedule_key)
+            {
+                keys.remove(&key);
+                if keys.is_empty() {
+                    work.pending_keys.remove(&schedule_key);
+                }
+            }
+        }
+
+        for (key, request) in &work.active {
+            if key.path != schedule_key.path || key.level != schedule_key.level {
+                continue;
+            }
+            let mut request = request
+                .lock()
+                .expect("active preview request lock poisoned");
+            let previous_len = request.waiters.len();
+            request.waiters.retain(|waiter| waiter.id != request_id);
+            changed |= request.waiters.len() != previous_len;
+        }
+        changed
+    }
+
     pub fn reconcile_schedule(
         &self,
         scope_id: String,

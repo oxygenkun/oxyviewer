@@ -99,13 +99,16 @@ tier 3  preload         视口外缓存预热
 Grid、list 和 loupe filmstrip 各自持有 viewport scope；稳定的已加载资产集合持有 background
 scope。viewport 随虚拟列表产生的视窗快照提交有界全量 reconcile，background 只在分页、排序或选择变化时
 更新。`epoch` 拒绝乱序到达的旧视窗快照。选中图排在 tier 0；可见图按选择或视窗中心产生 rank；
-附近项进入 tier 2；离屏后 viewport intent 被释放，既有 background/request intent 令任务自然降到
-tier 3，而不是删除任务。
+附近项进入 tier 2；选中项离开真实可见区后不再保留 tier 0，而按 nearby/离屏规则处理。离屏后
+viewport intent 被释放；已有 consumer 的任务按其余 scope 降级，没有 consumer 且尚未开始的任务
+会从队列删除。
 
 前端 scope 不会为每次 render 立即调用 IPC。同一帧内的 viewport 快照按 latest-wins 合并并做内容
 去重，发送间隔不小于 50ms；background 排序先防抖 150ms，再以 200ms 最小间隔发送。每个 scope
 最多保留一个进行中的 IPC，后续更新继续在前端合并，从而让 native bridge 反压而不是堆积请求。
 单个 Thumbnail 不再随 queueOrder 变化发送独立提权 IPC；可见项优先级统一由 viewport scope 更新。
+滚动期间仍持续提交这个轻量 viewport 快照，只暂停实际文件读取和 WebView 图片解码；因此快速跳到
+冷缓存区域时，native 队列在滚动停止前就已收到最新区域，旧的尚未开始请求也会被取消并摘出队列。
 
 具体任务身份由 canonical path、source revision 和 semantic level 组成；相同请求无论尚在等待
 还是已经运行，都只挂接新的 consumer，不启动第二次解码。有效位置取所有 scope/consumer 中
@@ -193,7 +196,10 @@ flowchart TD
 RAW 由 vendored LibRaw 0.22.2 处理。预览优先尝试内嵌预览：相机通常已经在 RAW 容器里存了
 JPEG，读取它远比 demosaic 原始感光数据快。若内嵌预览不适用，才执行 half-size development。
 
-RAW `thumbnail` 映射 512，`preview` 映射 4096。放大镜直接从 `preview` 开始，因为 Sony ARW
+RAW `thumbnail` 映射 512，`preview` 映射 4096。thumbnail 请求让 LibRaw 选择满足目标尺寸的最小
+内嵌图；若它是 JPEG，就和 HIF 快速路径一样原样写入缓存并由 WebView 缩放，不再为了生成严格
+512 px 文件而串行执行完整 JPEG 解码、缩放和重编码。只有内嵌 bitmap 或缺少可用 JPEG 时才进入
+像素转换/half-size development 回退。放大镜直接从 `preview` 开始，因为 Sony ARW
 常见的近全尺寸内嵌 JPEG 可以在数毫秒内直接复制；先把它解码、缩放并重编码成 512 反而更慢。
 4096 产物保留合适的
 内嵌 JPEG，避免无意义的解码、缩放、重编码。最终结果进入 JPEG 缓存，macOS Quick Look 是
@@ -292,8 +298,9 @@ WebView 的文件会在这轮清理中保留，容量小于单个 artifact 时�
 2. **前端忽略结果**：command 已开始，React Query 不再使用返回值；
 3. **后端协作取消**：解码器定期检查 flag 并提前退出。
 
-统一 preview 当前完整支持第 1 项；第 2 项同时把对应 request intent 降到 `preload`，后端仍会
-完成并温热缓存；第 3 项尚未普遍实现。Tauri `invoke` 本身不能携带浏览器 `AbortSignal` 去中断
+统一 preview 当前完整支持第 1 项；第 2 项会通过独立 command 释放对应 request consumer：若工作
+仍在 Rust pending 队列中且已无其他 consumer，它会被直接摘出；若原生解码已经开始，则后端仍会
+完成并温热缓存。第 3 项尚未普遍实现。Tauri `invoke` 本身不能携带浏览器 `AbortSignal` 去中断
 Rust 原生解码。文档或 UI 不应把“停止等待结果”描述成“停止了 CPU 解码”。HEIF full session
 有自己的取消 flag，语义更强，见下一章。
 

@@ -214,7 +214,7 @@ impl HeifDecodeService {
                 };
                 self.state
                     .lock()
-                    .unwrap_or_else(|error| error.into_inner())
+                    .unwrap_or_else(std::sync::PoisonError::into_inner)
                     .tiles
                     .insert(
                         (session.id.clone(), session.generation, tile.x, tile.y),
@@ -688,10 +688,10 @@ fn fallback_reason(_path: &Path) -> String {
     {
         let platform = platform_capability();
         if platform.available {
-            return crate::windows_wic::can_decode(_path)
-                .err()
-                .map(|error| error.to_string())
-                .unwrap_or_else(|| "Windows WIC was not selected".into());
+            return crate::windows_wic::can_decode(_path).err().map_or_else(
+                || "Windows WIC was not selected".into(),
+                |error| error.to_string(),
+            );
         }
         platform
             .detail
