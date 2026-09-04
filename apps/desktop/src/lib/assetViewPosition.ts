@@ -9,6 +9,15 @@ export function activeAssetIndex(
   return index >= 0 ? index : undefined;
 }
 
+export function replacementAssetIdAfterRemoval(
+  assets: readonly Pick<AssetSummary, "id">[],
+  removedId: string,
+): string | undefined {
+  const removedIndex = assets.findIndex((asset) => asset.id === removedId);
+  if (removedIndex < 0) return undefined;
+  return assets[removedIndex + 1]?.id ?? assets[removedIndex - 1]?.id;
+}
+
 export function gridRowForAsset(assetIndex: number, columns: number): number {
   return Math.floor(assetIndex / columns);
 }

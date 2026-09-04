@@ -30,6 +30,7 @@ import {
   trashPaths,
 } from "./lib/api";
 import { filterAndSortAssets } from "./lib/assetFiltering";
+import { replacementAssetIdAfterRemoval } from "./lib/assetViewPosition";
 import { acceptDirectoryTreeSnapshot } from "./lib/directoryTreeProjection";
 import { acceptImageProjection, invalidateImageDirectory } from "./lib/imageProjection";
 import {
@@ -71,7 +72,7 @@ export function App({ perfScenario }: { perfScenario?: PerfScenario }) {
   const metadataRecords = useMetadataProjectionStore((state) => state.records);
   const {
     view, gridPreference, activeId, selectedIds, inspectorOpen, leftPanelOpen, settingsOpen, locale,
-    search, kind, minimumRating, colorLabels, sort, direction, clearSelection, setGridPreference, toggleSettings,
+    search, kind, minimumRating, colorLabels, sort, direction, clearSelection, select, setGridPreference, toggleSettings,
     leftPanelWidth, inspectorWidth, setLeftPanelWidth, setInspectorWidth,
   } = useWorkspaceStore();
   const appShellRef = useRef<HTMLDivElement>(null);
@@ -458,13 +459,15 @@ export function App({ perfScenario }: { perfScenario?: PerfScenario }) {
     setError(undefined);
     try {
       await trashPaths([asset.path]);
-      clearSelection();
+      const replacementId = replacementAssetIdAfterRemoval(assets, asset.id);
+      if (replacementId) select(replacementId);
+      else clearSelection();
       queryClient.removeQueries({ queryKey: ["asset-render", asset.id] });
       await handleRefresh();
     } catch (cause) {
       setError(String(cause));
     }
-  }, [clearSelection, handleRefresh, queryClient]);
+  }, [assets, clearSelection, handleRefresh, queryClient, select]);
 
   const handleTrashFolder = useCallback(async (session: FolderSession, path: string) => {
     setError(undefined);
