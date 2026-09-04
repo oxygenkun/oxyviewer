@@ -15,6 +15,7 @@ import { perfMark } from "../lib/perfProbe";
 import { imageProjectionKey, useImageProjectionStore } from "../lib/imageProjection";
 import {
   assetRenderQueryKey,
+  loupeThumbnailFallback,
   renderMethodKey,
   renderPlan,
   type RenderMethod,
@@ -80,11 +81,19 @@ export function Thumbnail({
   const fullStep = plan.find((step) => step.level === "full");
   const previewMethod = previewStep.method;
   const fullMethod = fullStep?.method;
+  const fallbackThumbnailStep = useMemo(
+    () => large ? loupeThumbnailFallback(asset.kind) : undefined,
+    [asset.kind, large],
+  );
   const previewLevel = generatedLevel(previewMethod);
   const fullLevel = generatedLevel(fullMethod);
   const previewMethodIdentity = renderMethodKey(previewMethod);
+  const fallbackThumbnailLevel = generatedLevel(fallbackThumbnailStep?.method);
   const fullMethodIdentity = fullMethod ? renderMethodKey(fullMethod) : undefined;
   const distinctFullLevel = fullMethodIdentity !== previewMethodIdentity ? fullLevel : undefined;
+  const thumbnailProjection = useImageProjectionStore((state) => fallbackThumbnailLevel
+    ? state.records[imageProjectionKey(asset.path, fallbackThumbnailLevel)]
+    : undefined);
   const previewProjection = useImageProjectionStore((state) => previewLevel
     ? state.records[imageProjectionKey(asset.path, previewLevel)]
     : undefined);
@@ -134,12 +143,15 @@ export function Thumbnail({
     staleTime: Infinity,
     retry: 0,
   });
+  const thumbnailSource = thumbnailProjection?.result;
   const previewSource = previewProjection?.result;
   const fullSource = fullProjection?.result;
   const preparedSource = directSource && isBrowserImageReady(directSource)
     ? directSource
     : previewSource && isBrowserImageReady(previewSource.url)
       ? previewSource.url
+      : thumbnailSource && isBrowserImageReady(thumbnailSource.url)
+        ? thumbnailSource.url
       : undefined;
   const preparedSize = preparedSource ? getBrowserImageSize(preparedSource) : undefined;
   const visibleImage = displayedImage?.assetId === asset.id
@@ -148,6 +160,7 @@ export function Thumbnail({
       ? { assetId: asset.id, source: preparedSource }
       : undefined;
   const generatedSource = nextProgressiveStage(Boolean(visibleImage), [
+    thumbnailSource,
     previewSource,
     !fullImageFailed ? fullSource : undefined,
   ]);
@@ -260,6 +273,8 @@ export function Thumbnail({
   const handleLoad = (size: { width: number; height: number }, result?: PreviewResult) => {
     const loadedLevel = result && result === fullSource
       ? fullStep?.level ?? "full"
+      : result && result === thumbnailSource
+        ? "thumbnail"
       : previewStep.level;
     perfMark("image:loaded", {
       assetName: asset.name,
@@ -286,7 +301,7 @@ export function Thumbnail({
     }
     debug?.complete();
     if (source) markBrowserImageReady(source, size);
-    if (ownsFullDetailStage && large && result) {
+    if (ownsFullDetailStage && large && result && result !== thumbnailSource) {
       setLoaded({ assetId: asset.id, mode: result === fullSource ? "full" : "preview" });
     }
     if (source) setDisplayedImage({ assetId: asset.id, source });

@@ -109,6 +109,22 @@ export function renderPlan(
   }));
 }
 
+/**
+ * Returns a cheaper loupe safety net when its normal preview uses a distinct
+ * artifact. Filmstrips already request this step, so the loupe can reuse it
+ * while a larger RAW/TIFF preview is unavailable or fails to decode.
+ */
+export function loupeThumbnailFallback(
+  kind: AssetKind,
+  platform = runtimeRenderPlatform(),
+): RenderStep | undefined {
+  const thumbnail = renderPlan(kind, "thumbnail", platform)[0];
+  const preview = renderPlan(kind, "loupe", platform)[0];
+  return renderMethodKey(thumbnail.method) === renderMethodKey(preview.method)
+    ? undefined
+    : thumbnail;
+}
+
 /** Stable artifact identity for query reuse; scheduling priority is not data identity. */
 export function renderMethodKey(method: RenderMethod): string {
   return method.type === "generatedImage"

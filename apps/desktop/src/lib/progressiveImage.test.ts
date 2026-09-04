@@ -13,4 +13,8 @@ describe("progressive image selection", () => {
   it("falls back to the remaining preview when the full stage is unavailable", () => {
     expect(nextProgressiveStage(true, ["thumbnail", "preview", undefined])).toBe("preview");
   });
+
+  it("uses an available filmstrip thumbnail while the loupe preview is unavailable", () => {
+    expect(nextProgressiveStage(false, ["thumbnail", undefined, undefined])).toBe("thumbnail");
+  });
 });

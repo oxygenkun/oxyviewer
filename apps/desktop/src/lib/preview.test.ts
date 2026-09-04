@@ -1,5 +1,10 @@
 import { describe, expect, it } from "vitest";
-import { renderMethodKey, renderPlan, runtimeRenderPlatform } from "./preview";
+import {
+  loupeThumbnailFallback,
+  renderMethodKey,
+  renderPlan,
+  runtimeRenderPlatform,
+} from "./preview";
 
 describe("semantic render graph", () => {
   it("keeps interaction levels independent from format and pixel size", () => {
@@ -35,6 +40,16 @@ describe("semantic render graph", () => {
       { type: "generatedImage", requestLevel: "preview" },
       { type: "generatedImage", requestLevel: "full" },
     ]);
+  });
+
+  it("reuses the filmstrip artifact as a distinct RAW/TIFF loupe fallback", () => {
+    expect(loupeThumbnailFallback("raw", "windows")).toEqual({
+      level: "thumbnail",
+      method: { type: "generatedImage", requestLevel: "thumbnail" },
+    });
+    expect(loupeThumbnailFallback("tiff", "windows")?.level).toBe("thumbnail");
+    expect(loupeThumbnailFallback("heif", "windows")).toBeUndefined();
+    expect(loupeThumbnailFallback("jpeg", "windows")).toBeUndefined();
   });
 
   it("uses the original image for browser-native raster formats", () => {
