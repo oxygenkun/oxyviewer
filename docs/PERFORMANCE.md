@@ -16,6 +16,17 @@ end-to-end regression harness that enforces these budgets is described in
 
 ## Verification Log
 
+- 2026-09-05: Filmstrip summary pagination now measures the rendered unloaded
+  boundary instead of multiplying an estimated item width. This avoids cumulative
+  drift from scrollbar space and fractional CSS sizing, and rechecks on viewport
+  resize and page completion. The browser regression in
+  `scripts/filmstrip-pagination.browser.js` mounts the real Loupe with 1,473
+  synthetic summaries and delayed pages. All 12 orientation/height/scrollbar-space
+  cases pass boundary and end jumps; six simulated classic-scrollbar cases
+  reproduce the former missed fetch at item 750. Opening does not eagerly fetch
+  additional pages. This verifies pagination behavior in Chromium, not native
+  media latency or the release-build timing budgets above.
+
 - 2026-09-04: Fast scrolling now keeps the cheap viewport schedule current
   while filesystem reads and WebView image decode remain paused. Cancelling an
   off-screen React Query also releases its Rust request consumer and removes

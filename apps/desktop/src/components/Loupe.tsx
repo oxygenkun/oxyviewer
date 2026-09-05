@@ -18,8 +18,6 @@ import {
 import {
   clampPan,
   clampZoom,
-  FILMSTRIP_GAP,
-  filmstripItemWidth,
   filmstripUnloadedWidth,
   fitSize,
   getNavigatorViewport,
@@ -114,6 +112,7 @@ export function Loupe({
   const settingsRef = useRef<HTMLDivElement>(null);
   const settingsButtonRef = useRef<HTMLButtonElement>(null);
   const filmstripRef = useRef<HTMLDivElement>(null);
+  const unloadedFilmstripRef = useRef<HTMLSpanElement>(null);
   const loupeRef = useRef<HTMLDivElement>(null);
   const dragRef = useRef<{ pointerId: number; start: Point; offset: Point } | undefined>(undefined);
   const navigatorDragRef = useRef<{ pointerId: number; last: Point } | undefined>(undefined);
@@ -403,17 +402,25 @@ export function Loupe({
 
   const fetchFilmstripPageIfNeeded = useCallback((strip: HTMLDivElement) => {
     if (!hasNextPage || isFetchingNextPage) return;
-    const loadedRight = 9 + assets.length
-      * (filmstripItemWidth(filmstripHeight, thumbnailOrientation) + FILMSTRIP_GAP);
-    if (shouldFetchFilmstripPage(strip.scrollLeft, strip.clientWidth, loadedRight)) {
+    const unloaded = unloadedFilmstripRef.current;
+    if (!unloaded) return;
+    // Use the rendered page boundary: scrollbar height and fractional CSS
+    // sizing make per-item width estimates drift over hundreds of photos.
+    const loadedRight = unloaded.getBoundingClientRect().left
+      - strip.getBoundingClientRect().left - strip.clientLeft;
+    if (shouldFetchFilmstripPage(0, strip.clientWidth, loadedRight)) {
       fetchNextPage();
     }
-  }, [assets.length, fetchNextPage, filmstripHeight, hasNextPage, isFetchingNextPage, thumbnailOrientation]);
+  }, [fetchNextPage, hasNextPage, isFetchingNextPage]);
 
   useEffect(() => {
     const strip = filmstripRef.current;
-    if (strip) fetchFilmstripPageIfNeeded(strip);
-  }, [fetchFilmstripPageIfNeeded]);
+    if (!strip) return;
+    fetchFilmstripPageIfNeeded(strip);
+    const observer = new ResizeObserver(() => fetchFilmstripPageIfNeeded(strip));
+    observer.observe(strip);
+    return () => observer.disconnect();
+  }, [assets.length, fetchFilmstripPageIfNeeded, filmstripHeight, thumbnailOrientation]);
 
   const handleWheel = useCallback((event: React.WheelEvent<HTMLDivElement>) => {
     if ((event.target as HTMLElement).closest(".loupe__controls, .loupe__navigator, .loupe__settings")) return;
@@ -773,6 +780,7 @@ export function Loupe({
           <span
             aria-hidden="true"
             className="filmstrip__unloaded"
+            ref={unloadedFilmstripRef}
             style={{ flexBasis: unloadedFilmstripWidth }}
           />
         ) : null}
