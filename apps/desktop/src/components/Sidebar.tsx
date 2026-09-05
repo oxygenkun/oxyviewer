@@ -22,6 +22,7 @@ import { getDirectoryTree, searchDirectories, setDirectoryExpanded } from "../li
 import {
   acceptDirectoryTreeSnapshot,
   directoryTreePlaceholder,
+  directoryRevealStep,
 } from "../lib/directoryTreeProjection";
 import { buildDirectorySearchTree, type DirectorySearchTreeNode } from "../lib/directorySearchTree";
 import {
@@ -287,6 +288,7 @@ export function Sidebar({
   const [search, setSearch] = useState("");
   const [debouncedSearch, setDebouncedSearch] = useState("");
   const searchInputRef = useRef<HTMLInputElement>(null);
+  const folderTreeRef = useRef<HTMLDivElement>(null);
   const sortMenuRef = useRef<HTMLDivElement>(null);
   const sortMenuButtonRef = useRef<HTMLButtonElement>(null);
   const sortPopoverRef = useRef<HTMLDivElement>(null);
@@ -366,6 +368,51 @@ export function Sidebar({
     ? sessions.findIndex((session) => session.id === activeSession.id)
     : -1;
   const activeTreeQuery = directoryTreeQueries[activeTreeQueryIndex];
+  const wasSearchActiveRef = useRef(false);
+  const revealSelectionRef = useRef<{
+    sessionId: string;
+    path: string;
+    requested: Set<string>;
+  } | undefined>(undefined);
+  useEffect(() => {
+    if (wasSearchActiveRef.current && !searchActive && activeSession && currentPath) {
+      revealSelectionRef.current = {
+        sessionId: activeSession.id,
+        path: currentPath,
+        requested: new Set(),
+      };
+    }
+    wasSearchActiveRef.current = searchActive;
+    const reveal = revealSelectionRef.current;
+    if (!reveal) return;
+    if (searchActive || reveal.sessionId !== activeSession?.id || reveal.path !== currentPath) {
+      revealSelectionRef.current = undefined;
+      return;
+    }
+    if (!activeTreeQuery?.isFetched || !activeTreeQuery.data) return;
+    const step = directoryRevealStep(activeTreeQuery.data.root, reveal.path);
+    if (step === "done") {
+      revealSelectionRef.current = undefined;
+      const container = folderTreeRef.current;
+      const selectedRow = container?.querySelector<HTMLElement>(".folder-root .tree-row--active");
+      if (container && selectedRow) {
+        const viewport = container.getBoundingClientRect();
+        const row = selectedRow.getBoundingClientRect();
+        const top = viewport.top + container.clientTop;
+        const bottom = top + container.clientHeight;
+        if (row.top < top) {
+          container.scrollTop += row.top - top;
+        } else if (row.bottom > bottom) {
+          container.scrollTop += row.bottom - bottom;
+        }
+      }
+    } else if (step !== "waiting" && !reveal.requested.has(step.expand)) {
+      reveal.requested.add(step.expand);
+      changeDirectoryExpansion(activeSession, step.expand, true);
+    }
+  }, [searchActive, activeSession, currentPath, activeTreeQuery?.isFetched,
+    activeTreeQuery?.data, changeDirectoryExpansion]);
+
   useEffect(() => {
     if (!activeSession || !activeTreeQuery?.isFetched) return;
     if (initializedTreeSessionsRef.current.has(activeSession.id)) return;
@@ -541,7 +588,7 @@ export function Sidebar({
         <div><strong>OxyViewer</strong><small>PHOTO DESK</small></div>
       </div>
 
-      <div className={`sidebar__section sidebar__section--folders ${showOnboarding ? "is-guided" : ""}`}>
+      <div ref={folderTreeRef} className={`sidebar__section sidebar__section--folders ${showOnboarding ? "is-guided" : ""}`}>
         <div className="sidebar__heading">
           <span>{t("folders")}</span>
           <div className="sidebar__heading-actions">
