@@ -53,6 +53,7 @@ import { ResizeHandle } from "./ResizeHandle";
 
 interface LoupeProps {
   assets: AssetSummary[];
+  restoringActiveId?: string;
   total: number;
   fetchNextPage: () => void;
   hasNextPage: boolean;
@@ -82,6 +83,7 @@ function elementContentSize(element: HTMLElement): Size {
 
 export function Loupe({
   assets,
+  restoringActiveId,
   total,
   fetchNextPage,
   hasNextPage,
@@ -176,8 +178,8 @@ export function Loupe({
   const showFocusAreas = focusAreasVisible !== focusTemporarilyInverted;
 
   useEffect(() => {
-    if (activeId !== active.id) select(active.id);
-  }, [active.id, activeId, select]);
+    if (activeId !== active.id && restoringActiveId !== activeId) select(active.id);
+  }, [active.id, activeId, restoringActiveId, select]);
 
   const getSizes = useCallback(() => ({
     stage: elementSize(stageRef.current),
@@ -781,13 +783,14 @@ export function Loupe({
           event.currentTarget.scrollLeft += event.deltaX + event.deltaY;
         }}
       >
-        {assets.map((asset) => (
+        {assets.map((asset, position) => (
           <FilmstripItem
             key={asset.id}
             active={active.id === asset.id}
             asset={asset}
             onClick={() => select(asset.id)}
             onContextMenu={(event) => onAssetContextMenu(event, asset)}
+            position={position}
             queueOrder={viewportRankById.get(asset.id)
               ?? visibleFilmstripIds.length + (priorityRankById.get(asset.id) ?? assets.length)}
             root={filmstripRef}
@@ -814,6 +817,7 @@ interface FilmstripItemProps {
   asset: AssetSummary;
   onClick: () => void;
   onContextMenu: (event: React.MouseEvent) => void;
+  position: number;
   queueOrder: number;
   root: React.RefObject<HTMLDivElement | null>;
   showMetadata: boolean;
@@ -825,6 +829,7 @@ function FilmstripItem({
   asset,
   onClick,
   onContextMenu,
+  position,
   queueOrder,
   root,
   showMetadata,
@@ -849,12 +854,12 @@ function FilmstripItem({
     };
   }, [root]);
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     if (active) {
       setNearby(true);
       itemRef.current?.scrollIntoView({ block: "nearest", inline: "nearest" });
     }
-  }, [active]);
+  }, [active, position]);
 
   return (
     <button

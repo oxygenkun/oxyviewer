@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   activeAssetIndex,
+  focusRestoreAction,
   gridRowCount,
   gridRowForAsset,
   replacementAssetIdAfterRemoval,
@@ -14,6 +15,14 @@ describe("asset view position", () => {
     expect(activeAssetIndex(assets, "d")).toBe(3);
     expect(activeAssetIndex(assets, "missing")).toBeUndefined();
     expect(activeAssetIndex(assets, undefined)).toBeUndefined();
+  });
+
+  it("keeps paging while restoring a filtered filmstrip focus", () => {
+    expect(focusRestoreAction(assets, "e", true, false)).toBe("none");
+    expect(focusRestoreAction(assets.slice(0, 2), "e", true, false)).toBe("fetch");
+    expect(focusRestoreAction(assets.slice(0, 2), "e", true, true)).toBe("wait");
+    expect(focusRestoreAction(assets.slice(0, 2), "e", false, false)).toBe("fallback");
+    expect(focusRestoreAction(assets, undefined, true, false)).toBe("none");
   });
 
   it("selects the asset that moves into the removed asset's position", () => {

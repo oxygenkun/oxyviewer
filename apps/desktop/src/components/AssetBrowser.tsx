@@ -24,6 +24,7 @@ import { Thumbnail } from "./Thumbnail";
 
 interface AssetBrowserProps {
   assets: AssetSummary[];
+  restoringActiveId?: string;
   total: number;
   hasNextPage: boolean;
   isFetchingNextPage: boolean;
@@ -143,6 +144,7 @@ export function AssetBrowser(props: AssetBrowserProps) {
     content = (
       <Loupe
         assets={props.assets}
+        restoringActiveId={props.restoringActiveId}
         total={props.total}
         fetchNextPage={props.fetchNextPage}
         hasNextPage={props.hasNextPage}

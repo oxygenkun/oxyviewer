@@ -9,6 +9,19 @@ export function activeAssetIndex(
   return index >= 0 ? index : undefined;
 }
 
+export type FocusRestoreAction = "none" | "fetch" | "wait" | "fallback";
+
+export function focusRestoreAction(
+  assets: readonly Pick<AssetSummary, "id">[],
+  restoreId: string | undefined,
+  hasNextPage: boolean,
+  isFetchingNextPage: boolean,
+): FocusRestoreAction {
+  if (!restoreId || assets.some((asset) => asset.id === restoreId)) return "none";
+  if (isFetchingNextPage) return "wait";
+  return hasNextPage ? "fetch" : "fallback";
+}
+
 export function replacementAssetIdAfterRemoval(
   assets: readonly Pick<AssetSummary, "id">[],
   removedId: string,

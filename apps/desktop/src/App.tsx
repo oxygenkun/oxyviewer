@@ -35,7 +35,7 @@ import { filterAndSortAssets } from "./lib/assetFiltering";
 import { recordBrowseTiming } from "./lib/browseDiagnostics";
 import { firstBrowseCursor, nextBrowseCursor } from "./lib/browsePagination";
 import { insertRestoredFolder, restoreFoldersProgressively, type FolderRestoreState } from "./lib/folderRestoration";
-import { replacementAssetIdAfterRemoval } from "./lib/assetViewPosition";
+import { focusRestoreAction, replacementAssetIdAfterRemoval } from "./lib/assetViewPosition";
 import { setBrowserImageResourceScope } from "./lib/browserImageCache";
 import { acceptDirectoryTreeSnapshot } from "./lib/directoryTreeProjection";
 import { acceptImageProjection, invalidateImageDirectory } from "./lib/imageProjection";
@@ -79,6 +79,7 @@ export function App({ perfScenario }: { perfScenario?: PerfScenario }) {
   } = useWorkspaceStore();
   const appShellRef = useRef<HTMLDivElement>(null);
   const activeDirectoryNoticeRef = useRef<string | undefined>(undefined);
+  const filteredFocusRef = useRef<string | undefined>(undefined);
   const t = useCallback((key: Parameters<typeof translate>[1]) => translate(locale, key), [locale]);
 
   useLayoutEffect(() => {
@@ -259,6 +260,9 @@ export function App({ perfScenario }: { perfScenario?: PerfScenario }) {
     direction,
     pageSize: 250,
   }), [colorLabels, direction, kind, minimumRating, search, sort]);
+  const metadataFiltersActive = Boolean(minimumRating || colorLabels.length);
+  if (metadataFiltersActive && activeId) filteredFocusRef.current = activeId;
+  const filteredFocusRestoreId = metadataFiltersActive ? undefined : filteredFocusRef.current;
   const progressivelyFilterMetadata = Boolean(!search && (minimumRating || colorLabels.length));
   const shouldPreloadFilteredAssets = Boolean(!search && (kind || minimumRating || colorLabels.length));
   const preloadQuery = useMemo<AssetQuery>(() => ({
@@ -370,6 +374,25 @@ export function App({ perfScenario }: { perfScenario?: PerfScenario }) {
   const assetsError = progressivelyFilterMetadata
     ? progressiveMetadataQuery.error
     : assetsQuery.error;
+  const filteredFocusAction = focusRestoreAction(
+    assets,
+    filteredFocusRestoreId,
+    Boolean(assetsQuery.hasNextPage),
+    assetsQuery.isFetchingNextPage,
+  );
+  useEffect(() => {
+    if (!filteredFocusRestoreId) return;
+    if (activeId !== filteredFocusRestoreId || filteredFocusAction === "none") {
+      filteredFocusRef.current = undefined;
+      return;
+    }
+    if (filteredFocusAction === "fetch") {
+      void assetsQuery.fetchNextPage();
+    } else if (filteredFocusAction === "fallback" && assets[0]) {
+      filteredFocusRef.current = undefined;
+      select(assets[0].id);
+    }
+  }, [activeId, assets, assetsQuery.fetchNextPage, filteredFocusAction, filteredFocusRestoreId, select]);
   const currentBrowseProgress = browseProgress?.sessionId === activeSession?.id && browseProgress?.directory === currentPath
     ? browseProgress : assetsQuery.data?.pages[0]?.progress;
   useEffect(() => {
@@ -678,6 +701,7 @@ export function App({ perfScenario }: { perfScenario?: PerfScenario }) {
         ) : (
           <AssetBrowser
             assets={assets}
+            restoringActiveId={filteredFocusAction === "none" ? undefined : filteredFocusRestoreId}
             total={total}
             view={view}
             hasNextPage={progressivelyFilterMetadata ? false : assetsQuery.hasNextPage}
