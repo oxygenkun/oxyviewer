@@ -4,10 +4,12 @@ import {
   ChevronDown,
   ChevronRight,
   Copy,
+  Crosshair,
   Ellipsis,
   Folder,
   FolderOpen,
   GripVertical,
+  ListCollapse,
   LoaderCircle,
   Plus,
   RefreshCw,
@@ -18,7 +20,7 @@ import {
 } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
-import { getDirectoryTree, searchDirectories, setDirectoryExpanded } from "../lib/api";
+import { collapseDirectoryTree, getDirectoryTree, searchDirectories, setDirectoryExpanded } from "../lib/api";
 import {
   acceptDirectoryTreeSnapshot,
   directoryTreePlaceholder,
@@ -32,7 +34,7 @@ import {
 } from "../lib/folderOrdering";
 import type { MessageKey } from "../lib/i18n";
 import type { FolderRestoreState } from "../lib/folderRestoration";
-import { platformFileManager } from "../lib/folderPaths";
+import { isSameOrDescendantPath, platformFileManager } from "../lib/folderPaths";
 import type { DirectorySummary, DirectoryTreeNode, DirectoryTreeSnapshot, FolderSession } from "../types";
 import { ConfirmTrashDialog } from "./ConfirmTrashDialog";
 
@@ -103,12 +105,13 @@ function DirectoryNode({
 }: DirectoryNodeProps) {
   const { entry, expanded, children } = node;
   const isActive = currentPath === entry.path;
+  const isAncestor = !isActive && !!currentPath && isSameOrDescendantPath(entry.path, currentPath);
   const loading = expanded && children === null;
 
   return (
     <div className="directory-node">
       <div
-        className={`tree-row tree-row--directory ${isActive ? "tree-row--active" : ""}`}
+        className={`tree-row tree-row--directory ${isActive ? "tree-row--active" : ""} ${isAncestor ? "tree-row--ancestor" : ""}`}
         style={{ "--tree-indent": `${depth * 13}px` } as React.CSSProperties}
         onContextMenu={(event) => onContextMenu(event, session, entry)}
       >
@@ -377,6 +380,7 @@ export function Sidebar({
     path: string;
     requested: Set<string>;
   } | undefined>(undefined);
+  const [revealNonce, setRevealNonce] = useState(0);
   useEffect(() => {
     if (wasSearchActiveRef.current && !searchActive && activeSession && currentPath) {
       revealSelectionRef.current = {
@@ -414,7 +418,7 @@ export function Sidebar({
       changeDirectoryExpansion(activeSession, step.expand, true);
     }
   }, [searchActive, activeSession, currentPath, activeTreeQuery?.isFetched,
-    activeTreeQuery?.data, changeDirectoryExpansion]);
+    activeTreeQuery?.data, changeDirectoryExpansion, revealNonce]);
 
   useEffect(() => {
     if (!activeSession || !activeTreeQuery?.isFetched) return;
@@ -505,6 +509,25 @@ export function Sidebar({
     setSearchOpen(false);
     setSearch("");
     setDebouncedSearch("");
+  };
+  const revealCurrentFolder = () => {
+    if (!activeSession || !currentPath) return;
+    if (searchOpen) closeSearch();
+    revealSelectionRef.current = {
+      sessionId: activeSession.id,
+      path: currentPath,
+      requested: new Set(),
+    };
+    setRevealNonce((nonce) => nonce + 1);
+  };
+  const collapseAllFolders = () => {
+    revealSelectionRef.current = undefined;
+    for (const session of sessions) {
+      void queryClient.cancelQueries({ queryKey: ["directory-tree", session.id] })
+        .then(() => collapseDirectoryTree(session.id))
+        .then(syncDirectoryTree)
+        .catch(() => queryClient.invalidateQueries({ queryKey: ["directory-tree", session.id] }));
+    }
   };
   const waitingForDebounce = searchActive && search.trim() !== normalizedSearch;
   const searchLoading = waitingForDebounce || searchQueries.some((query) => query.isLoading);
@@ -603,6 +626,22 @@ export function Sidebar({
               onClick={() => searchOpen ? closeSearch() : setSearchOpen(true)}
             >
               <Search size={13} />
+            </button>
+            <button
+              title={t("revealCurrentFolder")}
+              aria-label={t("revealCurrentFolder")}
+              disabled={!activeSession || !currentPath}
+              onClick={revealCurrentFolder}
+            >
+              <Crosshair size={13} />
+            </button>
+            <button
+              title={t("collapseAllFolders")}
+              aria-label={t("collapseAllFolders")}
+              disabled={sessions.length === 0}
+              onClick={collapseAllFolders}
+            >
+              <ListCollapse size={13} />
             </button>
             <button
               title={t("refreshFolder")}

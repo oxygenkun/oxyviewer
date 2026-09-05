@@ -77,16 +77,22 @@
   letter-spacing: 1.45px;
   text-transform: uppercase;
 }
+.sidebar__heading > span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
 .sidebar__heading button,
 .tree-row {
   background: transparent;
 }
-.sidebar__heading-actions { display: flex; align-items: center; gap: 2px; }
+.sidebar__heading-actions { display: flex; flex: none; align-items: center; gap: 1px; }
 .folder-sort-control { position: relative; display: flex; }
 .sidebar__heading-actions > button,
 .folder-sort-control > button {
   display: grid;
-  width: 22px;
+  width: 20px;
   height: 22px;
   padding: 0;
   border-radius: 4px;
@@ -370,6 +376,16 @@
   content: "";
 }
 .tree-row--active i { width: 5px; height: 5px; margin-left: auto; border-radius: 50%; background: var(--accent); }
+.tree-row--ancestor { position: relative; }
+.tree-row--ancestor::before {
+  position: absolute;
+  left: 0;
+  width: 2px;
+  height: 13px;
+  border-radius: 2px;
+  background: #4a5158;
+  content: "";
+}
 .tree-row--search:not(.tree-row--match) { color: #838a90; }
 .tree-row--match .tree-row__main { color: #e4e5df; font-weight: 600; }
 .tree-row--match mark {

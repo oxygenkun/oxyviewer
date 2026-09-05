@@ -138,6 +138,7 @@ pub fn run() {
             list_assets,
             get_directory_tree,
             set_directory_expanded,
+            collapse_directory_tree,
             set_active_directory,
             search_directories,
             refresh_directory,

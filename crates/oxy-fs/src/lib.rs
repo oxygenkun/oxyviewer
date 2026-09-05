@@ -200,6 +200,20 @@ impl FsCatalog {
         Ok((state.snapshot.clone(), should_load))
     }
 
+    /// Collapses every expanded level without performing filesystem IO.
+    /// Loaded children stay cached so re-expansion remains cheap.
+    pub fn collapse_directory_tree(
+        &self,
+        session_id: &str,
+    ) -> Result<DirectoryTreeSnapshot, FsError> {
+        let tree = self.directory_tree_state(session_id)?;
+        let mut state = tree.lock();
+        collapse_tree_nodes(&mut state.snapshot.root);
+        state.loading_directories.clear();
+        state.snapshot.revision = self.next_tree_revision();
+        Ok(state.snapshot.clone())
+    }
+
     /// Completes one previously admitted expansion. A collapse or refresh can
     /// revoke the admission while IO is in flight, preventing stale results
     /// from replacing newer tree state.
@@ -384,6 +398,15 @@ fn find_tree_node<'a>(node: &'a DirectoryTreeNode, path: &Path) -> Option<&'a Di
         .as_ref()?
         .iter()
         .find_map(|child| find_tree_node(child, path))
+}
+
+fn collapse_tree_nodes(node: &mut DirectoryTreeNode) {
+    node.expanded = false;
+    if let Some(children) = node.children.as_mut() {
+        for child in children {
+            collapse_tree_nodes(child);
+        }
+    }
 }
 
 fn replace_tree_children(node: &mut DirectoryTreeNode, directories: &[DirectorySummary]) {
@@ -1276,6 +1299,31 @@ mod tests {
         let child = &tree.root.children.as_ref().unwrap()[0];
         assert!(!child.expanded);
         assert!(child.children.is_none());
+    }
+
+    #[test]
+    fn collapsing_the_whole_tree_keeps_loaded_children_but_marks_every_level_closed() {
+        let root = tempdir().unwrap();
+        let child = root.path().join("child");
+        fs::create_dir(&child).unwrap();
+        let catalog = FsCatalog::default();
+        let session = catalog.open_folder(root.path()).unwrap();
+        let child = session.root_path.join("child");
+        catalog
+            .set_directory_expanded(&session.id, &session.root_path, true)
+            .unwrap();
+        catalog
+            .load_directory_children(&session.id, &session.root_path)
+            .unwrap();
+        catalog
+            .set_directory_expanded(&session.id, &child, true)
+            .unwrap();
+
+        let tree = catalog.collapse_directory_tree(&session.id).unwrap();
+
+        assert!(!tree.root.expanded);
+        let child_node = &tree.root.children.as_ref().unwrap()[0];
+        assert!(!child_node.expanded);
     }
 
     #[test]

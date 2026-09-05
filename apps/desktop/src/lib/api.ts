@@ -281,6 +281,21 @@ export async function setDirectoryExpanded(
   });
 }
 
+export async function collapseDirectoryTree(sessionId: string): Promise<DirectoryTreeSnapshot> {
+  if (!isTauri()) {
+    const snapshot = demoDirectoryTrees.get(sessionId);
+    if (!snapshot) throw new Error(`Unknown folder session: ${sessionId}`);
+    const collapseNode = (node: DirectoryTreeNode) => {
+      node.expanded = false;
+      node.children?.forEach(collapseNode);
+    };
+    collapseNode(snapshot.root);
+    snapshot.revision = ++demoTreeRevision;
+    return cloneDemoTree(snapshot);
+  }
+  return invoke<DirectoryTreeSnapshot>("collapse_directory_tree", { sessionId });
+}
+
 export async function setActiveDirectory(sessionId: string, directory: string): Promise<void> {
   if (!isTauri()) {
     if (!demoDirectoryTrees.has(sessionId)) {

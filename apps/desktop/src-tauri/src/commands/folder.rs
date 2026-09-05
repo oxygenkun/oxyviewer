@@ -228,6 +228,20 @@ pub(crate) fn set_directory_expanded(
 }
 
 #[tauri::command]
+pub(crate) fn collapse_directory_tree(
+    session_id: String,
+    app: tauri::AppHandle,
+    state: State<'_, AppState>,
+) -> Result<DirectoryTreeSnapshot, String> {
+    let snapshot = state
+        .files
+        .collapse_directory_tree(&session_id)
+        .map_err(|error| error.to_string())?;
+    let _ = app.emit(DIRECTORY_TREE_UPDATED_EVENT, snapshot.clone());
+    Ok(snapshot)
+}
+
+#[tauri::command]
 pub(crate) async fn set_active_directory(
     session_id: String,
     directory: PathBuf,
