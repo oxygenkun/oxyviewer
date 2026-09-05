@@ -444,6 +444,67 @@ pub fn scan_index_directory(root: &Path) -> Result<DirectoryScan, FsError> {
     })
 }
 
+/// Discovers only the immediate child directories needed by the first phase of
+/// library indexing. Asset metadata is intentionally left untouched until the
+/// directory tree has been recorded.
+pub fn scan_index_directories(root: &Path) -> Result<Vec<DirectorySummary>, FsError> {
+    if !root.is_dir() {
+        return Err(FsError::InvalidFolder(root.to_owned()));
+    }
+    let mut directories = Vec::new();
+    for entry in fs::read_dir(root)? {
+        let Ok(entry) = entry else { continue };
+        let path = entry.path();
+        let is_directory = entry.file_type().map_or_else(
+            |_| path.is_dir(),
+            |file_type| file_type.is_dir() || file_type.is_symlink() && path.is_dir(),
+        );
+        if !is_directory {
+            continue;
+        }
+        let Some(name) = path
+            .file_name()
+            .and_then(|value| value.to_str())
+            .map(str::to_owned)
+        else {
+            continue;
+        };
+        directories.push(DirectorySummary {
+            path,
+            name,
+            has_children: true,
+        });
+    }
+    Ok(directories)
+}
+
+/// Discovers only the immediate assets for the second phase of library
+/// indexing, after the complete directory tree has been recorded.
+pub fn scan_index_assets(root: &Path) -> Result<Vec<AssetSummary>, FsError> {
+    if !root.is_dir() {
+        return Err(FsError::InvalidFolder(root.to_owned()));
+    }
+    let paths = fs::read_dir(root)?
+        .filter_map(Result::ok)
+        .map(|entry| entry.path())
+        .collect::<Vec<_>>();
+    let sidecars = paths
+        .iter()
+        .filter(|path| {
+            path.extension().is_some_and(|extension| extension == "xmp") && path.is_file()
+        })
+        .cloned()
+        .collect::<HashSet<_>>();
+    let mut assets = Vec::new();
+    for path in paths {
+        let has_sidecar = sidecars.contains(&sidecar_path(&path));
+        if let Some(summary) = summary_for_path_with_sidecar(&path, Some(has_sidecar))? {
+            assets.push(summary);
+        }
+    }
+    Ok(assets)
+}
+
 pub fn list_directories(root: &Path) -> Result<Vec<DirectorySummary>, FsError> {
     if !root.is_dir() {
         return Err(FsError::InvalidFolder(root.to_owned()));
@@ -622,16 +683,25 @@ pub fn sidecar_path(path: &Path) -> PathBuf {
 }
 
 fn summary_for_path(path: &Path) -> Result<Option<AssetSummary>, FsError> {
-    if !path.is_file() {
-        return Ok(None);
-    }
+    summary_for_path_with_sidecar(path, None)
+}
+
+fn summary_for_path_with_sidecar(
+    path: &Path,
+    known_sidecar: Option<bool>,
+) -> Result<Option<AssetSummary>, FsError> {
     let Some(extension) = path.extension().and_then(|value| value.to_str()) else {
         return Ok(None);
     };
     let Some(kind) = kind_for_extension(extension) else {
         return Ok(None);
     };
-    let metadata = fs::metadata(path)?;
+    let Ok(metadata) = fs::metadata(path) else {
+        return Ok(None);
+    };
+    if !metadata.is_file() {
+        return Ok(None);
+    }
     let name = path
         .file_name()
         .and_then(|value| value.to_str())
@@ -646,7 +716,7 @@ fn summary_for_path(path: &Path) -> Result<Option<AssetSummary>, FsError> {
         kind,
         size_bytes: metadata.len(),
         modified_at_ms: metadata.modified().map(epoch_ms).unwrap_or_default(),
-        has_sidecar: sidecar_path(path).is_file(),
+        has_sidecar: known_sidecar.unwrap_or_else(|| sidecar_path(path).is_file()),
         rating: None,
         color_label: None,
         pick_label: None,
@@ -842,6 +912,32 @@ mod tests {
         assert_eq!(scan.assets[0].name, "root.jpg");
         assert_eq!(scan.directories.len(), 1);
         assert_eq!(scan.directories[0].name, "child");
+    }
+
+    #[test]
+    fn index_asset_scan_pairs_sidecars_from_one_directory_enumeration() {
+        let directory = tempdir().unwrap();
+        File::create(directory.path().join("paired.CR3")).unwrap();
+        File::create(directory.path().join("paired.xmp")).unwrap();
+        File::create(directory.path().join("plain.jpg")).unwrap();
+
+        let assets = scan_index_assets(directory.path()).unwrap();
+
+        assert_eq!(assets.len(), 2);
+        assert!(
+            assets
+                .iter()
+                .find(|asset| asset.name == "paired.CR3")
+                .unwrap()
+                .has_sidecar
+        );
+        assert!(
+            !assets
+                .iter()
+                .find(|asset| asset.name == "plain.jpg")
+                .unwrap()
+                .has_sidecar
+        );
     }
 
     #[test]

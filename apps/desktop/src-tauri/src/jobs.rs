@@ -3,7 +3,7 @@ pub(crate) mod metadata;
 pub(crate) mod preview;
 
 use oxy_domain::{DebugQueueItem, DebugQueueState, LibraryIndexUpdate};
-use oxy_library::{IndexProgress, Library};
+use oxy_library::{IndexProgress, IndexStage, Library};
 use std::{
     path::{Path, PathBuf},
     sync::{Arc, Mutex},
@@ -11,6 +11,7 @@ use std::{
 use tauri::Emitter;
 
 const LIBRARY_INDEX_UPDATED_EVENT: &str = "library-index-updated";
+const LIBRARY_DIRECTORY_INDEX_UPDATED_EVENT: &str = "library-directory-index-updated";
 
 #[derive(Clone)]
 pub(crate) struct LibraryIndexQueue {
@@ -34,6 +35,9 @@ impl LibraryIndexQueue {
 
     pub(crate) fn schedule(&self, app: tauri::AppHandle, root: PathBuf) {
         let root = root.canonicalize().unwrap_or(root);
+        if !self.library.root_needs_index(&root).unwrap_or(false) {
+            return;
+        }
         {
             let mut work = self.work.lock().expect("library index queue poisoned");
             if work.pending.contains(&root)
@@ -49,7 +53,20 @@ impl LibraryIndexQueue {
 
         let queue = self.clone();
         tauri::async_runtime::spawn_blocking(move || {
+            let directory_event_app = app.clone();
+            let mut directory_event_sent = false;
             let result = queue.library.index_root_with_progress(&root, |progress| {
+                if progress.stage == IndexStage::Assets && !directory_event_sent {
+                    directory_event_sent = true;
+                    let _ = directory_event_app.emit(
+                        LIBRARY_DIRECTORY_INDEX_UPDATED_EVENT,
+                        LibraryIndexUpdate {
+                            root_path: progress.root_path.clone(),
+                            asset_count: progress.asset_count,
+                            directory_count: progress.directory_count,
+                        },
+                    );
+                }
                 queue.update_progress(progress);
             });
             queue.finish(&root);
@@ -122,11 +139,13 @@ fn library_index_debug_item(root: &Path, progress: Option<&IndexProgress>) -> De
             |progress| progress.current_directory.clone(),
         )),
         root_path: Some(root.to_owned()),
-        stage: if progress.is_some() {
-            "scanning".into()
-        } else {
-            "waiting".into()
-        },
+        stage: progress.map_or_else(
+            || "waiting".into(),
+            |progress| match progress.stage {
+                IndexStage::Directories => "discoveringDirectories".into(),
+                IndexStage::Assets => "indexingAssets".into(),
+            },
+        ),
         priority: "background".into(),
         rank: None,
         consumers: 1,
@@ -162,6 +181,7 @@ mod tests {
             pending_directory_count: 12,
             asset_count: 345,
             directory_count: 67,
+            stage: IndexStage::Directories,
         });
 
         let active = queue.debug_snapshot();
@@ -171,5 +191,6 @@ mod tests {
         assert_eq!(active.active[0].pending_count, Some(12));
         assert_eq!(active.active[0].asset_count, Some(345));
         assert_eq!(active.active[0].directory_count, Some(67));
+        assert_eq!(active.active[0].stage, "discoveringDirectories");
     }
 }

@@ -16,6 +16,7 @@ mod tags;
 
 const DEFAULT_PAGE_SIZE: usize = 250;
 const MAX_PAGE_SIZE: usize = 1_000;
+const INDEX_WRITE_BATCH_SIZE: usize = 256;
 
 #[derive(Debug, Error)]
 pub enum LibraryError {
@@ -164,6 +165,13 @@ pub struct IndexProgress {
     pub pending_directory_count: usize,
     pub asset_count: usize,
     pub directory_count: usize,
+    pub stage: IndexStage,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum IndexStage {
+    Directories,
+    Assets,
 }
 
 impl Library {
@@ -187,6 +195,13 @@ impl Library {
               asset_count INTEGER NOT NULL,
               directory_count INTEGER NOT NULL
             );
+            CREATE TABLE IF NOT EXISTS indexed_directory_roots (
+              root_path TEXT PRIMARY KEY NOT NULL,
+              indexed_at INTEGER NOT NULL DEFAULT (unixepoch()),
+              directory_count INTEGER NOT NULL
+            );
+            INSERT OR IGNORE INTO indexed_directory_roots(root_path, indexed_at, directory_count)
+              SELECT root_path, indexed_at, directory_count FROM indexed_roots;
             CREATE TABLE IF NOT EXISTS library_index_sequence (
               id INTEGER PRIMARY KEY CHECK(id = 1),
               next_scan_id INTEGER NOT NULL
@@ -330,6 +345,11 @@ impl Library {
               asset_count INTEGER NOT NULL,
               directory_count INTEGER NOT NULL
             );
+            CREATE TABLE indexed_directory_roots (
+              root_path TEXT PRIMARY KEY NOT NULL,
+              indexed_at INTEGER NOT NULL DEFAULT (unixepoch()),
+              directory_count INTEGER NOT NULL
+            );
             CREATE TABLE library_index_sequence (
               id INTEGER PRIMARY KEY CHECK(id = 1),
               next_scan_id INTEGER NOT NULL
@@ -451,6 +471,10 @@ impl Library {
         transaction.execute("DELETE FROM library_roots WHERE path = ?1", params![root])?;
         transaction.execute(
             "DELETE FROM indexed_roots WHERE root_path = ?1",
+            params![root],
+        )?;
+        transaction.execute(
+            "DELETE FROM indexed_directory_roots WHERE root_path = ?1",
             params![root],
         )?;
         transaction.execute(
@@ -713,6 +737,21 @@ impl Library {
         self.index_root_with_progress(root, |_| {})
     }
 
+    /// Returns whether a registered root has no complete index generation.
+    /// Normal folder opens reuse a completed generation; explicit refresh
+    /// invalidates it and makes this check true again.
+    pub fn root_needs_index(&self, root: &Path) -> Result<bool, LibraryError> {
+        let root = root.canonicalize().unwrap_or_else(|_| root.to_owned());
+        let root = root.to_string_lossy();
+        let connection = self.connection.lock();
+        let registered = connection.query_row(
+            "SELECT EXISTS(SELECT 1 FROM library_roots WHERE path = ?1)",
+            params![root],
+            |row| row.get::<_, bool>(0),
+        )?;
+        Ok(registered && !has_completed_index(&connection, &root)?)
+    }
+
     pub fn index_root_with_progress(
         &self,
         root: &Path,
@@ -848,7 +887,7 @@ impl Library {
     ) -> Result<Option<Vec<DirectorySummary>>, LibraryError> {
         let root = root.to_string_lossy();
         let connection = self.connection.lock();
-        if !has_completed_index(&connection, &root)? {
+        if !has_completed_directory_index(&connection, &root)? {
             return Ok(None);
         }
         let mut statement = connection.prepare(
@@ -879,7 +918,7 @@ impl Library {
         }
         let root_text = root.to_string_lossy();
         let connection = self.connection.lock();
-        if !has_completed_index(&connection, &root_text)? {
+        if !has_completed_directory_index(&connection, &root_text)? {
             return Ok(None);
         }
         let mut statement = connection.prepare(
@@ -915,10 +954,18 @@ impl Library {
     }
 
     pub fn invalidate_index(&self, root: &Path) -> Result<(), LibraryError> {
-        self.connection.lock().execute(
+        let root = root.canonicalize().unwrap_or_else(|_| root.to_owned());
+        let mut connection = self.connection.lock();
+        let transaction = connection.transaction()?;
+        transaction.execute(
             "DELETE FROM indexed_roots WHERE root_path = ?1",
             params![root.to_string_lossy()],
         )?;
+        transaction.execute(
+            "DELETE FROM indexed_directory_roots WHERE root_path = ?1",
+            params![root.to_string_lossy()],
+        )?;
+        transaction.commit()?;
         Ok(())
     }
 
@@ -929,9 +976,13 @@ impl Library {
     ) -> Result<IndexStats, LibraryError> {
         let scan_id = self.next_scan_id()?;
         let mut queue = DirectoryPriorityQueue::new(root.to_owned());
+        let mut discovered_directories = Vec::new();
         let mut asset_count = 0;
         let mut directory_count = 0;
 
+        // Record the complete directory tree first. Besides making folder
+        // discovery the highest-priority work, this avoids touching asset
+        // metadata in a large directory until every folder is known.
         while let Some((directory, depth)) = queue.pop_next() {
             report_progress(IndexProgress {
                 root_path: root.to_owned(),
@@ -939,6 +990,7 @@ impl Library {
                 pending_directory_count: queue.pending.len(),
                 asset_count,
                 directory_count,
+                stage: IndexStage::Directories,
             });
             if !self.contains_root(root)? {
                 return Ok(IndexStats {
@@ -949,17 +1001,53 @@ impl Library {
             // Preserve the last completed generation if any directory becomes
             // unreadable. Publishing a partial scan as complete would turn a
             // transient permission or volume error into false deletions.
-            let scan = oxy_fs::scan_index_directory(&directory)?;
-            let safe_directories = queue.enqueue_children(depth, scan.directories);
-            asset_count += scan.assets.len();
+            let directories = oxy_fs::scan_index_directories(&directory)?;
+            let safe_directories = queue.enqueue_children(depth, directories);
             directory_count += safe_directories.len();
-            self.write_index_batch(root, &directory, scan_id, &scan.assets, &safe_directories)?;
+            self.write_directory_index_batch(root, &directory, scan_id, &safe_directories)?;
+            discovered_directories.push(directory.clone());
             report_progress(IndexProgress {
                 root_path: root.to_owned(),
                 current_directory: directory,
                 pending_directory_count: queue.pending.len(),
                 asset_count,
                 directory_count,
+                stage: IndexStage::Directories,
+            });
+        }
+
+        if !self.finish_directory_index(root, scan_id, directory_count)? {
+            return Ok(IndexStats {
+                asset_count,
+                directory_count,
+            });
+        }
+
+        for (index, directory) in discovered_directories.iter().enumerate() {
+            report_progress(IndexProgress {
+                root_path: root.to_owned(),
+                current_directory: directory.clone(),
+                pending_directory_count: discovered_directories.len() - index,
+                asset_count,
+                directory_count,
+                stage: IndexStage::Assets,
+            });
+            if !self.contains_root(root)? {
+                return Ok(IndexStats {
+                    asset_count,
+                    directory_count,
+                });
+            }
+            let assets = oxy_fs::scan_index_assets(directory)?;
+            asset_count += assets.len();
+            self.write_asset_index_batch(root, directory, scan_id, &assets)?;
+            report_progress(IndexProgress {
+                root_path: root.to_owned(),
+                current_directory: directory.clone(),
+                pending_directory_count: discovered_directories.len() - index - 1,
+                asset_count,
+                directory_count,
+                stage: IndexStage::Assets,
             });
         }
         self.finish_index(root, scan_id, asset_count, directory_count)?;
@@ -969,80 +1057,153 @@ impl Library {
         })
     }
 
-    fn write_index_batch(
+    fn write_directory_index_batch(
+        &self,
+        root: &Path,
+        parent: &Path,
+        scan_id: i64,
+        directories: &[DirectorySummary],
+    ) -> Result<(), LibraryError> {
+        {
+            let mut connection = self.connection.lock();
+            let transaction = connection.transaction()?;
+            if !root_is_registered(&transaction, &root.to_string_lossy())? {
+                return Ok(());
+            }
+            // The parent was inserted optimistically when its own parent was
+            // scanned. Once this level has been visited, its child status is
+            // authoritative and can be corrected without another filesystem read.
+            transaction.execute(
+                "UPDATE indexed_directories
+                 SET has_children = ?3, scan_id = ?4
+                 WHERE root_path = ?1 AND path = ?2",
+                params![
+                    root.to_string_lossy(),
+                    parent.to_string_lossy(),
+                    !directories.is_empty(),
+                    scan_id,
+                ],
+            )?;
+            transaction.commit()?;
+        }
+
+        for batch in directories.chunks(INDEX_WRITE_BATCH_SIZE) {
+            let mut connection = self.connection.lock();
+            let transaction = connection.transaction()?;
+            if !root_is_registered(&transaction, &root.to_string_lossy())? {
+                return Ok(());
+            }
+            {
+                let mut statement = transaction.prepare_cached(
+                    "INSERT INTO indexed_directories(
+                       root_path, path, parent_path, name, has_children, scan_id
+                     ) VALUES (?1, ?2, ?3, ?4, ?5, ?6)
+                     ON CONFLICT(root_path, path) DO UPDATE SET
+                       root_path=excluded.root_path, parent_path=excluded.parent_path,
+                       name=excluded.name, has_children=excluded.has_children,
+                       scan_id=excluded.scan_id",
+                )?;
+                for directory in batch {
+                    statement.execute(params![
+                        root.to_string_lossy(),
+                        directory.path.to_string_lossy(),
+                        parent.to_string_lossy(),
+                        directory.name,
+                        directory.has_children,
+                        scan_id,
+                    ])?;
+                }
+            }
+            transaction.commit()?;
+        }
+        Ok(())
+    }
+
+    fn write_asset_index_batch(
         &self,
         root: &Path,
         parent: &Path,
         scan_id: i64,
         assets: &[AssetSummary],
-        directories: &[DirectorySummary],
     ) -> Result<(), LibraryError> {
-        let mut connection = self.connection.lock();
-        let transaction = connection.transaction()?;
-        if !root_is_registered(&transaction, &root.to_string_lossy())? {
-            return Ok(());
+        for batch in assets.chunks(INDEX_WRITE_BATCH_SIZE) {
+            let mut connection = self.connection.lock();
+            let transaction = connection.transaction()?;
+            if !root_is_registered(&transaction, &root.to_string_lossy())? {
+                return Ok(());
+            }
+            {
+                let mut mark_unchanged = transaction.prepare_cached(
+                    "UPDATE indexed_assets SET scan_id = ?11
+                     WHERE root_path = ?1 AND path = ?2 AND parent_path = ?3
+                       AND id = ?4 AND name = ?5 AND extension = ?6 AND kind = ?7
+                       AND modified_at_ms = ?8 AND size_bytes = ?9
+                       AND has_sidecar = ?10",
+                )?;
+                let mut upsert = transaction.prepare_cached(
+                    "INSERT INTO indexed_assets(
+                       root_path, path, parent_path, id, name, extension, kind,
+                       modified_at_ms, size_bytes, has_sidecar, scan_id
+                     ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)
+                     ON CONFLICT(root_path, path) DO UPDATE SET
+                       root_path=excluded.root_path, parent_path=excluded.parent_path,
+                       id=excluded.id, name=excluded.name, extension=excluded.extension,
+                       kind=excluded.kind, modified_at_ms=excluded.modified_at_ms,
+                       size_bytes=excluded.size_bytes, has_sidecar=excluded.has_sidecar,
+                       scan_id=excluded.scan_id",
+                )?;
+                let mut delete_search = transaction.prepare_cached(
+                    "DELETE FROM indexed_asset_search
+                     WHERE root_path = ?1 AND path = ?2",
+                )?;
+                let mut insert_search = transaction.prepare_cached(
+                    "INSERT INTO indexed_asset_search(path, root_path, name, directory)
+                     VALUES (?1, ?2, ?3, ?4)",
+                )?;
+                for asset in batch {
+                    let values = params![
+                        root.to_string_lossy(),
+                        asset.path.to_string_lossy(),
+                        parent.to_string_lossy(),
+                        asset.id,
+                        asset.name,
+                        asset.extension,
+                        kind_name(asset.kind),
+                        asset.modified_at_ms,
+                        asset.size_bytes,
+                        asset.has_sidecar,
+                        scan_id,
+                    ];
+                    if mark_unchanged.execute(values)? > 0 {
+                        continue;
+                    }
+                    upsert.execute(params![
+                        root.to_string_lossy(),
+                        asset.path.to_string_lossy(),
+                        parent.to_string_lossy(),
+                        asset.id,
+                        asset.name,
+                        asset.extension,
+                        kind_name(asset.kind),
+                        asset.modified_at_ms,
+                        asset.size_bytes,
+                        asset.has_sidecar,
+                        scan_id,
+                    ])?;
+                    delete_search.execute(params![
+                        root.to_string_lossy(),
+                        asset.path.to_string_lossy()
+                    ])?;
+                    insert_search.execute(params![
+                        asset.path.to_string_lossy(),
+                        root.to_string_lossy(),
+                        asset.name,
+                        parent.to_string_lossy(),
+                    ])?;
+                }
+            }
+            transaction.commit()?;
         }
-        // The parent was inserted optimistically when its own parent was
-        // scanned. Once this level has been visited, its child status is
-        // authoritative and can be corrected without another filesystem read.
-        transaction.execute(
-            "UPDATE indexed_directories
-             SET has_children = ?3, scan_id = ?4
-             WHERE root_path = ?1 AND path = ?2",
-            params![
-                root.to_string_lossy(),
-                parent.to_string_lossy(),
-                !directories.is_empty(),
-                scan_id,
-            ],
-        )?;
-        for asset in assets {
-            transaction.execute(
-                "INSERT INTO indexed_assets(
-                   root_path, path, parent_path, id, name, extension, kind,
-                   modified_at_ms, size_bytes, has_sidecar, scan_id
-                 ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)
-                 ON CONFLICT(root_path, path) DO UPDATE SET
-                   root_path=excluded.root_path, parent_path=excluded.parent_path,
-                   id=excluded.id, name=excluded.name, extension=excluded.extension,
-                   kind=excluded.kind, modified_at_ms=excluded.modified_at_ms,
-                   size_bytes=excluded.size_bytes, has_sidecar=excluded.has_sidecar,
-                   scan_id=excluded.scan_id",
-                params![
-                    root.to_string_lossy(),
-                    asset.path.to_string_lossy(),
-                    parent.to_string_lossy(),
-                    asset.id,
-                    asset.name,
-                    asset.extension,
-                    kind_name(asset.kind),
-                    asset.modified_at_ms,
-                    asset.size_bytes,
-                    asset.has_sidecar,
-                    scan_id,
-                ],
-            )?;
-        }
-        for directory in directories {
-            transaction.execute(
-                "INSERT INTO indexed_directories(
-                   root_path, path, parent_path, name, has_children, scan_id
-                 ) VALUES (?1, ?2, ?3, ?4, ?5, ?6)
-                 ON CONFLICT(root_path, path) DO UPDATE SET
-                   root_path=excluded.root_path, parent_path=excluded.parent_path,
-                   name=excluded.name, has_children=excluded.has_children,
-                   scan_id=excluded.scan_id",
-                params![
-                    root.to_string_lossy(),
-                    directory.path.to_string_lossy(),
-                    parent.to_string_lossy(),
-                    directory.name,
-                    directory.has_children,
-                    scan_id,
-                ],
-            )?;
-        }
-        transaction.commit()?;
         Ok(())
     }
 
@@ -1062,6 +1223,33 @@ impl Library {
         Ok(scan_id)
     }
 
+    fn finish_directory_index(
+        &self,
+        root: &Path,
+        scan_id: i64,
+        directory_count: usize,
+    ) -> Result<bool, LibraryError> {
+        let mut connection = self.connection.lock();
+        let transaction = connection.transaction()?;
+        if !root_is_registered(&transaction, &root.to_string_lossy())? {
+            return Ok(false);
+        }
+        transaction.execute(
+            "DELETE FROM indexed_directories WHERE root_path = ?1 AND scan_id != ?2",
+            params![root.to_string_lossy(), scan_id],
+        )?;
+        transaction.execute(
+            "INSERT INTO indexed_directory_roots(root_path, indexed_at, directory_count)
+             VALUES (?1, unixepoch(), ?2)
+             ON CONFLICT(root_path) DO UPDATE SET
+               indexed_at=excluded.indexed_at,
+               directory_count=excluded.directory_count",
+            params![root.to_string_lossy(), directory_count],
+        )?;
+        transaction.commit()?;
+        Ok(true)
+    }
+
     fn finish_index(
         &self,
         root: &Path,
@@ -1075,22 +1263,16 @@ impl Library {
             return Ok(());
         }
         transaction.execute(
+            "DELETE FROM indexed_asset_search
+             WHERE root_path = ?1 AND path IN (
+               SELECT path FROM indexed_assets
+               WHERE root_path = ?1 AND scan_id != ?2
+             )",
+            params![root.to_string_lossy(), scan_id],
+        )?;
+        transaction.execute(
             "DELETE FROM indexed_assets WHERE root_path = ?1 AND scan_id != ?2",
             params![root.to_string_lossy(), scan_id],
-        )?;
-        transaction.execute(
-            "DELETE FROM indexed_directories WHERE root_path = ?1 AND scan_id != ?2",
-            params![root.to_string_lossy(), scan_id],
-        )?;
-        transaction.execute(
-            "DELETE FROM indexed_asset_search WHERE root_path = ?1",
-            params![root.to_string_lossy()],
-        )?;
-        transaction.execute(
-            "INSERT INTO indexed_asset_search(path, root_path, name, directory)
-             SELECT path, root_path, name, parent_path FROM indexed_assets
-             WHERE root_path = ?1",
-            params![root.to_string_lossy()],
         )?;
         transaction.execute(
             "INSERT INTO indexed_roots(root_path, indexed_at, asset_count, directory_count)
@@ -1251,6 +1433,20 @@ fn has_completed_index(connection: &Connection, root: &str) -> Result<bool, rusq
     connection
         .query_row(
             "SELECT 1 FROM indexed_roots WHERE root_path = ?1",
+            params![root],
+            |_| Ok(true),
+        )
+        .optional()
+        .map(|value| value.unwrap_or(false))
+}
+
+fn has_completed_directory_index(
+    connection: &Connection,
+    root: &str,
+) -> Result<bool, rusqlite::Error> {
+    connection
+        .query_row(
+            "SELECT 1 FROM indexed_directory_roots WHERE root_path = ?1",
             params![root],
             |_| Ok(true),
         )
@@ -1629,6 +1825,65 @@ mod tests {
     }
 
     #[test]
+    fn completed_index_is_reused_until_explicitly_invalidated() {
+        let library = Library::in_memory().unwrap();
+        let root = tempdir().unwrap();
+        library.add_root(root.path()).unwrap();
+
+        assert!(library.root_needs_index(root.path()).unwrap());
+        library.index_root(root.path()).unwrap();
+        assert!(!library.root_needs_index(root.path()).unwrap());
+
+        library.invalidate_index(root.path()).unwrap();
+        assert!(library.root_needs_index(root.path()).unwrap());
+    }
+
+    #[test]
+    fn batched_reindex_updates_fts_only_to_the_current_asset_set() {
+        let library = Library::in_memory().unwrap();
+        let root = tempdir().unwrap();
+        library.add_root(root.path()).unwrap();
+        for index in 0..=INDEX_WRITE_BATCH_SIZE {
+            std::fs::write(root.path().join(format!("old-{index}.jpg")), b"jpeg").unwrap();
+        }
+        library.index_root(root.path()).unwrap();
+
+        for index in 0..INDEX_WRITE_BATCH_SIZE {
+            std::fs::remove_file(root.path().join(format!("old-{index}.jpg"))).unwrap();
+        }
+        std::fs::write(root.path().join("new-result.jpg"), b"jpeg").unwrap();
+        library.index_root(root.path()).unwrap();
+
+        let canonical_root = root.path().canonicalize().unwrap();
+        assert_eq!(
+            library
+                .list_assets(&canonical_root, &canonical_root, &query(Some("old")), 0)
+                .unwrap()
+                .unwrap()
+                .total,
+            1
+        );
+        assert_eq!(
+            library
+                .list_assets(&canonical_root, &canonical_root, &query(Some("new")), 0)
+                .unwrap()
+                .unwrap()
+                .total,
+            1
+        );
+        let search_rows = library
+            .connection
+            .lock()
+            .query_row(
+                "SELECT COUNT(*) FROM indexed_asset_search WHERE root_path = ?1",
+                params![canonical_root.to_string_lossy()],
+                |row| row.get::<_, usize>(0),
+            )
+            .unwrap();
+        assert_eq!(search_rows, 2);
+    }
+
+    #[test]
     fn reports_index_progress_for_each_directory_batch() {
         let library = Library::in_memory().unwrap();
         let root = tempdir().unwrap();
@@ -1654,6 +1909,78 @@ mod tests {
         assert_eq!(completed.asset_count, 2);
         assert_eq!(completed.directory_count, 1);
         assert_eq!(completed.pending_directory_count, 0);
+    }
+
+    #[test]
+    fn records_the_complete_directory_tree_before_any_assets() {
+        let library = Library::in_memory().unwrap();
+        let root = tempdir().unwrap();
+        let nested = root.path().join("parent").join("child");
+        std::fs::create_dir_all(&nested).unwrap();
+        std::fs::write(root.path().join("root.jpg"), b"jpeg").unwrap();
+        std::fs::write(nested.join("nested.jpg"), b"jpeg").unwrap();
+        library.add_root(root.path()).unwrap();
+        let mut observed_counts = Vec::new();
+
+        library
+            .index_root_with_progress(root.path(), |_| {
+                let connection = library.connection.lock();
+                let directory_rows = connection
+                    .query_row("SELECT COUNT(*) FROM indexed_directories", [], |row| {
+                        row.get::<_, usize>(0)
+                    })
+                    .unwrap();
+                let asset_rows = connection
+                    .query_row("SELECT COUNT(*) FROM indexed_assets", [], |row| {
+                        row.get::<_, usize>(0)
+                    })
+                    .unwrap();
+                observed_counts.push((directory_rows, asset_rows));
+            })
+            .unwrap();
+
+        assert!(observed_counts.contains(&(2, 0)));
+        assert!(
+            observed_counts
+                .iter()
+                .filter(|(_, asset_rows)| *asset_rows > 0)
+                .all(|(directory_rows, _)| *directory_rows == 2)
+        );
+    }
+
+    #[test]
+    fn directory_search_is_available_before_asset_indexing_finishes() {
+        let library = Library::in_memory().unwrap();
+        let root = tempdir().unwrap();
+        let matching = root.path().join("matching-folder");
+        std::fs::create_dir(&matching).unwrap();
+        std::fs::write(root.path().join("root.jpg"), b"jpeg").unwrap();
+        library.add_root(root.path()).unwrap();
+        let canonical_root = root.path().canonicalize().unwrap();
+        let mut matches_during_asset_index = None;
+        let mut assets_during_asset_index = None;
+
+        library
+            .index_root_with_progress(&canonical_root, |progress| {
+                if progress.stage == IndexStage::Assets && matches_during_asset_index.is_none() {
+                    matches_during_asset_index = Some(
+                        library
+                            .search_directories(&canonical_root, "matching")
+                            .unwrap(),
+                    );
+                    assets_during_asset_index = Some(
+                        library
+                            .list_assets(&canonical_root, &canonical_root, &query(None), 0)
+                            .unwrap(),
+                    );
+                }
+            })
+            .unwrap();
+
+        let matches = matches_during_asset_index.unwrap().unwrap();
+        assert_eq!(matches.len(), 1);
+        assert_eq!(matches[0].directory.path, matching.canonicalize().unwrap());
+        assert!(matches!(assets_during_asset_index, Some(None)));
     }
 
     #[test]

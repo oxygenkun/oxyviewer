@@ -219,6 +219,13 @@ export async function onLibraryIndexUpdated(
   return listen<LibraryIndexUpdate>("library-index-updated", (event) => callback(event.payload));
 }
 
+export async function onLibraryDirectoryIndexUpdated(
+  callback: (update: LibraryIndexUpdate) => void,
+): Promise<UnlistenFn> {
+  if (!isTauri()) return () => {};
+  return listen<LibraryIndexUpdate>("library-directory-index-updated", (event) => callback(event.payload));
+}
+
 export async function onDirectoryTreeUpdated(
   callback: (snapshot: DirectoryTreeSnapshot) => void,
 ): Promise<UnlistenFn> {

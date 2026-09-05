@@ -19,6 +19,7 @@ import {
   openFolder,
   openInFileManager,
   onDirectoryTreeUpdated,
+  onLibraryDirectoryIndexUpdated,
   onLibraryIndexUpdated,
   onImageProjectionUpdated,
   onMetadataProjectionUpdated,
@@ -134,6 +135,21 @@ export function App({ perfScenario }: { perfScenario?: PerfScenario }) {
   useEffect(() => {
     if (activeSession && currentPath) notifyActiveDirectory(activeSession, currentPath);
   }, [activeSession?.id, currentPath, notifyActiveDirectory]);
+
+  useEffect(() => {
+    let unlisten: (() => void) | undefined;
+    let disposed = false;
+    void onLibraryDirectoryIndexUpdated(() => {
+      void queryClient.invalidateQueries({ queryKey: ["directory-search"] });
+    }).then((dispose) => {
+      if (disposed) dispose();
+      else unlisten = dispose;
+    });
+    return () => {
+      disposed = true;
+      unlisten?.();
+    };
+  }, [queryClient]);
 
   useEffect(() => {
     let unlisten: (() => void) | undefined;

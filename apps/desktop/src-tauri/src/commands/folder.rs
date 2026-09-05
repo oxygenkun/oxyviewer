@@ -19,7 +19,9 @@ pub(crate) async fn open_folder(
     let library = state.library.clone();
     let (session, should_index) = tauri::async_runtime::spawn_blocking(move || {
         let session = files.open_folder(path).map_err(|error| error.to_string())?;
-        let should_index = library.contains_root(&session.root_path).unwrap_or(false);
+        let should_index = library
+            .root_needs_index(&session.root_path)
+            .unwrap_or(false);
         Ok::<_, String>((session, should_index))
     })
     .await
