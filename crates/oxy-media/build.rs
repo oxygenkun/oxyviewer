@@ -6,7 +6,7 @@ use std::{
 fn main() {
     let manifest_dir = PathBuf::from(env::var_os("CARGO_MANIFEST_DIR").unwrap());
     let libraw_dir = manifest_dir.join("../../3rdpart/libraw");
-    let wrapper = manifest_dir.join("src/libraw_wrapper.cpp");
+    let wrapper = manifest_dir.join("src/backends/libraw/wrapper.cpp");
 
     link_windows_libheif_dependencies();
     build_apple_image_io(&manifest_dir);
@@ -63,7 +63,7 @@ fn build_apple_image_io(manifest_dir: &Path) {
         target_os => panic!("oxy-media does not support target OS {target_os}"),
     }
 
-    let wrapper = manifest_dir.join("src/apple_image_io.c");
+    let wrapper = manifest_dir.join("src/backends/apple_image_io/wrapper.c");
     println!("cargo:rerun-if-changed={}", wrapper.display());
     println!("cargo:rustc-link-lib=framework=CoreFoundation");
     println!("cargo:rustc-link-lib=framework=CoreGraphics");

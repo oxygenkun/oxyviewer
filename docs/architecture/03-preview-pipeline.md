@@ -137,7 +137,9 @@ PreviewQueue 使用两个有界 worker，避免一个已经开始且不可抢占
 
 ## 6. 第二层调度：后端 `DecodeGate`
 
-Rust `DecodeGate` 有三档优先级：
+Rust `DecodeGate` 位于 `crates/oxy-media/src/decode_control.rs`，与 RAW full 独立锁、
+HEIF session 缓存写锁和同源锁表一起管理媒体资源准入；它不替代 `oxy-runtime` 的请求调度。
+根模块保留兼容入口。`DecodeGate` 有三档优先级：
 
 | IPC priority | Rust priority | 等待规则 |
 | --- | --- | --- |
@@ -239,6 +241,11 @@ macOS ImageIO 竖拍尺寸映射和前端区域映射；CI 在三个桌面平台
 
 ## 9. HEIF 预览路径
 
+原生/可移植适配器集中在 `crates/oxy-media/src/backends/`；其中 `libheif.rs` 是具体后端，
+不是 HEIF 格式层。Sony 专用内嵌 JPEG 提取与方向兼容逻辑位于
+`formats/heif/quirks/sony.rs`。这次目录迁移保持下述策略不变；后续分层计划见
+[重构规则与目标](07-media-refactoring.md)。
+
 HEIF preview 优先尝试容器内 thumbnail，接受尺寸不足的内嵌图作为快速第一阶段。Windows Sony
 HIF 会直接读取前 2 MiB 内的 160×120 MJPEG item，注入正确 EXIF orientation 后原样写入缓存，
 不进入 HEVC gate，也不进行像素重编码。需要解码
@@ -289,6 +296,10 @@ preview 返回时会刷新命中文件的最近使用时间，并在后台触发
 一个清理任务。清理按修改时间从旧到新删除，避免把目录统计和清理延迟算进首图返回。刚返回给
 WebView 的文件会在这轮清理中保留，容量小于单个 artifact 时允许暂时超限，而不是删除正在显示
 的结果。“清空缓存”同样只处理专属目录第一层的普通文件，不做任意路径的递归删除。
+
+容量扫描是并发目录的近似快照，不是事务：原子写入可能在枚举临时文件后、读取属性前完成
+重命名。目录打开、枚举和属性读取遇到 `NotFound` 时按已消失处理；权限及其他 IO 错误仍返回。
+扫描不再用 `exists()` 前置检查来掩盖错误，也不为此持有解码锁或阻塞缓存写入。
 
 ## 11. 取消的真实语义
 

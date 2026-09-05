@@ -63,7 +63,7 @@ unsafe extern "C" {
     fn oxy_libraw_unpack_sized_thumb(raw: *mut LibRawData, target_size: c_uint) -> c_int;
 }
 
-pub fn dimensions(path: &Path) -> Result<super::ImageDimensions, String> {
+pub fn dimensions(path: &Path) -> Result<crate::ImageDimensions, String> {
     let raw = Processor::open(path)?;
     check(unsafe { libraw_adjust_sizes_info_only(raw.inner) })?;
     let width = unsafe { libraw_get_iwidth(raw.inner) };
@@ -71,7 +71,7 @@ pub fn dimensions(path: &Path) -> Result<super::ImageDimensions, String> {
     if width <= 0 || height <= 0 {
         return Err(format!("invalid dimensions {width}x{height}"));
     }
-    Ok(super::ImageDimensions {
+    Ok(crate::ImageDimensions {
         width: width as u32,
         height: height as u32,
     })

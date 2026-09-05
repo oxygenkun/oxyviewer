@@ -1,4 +1,4 @@
-use crate::{HeifDecodePriority, MediaError, heif};
+use crate::{HeifDecodePriority, MediaError, backends::libheif};
 use image::{DynamicImage, RgbaImage};
 use oxy_domain::{
     AccelerationKind, HeifBackendKind, HeifCapabilities, HeifDecodeRequest, HeifDecodeSession,
@@ -74,7 +74,7 @@ impl HeifDecodeService {
         hardware_acceleration: bool,
         display_sharpening: bool,
     ) -> Result<HeifDecodeSession, MediaError> {
-        let size = heif::dimensions(path)?;
+        let size = libheif::dimensions(path)?;
         let id = format!(
             "heif-{}",
             self.next_session.fetch_add(1, Ordering::Relaxed) + 1
@@ -659,7 +659,7 @@ fn decode_ffmpeg_or_libheif(
             Err(error) => {
                 let reason = append_fallback_reason(fallback_reason, error.to_string());
                 return Ok((
-                    heif::decode_full_rgb8(path)?,
+                    libheif::decode_full_rgb8(path)?,
                     HeifBackendKind::LibheifSoftware,
                     AccelerationKind::Software,
                     "libheif/libde265",
@@ -669,7 +669,7 @@ fn decode_ffmpeg_or_libheif(
         }
     }
     Ok((
-        heif::decode_full_rgb8(path)?,
+        libheif::decode_full_rgb8(path)?,
         HeifBackendKind::LibheifSoftware,
         AccelerationKind::Software,
         "libheif/libde265",

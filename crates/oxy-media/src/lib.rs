@@ -1,29 +1,39 @@
 #[cfg(not(any(target_os = "windows", target_os = "macos", target_os = "linux")))]
 compile_error!("oxy-media supports only Windows, macOS, and Linux");
 
-#[cfg(target_os = "macos")]
-mod apple_image_io;
-mod embedded_jpeg;
-mod ffmpeg_heif;
-mod heif;
+mod backends;
+mod cache;
+mod decode_control;
+mod formats;
 mod heif_service;
-mod libraw;
-#[cfg(target_os = "windows")]
-mod windows_wic;
 
+#[cfg(target_os = "macos")]
+use backends::apple_image_io;
+#[cfg(target_os = "windows")]
+use backends::windows_wic;
+use backends::{ffmpeg_heif, libheif, libraw};
+use formats::heif::quirks::sony;
+
+pub use cache::{CacheUsage, clear_preview_cache, preview_cache_usage, prune_preview_cache};
+use cache::{
+    persist_atomically, preview_cache_key, write_bytes_atomically, write_jpeg_atomically,
+    write_jpeg_atomically_timed,
+};
+pub use decode_control::{DecodePriority, HeifDecodePriority};
+pub(crate) use decode_control::{
+    acquire_decode, acquire_heif_decode, try_acquire_heif_session_cache_write,
+};
+use decode_control::{acquire_file_lock, acquire_raw_full_decode};
 pub use heif_service::{DEFAULT_TILE_SIZE, HeifBackend, HeifDecodeService, HeifTile, TileSink};
-use image::{DynamicImage, ImageEncoder, ImageReader, codecs::jpeg::JpegEncoder};
+use image::{DynamicImage, ImageReader};
 use oxy_domain::{PreviewDiagnostics, PreviewKind, PreviewResult, RenderLevel};
 #[cfg(target_os = "macos")]
 use std::process::{Command, Stdio};
 use std::{
-    collections::{HashMap, hash_map::DefaultHasher},
     fs::{self, File},
-    hash::{Hash, Hasher},
-    io::{BufReader, Write},
+    io::BufReader,
     path::{Path, PathBuf},
-    sync::{Arc, Condvar, LazyLock, Mutex},
-    time::{Instant, SystemTime},
+    time::Instant,
 };
 use tempfile::NamedTempFile;
 use thiserror::Error;
@@ -41,151 +51,6 @@ const SYSTEM_CACHE_VERSION: &str = "system-preview-v2";
 /// smaller size may be satisfied by any larger cached entry (see
 /// [`larger_cached_preview`]).
 const PREVIEW_CACHE_SIZES: [u32; 2] = [512, 4_096];
-// Full-resolution RAW development (potentially tens of seconds) stays on its
-// own lane so it never blocks the unified thumbnail/loupe gate. The gate below
-// covers the progressive stages (512 / 4096) for every format.
-static RAW_FULL_DECODE_LOCK: Mutex<()> = Mutex::new(());
-static DECODE_GATE: DecodeGate = DecodeGate::new();
-// A stale selection may finish writing its rebuildable JPEG without blocking
-// the foreground decode gate needed by the newly selected HEIF.
-static HEIF_SESSION_CACHE_WRITE_LOCK: Mutex<()> = Mutex::new(());
-
-// Per-file locks coalesce duplicate cache work after the global decode gate has
-// selected the next source. Shared by every format.
-static DECODE_LOCKS: LazyLock<Mutex<HashMap<String, Arc<Mutex<()>>>>> =
-    LazyLock::new(|| Mutex::new(HashMap::new()));
-
-/// Priority for the unified decode gate. Higher priorities jump ahead of
-/// lower-priority waiters but never preempt a running decode.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum DecodePriority {
-    /// Overscan/off-screen thumbnails — served only when nothing else wants the gate.
-    Background,
-    /// On-screen thumbnails and filmstrip — served before background work.
-    Visible,
-    /// The currently-selected loupe image — served first.
-    Foreground,
-}
-
-/// Backwards-compatible alias. HEIF code historically used `HeifDecodePriority`;
-/// the gate is now format-agnostic but the name is retained to avoid churning
-/// `heif_service.rs` and the public re-exports.
-pub type HeifDecodePriority = DecodePriority;
-
-struct DecodeGate {
-    state: Mutex<DecodeGateState>,
-    ready: Condvar,
-}
-
-#[derive(Default)]
-struct DecodeGateState {
-    active: bool,
-    foreground_waiters: usize,
-    visible_waiters: usize,
-}
-
-struct DecodePermit<'a> {
-    gate: &'a DecodeGate,
-}
-
-impl DecodeGate {
-    const fn new() -> Self {
-        Self {
-            state: Mutex::new(DecodeGateState {
-                active: false,
-                foreground_waiters: 0,
-                visible_waiters: 0,
-            }),
-            ready: Condvar::new(),
-        }
-    }
-
-    fn acquire(&self, priority: DecodePriority) -> DecodePermit<'_> {
-        let mut state = self
-            .state
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
-        if priority == DecodePriority::Foreground {
-            state.foreground_waiters += 1;
-        } else if priority == DecodePriority::Visible {
-            state.visible_waiters += 1;
-        }
-        while state.active
-            || match priority {
-                DecodePriority::Foreground => false,
-                DecodePriority::Visible => state.foreground_waiters > 0,
-                DecodePriority::Background => {
-                    state.foreground_waiters > 0 || state.visible_waiters > 0
-                }
-            }
-        {
-            state = self
-                .ready
-                .wait(state)
-                .unwrap_or_else(std::sync::PoisonError::into_inner);
-        }
-        if priority == DecodePriority::Foreground {
-            state.foreground_waiters -= 1;
-        } else if priority == DecodePriority::Visible {
-            state.visible_waiters -= 1;
-        }
-        state.active = true;
-        DecodePermit { gate: self }
-    }
-}
-
-impl Drop for DecodePermit<'_> {
-    fn drop(&mut self) {
-        let mut state = self
-            .gate
-            .state
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
-        state.active = false;
-        self.gate.ready.notify_all();
-    }
-}
-
-/// Acquire the unified decode gate. Higher-priority waiters are served before
-/// lower-priority ones; a running decode is never preempted (caller opted into
-/// the "order pending only" scheduling policy).
-pub(crate) fn acquire_decode(priority: DecodePriority) -> impl Drop {
-    DECODE_GATE.acquire(priority)
-}
-
-/// Backwards-compatible alias for [`acquire_decode`].
-pub(crate) fn acquire_heif_decode(priority: DecodePriority) -> impl Drop {
-    acquire_decode(priority)
-}
-
-pub(crate) fn try_acquire_heif_session_cache_write() -> Option<impl Drop> {
-    match HEIF_SESSION_CACHE_WRITE_LOCK.try_lock() {
-        Ok(guard) => Some(guard),
-        Err(std::sync::TryLockError::WouldBlock) => None,
-        Err(std::sync::TryLockError::Poisoned(poisoned)) => Some(poisoned.into_inner()),
-    }
-}
-
-/// Look up or create a per-file `Mutex`, clone the `Arc`, then lock it.
-/// Returns `(Arc<Mutex<()>>, MutexGuard)` — caller must keep the `Arc` alive
-/// alongside the guard (it is dropped last due to reverse-order drop).
-fn acquire_file_lock(cache_key: &str) -> (Arc<Mutex<()>>, std::sync::MutexGuard<'static, ()>) {
-    let arc: Arc<Mutex<()>> = DECODE_LOCKS
-        .lock()
-        .unwrap()
-        .entry(cache_key.to_owned())
-        .or_insert_with(|| Arc::new(Mutex::new(())))
-        .clone();
-    // Access the Mutex via raw pointer to decouple the guard's lifetime from
-    // the local `arc` binding. This lets us return both the Arc and the guard.
-    // Safety: the Mutex lives inside the static DECODE_LOCKS HashMap behind an
-    // Arc that is never removed; the returned Arc keeps it alive.
-    let mutex: &'static Mutex<()> = unsafe { &*Arc::as_ptr(&arc) };
-    let guard = mutex
-        .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner);
-    (arc, guard)
-}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ImageDimensions {
@@ -218,106 +83,6 @@ pub enum MediaError {
     Image(#[from] image::ImageError),
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct CacheUsage {
-    pub size_bytes: u64,
-    pub file_count: usize,
-}
-
-#[derive(Debug)]
-struct CacheEntry {
-    path: PathBuf,
-    size_bytes: u64,
-    modified: SystemTime,
-}
-
-/// Measures only regular files directly inside the app-owned preview folder.
-/// Preview artifacts are intentionally flat, so unrelated nested content is
-/// never traversed or counted.
-pub fn preview_cache_usage(cache_dir: &Path) -> Result<CacheUsage, MediaError> {
-    if !cache_dir.exists() {
-        return Ok(CacheUsage {
-            size_bytes: 0,
-            file_count: 0,
-        });
-    }
-    let entries = preview_cache_entries(cache_dir)?;
-    Ok(CacheUsage {
-        size_bytes: entries.iter().map(|entry| entry.size_bytes).sum(),
-        file_count: entries.len(),
-    })
-}
-
-/// Removes least-recently-modified preview artifacts until the configured
-/// budget is met. The artifact returned by the current request can be
-/// protected so pruning never races the webview's first read of that file.
-pub fn prune_preview_cache(
-    cache_dir: &Path,
-    max_size_bytes: u64,
-    protected_path: Option<&Path>,
-) -> Result<CacheUsage, MediaError> {
-    if !cache_dir.exists() {
-        return preview_cache_usage(cache_dir);
-    }
-    let mut entries = preview_cache_entries(cache_dir)?;
-    entries.sort_by_key(|entry| entry.modified);
-    let mut total = entries.iter().map(|entry| entry.size_bytes).sum::<u64>();
-    let mut file_count = entries.len();
-    for entry in entries {
-        if total <= max_size_bytes {
-            break;
-        }
-        if protected_path.is_some_and(|protected| protected == entry.path) {
-            continue;
-        }
-        match fs::remove_file(&entry.path) {
-            Ok(()) => {
-                total = total.saturating_sub(entry.size_bytes);
-                file_count = file_count.saturating_sub(1);
-            }
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
-            Err(error) => return Err(error.into()),
-        }
-    }
-    Ok(CacheUsage {
-        size_bytes: total,
-        file_count,
-    })
-}
-
-/// Clears regular preview artifacts without recursively deleting the selected
-/// directory. This remains safe even if a future configuration is malformed.
-pub fn clear_preview_cache(cache_dir: &Path) -> Result<CacheUsage, MediaError> {
-    if !cache_dir.exists() {
-        return preview_cache_usage(cache_dir);
-    }
-    for entry in preview_cache_entries(cache_dir)? {
-        match fs::remove_file(entry.path) {
-            Ok(()) => {}
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
-            Err(error) => return Err(error.into()),
-        }
-    }
-    preview_cache_usage(cache_dir)
-}
-
-fn preview_cache_entries(cache_dir: &Path) -> Result<Vec<CacheEntry>, MediaError> {
-    let mut entries = Vec::new();
-    for entry in fs::read_dir(cache_dir)? {
-        let entry = entry?;
-        let metadata = entry.metadata()?;
-        if !metadata.is_file() {
-            continue;
-        }
-        entries.push(CacheEntry {
-            path: entry.path(),
-            size_bytes: metadata.len(),
-            modified: metadata.modified().unwrap_or(SystemTime::UNIX_EPOCH),
-        });
-    }
-    Ok(entries)
-}
-
 pub fn dimensions(path: &Path) -> Result<ImageDimensions, MediaError> {
     let raster = || -> Result<ImageDimensions, MediaError> {
         let reader = ImageReader::new(BufReader::new(File::open(path)?)).with_guessed_format()?;
@@ -326,7 +91,7 @@ pub fn dimensions(path: &Path) -> Result<ImageDimensions, MediaError> {
     };
 
     raster()
-        .or_else(|_| heif::dimensions(path))
+        .or_else(|_| libheif::dimensions(path))
         .or_else(|_| raw_dimensions(path))
 }
 
@@ -455,9 +220,7 @@ pub fn raw_full(path: &Path, cache_dir: &Path) -> Result<PreviewResult, MediaErr
         return preview_result(destination, PreviewKind::Developed);
     }
 
-    let _decode_guard = RAW_FULL_DECODE_LOCK
-        .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    let _decode_guard = acquire_raw_full_decode();
     if destination.is_file() {
         return preview_result(destination, PreviewKind::Developed);
     }
@@ -510,7 +273,12 @@ pub fn heif_full(path: &Path, cache_dir: &Path) -> Result<PreviewResult, MediaEr
     #[cfg(target_os = "macos")]
     crate::apple_image_io::transcode_jpeg(path, temporary.path(), 95)?;
     #[cfg(any(target_os = "windows", target_os = "linux"))]
-    crate::ffmpeg_heif::transcode_full_jpeg(path, temporary.path(), heif::dimensions(path)?, 95)?;
+    crate::ffmpeg_heif::transcode_full_jpeg(
+        path,
+        temporary.path(),
+        libheif::dimensions(path)?,
+        95,
+    )?;
     persist_atomically(temporary, &destination)?;
     preview_result(destination, PreviewKind::Decoded)
 }
@@ -547,7 +315,7 @@ pub(crate) fn cache_heif_source_jpeg(path: &Path, cache_dir: &Path) -> Result<Pa
         crate::ffmpeg_heif::transcode_full_jpeg(
             path,
             temporary.path(),
-            heif::dimensions(path)?,
+            libheif::dimensions(path)?,
             95,
         )?;
         persist_atomically(temporary, &destination)?;
@@ -586,8 +354,8 @@ pub fn heif_preview_with_priority(
     // viewport must not launch FFmpeg or wait behind full-image decode merely
     // to paint a 160 px placeholder.
     if max_size <= 160
-        && let Ok(display_size) = heif::dimensions(path)
-        && let Ok(image) = embedded_jpeg::extract(path, display_size)
+        && let Ok(display_size) = libheif::dimensions(path)
+        && let Ok(image) = sony::extract(path, display_size)
     {
         let decode_ms = duration_ms(total_started);
         let write_started = Instant::now();
@@ -684,7 +452,7 @@ fn decode_heif_preview(
             Err(error) => fallback_reason = Some(error.to_string()),
         }
     }
-    let image = heif::decode_scaled(path, max_size)?;
+    let image = libheif::decode_scaled(path, max_size)?;
     Ok((image, "libheif scaled preview", fallback_reason))
 }
 
@@ -700,7 +468,7 @@ fn decode_heif_preview(
             Err(error) => fallback_reason = Some(error.to_string()),
         }
     }
-    let image = heif::decode_scaled(path, max_size)?;
+    let image = libheif::decode_scaled(path, max_size)?;
     Ok((image, "libheif scaled preview", fallback_reason))
 }
 
@@ -709,7 +477,7 @@ fn decode_heif_preview(
     path: &Path,
     max_size: u32,
 ) -> Result<(DynamicImage, &'static str, Option<String>), MediaError> {
-    let image = heif::decode_scaled(path, max_size)?;
+    let image = libheif::decode_scaled(path, max_size)?;
     Ok((image, "libheif scaled preview", None))
 }
 
@@ -918,86 +686,6 @@ pub fn preview(
     Ok(result)
 }
 
-fn preview_cache_key(path: &Path, backend: &str, max_size: u32) -> Result<String, MediaError> {
-    // Key previews by physical file identity rather than by the library root
-    // used to reach it. Parent/child roots (and symlink aliases) therefore
-    // converge on one cache entry for the same source image.
-    let canonical_path = path.canonicalize()?;
-    let metadata = fs::metadata(&canonical_path)?;
-    let mut hasher = DefaultHasher::new();
-    canonical_path.hash(&mut hasher);
-    metadata.len().hash(&mut hasher);
-    metadata.modified().ok().hash(&mut hasher);
-    backend.hash(&mut hasher);
-    max_size.hash(&mut hasher);
-    Ok(format!("{:016x}", hasher.finish()))
-}
-
-fn write_jpeg_atomically(
-    image: &DynamicImage,
-    destination: &Path,
-    quality: u8,
-) -> Result<(), MediaError> {
-    write_jpeg_atomically_with_icc(image, destination, quality, None)
-}
-
-#[derive(Debug, Clone, Copy)]
-struct CacheWriteTiming {
-    encode_ms: u64,
-    sync_ms: u64,
-    commit_ms: u64,
-}
-
-fn write_jpeg_atomically_timed(
-    image: &DynamicImage,
-    destination: &Path,
-    quality: u8,
-) -> Result<CacheWriteTiming, MediaError> {
-    let temporary = tempfile::Builder::new()
-        .suffix(".jpg")
-        .tempfile_in(destination.parent().unwrap_or_else(|| Path::new(".")))?;
-    let encode_started = Instant::now();
-    #[cfg(target_os = "macos")]
-    apple_image_io::write_jpeg(image, temporary.path(), quality)?;
-    #[cfg(any(target_os = "windows", target_os = "linux"))]
-    {
-        let mut output = temporary.as_file();
-        JpegEncoder::new_with_quality(&mut output, quality).encode_image(image)?;
-    }
-    let encode_ms = duration_ms(encode_started);
-    let sync_started = Instant::now();
-    temporary.as_file().sync_all()?;
-    let sync_ms = duration_ms(sync_started);
-    let commit_started = Instant::now();
-    persist_noclobber(temporary, destination)?;
-    Ok(CacheWriteTiming {
-        encode_ms,
-        sync_ms,
-        commit_ms: duration_ms(commit_started),
-    })
-}
-
-/// Encode `image` as JPEG, optionally embedding an ICC profile in an APP2 chunk.
-/// Used by the unified cache layer so every preview stage and format lands as a
-/// color-managed JPEG on disk.
-fn write_jpeg_atomically_with_icc(
-    image: &DynamicImage,
-    destination: &Path,
-    quality: u8,
-    icc: Option<Vec<u8>>,
-) -> Result<(), MediaError> {
-    let mut temporary =
-        NamedTempFile::new_in(destination.parent().unwrap_or_else(|| Path::new(".")))?;
-    let mut encoder = JpegEncoder::new_with_quality(&mut temporary, quality);
-    if let Some(profile) = icc {
-        encoder
-            .set_icc_profile(profile)
-            .map_err(|error| MediaError::Color(error.to_string()))?;
-    }
-    encoder.encode_image(image)?;
-    persist_atomically(temporary, destination)
-}
-
 fn preview_result(path: PathBuf, kind: PreviewKind) -> Result<PreviewResult, MediaError> {
     let size = dimensions(&path)?;
     Ok(PreviewResult {
@@ -1008,27 +696,6 @@ fn preview_result(path: PathBuf, kind: PreviewKind) -> Result<PreviewResult, Med
         render_level: None,
         diagnostics: None,
     })
-}
-
-fn write_bytes_atomically(data: &[u8], destination: &Path) -> Result<(), MediaError> {
-    let mut temporary =
-        NamedTempFile::new_in(destination.parent().unwrap_or_else(|| Path::new(".")))?;
-    temporary.write_all(data)?;
-    persist_atomically(temporary, destination)
-}
-
-fn persist_atomically(temporary: NamedTempFile, destination: &Path) -> Result<(), MediaError> {
-    temporary.as_file().sync_all()?;
-
-    persist_noclobber(temporary, destination)
-}
-
-fn persist_noclobber(temporary: NamedTempFile, destination: &Path) -> Result<(), MediaError> {
-    match temporary.persist_noclobber(destination) {
-        Ok(_) => Ok(()),
-        Err(_error) if destination.is_file() => Ok(()),
-        Err(error) => Err(MediaError::Io(error.error)),
-    }
 }
 
 #[cfg(target_os = "macos")]
@@ -1086,8 +753,6 @@ mod tests {
     use image::{DynamicImage, ImageDecoder, ImageFormat, ImageReader, Rgb, RgbImage};
     use std::{
         io::Cursor,
-        sync::mpsc,
-        thread,
         time::{Duration, Instant},
     };
 
@@ -1118,36 +783,6 @@ mod tests {
         assert!(cached.width >= 4_672);
         assert!(cached.height >= 4_672);
         assert!(cached.path.is_file());
-    }
-
-    #[test]
-    fn preview_cache_pruning_respects_budget_and_protected_artifact() {
-        let cache = tempfile::tempdir().unwrap();
-        let older = cache.path().join("older.jpg");
-        let protected = cache.path().join("current.jpg");
-        fs::write(&older, [1_u8; 4]).unwrap();
-        fs::write(&protected, [2_u8; 4]).unwrap();
-
-        let usage = prune_preview_cache(cache.path(), 4, Some(&protected)).unwrap();
-
-        assert_eq!(usage.size_bytes, 4);
-        assert_eq!(usage.file_count, 1);
-        assert!(!older.exists());
-        assert!(protected.exists());
-    }
-
-    #[test]
-    fn clearing_preview_cache_does_not_traverse_nested_directories() {
-        let cache = tempfile::tempdir().unwrap();
-        fs::write(cache.path().join("preview.jpg"), [1_u8; 4]).unwrap();
-        let nested = cache.path().join("unrelated");
-        fs::create_dir(&nested).unwrap();
-        fs::write(nested.join("keep.txt"), b"keep").unwrap();
-
-        let usage = clear_preview_cache(cache.path()).unwrap();
-
-        assert_eq!(usage.size_bytes, 0);
-        assert!(nested.join("keep.txt").exists());
     }
 
     #[test]
@@ -1241,137 +876,6 @@ mod tests {
                 RenderPlatform::Windows,
             ),
             RenderMethod::SystemPreview(4_096)
-        );
-    }
-
-    #[test]
-    fn decode_gate_prefers_foreground_then_visible_then_background() {
-        // The gate is now format-agnostic; the priority contract (loupe first,
-        // visible second, overscan last) is preserved unchanged.
-        let gate = Arc::new(DecodeGate::new());
-        let active = gate.acquire(DecodePriority::Background);
-        let (acquired_tx, acquired_rx) = mpsc::channel();
-        let spawn_waiter = |priority| {
-            let gate = gate.clone();
-            let acquired_tx = acquired_tx.clone();
-            thread::spawn(move || {
-                let _permit = gate.acquire(priority);
-                acquired_tx.send(priority).unwrap();
-            })
-        };
-        let nearby = spawn_waiter(DecodePriority::Background);
-        let visible = spawn_waiter(DecodePriority::Visible);
-        let loupe = spawn_waiter(DecodePriority::Foreground);
-
-        let started = Instant::now();
-        loop {
-            let state = gate
-                .state
-                .lock()
-                .unwrap_or_else(std::sync::PoisonError::into_inner);
-            if state.foreground_waiters == 1 && state.visible_waiters == 1 {
-                break;
-            }
-            drop(state);
-            assert!(started.elapsed() < Duration::from_secs(1));
-            thread::yield_now();
-        }
-        drop(active);
-
-        assert_eq!(
-            acquired_rx.recv_timeout(Duration::from_secs(1)).unwrap(),
-            DecodePriority::Foreground
-        );
-        assert_eq!(
-            acquired_rx.recv_timeout(Duration::from_secs(1)).unwrap(),
-            DecodePriority::Visible
-        );
-        assert_eq!(
-            acquired_rx.recv_timeout(Duration::from_secs(1)).unwrap(),
-            DecodePriority::Background
-        );
-        nearby.join().unwrap();
-        visible.join().unwrap();
-        loupe.join().unwrap();
-    }
-
-    #[test]
-    fn decode_gate_orders_visible_thumbnail_before_nearby() {
-        // Regression for the unified gate: a visible thumbnail that arrives
-        // *after* a nearby one must still be served first. This is the core
-        // "scroll into view jumps the queue" guarantee for every format.
-        let gate = Arc::new(DecodeGate::new());
-        let active = gate.acquire(DecodePriority::Foreground);
-        let (acquired_tx, acquired_rx) = mpsc::channel();
-        let spawn_waiter = |priority| {
-            let gate = gate.clone();
-            let acquired_tx = acquired_tx.clone();
-            thread::spawn(move || {
-                let _permit = gate.acquire(priority);
-                acquired_tx.send(priority).unwrap();
-            })
-        };
-        // Nearby arrives first, visible second.
-        let nearby = spawn_waiter(DecodePriority::Background);
-        let visible = spawn_waiter(DecodePriority::Visible);
-
-        let started = Instant::now();
-        loop {
-            let state = gate
-                .state
-                .lock()
-                .unwrap_or_else(std::sync::PoisonError::into_inner);
-            if state.visible_waiters == 1 {
-                break;
-            }
-            drop(state);
-            assert!(started.elapsed() < Duration::from_secs(1));
-            thread::yield_now();
-        }
-        drop(active);
-
-        assert_eq!(
-            acquired_rx.recv_timeout(Duration::from_secs(1)).unwrap(),
-            DecodePriority::Visible
-        );
-        assert_eq!(
-            acquired_rx.recv_timeout(Duration::from_secs(1)).unwrap(),
-            DecodePriority::Background
-        );
-        visible.join().unwrap();
-        nearby.join().unwrap();
-    }
-
-    #[test]
-    fn cache_key_changes_with_backend_and_size() {
-        let directory = tempfile::tempdir().unwrap();
-        let path = directory.path().join("image.jpg");
-        RgbImage::from_pixel(4, 3, Rgb([10, 20, 30]))
-            .save(&path)
-            .unwrap();
-
-        let first = preview_cache_key(&path, "one", 512).unwrap();
-        let different_backend = preview_cache_key(&path, "two", 512).unwrap();
-        let different_size = preview_cache_key(&path, "one", 2_048).unwrap();
-
-        assert_ne!(first, different_backend);
-        assert_ne!(first, different_size);
-    }
-
-    #[cfg(any(target_os = "macos", target_os = "linux"))]
-    #[test]
-    fn cache_key_is_shared_across_paths_to_the_same_file() {
-        let directory = tempfile::tempdir().unwrap();
-        let path = directory.path().join("image.jpg");
-        let alias = directory.path().join("image-alias.jpg");
-        RgbImage::from_pixel(4, 3, Rgb([10, 20, 30]))
-            .save(&path)
-            .unwrap();
-        std::os::unix::fs::symlink(&path, &alias).unwrap();
-
-        assert_eq!(
-            preview_cache_key(&path, "jpeg", 512).unwrap(),
-            preview_cache_key(&alias, "jpeg", 512).unwrap()
         );
     }
 
@@ -1590,7 +1094,7 @@ mod tests {
         ))
         .unwrap();
         let directory = tempfile::tempdir().unwrap();
-        let original_size = heif::dimensions(&heif_path).unwrap();
+        let original_size = libheif::dimensions(&heif_path).unwrap();
         let started = Instant::now();
         let full = heif_full(&heif_path, directory.path()).unwrap();
 
@@ -1618,7 +1122,7 @@ mod tests {
         ))
         .unwrap();
         let directory = tempfile::tempdir().unwrap();
-        let original = heif::dimensions(&heif_path).unwrap();
+        let original = libheif::dimensions(&heif_path).unwrap();
         let preview = system_preview(
             &heif_path,
             directory.path(),

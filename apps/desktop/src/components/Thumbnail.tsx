@@ -238,8 +238,19 @@ export function Thumbnail({
     imageDebug.current?.handle.updatePriority(requestPriority);
   }, [requestPriority]);
 
+  useLayoutEffect(() => {
+    if (!preparedSource) return;
+    // A cache-ready image paints without the pending image's onLoad handler.
+    // Retain that displayed source locally: projection updates and LRU eviction
+    // may drop the shared cache entry while this DOM image is still visible.
+    // Otherwise React reuses it as a hidden pending image with the same src,
+    // which does not reliably fire another load event to reveal it again.
+    setDisplayedImage((current) => current?.assetId === asset.id
+      ? current
+      : { assetId: asset.id, source: preparedSource });
+  }, [asset.id, preparedSource]);
+
   useEffect(() => {
-    setDisplayedImage(undefined);
     setFullImageFailed(false);
   }, [asset.id]);
 

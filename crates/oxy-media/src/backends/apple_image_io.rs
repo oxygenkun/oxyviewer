@@ -174,9 +174,9 @@ pub fn transcode_jpeg(source: &Path, destination: &Path, quality: u8) -> Result<
         .write(true)
         .truncate(true)
         .open(destination)?;
-    let dimensions = crate::heif::dimensions(source)?;
+    let dimensions = super::libheif::dimensions(source)?;
     if let Err(fallback_error) =
-        crate::ffmpeg_heif::transcode_full_jpeg(source, destination, dimensions, quality)
+        super::ffmpeg_heif::transcode_full_jpeg(source, destination, dimensions, quality)
     {
         return Err(native_error(format!(
             "source HEIF to JPEG conversion failed ({native_failure}); FFmpeg fallback failed: {fallback_error}"

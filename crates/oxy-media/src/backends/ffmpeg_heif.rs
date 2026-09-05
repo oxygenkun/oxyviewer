@@ -919,7 +919,7 @@ mod tests {
         .unwrap()
         .thumbnail_exact(64, 96)
         .into_rgb8();
-        let libheif = crate::heif::decode_full_rgb8(&fixture)
+        let libheif = crate::backends::libheif::decode_full_rgb8(&fixture)
             .unwrap()
             .thumbnail_exact(64, 96)
             .into_rgb8();

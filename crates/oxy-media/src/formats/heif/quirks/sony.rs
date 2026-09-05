@@ -1,3 +1,6 @@
+//! Sony SHIF's bounded embedded-JPEG extraction and orientation compatibility.
+//! This is not a generic HEIF thumbnail extractor or a decoder backend.
+
 use crate::{ImageDimensions, MediaError};
 use image::GenericImageView;
 use std::{fs::File, io::Read, path::Path};
@@ -125,13 +128,46 @@ mod tests {
     }
 
     #[test]
+    fn rejects_files_without_sony_signature() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("generic.hif");
+        std::fs::write(&path, b"not a Sony container").unwrap();
+        let error = extract(
+            &path,
+            ImageDimensions {
+                width: 160,
+                height: 120,
+            },
+        )
+        .err()
+        .expect("non-Sony input must not use the quirk");
+        assert!(matches!(error, MediaError::NativeDecode { message, .. }
+            if message.contains("not a Sony SHIF container")));
+    }
+
+    #[test]
+    fn sony_signature_without_jpeg_is_not_a_preview() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("empty.hif");
+        std::fs::write(&path, b"SHIF").unwrap();
+        let error = extract(
+            &path,
+            ImageDimensions {
+                width: 160,
+                height: 120,
+            },
+        )
+        .err()
+        .expect("signature alone cannot supply a preview");
+        assert!(matches!(error, MediaError::NativeDecode { message, .. }
+            if message.contains("no small embedded JPEG")));
+    }
+
+    #[test]
     fn extracts_repository_sony_sidebar_jpeg() {
-        let path = Path::new("../../tests/fixtures/DSC00449.HIF");
-        if !path.is_file() {
-            return;
-        }
+        let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/DSC00449.HIF");
         let image = extract(
-            path,
+            &path,
             ImageDimensions {
                 width: 4_672,
                 height: 7_008,
