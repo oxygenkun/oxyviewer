@@ -29,7 +29,7 @@ import {
   removeLibraryRoot,
   reorderLibraryRoots,
   setActiveDirectory,
-  trashPaths,
+  deletePaths,
 } from "./lib/api";
 import { filterAndSortAssets } from "./lib/assetFiltering";
 import { recordBrowseTiming } from "./lib/browseDiagnostics";
@@ -563,7 +563,7 @@ export function App({ perfScenario }: { perfScenario?: PerfScenario }) {
   const handleTrashAsset = useCallback(async (asset: typeof assets[number]) => {
     setError(undefined);
     try {
-      await trashPaths([asset.path]);
+      await deletePaths([asset.path], activeSession?.deletionMode ?? "trash");
       const replacementId = replacementAssetIdAfterRemoval(assets, asset.id);
       if (replacementId) select(replacementId);
       else clearSelection();
@@ -572,12 +572,12 @@ export function App({ perfScenario }: { perfScenario?: PerfScenario }) {
     } catch (cause) {
       setError(String(cause));
     }
-  }, [assets, clearSelection, handleRefresh, queryClient, select]);
+  }, [activeSession?.deletionMode, assets, clearSelection, handleRefresh, queryClient, select]);
 
   const handleTrashFolder = useCallback(async (session: FolderSession, path: string) => {
     setError(undefined);
     try {
-      await trashPaths([path]);
+      await deletePaths([path], session.deletionMode);
       if (path === session.rootPath) {
         await handleRemove(session);
         return;
@@ -701,6 +701,7 @@ export function App({ perfScenario }: { perfScenario?: PerfScenario }) {
         ) : (
           <AssetBrowser
             assets={assets}
+            deletionMode={activeSession.deletionMode}
             restoringActiveId={filteredFocusAction === "none" ? undefined : filteredFocusRestoreId}
             total={total}
             view={view}

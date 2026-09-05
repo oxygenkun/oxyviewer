@@ -7,6 +7,7 @@ const folder = (displayName: string, rootPath = `/${displayName}`): FolderSessio
   rootPath,
   displayName,
   openedAtMs: 0,
+  deletionMode: "trash",
 });
 
 describe("folder ordering", () => {

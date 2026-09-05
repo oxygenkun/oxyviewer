@@ -912,7 +912,7 @@ export function Sidebar({
               }}
             >
               <Trash2 size={13} />
-              {t("trashFolder")}
+              {t(contextMenu.session.deletionMode === "permanent" ? "deletePermanently" : "trashFolder")}
             </button>
           </div>,
           document.body,
@@ -920,6 +920,7 @@ export function Sidebar({
 
         {pendingTrash ? (
           <ConfirmTrashDialog
+            deletionMode={pendingTrash.session.deletionMode}
             itemName={pendingTrash.entry.name}
             onCancel={() => setPendingTrash(undefined)}
             onConfirm={() => {

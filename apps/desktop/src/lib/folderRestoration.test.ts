@@ -4,7 +4,7 @@ import type { FolderSession } from "../types";
 import { insertRestoredFolder, restoreFoldersProgressively, type FolderRestoreState } from "./folderRestoration";
 
 const folder = (rootPath: string): FolderSession => ({
-  id: rootPath, rootPath, displayName: rootPath, openedAtMs: 0,
+  id: rootPath, rootPath, displayName: rootPath, openedAtMs: 0, deletionMode: "trash",
 });
 function deferred<T>() {
   let resolve!: (value: T) => void;

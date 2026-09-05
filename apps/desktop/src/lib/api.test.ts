@@ -23,7 +23,7 @@ vi.mock("./previewDebug", () => ({
   beginPreviewDebug: mocks.beginPreviewDebug,
 }));
 
-import { generatedPreview } from "./api";
+import { deletePaths, generatedPreview } from "./api";
 
 const asset: AssetSummary = {
   id: "raw-1",
@@ -73,5 +73,26 @@ describe("generated preview cancellation", () => {
 
     expect(mocks.beginPreviewDebug).not.toHaveBeenCalled();
     expect(mocks.invoke).not.toHaveBeenCalled();
+  });
+});
+
+describe("file deletion", () => {
+  afterEach(() => {
+    mocks.invoke.mockReset();
+    vi.unstubAllGlobals();
+  });
+
+  it.each([
+    ["trash", "trash"],
+    ["permanent", "deletePermanently"],
+  ] as const)("maps %s mode to the native %s operation", async (mode, type) => {
+    vi.stubGlobal("window", { __TAURI_INTERNALS__: {} });
+    mocks.invoke.mockResolvedValue(undefined);
+
+    await deletePaths([asset.path], mode);
+
+    expect(mocks.invoke).toHaveBeenCalledWith("execute_file_operation", {
+      operation: { type, paths: [asset.path] },
+    });
   });
 });

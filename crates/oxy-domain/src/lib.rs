@@ -5,6 +5,14 @@ pub type AssetId = String;
 pub type JobId = String;
 pub type SessionId = String;
 
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub enum FileDeletionMode {
+    #[default]
+    Trash,
+    Permanent,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct FolderSession {
@@ -12,6 +20,8 @@ pub struct FolderSession {
     pub root_path: PathBuf,
     pub display_name: String,
     pub opened_at_ms: u64,
+    #[serde(default)]
+    pub deletion_mode: FileDeletionMode,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -666,6 +676,9 @@ pub enum FileOperation {
         destination_dir: PathBuf,
     },
     Trash {
+        paths: Vec<PathBuf>,
+    },
+    DeletePermanently {
         paths: Vec<PathBuf>,
     },
 }

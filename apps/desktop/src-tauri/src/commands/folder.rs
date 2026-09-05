@@ -374,7 +374,7 @@ pub(crate) async fn execute_file_operation(
                     }
                 }
             }
-            FileOperation::Trash { paths } => {
+            FileOperation::Trash { paths } | FileOperation::DeletePermanently { paths } => {
                 for path in paths {
                     library
                         .remove_asset_tag_state(path)
@@ -393,7 +393,9 @@ pub(crate) async fn execute_file_operation(
             FileOperation::Copy { sources, .. } | FileOperation::Move { sources, .. } => {
                 sources.as_slice()
             }
-            FileOperation::Trash { paths } => paths.as_slice(),
+            FileOperation::Trash { paths } | FileOperation::DeletePermanently { paths } => {
+                paths.as_slice()
+            }
         };
         for path in sources {
             library

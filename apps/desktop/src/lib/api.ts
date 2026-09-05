@@ -20,6 +20,7 @@ import type {
   ImageProjection,
   LibraryIndexUpdate,
   ExiftoolStatus,
+  FileDeletionMode,
   MetadataPatch,
   MetadataProjection,
   MetadataRequestPriority,
@@ -157,11 +158,12 @@ export async function chooseFolder(): Promise<string | null> {
 
 export async function openFolder(path: string): Promise<FolderSession> {
   if (!isTauri()) {
-    const session = {
+    const session: FolderSession = {
       id: "demo-session",
       rootPath: path,
       displayName: "Field Notes",
       openedAtMs: Date.now(),
+      deletionMode: "trash",
     };
     createDemoTree(session);
     return session;
@@ -334,7 +336,7 @@ export async function refreshDirectory(
   return invoke<DirectoryTreeSnapshot>("refresh_directory", { sessionId, directory });
 }
 
-export async function trashPaths(paths: string[]): Promise<void> {
+export async function deletePaths(paths: string[], mode: FileDeletionMode): Promise<void> {
   if (!isTauri()) {
     for (let index = demoAssets.length - 1; index >= 0; index -= 1) {
       if (paths.some((path) => demoAssets[index].path === path || demoAssets[index].path.startsWith(`${path}/`))) {
@@ -349,7 +351,7 @@ export async function trashPaths(paths: string[]): Promise<void> {
     return;
   }
   await invoke("execute_file_operation", {
-    operation: { type: "trash", paths },
+    operation: { type: mode === "permanent" ? "deletePermanently" : "trash", paths },
   });
 }
 

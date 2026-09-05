@@ -14,5 +14,8 @@ parking_lot.workspace = true
 thiserror.workspace = true
 trash.workspace = true
 
+[target.'cfg(target_os = "windows")'.dependencies]
+windows = { workspace = true, features = ["Win32_Storage_FileSystem"] }
+
 [dev-dependencies]
 tempfile.workspace = true

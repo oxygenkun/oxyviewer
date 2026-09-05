@@ -7,6 +7,7 @@ const session: FolderSession = {
   rootPath: "/photos",
   displayName: "photos",
   openedAtMs: 1,
+  deletionMode: "trash",
 };
 
 describe("directory tree projection", () => {

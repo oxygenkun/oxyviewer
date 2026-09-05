@@ -242,12 +242,15 @@ rating/color/flag；只有启用 rating/color 筛选时才批量读取整个当�
 
 ## 8. 文件操作
 
-`FileOperation` 是 tagged enum：Rename、Copy、Move、Trash。实际操作集中在 `oxy-fs`：
+`FileOperation` 是 tagged enum：Rename、Copy、Move、Trash、DeletePermanently。实际操作集中在 `oxy-fs`：
 
 - rename 只接受单个 normal filename component，拒绝空值和路径穿越式名称；
 - 目标存在时拒绝覆盖；
 - copy/move 同步处理 XMP sidecar；
 - trash 使用系统废纸篓，并同时处理 sidecar；
+- Windows 上打开目录时使用卷类型识别 UNC 与映射的网络驱动器。网络卷的右键菜单明确显示
+  “直接删除”，确认框提示不可恢复，再由 DeletePermanently 递归删除目录或删除文件及其 sidecar；
+  本地卷仍只提供可恢复的 trash 操作；
 - 返回所有受影响路径。
 
 ```mermaid
@@ -257,12 +260,14 @@ flowchart TD
     operationKind -->|Copy| transfer["复制源与 sidecar"]
     operationKind -->|Move| move["移动源与 sidecar"]
     operationKind -->|Trash| trash["送入系统废纸篓"]
+    operationKind -->|DeletePermanently| permanent["仅网络卷直接删除"]
     validateName --> collision{目标已存在?}
     transfer --> collision
     move --> collision
     collision -->|是| reject["DestinationExists"]
     collision -->|否| affected["返回 affectedPaths"]
     trash --> affected
+    permanent --> affected
 ```
 
 ### 8.1 必须知道的当前限制

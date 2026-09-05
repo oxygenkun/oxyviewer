@@ -1,6 +1,7 @@
 use oxy_domain::{
     AssetKind, AssetQuery, AssetSort, AssetSummary, DirectorySummary, DirectoryTreeNode,
-    DirectoryTreeSnapshot, FileOperation, FileOperationResult, FolderSession, Page, SortDirection,
+    DirectoryTreeSnapshot, FileDeletionMode, FileOperation, FileOperationResult, FolderSession,
+    Page, SortDirection,
 };
 use parking_lot::{Mutex, RwLock};
 use std::{
@@ -37,6 +38,8 @@ pub enum FsError {
     Io(#[from] std::io::Error),
     #[error("failed to move item to the system trash: {0}")]
     Trash(String),
+    #[error("permanent deletion is only available for paths without system trash support: {0}")]
+    PermanentDeleteUnsupported(PathBuf),
 }
 
 #[derive(Default)]
@@ -87,6 +90,7 @@ impl FsCatalog {
         let session = FolderSession {
             id,
             display_name,
+            deletion_mode: deletion_mode_for_path(&root_path),
             root_path,
             opened_at_ms,
         };
@@ -687,6 +691,50 @@ pub fn execute_file_operation(operation: &FileOperation) -> Result<FileOperation
             destination_dir,
         } => transfer_assets(sources, destination_dir, true),
         FileOperation::Trash { paths } => trash_assets(paths),
+        FileOperation::DeletePermanently { paths } => delete_assets_permanently(paths),
+    }
+}
+
+pub fn deletion_mode_for_path(path: &Path) -> FileDeletionMode {
+    #[cfg(target_os = "windows")]
+    {
+        use std::os::windows::ffi::OsStrExt;
+        use windows::{Win32::Storage::FileSystem::GetDriveTypeW, core::PCWSTR};
+
+        let Some(root) = windows_volume_root(path) else {
+            return FileDeletionMode::Trash;
+        };
+        let mut root = root.as_os_str().encode_wide().collect::<Vec<_>>();
+        root.push(0);
+        // GetDriveTypeW only reads the locally known drive mapping. DRIVE_REMOTE
+        // is 4 and covers both UNC shares and mapped SMB drive letters.
+        if unsafe { GetDriveTypeW(PCWSTR(root.as_ptr())) } == 4 {
+            return FileDeletionMode::Permanent;
+        }
+    }
+
+    FileDeletionMode::Trash
+}
+
+#[cfg(target_os = "windows")]
+fn windows_volume_root(path: &Path) -> Option<PathBuf> {
+    use std::path::{Component, Prefix};
+
+    let Component::Prefix(prefix) = path.components().next()? else {
+        return None;
+    };
+    match prefix.kind() {
+        Prefix::Disk(letter) | Prefix::VerbatimDisk(letter) => {
+            Some(PathBuf::from(format!("{}:\\", char::from(letter))))
+        }
+        Prefix::UNC(server, share) | Prefix::VerbatimUNC(server, share) => {
+            let mut root = PathBuf::from(r"\\");
+            root.push(server);
+            root.push(share);
+            root.as_mut_os_string().push("\\");
+            Some(root)
+        }
+        _ => None,
     }
 }
 
@@ -867,6 +915,37 @@ fn trash_assets(paths: &[PathBuf]) -> Result<FileOperationResult, FsError> {
         }
     }
     Ok(FileOperationResult { affected_paths })
+}
+
+fn delete_assets_permanently(paths: &[PathBuf]) -> Result<FileOperationResult, FsError> {
+    if let Some(path) = paths
+        .iter()
+        .find(|path| deletion_mode_for_path(path) != FileDeletionMode::Permanent)
+    {
+        return Err(FsError::PermanentDeleteUnsupported(path.clone()));
+    }
+
+    let mut affected_paths = Vec::new();
+    for path in paths {
+        delete_path_permanently(path, &mut affected_paths)?;
+    }
+    Ok(FileOperationResult { affected_paths })
+}
+
+fn delete_path_permanently(path: &Path, affected_paths: &mut Vec<PathBuf>) -> Result<(), FsError> {
+    let metadata = fs::symlink_metadata(path)?;
+    let sidecar = metadata.is_file().then(|| sidecar_path(path));
+    if metadata.is_dir() {
+        fs::remove_dir_all(path)?;
+    } else {
+        fs::remove_file(path)?;
+    }
+    affected_paths.push(path.to_owned());
+    if let Some(sidecar) = sidecar.filter(|candidate| candidate.exists()) {
+        fs::remove_file(&sidecar)?;
+        affected_paths.push(sidecar);
+    }
+    Ok(())
 }
 
 fn move_sidecar(
@@ -1282,5 +1361,48 @@ mod tests {
         assert!(directory.path().join("after.HIF").exists());
         assert!(directory.path().join("after.xmp").exists());
         assert!(!directory.path().join("before.xmp").exists());
+    }
+
+    #[test]
+    fn permanent_delete_removes_a_file_and_its_sidecar() {
+        let directory = tempdir().unwrap();
+        let raw = directory.path().join("delete.nef");
+        let sidecar = sidecar_path(&raw);
+        File::create(&raw).unwrap();
+        File::create(&sidecar).unwrap();
+        let mut affected = Vec::new();
+
+        delete_path_permanently(&raw, &mut affected).unwrap();
+
+        assert_eq!(affected, [raw.clone(), sidecar.clone()]);
+        assert!(!raw.exists());
+        assert!(!sidecar.exists());
+    }
+
+    #[test]
+    fn permanent_delete_removes_a_directory_tree() {
+        let directory = tempdir().unwrap();
+        let child = directory.path().join("delete-me");
+        fs::create_dir(&child).unwrap();
+        File::create(child.join("photo.jpg")).unwrap();
+        let mut affected = Vec::new();
+
+        delete_path_permanently(&child, &mut affected).unwrap();
+
+        assert_eq!(affected, std::slice::from_ref(&child));
+        assert!(!child.exists());
+    }
+
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn extracts_unc_and_mapped_drive_roots_for_drive_type_detection() {
+        assert_eq!(
+            windows_volume_root(Path::new(r"\\server\share\photos\2026")),
+            Some(PathBuf::from(r"\\server\share\")),
+        );
+        assert_eq!(
+            windows_volume_root(Path::new(r"Z:\photos\2026")),
+            Some(PathBuf::from(r"Z:\")),
+        );
     }
 }

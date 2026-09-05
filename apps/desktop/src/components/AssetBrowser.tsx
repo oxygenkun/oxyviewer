@@ -16,7 +16,7 @@ import {
   viewportPreviewIntents,
 } from "../lib/previewScheduling";
 import { useWorkspaceStore } from "../store";
-import type { AssetSummary, ViewMode } from "../types";
+import type { AssetSummary, FileDeletionMode, ViewMode } from "../types";
 import { AssetMetadataBadges } from "./AssetMetadataBadges";
 import { ConfirmTrashDialog } from "./ConfirmTrashDialog";
 import { Loupe } from "./Loupe";
@@ -32,6 +32,7 @@ interface AssetBrowserProps {
   onTrashAsset: (asset: AssetSummary) => void;
   onCopyAssetPath: (asset: AssetSummary, relative: boolean) => void;
   onOpenInFileManager: (path: string) => void;
+  deletionMode: FileDeletionMode;
   view: ViewMode;
   t: (key: MessageKey) => string;
 }
@@ -216,13 +217,14 @@ export function AssetBrowser(props: AssetBrowserProps) {
             }}
           >
             <Trash2 size={13} />
-            {props.t("delete")}
+            {props.t(props.deletionMode === "permanent" ? "deletePermanently" : "delete")}
           </button>
         </div>,
         document.body,
       ) : null}
       {pendingTrash ? (
         <ConfirmTrashDialog
+          deletionMode={props.deletionMode}
           itemName={pendingTrash.name}
           onCancel={() => setPendingTrash(undefined)}
           onConfirm={() => {

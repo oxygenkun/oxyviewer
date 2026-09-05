@@ -5,12 +5,14 @@ export type ViewMode = "grid" | "list" | "loupe";
 export type ThumbnailOrientation = "landscape" | "portrait";
 export type NavigatorPosition = "top-left" | "top-right" | "bottom-left" | "bottom-right";
 export type PickLabel = "rejected" | "pending" | "accepted";
+export type FileDeletionMode = "trash" | "permanent";
 
 export interface FolderSession {
   id: string;
   rootPath: string;
   displayName: string;
   openedAtMs: number;
+  deletionMode: FileDeletionMode;
 }
 
 export interface DirectorySummary {
