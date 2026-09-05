@@ -275,6 +275,23 @@ export interface Page<T> {
   items: T[];
   nextCursor?: number;
   total: number;
+  progress?: DirectoryBrowseProgress;
+  snapshotRevision?: number;
+}
+
+export interface DirectoryBrowseProgress {
+  sessionId: string;
+  directory: string;
+  stage: string;
+  source: string;
+  discoveredCount: number;
+  elapsedMs: number;
+  cacheMs: number;
+  resolveMs: number;
+  enumerationMs: number;
+  attributesMs: number;
+  sortMs: number;
+  error?: string;
 }
 
 export interface LibraryIndexUpdate {

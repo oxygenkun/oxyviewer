@@ -29,10 +29,11 @@ const views: Array<[ViewMode, typeof Grid3X3, MessageKey]> = [
 
 interface ToolbarProps {
   total: number;
+  loading?: boolean;
   t: (key: MessageKey) => string;
 }
 
-export function Toolbar({ total, t }: ToolbarProps) {
+export function Toolbar({ total, loading, t }: ToolbarProps) {
   const {
     view, setView, search, setSearch, kind, setKind, sort, setSort, direction,
     toggleDirection, inspectorOpen, toggleInspector, leftPanelOpen, toggleLeftPanel,
@@ -47,7 +48,7 @@ export function Toolbar({ total, t }: ToolbarProps) {
         </button>
         <div className="toolbar__title">
           <strong>WORKSPACE</strong>
-          <span>{total.toLocaleString()} {t("photos")}</span>
+          <span>{loading ? t("loading") : `${total.toLocaleString()} ${t("photos")}`}</span>
         </div>
         <label className="search-field">
           <Search size={15} />

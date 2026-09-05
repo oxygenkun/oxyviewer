@@ -103,7 +103,8 @@ pub fn run() {
             let library = Arc::new(Library::open(&data_dir.join("oxyviewer.sqlite"))?);
             let metadata_provider = Arc::new(ProviderManager::load(data_dir));
             let files = Arc::new(FsCatalog::default());
-            let directory_tree_queue = DirectoryTreeQueue::new(app.handle().clone(), files.clone());
+            let directory_tree_queue =
+                DirectoryTreeQueue::new(app.handle().clone(), files.clone(), library.clone());
             let metadata = metadata_provider.facade();
             let metadata_queue = jobs::metadata::MetadataQueue::new(
                 app.handle().clone(),

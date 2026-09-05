@@ -34,7 +34,8 @@ impl LibraryIndexQueue {
     }
 
     pub(crate) fn schedule(&self, app: tauri::AppHandle, root: PathBuf) {
-        let root = root.canonicalize().unwrap_or(root);
+        // Callers supply registered canonical paths. Do not stat a NAS on the
+        // command/UI thread just to enqueue background work.
         if !self.library.root_needs_index(&root).unwrap_or(false) {
             return;
         }
@@ -53,6 +54,7 @@ impl LibraryIndexQueue {
 
         let queue = self.clone();
         tauri::async_runtime::spawn_blocking(move || {
+            queue.library.foreground.wait_for_background();
             let directory_event_app = app.clone();
             let mut directory_event_sent = false;
             let result = queue.library.index_root_with_progress(&root, |progress| {

@@ -587,6 +587,32 @@ pub struct Page<T> {
     pub total: usize,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct DirectoryBrowseProgress {
+    pub session_id: String,
+    pub directory: PathBuf,
+    pub stage: String,
+    pub source: String,
+    pub discovered_count: usize,
+    pub elapsed_ms: u64,
+    pub cache_ms: u64,
+    pub resolve_ms: u64,
+    pub enumeration_ms: u64,
+    pub attributes_ms: u64,
+    pub sort_ms: u64,
+    pub error: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BrowsePage {
+    #[serde(flatten)]
+    pub page: Page<AssetSummary>,
+    pub progress: DirectoryBrowseProgress,
+    pub snapshot_revision: Option<u64>,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct LibraryIndexUpdate {

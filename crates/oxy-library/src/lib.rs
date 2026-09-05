@@ -15,7 +15,9 @@ use std::{
 };
 use thiserror::Error;
 
+mod browsing;
 mod tags;
+pub use browsing::DirectoryRead;
 
 const DEFAULT_PAGE_SIZE: usize = 250;
 const MAX_PAGE_SIZE: usize = 1_000;
@@ -24,6 +26,8 @@ const INDEX_WRITE_TIME_SLICE: Duration = Duration::from_millis(8);
 
 #[derive(Debug, Error)]
 pub enum LibraryError {
+    #[error("directory snapshot changed; reload the first page")]
+    StaleDirectorySnapshot,
     #[error(transparent)]
     Sqlite(#[from] rusqlite::Error),
     #[error(transparent)]
@@ -45,6 +49,8 @@ pub enum LibraryError {
 }
 
 pub struct Library {
+    directory_snapshots: browsing::DirectorySnapshots,
+    pub foreground: oxy_runtime::ForegroundGate,
     connection: Mutex<Connection>,
     // Disk libraries use WAL readers that never acquire the writer mutex.
     // Plain in-memory databases cannot share WAL; tests retain one connection.
@@ -366,6 +372,7 @@ impl Library {
                 [],
             )?;
         }
+        browsing::ensure_schema(&connection)?;
         ensure_search_keys(&mut connection)?;
         normalize_root_order(&mut connection)?;
         let open_reader = || -> Result<Mutex<Connection>, rusqlite::Error> {
@@ -381,6 +388,8 @@ impl Library {
             connection: Mutex::new(connection),
             indexing_roots: Mutex::new(HashSet::new()),
             index_gate: Mutex::new(()),
+            directory_snapshots: browsing::DirectorySnapshots::default(),
+            foreground: oxy_runtime::ForegroundGate::default(),
         })
     }
 
@@ -497,6 +506,7 @@ impl Library {
             );
             ",
         )?;
+        browsing::ensure_schema(&connection)?;
         ensure_search_keys(&mut connection)?;
         normalize_root_order(&mut connection)?;
         Ok(Self {
@@ -505,6 +515,8 @@ impl Library {
             projection_reader: None,
             indexing_roots: Mutex::new(HashSet::new()),
             index_gate: Mutex::new(()),
+            directory_snapshots: browsing::DirectorySnapshots::default(),
+            foreground: oxy_runtime::ForegroundGate::default(),
         })
     }
 
@@ -523,6 +535,7 @@ impl Library {
         // has been moved or disconnected. In that case the exact persisted path
         // is still safe to remove.
         let path = path.canonicalize().unwrap_or_else(|_| path.to_path_buf());
+        self.invalidate_snapshot_root(&path)?;
         let root = path.to_string_lossy();
         let mut connection = self.connection.lock();
         let transaction = connection.transaction()?;
@@ -804,7 +817,11 @@ impl Library {
     /// Normal folder opens reuse a completed generation; explicit refresh
     /// invalidates it and makes this check true again.
     pub fn root_needs_index(&self, root: &Path) -> Result<bool, LibraryError> {
-        let root = root.canonicalize().unwrap_or_else(|_| root.to_owned());
+        let root = if self.roots()?.iter().any(|stored| stored == root) {
+            root.to_owned()
+        } else {
+            root.canonicalize().unwrap_or_else(|_| root.to_owned())
+        };
         let root = root.to_string_lossy();
         let mut reader = self.read_connection();
         let connection = reader.transaction()?;
@@ -1068,7 +1085,10 @@ impl Library {
             // Preserve the last completed generation if any directory becomes
             // unreadable. Publishing a partial scan as complete would turn a
             // transient permission or volume error into false deletions.
-            let directories = oxy_fs::scan_index_directories(&directory)?;
+            self.foreground.wait_for_background();
+            let directories = oxy_fs::scan_index_directories_with_checkpoint(&directory, || {
+                self.foreground.wait_for_background();
+            })?;
             let safe_directories = queue.enqueue_children(depth, directories);
             directory_count += safe_directories.len();
             self.write_directory_index_batch(root, &directory, scan_id, &safe_directories)?;
@@ -1105,7 +1125,10 @@ impl Library {
                     directory_count,
                 });
             }
-            let assets = oxy_fs::scan_index_assets(directory)?;
+            self.foreground.wait_for_background();
+            let assets = oxy_fs::scan_assets_with_progress(directory, |_| {
+                self.foreground.wait_for_background();
+            })?;
             asset_count += assets.len();
             self.write_asset_index_batch(root, directory, scan_id, &assets)?;
             report_progress(IndexProgress {

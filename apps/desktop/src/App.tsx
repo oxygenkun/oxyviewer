@@ -19,6 +19,7 @@ import {
   openFolder,
   openInFileManager,
   onDirectoryTreeUpdated,
+  onDirectoryBrowseProgress,
   onLibraryDirectoryIndexUpdated,
   onLibraryIndexUpdated,
   onImageProjectionUpdated,
@@ -31,6 +32,9 @@ import {
   trashPaths,
 } from "./lib/api";
 import { filterAndSortAssets } from "./lib/assetFiltering";
+import { recordBrowseTiming } from "./lib/browseDiagnostics";
+import { firstBrowseCursor, nextBrowseCursor } from "./lib/browsePagination";
+import { insertRestoredFolder, restoreFoldersProgressively, type FolderRestoreState } from "./lib/folderRestoration";
 import { replacementAssetIdAfterRemoval } from "./lib/assetViewPosition";
 import { setBrowserImageResourceScope } from "./lib/browserImageCache";
 import { acceptDirectoryTreeSnapshot } from "./lib/directoryTreeProjection";
@@ -57,16 +61,12 @@ import {
   saveWorkspace,
 } from "./lib/workspacePersistence";
 import { useWorkspaceStore } from "./store";
-import type { AssetQuery, DirectoryTreeSnapshot, FolderSession, PerfScenario } from "./types";
-
-async function restoreFolders(): Promise<FolderSession[]> {
-  const roots = await listLibraryRoots();
-  const restored = await Promise.allSettled(roots.map((root) => openFolder(root)));
-  return restored.flatMap((result) => result.status === "fulfilled" ? [result.value] : []);
-}
+import type { AssetQuery, DirectoryBrowseProgress, DirectoryTreeSnapshot, FolderSession, PerfScenario } from "./types";
 
 export function App({ perfScenario }: { perfScenario?: PerfScenario }) {
   const [workspace, setWorkspace] = useState(loadWorkspace);
+  const [browseProgress, setBrowseProgress] = useState<DirectoryBrowseProgress>();
+  const [folderRestoreStates, setFolderRestoreStates] = useState<FolderRestoreState[]>([]);
   const [showOnboarding, setShowOnboarding] = useState(() => !hasSeenFolderOnboarding());
   const [error, setError] = useState<string>();
   const [isRefreshing, setIsRefreshing] = useState(false);
@@ -90,7 +90,19 @@ export function App({ perfScenario }: { perfScenario?: PerfScenario }) {
 
   const foldersQuery = useQuery({
     queryKey: ["open-folders"],
-    queryFn: restoreFolders,
+    queryFn: async () => {
+      const started = performance.now();
+      const roots = await listLibraryRoots();
+      recordBrowseTiming("workspace-roots", { elapsedMs: performance.now() - started, count: roots.length });
+      await restoreFoldersProgressively(roots, workspace.activeRoot, openFolder, (session) => {
+        recordBrowseTiming("workspace-root-ready", { root: session.rootPath, elapsedMs: performance.now() - started });
+        queryClient.setQueryData<FolderSession[]>(["open-folders"], (current = []) =>
+          insertRestoredFolder(current, session, roots));
+      }, setFolderRestoreStates);
+      // Do not replay completed results: users may have removed a ready root.
+      return queryClient.getQueryData<FolderSession[]>(["open-folders"]) ?? [];
+    },
+    retry: false,
     // The perf harness opens its scenario folder explicitly; restoring library
     // roots would add noise from previously recorded runs.
     enabled: !perfScenario,
@@ -103,11 +115,38 @@ export function App({ perfScenario }: { perfScenario?: PerfScenario }) {
     () => sortFolderSessions(sessions, folderSort, locale),
     [folderSort, locale, sessions],
   );
+  const activeRootRestoring = folderRestoreStates.some((state) =>
+    state.rootPath === workspace.activeRoot && state.status === "restoring");
+  const restoringFolders = foldersQuery.isLoading || folderRestoreStates.some((state) =>
+    state.status === "restoring");
   const activeSession = sessions.find((item) => item.rootPath === workspace.activeRoot) ??
-    sortedSessions[0];
+    (activeRootRestoring ? undefined : sortedSessions[0]);
+  useEffect(() => {
+    if (activeSession && activeSession.rootPath !== workspace.activeRoot) {
+      setWorkspace((current) => ({ ...current, activeRoot: activeSession.rootPath }));
+    }
+  }, [activeSession, workspace.activeRoot]);
   const currentPath = activeSession
     ? workspace.currentDirectories[activeSession.rootPath] ?? activeSession.rootPath
     : undefined;
+  const browseTarget = useRef({ sessionId: activeSession?.id, directory: currentPath });
+  browseTarget.current = { sessionId: activeSession?.id, directory: currentPath };
+  useEffect(() => {
+    let disposed = false;
+    let unlisten: (() => void) | undefined;
+    void onDirectoryBrowseProgress((progress) => {
+      recordBrowseTiming("native-browse", { ...progress });
+      if (progress.sessionId === browseTarget.current.sessionId && progress.directory === browseTarget.current.directory) {
+        setBrowseProgress(progress);
+      }
+      if (progress.stage === "updated") {
+        for (const key of ["assets", "preload-assets", "progressive-metadata-assets"]) {
+          void queryClient.invalidateQueries({ queryKey: [key, progress.sessionId, progress.directory] });
+        }
+      }
+    }).then((dispose) => { if (disposed) dispose(); else unlisten = dispose; });
+    return () => { disposed = true; unlisten?.(); };
+  }, [queryClient]);
 
   useEffect(() => {
     if (activeSession && currentPath) {
@@ -234,9 +273,9 @@ export function App({ perfScenario }: { perfScenario?: PerfScenario }) {
 
   const assetsQuery = useInfiniteQuery({
     queryKey: ["assets", activeSession?.id, currentPath, query],
-    queryFn: ({ pageParam }) => listAssets(activeSession!.id, currentPath!, query, pageParam),
-    initialPageParam: 0,
-    getNextPageParam: (page) => page.nextCursor,
+    queryFn: ({ pageParam }) => listAssets(activeSession!.id, currentPath!, query, pageParam.offset, pageParam.snapshotRevision),
+    initialPageParam: firstBrowseCursor,
+    getNextPageParam: nextBrowseCursor,
     enabled: Boolean(activeSession && currentPath && !progressivelyFilterMetadata),
     staleTime: Infinity,
   });
@@ -246,12 +285,14 @@ export function App({ perfScenario }: { perfScenario?: PerfScenario }) {
       activeSession!.id,
       currentPath!,
       preloadQuery,
-      pageParam,
+      pageParam.offset,
+      pageParam.snapshotRevision,
     ),
-    initialPageParam: 0,
-    getNextPageParam: (page) => page.nextCursor,
+    initialPageParam: firstBrowseCursor,
+    getNextPageParam: nextBrowseCursor,
     enabled: Boolean(
       shouldPreloadFilteredAssets &&
+      !assetsQuery.isLoading &&
       !progressivelyFilterMetadata &&
       activeSession &&
       currentPath,
@@ -265,14 +306,15 @@ export function App({ perfScenario }: { perfScenario?: PerfScenario }) {
         activeSession!.id,
         currentPath!,
         progressiveMetadataBatchQuery,
-        pageParam,
+        pageParam.offset,
+        pageParam.snapshotRevision,
       );
       const snapshots = await requestMetadata(page.items.map((asset) => asset.path), "filter");
       snapshots.forEach(acceptMetadataProjection);
       return page;
     },
-    initialPageParam: 0,
-    getNextPageParam: (page) => page.nextCursor,
+    initialPageParam: firstBrowseCursor,
+    getNextPageParam: nextBrowseCursor,
     enabled: Boolean(progressivelyFilterMetadata && activeSession && currentPath),
     staleTime: Infinity,
   });
@@ -328,6 +370,16 @@ export function App({ perfScenario }: { perfScenario?: PerfScenario }) {
   const assetsError = progressivelyFilterMetadata
     ? progressiveMetadataQuery.error
     : assetsQuery.error;
+  const currentBrowseProgress = browseProgress?.sessionId === activeSession?.id && browseProgress?.directory === currentPath
+    ? browseProgress : assetsQuery.data?.pages[0]?.progress;
+  useEffect(() => {
+    if (assetsLoading || !activeSession || !currentPath) return;
+    const requested = performance.now();
+    const frame = requestAnimationFrame(() => {
+      recordBrowseTiming("first-page-render-frame", { directory: currentPath, afterCommitMs: performance.now() - requested, total });
+    });
+    return () => cancelAnimationFrame(frame);
+  }, [activeSession?.id, currentPath, assetsLoading]);
 
   useEffect(() => {
     if (!preloadAssetsQuery.hasNextPage || preloadAssetsQuery.isFetchingNextPage) return;
@@ -566,9 +618,10 @@ export function App({ perfScenario }: { perfScenario?: PerfScenario }) {
     >
       <Sidebar
         sessions={sortedSessions}
+        folderRestoreStates={folderRestoreStates}
         activeSession={activeSession}
         currentPath={currentPath}
-        showOnboarding={showOnboarding && sessions.length === 0 && !foldersQuery.isLoading}
+        showOnboarding={showOnboarding && sessions.length === 0 && !restoringFolders}
         onOpen={handleOpen}
         onNavigate={handleNavigate}
         onRemove={handleRemove}
@@ -581,7 +634,7 @@ export function App({ perfScenario }: { perfScenario?: PerfScenario }) {
         onSettings={toggleSettings}
         folderSort={folderSort}
         onFolderSortChange={handleFolderSortChange}
-        folderDragEnabled={folderDragEnabled}
+        folderDragEnabled={folderDragEnabled && !restoringFolders}
         onFolderDragEnabledChange={handleFolderDragEnabledChange}
         onReorderFolders={(rootPaths) => void handleReorderFolders(rootPaths)}
         t={t}
@@ -600,15 +653,22 @@ export function App({ perfScenario }: { perfScenario?: PerfScenario }) {
         value={leftPanelWidth}
       />
       <section className="workspace">
-        <Toolbar total={total} t={t} />
+        <Toolbar total={total} loading={assetsLoading || !activeSession && restoringFolders} t={t} />
+        {currentBrowseProgress?.stage === "stale" ? (
+          <div className="workspace-browse-status" role="status" title={currentBrowseProgress.error}>{t("browseSnapshotOffline")}</div>
+        ) : currentBrowseProgress?.source === "snapshot" ? (
+          <div className="workspace-browse-status" role="status">{t("browseSnapshotChecking")}</div>
+        ) : null}
         {!activeSession ? (
           <div className="workspace-empty">
             <FolderPlus size={29} strokeWidth={1.4} />
-            <strong>{foldersQuery.isLoading ? t("restoringFolders") : t("noFolderTitle")}</strong>
-            <span>{foldersQuery.isLoading ? t("restoringFoldersBody") : t("noFolderBody")}</span>
+            <strong>{restoringFolders ? t("restoringFolders") : t("noFolderTitle")}</strong>
+            <span>{restoringFolders ? t("restoringFoldersBody") : t("noFolderBody")}</span>
           </div>
         ) : assetsLoading ? (
-          <div className="workspace-loading"><Aperture size={24} /> {t("scanningFolder")} {activeSession.displayName}…</div>
+          <div className="workspace-loading"><Aperture size={24} /> {t("scanningFolder")} {currentPath?.split(/[\\/]/).pop() || activeSession.displayName}…
+            {currentBrowseProgress && <span>{t("browseDiscovered")} {currentBrowseProgress.discoveredCount.toLocaleString()} {t("photos")}</span>}
+          </div>
         ) : assetsError ? (
           <div className="workspace-error">
             <CircleAlert size={24} />
@@ -637,7 +697,7 @@ export function App({ perfScenario }: { perfScenario?: PerfScenario }) {
           <span title={currentPath}><i className="status-dot" /> {
             currentPath?.split(/[\\/]/).filter(Boolean).at(-1) ?? t("noFolderOpen")
           }</span>
-          <span>{assets.length.toLocaleString()} / {total.toLocaleString()} {t("photos")}</span>
+          <span>{assetsLoading || !activeSession && restoringFolders ? t("loading") : `${assets.length.toLocaleString()} / ${total.toLocaleString()} ${t("photos")}`}</span>
           <span
             className="statusbar__thumbnail-orientation"
             role="group"

@@ -14,7 +14,7 @@ use std::{
         Arc,
         atomic::{AtomicU64, Ordering as AtomicOrdering},
     },
-    time::{SystemTime, UNIX_EPOCH},
+    time::{Instant, SystemTime, UNIX_EPOCH},
 };
 use thiserror::Error;
 
@@ -69,6 +69,12 @@ impl FsCatalog {
             return Err(FsError::InvalidFolder(root_path));
         }
 
+        Ok(self.restore_registered_folder(root_path))
+    }
+
+    /// The caller must obtain this canonical root from the registered library.
+    /// Restoring a trusted session must not stat an offline network volume.
+    pub fn restore_registered_folder(&self, root_path: PathBuf) -> FolderSession {
         let opened_at_ms = epoch_ms(SystemTime::now());
         let id = stable_id(&(root_path.clone(), opened_at_ms));
         self.sessions.write().insert(id.clone(), root_path.clone());
@@ -104,7 +110,7 @@ impl FsCatalog {
             })),
         );
 
-        Ok(session)
+        session
     }
 
     pub fn list_assets(
@@ -448,12 +454,21 @@ pub fn scan_index_directory(root: &Path) -> Result<DirectoryScan, FsError> {
 /// library indexing. Asset metadata is intentionally left untouched until the
 /// directory tree has been recorded.
 pub fn scan_index_directories(root: &Path) -> Result<Vec<DirectorySummary>, FsError> {
+    scan_index_directories_with_checkpoint(root, || {})
+}
+
+pub fn scan_index_directories_with_checkpoint(
+    root: &Path,
+    mut checkpoint: impl FnMut(),
+) -> Result<Vec<DirectorySummary>, FsError> {
+    checkpoint();
     if !root.is_dir() {
         return Err(FsError::InvalidFolder(root.to_owned()));
     }
     let mut directories = Vec::new();
     for entry in fs::read_dir(root)? {
-        let Ok(entry) = entry else { continue };
+        checkpoint();
+        let entry = entry?;
         let path = entry.path();
         let is_directory = entry.file_type().map_or_else(
             |_| path.is_dir(),
@@ -481,57 +496,11 @@ pub fn scan_index_directories(root: &Path) -> Result<Vec<DirectorySummary>, FsEr
 /// Discovers only the immediate assets for the second phase of library
 /// indexing, after the complete directory tree has been recorded.
 pub fn scan_index_assets(root: &Path) -> Result<Vec<AssetSummary>, FsError> {
-    if !root.is_dir() {
-        return Err(FsError::InvalidFolder(root.to_owned()));
-    }
-    let paths = fs::read_dir(root)?
-        .filter_map(Result::ok)
-        .map(|entry| entry.path())
-        .collect::<Vec<_>>();
-    let sidecars = paths
-        .iter()
-        .filter(|path| {
-            path.extension().is_some_and(|extension| extension == "xmp") && path.is_file()
-        })
-        .cloned()
-        .collect::<HashSet<_>>();
-    let mut assets = Vec::new();
-    for path in paths {
-        let has_sidecar = sidecars.contains(&sidecar_path(&path));
-        if let Some(summary) = summary_for_path_with_sidecar(&path, Some(has_sidecar))? {
-            assets.push(summary);
-        }
-    }
-    Ok(assets)
+    scan_assets_with_progress(root, |_| {})
 }
 
 pub fn list_directories(root: &Path) -> Result<Vec<DirectorySummary>, FsError> {
-    if !root.is_dir() {
-        return Err(FsError::InvalidFolder(root.to_owned()));
-    }
-    let mut directories = Vec::new();
-    for entry in fs::read_dir(root)? {
-        let Ok(entry) = entry else { continue };
-        let path = entry.path();
-        if path.is_dir() {
-            let Some(name) = path
-                .file_name()
-                .and_then(|value| value.to_str())
-                .map(str::to_owned)
-            else {
-                continue;
-            };
-            directories.push(DirectorySummary {
-                path,
-                name,
-                // Do not probe this directory before returning the current level.
-                // The directory tree loads its children on expansion and replaces
-                // this optimistic value with the actual result.
-                has_children: true,
-            });
-            continue;
-        }
-    }
+    let mut directories = scan_index_directories(root)?;
     directories.sort_unstable_by(|left, right| {
         left.name
             .to_ascii_lowercase()
@@ -555,17 +524,95 @@ pub fn scan_directory(
 }
 
 fn scan_assets(root: &Path) -> Result<Vec<AssetSummary>, FsError> {
-    if !root.is_dir() {
-        return Err(FsError::InvalidFolder(root.to_owned()));
-    }
-    let mut assets = Vec::new();
+    scan_assets_with_progress(root, |_| {})
+}
+
+#[derive(Clone, Copy, Debug, Default)]
+pub struct ScanProgress {
+    pub resolving: bool,
+    pub resolve_ms: u64,
+    pub discovered_count: usize,
+    pub reading_attributes: bool,
+    pub enumeration_ms: u64,
+    pub attributes_ms: u64,
+}
+
+/// One enumeration supplies file types and sidecar pairing. On Windows,
+/// DirEntry::metadata reuses enumeration attributes instead of a path stat.
+/// Keep size/mtime accurate because sorting and preview cache keys need them.
+pub fn scan_assets_with_progress(
+    root: &Path,
+    mut report: impl FnMut(ScanProgress),
+) -> Result<Vec<AssetSummary>, FsError> {
+    let started = Instant::now();
+    let mut progress = ScanProgress::default();
+    report(progress);
+    let mut entries = Vec::new();
+    let mut sidecars = HashSet::new();
     for entry in fs::read_dir(root)? {
-        let Ok(entry) = entry else { continue };
-        if let Some(summary) = summary_for_path(&entry.path())? {
-            assets.push(summary);
+        let entry = entry?;
+        let path = entry.path();
+        let file_type = entry.file_type()?;
+        if file_type.is_dir() {
+            continue;
         }
+        if path
+            .extension()
+            .is_some_and(|ext| ext.eq_ignore_ascii_case("xmp"))
+            && (file_type.is_file() || path.is_file())
+        {
+            sidecars.insert(sidecar_key(&path));
+        }
+        if path
+            .extension()
+            .and_then(|ext| ext.to_str())
+            .and_then(kind_for_extension)
+            .is_some()
+        {
+            entries.push(entry);
+            progress.discovered_count += 1;
+        }
+        progress.enumeration_ms = started.elapsed().as_millis() as u64;
+        report(progress);
     }
+    progress.enumeration_ms = started.elapsed().as_millis() as u64;
+    progress.reading_attributes = true;
+    report(progress);
+    let attributes_started = Instant::now();
+    let mut assets = Vec::with_capacity(entries.len());
+    for entry in entries {
+        let path = entry.path();
+        let metadata = if entry.file_type()?.is_symlink() {
+            fs::metadata(&path)
+        } else {
+            entry.metadata()
+        };
+        let metadata = match metadata {
+            Ok(metadata) => metadata,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => continue,
+            Err(error) => return Err(error.into()),
+        };
+        if metadata.is_file() {
+            let has_sidecar = sidecars.contains(&sidecar_key(&sidecar_path(&path)));
+            if let Some(summary) = summary_from_metadata(&path, &metadata, has_sidecar)? {
+                assets.push(summary);
+            }
+        }
+        progress.attributes_ms = attributes_started.elapsed().as_millis() as u64;
+        report(progress);
+    }
+    progress.discovered_count = assets.len();
+    progress.attributes_ms = attributes_started.elapsed().as_millis() as u64;
+    report(progress);
     Ok(assets)
+}
+
+fn sidecar_key(path: &Path) -> PathBuf {
+    if cfg!(windows) {
+        PathBuf::from(path.to_string_lossy().to_lowercase())
+    } else {
+        path.to_owned()
+    }
 }
 
 pub fn page_assets(
@@ -601,7 +648,7 @@ pub fn page_assets(
         {
             continue;
         }
-        items.push(summary.clone());
+        items.push(summary);
     }
 
     items.sort_unstable_by(|left, right| compare_assets(left, right, query.sort));
@@ -616,7 +663,7 @@ pub fn page_assets(
         .clamp(1, MAX_PAGE_SIZE);
     let end = offset.saturating_add(page_size).min(total);
     let page_items = if offset < total {
-        items.drain(offset..end).collect()
+        items.drain(offset..end).cloned().collect()
     } else {
         Vec::new()
     };
@@ -693,7 +740,7 @@ fn summary_for_path_with_sidecar(
     let Some(extension) = path.extension().and_then(|value| value.to_str()) else {
         return Ok(None);
     };
-    let Some(kind) = kind_for_extension(extension) else {
+    let Some(_) = kind_for_extension(extension) else {
         return Ok(None);
     };
     let Ok(metadata) = fs::metadata(path) else {
@@ -702,6 +749,24 @@ fn summary_for_path_with_sidecar(
     if !metadata.is_file() {
         return Ok(None);
     }
+    summary_from_metadata(
+        path,
+        &metadata,
+        known_sidecar.unwrap_or_else(|| sidecar_path(path).is_file()),
+    )
+}
+
+fn summary_from_metadata(
+    path: &Path,
+    metadata: &fs::Metadata,
+    has_sidecar: bool,
+) -> Result<Option<AssetSummary>, FsError> {
+    let Some(extension) = path.extension().and_then(|value| value.to_str()) else {
+        return Ok(None);
+    };
+    let Some(kind) = kind_for_extension(extension) else {
+        return Ok(None);
+    };
     let name = path
         .file_name()
         .and_then(|value| value.to_str())
@@ -716,7 +781,7 @@ fn summary_for_path_with_sidecar(
         kind,
         size_bytes: metadata.len(),
         modified_at_ms: metadata.modified().map(epoch_ms).unwrap_or_default(),
-        has_sidecar: known_sidecar.unwrap_or_else(|| sidecar_path(path).is_file()),
+        has_sidecar,
         rating: None,
         color_label: None,
         pick_label: None,

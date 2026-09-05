@@ -31,12 +31,14 @@ import {
   type FolderSort,
 } from "../lib/folderOrdering";
 import type { MessageKey } from "../lib/i18n";
+import type { FolderRestoreState } from "../lib/folderRestoration";
 import { platformFileManager } from "../lib/folderPaths";
 import type { DirectorySummary, DirectoryTreeNode, DirectoryTreeSnapshot, FolderSession } from "../types";
 import { ConfirmTrashDialog } from "./ConfirmTrashDialog";
 
 interface SidebarProps {
   sessions: FolderSession[];
+  folderRestoreStates?: FolderRestoreState[];
   activeSession?: FolderSession;
   currentPath?: string;
   showOnboarding: boolean;
@@ -263,6 +265,7 @@ function HighlightedDirectoryName({ name, search }: { name: string; search: stri
 
 export function Sidebar({
   sessions,
+  folderRestoreStates = [],
   activeSession,
   currentPath,
   showOnboarding,
@@ -748,6 +751,13 @@ export function Sidebar({
           </label>
         ) : null}
 
+        {folderRestoreStates.filter((state) => state.status !== "ready" &&
+          !sessions.some((session) => session.rootPath === state.rootPath)).map((state) => (
+          <div className="folder-search__state" key={state.rootPath} title={state.error ?? state.rootPath} role="status">
+            {state.status === "restoring" ? <LoaderCircle className="tree-row__loader" size={13} /> : null}
+            <span>{state.status === "restoring" ? t("restoringFolders") : t("folderRestoreFailed")}: {state.rootPath}</span>
+          </div>
+        ))}
         {searchActive ? (
           <div className="folder-search__results" aria-live="polite">
             {searchLoading ? (

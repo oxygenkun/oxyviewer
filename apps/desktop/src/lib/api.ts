@@ -9,6 +9,7 @@ import type {
   AssetSummary,
   CacheSettings,
   DirectorySearchMatch,
+  DirectoryBrowseProgress,
   DirectorySummary,
   DirectoryTreeNode,
   DirectoryTreeSnapshot,
@@ -41,6 +42,7 @@ import { browserPreloadQueue, priorityWeight } from "./previewQueue";
 import { acceptImageProjection } from "./imageProjection";
 import { acceptMetadataProjection } from "./metadataProjection";
 import { perfMark } from "./perfProbe";
+import { recordBrowseTiming } from "./browseDiagnostics";
 import { beginPreviewDebug } from "./previewDebug";
 
 function cancelGeneratedPreviewRequest(
@@ -175,6 +177,7 @@ export async function listAssets(
   directory: string,
   query: AssetQuery,
   cursor?: number,
+  snapshotRevision?: number,
 ): Promise<Page<AssetSummary>> {
   if (!isTauri()) {
     const needle = query.search?.toLowerCase();
@@ -200,13 +203,16 @@ export async function listAssets(
       total: filtered.length,
     };
   }
+  const started = performance.now();
   const page = await invoke<Page<AssetSummary>>("list_assets", {
     sessionId,
     directory,
     query,
     cursor,
+    snapshotRevision,
   });
   if (!cursor) {
+    recordBrowseTiming("first-page-returned", { directory, ipcMs: performance.now() - started, ...page.progress });
     perfMark("assets:first-page-returned", { directory, total: page.total });
   }
   return page;
@@ -217,6 +223,11 @@ export async function onLibraryIndexUpdated(
 ): Promise<UnlistenFn> {
   if (!isTauri()) return () => {};
   return listen<LibraryIndexUpdate>("library-index-updated", (event) => callback(event.payload));
+}
+
+export async function onDirectoryBrowseProgress(callback: (progress: DirectoryBrowseProgress) => void): Promise<UnlistenFn> {
+  if (!isTauri()) return () => {};
+  return listen<DirectoryBrowseProgress>("directory-browse-progress", (event) => callback(event.payload));
 }
 
 export async function onLibraryDirectoryIndexUpdated(

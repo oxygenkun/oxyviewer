@@ -592,6 +592,21 @@ impl PreviewQueue {
                                 .wait(pending)
                                 .expect("preview queue lock poisoned");
                         }
+                        // Leave background requests in the priority queue so
+                        // a newly visible request can wake and pass them.
+                        while (queue.library.foreground.is_busy() || !pending.active.is_empty())
+                            && !pending
+                                .pending
+                                .entries()
+                                .any(|(_, _, position)| position.tier <= 1)
+                        {
+                            pending = queue
+                                .work
+                                .1
+                                .wait_timeout(pending, std::time::Duration::from_millis(50))
+                                .expect("preview queue lock poisoned")
+                                .0;
+                        }
                         pending.pending.pop().map(|(key, request, position)| {
                             let schedule_key = PreviewScheduleKey {
                                 path: key.path.clone(),
@@ -611,6 +626,8 @@ impl PreviewQueue {
                     let Some((key, request, position)) = request else {
                         continue;
                     };
+                    let _foreground =
+                        (position.tier <= 1).then(|| queue.library.foreground.enter());
                     let (path, preview_dir, kind, source_revision, level, valid_at) = {
                         let request = request
                             .lock()

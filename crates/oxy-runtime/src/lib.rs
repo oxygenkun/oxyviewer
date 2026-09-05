@@ -1,4 +1,6 @@
 use oxy_domain::{JobId, JobPriority};
+mod foreground;
+pub use foreground::{ForegroundGate, ForegroundGuard};
 use parking_lot::RwLock;
 use std::{
     cmp::Ordering as CmpOrdering,

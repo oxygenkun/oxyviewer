@@ -71,13 +71,15 @@ impl WorkState {
 #[derive(Clone)]
 pub struct DirectoryTreeQueue {
     files: Arc<FsCatalog>,
+    library: Arc<oxy_library::Library>,
     work: Arc<(Mutex<WorkState>, Condvar)>,
 }
 
 impl DirectoryTreeQueue {
-    pub fn new(app: AppHandle, files: Arc<FsCatalog>) -> Self {
+    pub fn new(app: AppHandle, files: Arc<FsCatalog>, library: Arc<oxy_library::Library>) -> Self {
         let queue = Self {
             files,
+            library,
             work: Arc::new((Mutex::new(WorkState::default()), Condvar::new())),
         };
         queue.spawn_worker(app);
@@ -150,6 +152,7 @@ impl DirectoryTreeQueue {
                     let Some(key) = key else {
                         continue;
                     };
+                    queue.library.foreground.wait_for_background();
                     match queue
                         .files
                         .load_directory_children(&key.session_id, &key.directory)

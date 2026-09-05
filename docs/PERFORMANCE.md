@@ -16,6 +16,51 @@ end-to-end regression harness that enforces these budgets is described in
 
 ## Verification Log
 
+- 2026-09-05: Directory browsing persists independent complete snapshots and
+  reuses them across process restarts without a completed root index or a
+  filesystem stat. Successful background validation atomically replaces the
+  saved list; failure retains it. Explicit invalidation fences late results
+  and writes a tombstone so an obsolete index cannot reseed it. Pagination
+  pins a revision; the previous immutable list survives background replacement.
+  Foreground list/visible-preview work pauses index and snapshot scans at entry
+  boundaries and directory-tree work at job boundaries. Only one nearby/preload
+  decode starts at a time. Running OS I/O and decodes remain non-preemptive.
+  One-pass file/XMP pairing and Windows DirEntry attributes avoid per-photo
+  sidecar probes and path stats. Paging sorts references and clones only its
+  returned summaries. Size/mtime remain accurate; temporary filesystem-order
+  pages are not published.
+
+  Read-only debug backend measurement on a registered NAS directory with 2,164
+  photos, using isolated temporary SQLite: cold list plus first-page sorting
+  329 ms (enumeration 280 ms, attributes 7 ms); reopened snapshot plus sorting
+  29 ms; same-process paging 9 ms. These are not full startup, UI paint, cold
+  NAS/server-cache measurements or qualification of the 100k-file release
+  budget. Reproduce: `cargo run -p oxy-library --example browse_latency -- <directory>`.
+  Regression coverage includes restart/offline, empty snapshots, incomplete
+  indexing, coalesced reads, changed files/XMP, invalidation races and pinned
+  paging. `scripts/browse-startup.browser.js` verifies six App/IPC UI behaviors
+  with controlled responses, including loading counts and snapshot/offline states.
+
+  `window.__oxyBrowseDiagnostics` exposes the last 200 real startup records in
+  the WebView console: workspace discovery/readiness, native cache/enumeration/
+  attributes/sorting/elapsed times, first-page IPC return and the next frame
+  after React commit. Repeated progress in the same stage is coalesced so a
+  slow scan does not evict its startup milestones. That frame does not prove thumbnail pixels have decoded
+  or painted. Native intermediate progress is throttled to ten events/second.
+
+- 2026-09-05: Workspace restoration submits the saved active root first and
+  publishes each opened root immediately, without waiting for other roots.
+  Pending and failed roots have individual sidebar states. While the saved
+  active root is pending, other ready roots can be selected without an automatic
+  switch away from the saved directory; late results do not override that
+  selection. Import order is preserved and drag reordering is disabled until
+  restoration finishes. Deferred-promise tests cover slow/offline roots and
+  removing a ready root while another is pending. TypeScript checks, 117
+  frontend tests and the production build pass. This removes the all-roots
+  publication barrier; it does not prioritize native I/O, change filesystem
+  scanning or establish NAS first-page timing. Persistent directory snapshots,
+  cold-scan costs and foreground/background contention remain separate steps.
+
 - 2026-09-05: Disk-backed libraries now use separate read-only WAL connections
   for browsing/tag queries and resource-projection cache lookups. These readers
   do not acquire the writer mutex, and multi-statement asset/directory queries
