@@ -14,9 +14,15 @@ use backends::apple_image_io;
 use backends::windows_wic;
 use backends::{ffmpeg_heif, libheif, libraw};
 use formats::heif::quirks::sony;
-use pipeline::planner::{
-    BackendCapabilities, DecodePlan, DecodeStep, PlannedPriority, Platform, Request, SourceFacts,
-    plan,
+use pipeline::{
+    heif::{
+        BackendExecutionError, HeifBackend as PlannedHeifBackend, HeifOperation, backend_plan,
+        execute_backend_plan, format_attempt_diagnostics,
+    },
+    planner::{
+        BackendCapabilities, DecodePlan, DecodeStep, PlannedPriority, Platform, Request,
+        SourceFacts, plan,
+    },
 };
 
 pub use cache::{CacheUsage, clear_preview_cache, preview_cache_usage, prune_preview_cache};
@@ -35,7 +41,7 @@ use oxy_domain::{PreviewDiagnostics, PreviewKind, PreviewResult, RenderLevel};
 #[cfg(target_os = "macos")]
 use std::process::{Command, Stdio};
 use std::{
-    fs::{self, File},
+    fs::{self, File, OpenOptions},
     io::BufReader,
     path::{Path, PathBuf},
     time::Instant,
@@ -80,6 +86,12 @@ pub enum MediaError {
     Color(String),
     #[error("decode session was cancelled")]
     Cancelled,
+    #[error("all backend attempts failed ({attempts}): {source}")]
+    BackendAttempts {
+        attempts: String,
+        #[source]
+        source: Box<MediaError>,
+    },
     #[error("system preview generation failed for {path}: {message}")]
     PreviewGenerationFailed { path: PathBuf, message: String },
     #[error(transparent)]
@@ -275,17 +287,15 @@ pub fn heif_full(path: &Path, cache_dir: &Path) -> Result<PreviewResult, MediaEr
     let temporary = tempfile::Builder::new()
         .suffix(".jpg")
         .tempfile_in(destination.parent().unwrap_or_else(|| Path::new(".")))?;
-    #[cfg(target_os = "macos")]
-    crate::apple_image_io::transcode_jpeg(path, temporary.path(), 95)?;
-    #[cfg(any(target_os = "windows", target_os = "linux"))]
-    crate::ffmpeg_heif::transcode_full_jpeg(
-        path,
-        temporary.path(),
-        libheif::dimensions(path)?,
-        95,
-    )?;
+    let (backend, fallback_reason) = transcode_heif_source(path, temporary.path(), 95)?;
     persist_atomically(temporary, &destination)?;
-    preview_result(destination, PreviewKind::Decoded)
+    let mut result = preview_result(destination, PreviewKind::Decoded)?;
+    result.diagnostics = Some(PreviewDiagnostics {
+        backend: Some(backend.into()),
+        fallback_reason,
+        ..PreviewDiagnostics::default()
+    });
+    Ok(result)
 }
 
 fn heif_session_cache_path(path: &Path, cache_dir: &Path) -> Result<PathBuf, MediaError> {
@@ -307,6 +317,52 @@ pub fn cached_heif_session(
         .transpose()
 }
 
+fn transcode_heif_source(
+    source: &Path,
+    destination: &Path,
+    quality: u8,
+) -> Result<(&'static str, Option<String>), MediaError> {
+    let plan = backend_plan(source, HeifOperation::FullArtifact);
+    let result = execute_backend_plan(
+        &plan,
+        || false,
+        |backend| {
+            // A failed encoder may leave a header-only JPEG. Every fallback
+            // starts from an empty destination and only the caller commits it.
+            OpenOptions::new()
+                .write(true)
+                .truncate(true)
+                .open(destination)?;
+            match backend {
+                #[cfg(target_os = "macos")]
+                PlannedHeifBackend::Platform(_) => {
+                    crate::apple_image_io::transcode_jpeg(source, destination, quality)
+                }
+                #[cfg(any(target_os = "windows", target_os = "linux"))]
+                PlannedHeifBackend::Platform(_) => Err(MediaError::NativeDecoderUnavailable),
+                PlannedHeifBackend::Ffmpeg | PlannedHeifBackend::FfmpegRgbaFallback => {
+                    crate::ffmpeg_heif::can_decode(source)?;
+                    crate::ffmpeg_heif::transcode_full_jpeg(
+                        source,
+                        destination,
+                        libheif::dimensions(source)?,
+                        quality,
+                    )
+                }
+                PlannedHeifBackend::Libheif => Err(MediaError::NativeDecoderUnavailable),
+            }
+        },
+    )
+    .map_err(BackendExecutionError::into_media_error)?;
+    let backend = match result.backend {
+        PlannedHeifBackend::Platform(oxy_domain::HeifBackendKind::AppleImageIo) => "Apple ImageIO",
+        PlannedHeifBackend::Platform(_) => "platform HEIF backend",
+        PlannedHeifBackend::Ffmpeg | PlannedHeifBackend::FfmpegRgbaFallback => "FFmpeg",
+        PlannedHeifBackend::Libheif => "libheif",
+    };
+    Ok((backend, format_attempt_diagnostics(&result.diagnostics)))
+}
+
 pub(crate) fn cache_heif_source_jpeg(path: &Path, cache_dir: &Path) -> Result<PathBuf, MediaError> {
     fs::create_dir_all(cache_dir)?;
     let destination = heif_session_cache_path(path, cache_dir)?;
@@ -314,15 +370,7 @@ pub(crate) fn cache_heif_source_jpeg(path: &Path, cache_dir: &Path) -> Result<Pa
         let temporary = tempfile::Builder::new()
             .suffix(".jpg")
             .tempfile_in(destination.parent().unwrap_or_else(|| Path::new(".")))?;
-        #[cfg(target_os = "macos")]
-        crate::apple_image_io::transcode_jpeg(path, temporary.path(), 95)?;
-        #[cfg(any(target_os = "windows", target_os = "linux"))]
-        crate::ffmpeg_heif::transcode_full_jpeg(
-            path,
-            temporary.path(),
-            libheif::dimensions(path)?,
-            95,
-        )?;
+        transcode_heif_source(path, temporary.path(), 95)?;
         persist_atomically(temporary, &destination)?;
     }
     Ok(destination)
@@ -460,45 +508,47 @@ fn heif_preview_with_options(
     Ok(result)
 }
 
-#[cfg(target_os = "macos")]
 fn decode_heif_preview(
     path: &Path,
     max_size: u32,
 ) -> Result<(DynamicImage, &'static str, Option<String>), MediaError> {
-    let mut fallback_reason = None;
-    if crate::apple_image_io::can_decode(path).is_ok() {
-        match crate::apple_image_io::decode_rgba8(path, max_size) {
-            Ok(image) => return Ok((image, "Apple ImageIO thumbnail", None)),
-            Err(error) => fallback_reason = Some(error.to_string()),
+    let plan = backend_plan(path, HeifOperation::Preview);
+    let result = execute_backend_plan(
+        &plan,
+        || false,
+        |backend| match backend {
+            #[cfg(target_os = "macos")]
+            PlannedHeifBackend::Platform(_) => crate::apple_image_io::decode_rgba8(path, max_size),
+            #[cfg(target_os = "windows")]
+            PlannedHeifBackend::Platform(_) => crate::windows_wic::decode_full_rgba8(path)
+                .map(|image| image.thumbnail(max_size, max_size)),
+            #[cfg(target_os = "linux")]
+            PlannedHeifBackend::Platform(_) => Err(MediaError::NativeDecoderUnavailable),
+            PlannedHeifBackend::Ffmpeg | PlannedHeifBackend::FfmpegRgbaFallback => {
+                crate::ffmpeg_heif::decode_scaled_preview(path, max_size)
+            }
+            PlannedHeifBackend::Libheif => libheif::decode_scaled(path, max_size),
+        },
+    )
+    .map_err(BackendExecutionError::into_media_error)?;
+    let backend = match result.backend {
+        PlannedHeifBackend::Platform(oxy_domain::HeifBackendKind::AppleImageIo) => {
+            "Apple ImageIO thumbnail"
         }
-    }
-    let image = libheif::decode_scaled(path, max_size)?;
-    Ok((image, "libheif scaled preview", fallback_reason))
-}
-
-#[cfg(target_os = "windows")]
-fn decode_heif_preview(
-    path: &Path,
-    max_size: u32,
-) -> Result<(DynamicImage, &'static str, Option<String>), MediaError> {
-    let mut fallback_reason = None;
-    if crate::ffmpeg_heif::can_decode(path).is_ok() {
-        match crate::ffmpeg_heif::decode_scaled_preview(path, max_size) {
-            Ok(image) => return Ok((image, "FFmpeg auxiliary preview", None)),
-            Err(error) => fallback_reason = Some(error.to_string()),
+        PlannedHeifBackend::Platform(oxy_domain::HeifBackendKind::WindowsWic) => {
+            "Windows WIC thumbnail"
         }
-    }
-    let image = libheif::decode_scaled(path, max_size)?;
-    Ok((image, "libheif scaled preview", fallback_reason))
-}
-
-#[cfg(target_os = "linux")]
-fn decode_heif_preview(
-    path: &Path,
-    max_size: u32,
-) -> Result<(DynamicImage, &'static str, Option<String>), MediaError> {
-    let image = libheif::decode_scaled(path, max_size)?;
-    Ok((image, "libheif scaled preview", None))
+        PlannedHeifBackend::Platform(_) => "platform HEIF thumbnail",
+        PlannedHeifBackend::Ffmpeg | PlannedHeifBackend::FfmpegRgbaFallback => {
+            "FFmpeg auxiliary preview"
+        }
+        PlannedHeifBackend::Libheif => "libheif scaled preview",
+    };
+    Ok((
+        result.value,
+        backend,
+        format_attempt_diagnostics(&result.diagnostics),
+    ))
 }
 
 fn duration_ms(started: Instant) -> u64 {
@@ -651,8 +701,9 @@ fn execute_decode_plan(
             Some(DecodeStep::SystemPreview {
                 max_size: fallback_size,
             }),
-        ) => raw_preview_with_priority(path, cache_dir, max_size, request_priority).or_else(
-            |error| {
+        ) => match raw_preview_with_priority(path, cache_dir, max_size, request_priority) {
+            result @ Ok(_) | result @ Err(MediaError::Cancelled) => result,
+            Err(error) => {
                 // Preserve the original LibRaw error when the system fallback
                 // also fails so diagnostics remain actionable.
                 match system_preview(path, cache_dir, fallback_size) {
@@ -662,17 +713,20 @@ fn execute_decode_plan(
                         message: format!("{error}; fallback failed: {system_error}"),
                     }),
                 }
-            },
-        ),
-        (DecodeStep::HeifFull, Some(fallback)) => heif_full(path, cache_dir).or_else(|error| {
-            // Preserve the foreground 8192px fallback after full-detail HEIF
-            // failure so the loupe is not left empty.
-            eprintln!(
-                "full-detail HEIF decode failed for {}: {error}",
-                path.display()
-            );
-            execute_decode_step(path, cache_dir, request_priority, fallback)
-        }),
+            }
+        },
+        (DecodeStep::HeifFull, Some(fallback)) => match heif_full(path, cache_dir) {
+            result @ Ok(_) | result @ Err(MediaError::Cancelled) => result,
+            Err(error) => {
+                // Preserve the foreground 8192px fallback after full-detail
+                // HEIF failure so the loupe is not left empty.
+                eprintln!(
+                    "full-detail HEIF decode failed for {}: {error}",
+                    path.display()
+                );
+                execute_decode_step(path, cache_dir, request_priority, fallback)
+            }
+        },
         (first, None) => execute_decode_step(path, cache_dir, request_priority, first),
         // The Stage-B planner only emits the two ordered fallback pairs above.
         // Treat a future unsupported pairing explicitly rather than silently

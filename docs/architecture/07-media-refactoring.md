@@ -84,10 +84,10 @@ Request + SourceFacts + BackendCapabilities
 - [x] planner 用模拟能力测试平台 × 文件特征 × 等级矩阵，不依赖宿主原生解码器。
 - 验收：未知厂商、能力缺失与现有策略都有明确结果；探测不进入目录首屏。
 
-### C：统一后端选择
+### C：统一后端选择（已完成本阶段清单）
 
-- [ ] preview/session 共用能力判断与 fallback 机制。
-- [ ] 明确错误分类、尝试诊断、取消短路与迟到结果处理。
+- [x] preview/session 共用能力判断与 fallback 机制。
+- [x] 明确错误分类、尝试诊断、取消短路与迟到结果处理。
 - 验收：后端失败、不可用、取消、session 生命周期均有回归测试。
 
 ### D：修正策略与产物契约
@@ -201,5 +201,32 @@ B 阶段已实现：
   `crates/oxy-fs/src/lib.rs:698` 的 `path` 未使用告警阻挡。
 - 未运行 Windows/Linux 原生构建或真机验证，也未运行性能基准；本步未启动调试实例。
 
-下一小步：进入 C 阶段，在不改变 session 生命周期、fallback 与取消语义的前提下，让
-preview/session 共用能力判断和 fallback 机制；不要在该步骤提前修改 HEIF 160px 产物策略。
+C 阶段已实现：
+
+- 新增 `pipeline/heif.rs`，集中 HEIF preview、full artifact 和 full session 的运行时能力判断、
+  输入支持探测、有序候选与统一 attempt executor；纯 selector 使用模拟 probe 测试，不依赖宿主
+  decoder。preview 与 session 可以生成不同顺序，但不再各自实现 fallback。
+- 保留当前平台策略：macOS preview 优先 ImageIO，Windows preview 优先 FFmpeg；session 在 Windows
+  保留 FFmpeg JPEG grid、FFmpeg RGBA、libheif 的既有回退，在 macOS 保留 ImageIO、FFmpeg、
+  libheif 顺序。ImageIO full JPEG 适配器内的隐藏 FFmpeg fallback 也移到统一 executor。
+- attempt 按 unsupported、unavailable、corrupt、IO、decode failure 和 cancelled 分类。成功 fallback
+  写入现有 `fallbackReason`；全失败通过 `BackendAttempts` 保留有序诊断及最终 source error，未新增
+  跨 IPC 的序列化契约。
+- executor 在每次 attempt 前、不可抢占的 native 调用返回后及 fallback 前检查取消；取消直接终止
+  整个计划，迟到成功结果不进入 tile、完成回调或缓存。格式级 RAW/system 与 HEIF full/preview
+  fallback 同样对 `Cancelled` 短路。
+- session 在 `begin` 时保存 plan；尺寸或规划前置工作完成后才替换 active session，保持失败 begin
+  不取消旧 session。tile 与 complete 通过 session ID、generation、token 和 publication 边界校验，
+  新 session 不接受旧结果；成功替换仍取消旧 token、清 tile，并同步清理旧 diagnostics。
+- host-independent 测试覆盖 preview/session 顺序、不可用/不支持、IO/损坏/解码失败诊断、全失败、
+  fallback 成功、取消后不回退及迟到成功丢弃；service 测试覆盖失败 begin、成功替换、旧 tile 拒绝、
+  stale cancel 和取消后不 complete。原有真实 HIF fixture 集成测试继续通过。
+- 本阶段没有修改 HEIF thumbnail/preview 的全格式 160px 策略、RAW full 独立 lane、缓存 key、
+  RenderLevel、解码 gate 并发度或 IPC 图片交付方式；这些策略仍留给 D 阶段。
+- macOS：`cargo fmt --all --check`、oxy-media Clippy、`cargo test --workspace` 通过（媒体
+  75 passed、8 ignored）。workspace Clippy 仍被未修改的 `crates/oxy-fs/src/lib.rs:698` 中
+  `path` 未使用告警阻挡。未运行 Windows/Linux 原生构建或真机验证，也未运行性能基准；
+  本阶段未启动调试实例。
+
+下一小步：进入 D 阶段，以按需探测到的表示事实收窄 Sony 160px 快速路径，并明确方向、色彩、
+RAW 相机预览/显影意图与缓存替代契约；不要把本阶段内部 attempt 诊断误报为新的 IPC 契约。

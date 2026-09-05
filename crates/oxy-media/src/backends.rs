@@ -1,6 +1,6 @@
 //! Native and portable decoder adapters.
 //! File-format compatibility rules belong in `formats`, not platform copies.
-//! Existing cross-backend fallbacks remain until the planner migration.
+//! Cross-backend HEIF fallback is owned by `pipeline::heif`.
 
 #[cfg(target_os = "macos")]
 pub(crate) mod apple_image_io;

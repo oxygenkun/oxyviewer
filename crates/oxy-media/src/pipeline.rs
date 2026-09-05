@@ -1,3 +1,4 @@
-//! Pure decode planning separated from media I/O and execution.
+//! Decode planning, concrete backend selection, and ordered execution.
 
+pub(crate) mod heif;
 pub(crate) mod planner;

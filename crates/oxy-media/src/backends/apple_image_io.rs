@@ -1,7 +1,7 @@
 use crate::MediaError;
 use image::{DynamicImage, ImageBuffer, Rgba, RgbaImage};
 use std::{
-    fs::{File, OpenOptions},
+    fs::File,
     io::{Read, Seek, SeekFrom},
     os::unix::ffi::OsStrExt,
     path::Path,
@@ -144,7 +144,7 @@ pub fn write_jpeg(image: &DynamicImage, path: &Path, quality: u8) -> Result<(), 
 }
 
 pub fn transcode_jpeg(source: &Path, destination: &Path, quality: u8) -> Result<(), MediaError> {
-    let guard = lock_heif_transcode();
+    let _guard = lock_heif_transcode();
     let source_bytes = source.as_os_str().as_bytes();
     let destination_bytes = destination.as_os_str().as_bytes();
     let status = unsafe {
@@ -156,38 +156,13 @@ pub fn transcode_jpeg(source: &Path, destination: &Path, quality: u8) -> Result<
             quality,
         )
     };
-    let native_failure = if status != 0 {
-        format!("native stage {status}")
-    } else {
-        match has_complete_jpeg_markers(destination) {
-            Ok(true) => return Ok(()),
-            Ok(false) => "native finalize produced a truncated JPEG".into(),
-            Err(error) => format!("could not validate JPEG output: {error}"),
-        }
-    };
-
-    // A failed ImageIO finalize is repeatable while the system decoder is
-    // under pressure. Release its lane and use FFmpeg's independent decoder
-    // instead of publishing the small header-only file as a valid cache hit.
-    drop(guard);
-    OpenOptions::new()
-        .write(true)
-        .truncate(true)
-        .open(destination)?;
-    let dimensions = super::libheif::dimensions(source)?;
-    if let Err(fallback_error) =
-        super::ffmpeg_heif::transcode_full_jpeg(source, destination, dimensions, quality)
-    {
-        return Err(native_error(format!(
-            "source HEIF to JPEG conversion failed ({native_failure}); FFmpeg fallback failed: {fallback_error}"
-        )));
+    if status != 0 {
+        return Err(native_error(format!("native stage {status}")));
     }
     if has_complete_jpeg_markers(destination)? {
         Ok(())
     } else {
-        Err(native_error(format!(
-            "source HEIF to JPEG conversion failed ({native_failure}); FFmpeg fallback produced a truncated JPEG"
-        )))
+        Err(native_error("native finalize produced a truncated JPEG"))
     }
 }
 
