@@ -57,7 +57,7 @@ fn enqueue_paths(transaction: &Transaction<'_>, paths: &[String]) -> Result<(), 
 
 impl Library {
     pub fn custom_tags(&self) -> Result<Vec<CustomTag>, LibraryError> {
-        let connection = self.connection.lock();
+        let connection = self.read_connection();
         let mut statement = connection.prepare(
             "SELECT id, parent_id, name, sort_order
              FROM custom_tags ORDER BY parent_id, sort_order, name COLLATE NOCASE, id",
@@ -188,7 +188,7 @@ impl Library {
         &self,
         id: CustomTagId,
     ) -> Result<TagDeleteImpact, LibraryError> {
-        let connection = self.connection.lock();
+        let connection = self.read_connection();
         let (tag_count, asset_count) = connection.query_row(
             "WITH RECURSIVE descendants(id) AS (
                SELECT id FROM custom_tags WHERE id = ?1
@@ -221,7 +221,7 @@ impl Library {
         paths: &[std::path::PathBuf],
     ) -> Result<Vec<AssetTagAssignment>, LibraryError> {
         let tags = self.custom_tags()?;
-        let connection = self.connection.lock();
+        let connection = self.read_connection();
         let mut assigned = HashMap::<CustomTagId, usize>::new();
         for path in paths {
             let mut statement =
@@ -274,7 +274,7 @@ impl Library {
     }
 
     pub fn pending_tag_sync_paths(&self) -> Result<Vec<std::path::PathBuf>, LibraryError> {
-        let connection = self.connection.lock();
+        let connection = self.read_connection();
         let mut statement = connection.prepare(
             "SELECT asset_path FROM tag_xmp_sync_queue ORDER BY requested_at, asset_path",
         )?;
@@ -287,7 +287,7 @@ impl Library {
     }
 
     pub fn tag_xmp_payload(&self, path: &Path) -> Result<TagXmpPayload, LibraryError> {
-        let connection = self.connection.lock();
+        let connection = self.read_connection();
         let tags = assigned_tag_paths(&connection, path)?;
         let subjects = tags
             .iter()
@@ -360,7 +360,7 @@ impl Library {
     }
 
     pub fn tag_sync_status(&self) -> Result<TagSyncStatus, LibraryError> {
-        let connection = self.connection.lock();
+        let connection = self.read_connection();
         let (pending_count, failed_count) = connection.query_row(
             "SELECT COUNT(*), COUNT(last_error) FROM tag_xmp_sync_queue",
             [],

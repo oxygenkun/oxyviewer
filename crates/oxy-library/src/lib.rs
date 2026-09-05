@@ -3,12 +3,15 @@ use oxy_domain::{
     ImageProjection, MetadataProjection, Page, PickLabel, RenderLevel, ResourceLoadStatus,
     SortDirection,
 };
-use parking_lot::Mutex;
-use rusqlite::{Connection, OptionalExtension, Transaction, TransactionBehavior, params};
+use parking_lot::{Mutex, MutexGuard};
+use rusqlite::{
+    Connection, OpenFlags, OptionalExtension, Transaction, TransactionBehavior, params,
+};
 use std::{
     cmp::Ordering,
     collections::{BinaryHeap, HashSet},
     path::{Path, PathBuf},
+    time::{Duration, Instant},
 };
 use thiserror::Error;
 
@@ -17,6 +20,7 @@ mod tags;
 const DEFAULT_PAGE_SIZE: usize = 250;
 const MAX_PAGE_SIZE: usize = 1_000;
 const INDEX_WRITE_BATCH_SIZE: usize = 256;
+const INDEX_WRITE_TIME_SLICE: Duration = Duration::from_millis(8);
 
 #[derive(Debug, Error)]
 pub enum LibraryError {
@@ -42,8 +46,38 @@ pub enum LibraryError {
 
 pub struct Library {
     connection: Mutex<Connection>,
+    // Disk libraries use WAL readers that never acquire the writer mutex.
+    // Plain in-memory databases cannot share WAL; tests retain one connection.
+    reader: Option<Mutex<Connection>>,
+    projection_reader: Option<Mutex<Connection>>,
     indexing_roots: Mutex<HashSet<PathBuf>>,
     index_gate: Mutex<()>,
+}
+
+/// Give FTS records an indexed, stable identity. FTS5 cannot efficiently look up
+/// equality predicates on its UNINDEXED path columns. Preserve existing rowids
+/// during migration so an interrupted index can resume without rebuilding search.
+fn ensure_search_keys(connection: &mut Connection) -> Result<(), rusqlite::Error> {
+    let transaction = connection.transaction()?;
+    let exists: bool = transaction.query_row(
+        "SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type = 'table'
+         AND name = 'indexed_asset_search_keys')",
+        [],
+        |row| row.get(0),
+    )?;
+    if !exists {
+        transaction.execute_batch(
+            "CREATE TABLE indexed_asset_search_keys (
+               search_rowid INTEGER PRIMARY KEY,
+               root_path TEXT NOT NULL,
+               path TEXT NOT NULL,
+               UNIQUE(root_path, path)
+             );
+             INSERT INTO indexed_asset_search_keys(search_rowid, root_path, path)
+               SELECT rowid, root_path, path FROM indexed_asset_search;",
+        )?;
+    }
+    transaction.commit()
 }
 
 fn normalize_root_order(connection: &mut Connection) -> Result<(), rusqlite::Error> {
@@ -175,6 +209,17 @@ pub enum IndexStage {
 }
 
 impl Library {
+    fn read_connection(&self) -> MutexGuard<'_, Connection> {
+        self.reader.as_ref().unwrap_or(&self.connection).lock()
+    }
+
+    fn read_projection_connection(&self) -> MutexGuard<'_, Connection> {
+        self.projection_reader
+            .as_ref()
+            .unwrap_or(&self.connection)
+            .lock()
+    }
+
     pub fn open(path: &Path) -> Result<Self, LibraryError> {
         if let Some(parent) = path.parent() {
             std::fs::create_dir_all(parent)?;
@@ -321,8 +366,18 @@ impl Library {
                 [],
             )?;
         }
+        ensure_search_keys(&mut connection)?;
         normalize_root_order(&mut connection)?;
+        let open_reader = || -> Result<Mutex<Connection>, rusqlite::Error> {
+            let reader = Connection::open_with_flags(
+                path,
+                OpenFlags::SQLITE_OPEN_READ_ONLY | OpenFlags::SQLITE_OPEN_NO_MUTEX,
+            )?;
+            Ok(Mutex::new(reader))
+        };
         Ok(Self {
+            reader: Some(open_reader()?),
+            projection_reader: Some(open_reader()?),
             connection: Mutex::new(connection),
             indexing_roots: Mutex::new(HashSet::new()),
             index_gate: Mutex::new(()),
@@ -442,9 +497,12 @@ impl Library {
             );
             ",
         )?;
+        ensure_search_keys(&mut connection)?;
         normalize_root_order(&mut connection)?;
         Ok(Self {
             connection: Mutex::new(connection),
+            reader: None,
+            projection_reader: None,
             indexing_roots: Mutex::new(HashSet::new()),
             index_gate: Mutex::new(()),
         })
@@ -486,7 +544,13 @@ impl Library {
             params![root],
         )?;
         transaction.execute(
-            "DELETE FROM indexed_asset_search WHERE root_path = ?1",
+            "DELETE FROM indexed_asset_search WHERE rowid IN (
+               SELECT search_rowid FROM indexed_asset_search_keys WHERE root_path = ?1
+             )",
+            params![root],
+        )?;
+        transaction.execute(
+            "DELETE FROM indexed_asset_search_keys WHERE root_path = ?1",
             params![root],
         )?;
         transaction.commit()?;
@@ -494,7 +558,7 @@ impl Library {
     }
 
     pub fn roots(&self) -> Result<Vec<PathBuf>, LibraryError> {
-        let connection = self.connection.lock();
+        let connection = self.read_connection();
         let mut statement = connection
             .prepare("SELECT path FROM library_roots ORDER BY sort_order, added_at, path")?;
         let paths = statement
@@ -530,8 +594,7 @@ impl Library {
 
     pub fn contains_root(&self, path: &Path) -> Result<bool, LibraryError> {
         let path = path.canonicalize().unwrap_or_else(|_| path.to_owned());
-        self.connection
-            .lock()
+        self.read_connection()
             .query_row(
                 "SELECT EXISTS(SELECT 1 FROM library_roots WHERE path = ?1)",
                 params![path.to_string_lossy()],
@@ -555,7 +618,7 @@ impl Library {
         path: &Path,
         source_revision: &str,
     ) -> Result<Option<MetadataProjection>, LibraryError> {
-        let connection = self.connection.lock();
+        let connection = self.read_projection_connection();
         let projection = read_metadata_projection(&connection, path)?;
         Ok(projection.filter(|projection| projection.source_revision == source_revision))
     }
@@ -567,7 +630,7 @@ impl Library {
         &self,
         asset: &AssetSummary,
     ) -> Result<Option<MetadataProjection>, LibraryError> {
-        let connection = self.connection.lock();
+        let connection = self.read_projection_connection();
         let prefix = format!("{}:{}:", asset.modified_at_ms, asset.size_bytes);
         Ok(
             read_metadata_projection(&connection, &asset.path)?.filter(|projection| {
@@ -631,7 +694,7 @@ impl Library {
         level: RenderLevel,
         source_revision: &str,
     ) -> Result<Option<ImageProjection>, LibraryError> {
-        let connection = self.connection.lock();
+        let connection = self.read_projection_connection();
         let projection = read_image_projection(&connection, path, level)?;
         Ok(projection.filter(|projection| projection.source_revision == source_revision))
     }
@@ -743,7 +806,8 @@ impl Library {
     pub fn root_needs_index(&self, root: &Path) -> Result<bool, LibraryError> {
         let root = root.canonicalize().unwrap_or_else(|_| root.to_owned());
         let root = root.to_string_lossy();
-        let connection = self.connection.lock();
+        let mut reader = self.read_connection();
+        let connection = reader.transaction()?;
         let registered = connection.query_row(
             "SELECT EXISTS(SELECT 1 FROM library_roots WHERE path = ?1)",
             params![root],
@@ -781,7 +845,8 @@ impl Library {
             return Ok(None);
         }
         let root = root.to_string_lossy();
-        let connection = self.connection.lock();
+        let mut reader = self.read_connection();
+        let connection = reader.transaction()?;
         if !has_completed_index(&connection, &root)? {
             return Ok(None);
         }
@@ -886,7 +951,8 @@ impl Library {
         parent: &Path,
     ) -> Result<Option<Vec<DirectorySummary>>, LibraryError> {
         let root = root.to_string_lossy();
-        let connection = self.connection.lock();
+        let mut reader = self.read_connection();
+        let connection = reader.transaction()?;
         if !has_completed_directory_index(&connection, &root)? {
             return Ok(None);
         }
@@ -917,7 +983,8 @@ impl Library {
             return Ok(Some(Vec::new()));
         }
         let root_text = root.to_string_lossy();
-        let connection = self.connection.lock();
+        let mut reader = self.read_connection();
+        let connection = reader.transaction()?;
         if !has_completed_directory_index(&connection, &root_text)? {
             return Ok(None);
         }
@@ -1085,10 +1152,16 @@ impl Library {
                 ],
             )?;
             transaction.commit()?;
+            // Hand the writer to an existing waiter before starting another batch.
+            MutexGuard::unlock_fair(connection);
         }
 
-        for batch in directories.chunks(INDEX_WRITE_BATCH_SIZE) {
+        let mut offset = 0;
+        while offset < directories.len() {
+            let batch =
+                &directories[offset..directories.len().min(offset + INDEX_WRITE_BATCH_SIZE)];
             let mut connection = self.connection.lock();
+            let started = Instant::now();
             let transaction = connection.transaction()?;
             if !root_is_registered(&transaction, &root.to_string_lossy())? {
                 return Ok(());
@@ -1103,7 +1176,11 @@ impl Library {
                        name=excluded.name, has_children=excluded.has_children,
                        scan_id=excluded.scan_id",
                 )?;
-                for directory in batch {
+                for (processed, directory) in batch.iter().enumerate() {
+                    if processed > 0 && started.elapsed() >= INDEX_WRITE_TIME_SLICE {
+                        break;
+                    }
+                    offset += 1;
                     statement.execute(params![
                         root.to_string_lossy(),
                         directory.path.to_string_lossy(),
@@ -1115,6 +1192,8 @@ impl Library {
                 }
             }
             transaction.commit()?;
+            // Hand the writer to an existing waiter before starting another batch.
+            MutexGuard::unlock_fair(connection);
         }
         Ok(())
     }
@@ -1126,8 +1205,11 @@ impl Library {
         scan_id: i64,
         assets: &[AssetSummary],
     ) -> Result<(), LibraryError> {
-        for batch in assets.chunks(INDEX_WRITE_BATCH_SIZE) {
+        let mut offset = 0;
+        while offset < assets.len() {
+            let batch = &assets[offset..assets.len().min(offset + INDEX_WRITE_BATCH_SIZE)];
             let mut connection = self.connection.lock();
+            let started = Instant::now();
             let transaction = connection.transaction()?;
             if !root_is_registered(&transaction, &root.to_string_lossy())? {
                 return Ok(());
@@ -1152,15 +1234,23 @@ impl Library {
                        size_bytes=excluded.size_bytes, has_sidecar=excluded.has_sidecar,
                        scan_id=excluded.scan_id",
                 )?;
-                let mut delete_search = transaction.prepare_cached(
-                    "DELETE FROM indexed_asset_search
+                let mut insert_search_key = transaction.prepare_cached(
+                    "INSERT INTO indexed_asset_search_keys(root_path, path) VALUES (?1, ?2)
+                     ON CONFLICT(root_path, path) DO NOTHING",
+                )?;
+                let mut search_key = transaction.prepare_cached(
+                    "SELECT search_rowid FROM indexed_asset_search_keys
                      WHERE root_path = ?1 AND path = ?2",
                 )?;
                 let mut insert_search = transaction.prepare_cached(
-                    "INSERT INTO indexed_asset_search(path, root_path, name, directory)
-                     VALUES (?1, ?2, ?3, ?4)",
+                    "INSERT OR REPLACE INTO indexed_asset_search(rowid, path, root_path, name, directory)
+                     VALUES (?1, ?2, ?3, ?4, ?5)",
                 )?;
-                for asset in batch {
+                for (processed, asset) in batch.iter().enumerate() {
+                    if processed > 0 && started.elapsed() >= INDEX_WRITE_TIME_SLICE {
+                        break;
+                    }
+                    offset += 1;
                     let values = params![
                         root.to_string_lossy(),
                         asset.path.to_string_lossy(),
@@ -1190,11 +1280,16 @@ impl Library {
                         asset.has_sidecar,
                         scan_id,
                     ])?;
-                    delete_search.execute(params![
+                    insert_search_key.execute(params![
                         root.to_string_lossy(),
                         asset.path.to_string_lossy()
                     ])?;
+                    let search_rowid: i64 = search_key.query_row(
+                        params![root.to_string_lossy(), asset.path.to_string_lossy()],
+                        |row| row.get(0),
+                    )?;
                     insert_search.execute(params![
+                        search_rowid,
                         asset.path.to_string_lossy(),
                         root.to_string_lossy(),
                         asset.name,
@@ -1203,6 +1298,8 @@ impl Library {
                 }
             }
             transaction.commit()?;
+            // Hand the writer to an existing waiter before starting another batch.
+            MutexGuard::unlock_fair(connection);
         }
         Ok(())
     }
@@ -1263,10 +1360,16 @@ impl Library {
             return Ok(());
         }
         transaction.execute(
-            "DELETE FROM indexed_asset_search
-             WHERE root_path = ?1 AND path IN (
-               SELECT path FROM indexed_assets
-               WHERE root_path = ?1 AND scan_id != ?2
+            "DELETE FROM indexed_asset_search WHERE rowid IN (
+               SELECT k.search_rowid FROM indexed_asset_search_keys k
+               JOIN indexed_assets a ON a.root_path = k.root_path AND a.path = k.path
+               WHERE a.root_path = ?1 AND a.scan_id != ?2
+             )",
+            params![root.to_string_lossy(), scan_id],
+        )?;
+        transaction.execute(
+            "DELETE FROM indexed_asset_search_keys WHERE root_path = ?1 AND path IN (
+               SELECT path FROM indexed_assets WHERE root_path = ?1 AND scan_id != ?2
              )",
             params![root.to_string_lossy(), scan_id],
         )?;
@@ -1836,6 +1939,325 @@ mod tests {
 
         library.invalidate_index(root.path()).unwrap();
         assert!(library.root_needs_index(root.path()).unwrap());
+    }
+
+    #[test]
+    fn wal_reads_finish_during_an_uncommitted_index_write() {
+        let state = tempdir().unwrap();
+        let library = Library::open(&state.path().join("library.sqlite")).unwrap();
+        let root = tempdir().unwrap();
+        let root = root.path().canonicalize().unwrap();
+        std::fs::write(root.join("photo.jpg"), b"jpeg").unwrap();
+        library.add_root(&root).unwrap();
+        library.index_root(&root).unwrap();
+
+        let (sender, receiver) = std::sync::mpsc::channel();
+        let completed = std::thread::scope(|scope| {
+            let mut writer = library.connection.lock();
+            let transaction = writer.transaction().unwrap();
+            transaction
+                .execute("UPDATE indexed_assets SET name = 'uncommitted.jpg'", [])
+                .unwrap();
+            scope.spawn(|| {
+                let page = library
+                    .list_assets(&root, &root, &query(None), 0)
+                    .unwrap()
+                    .unwrap();
+                assert_eq!(page.items[0].name, "photo.jpg");
+                assert!(library.contains_root(&root).unwrap());
+                assert!(!library.root_needs_index(&root).unwrap());
+                assert_eq!(library.roots().unwrap(), vec![root.clone()]);
+                assert!(library.list_directories(&root, &root).unwrap().is_some());
+                assert!(
+                    library
+                        .search_directories(&root, "photo")
+                        .unwrap()
+                        .is_some()
+                );
+                assert!(library.custom_tags().unwrap().is_empty());
+                sender.send(()).unwrap();
+            });
+            let completed = receiver.recv_timeout(Duration::from_secs(2));
+            // Always release before joining, so a lock regression fails instead of hanging.
+            transaction.commit().unwrap();
+            drop(writer);
+            completed
+        });
+        assert!(completed.is_ok(), "WAL reader waited for the index writer");
+        let page = library
+            .list_assets(&root, &root, &query(None), 0)
+            .unwrap()
+            .unwrap();
+        assert_eq!(page.items[0].name, "uncommitted.jpg");
+    }
+
+    #[test]
+    fn projection_reads_do_not_wait_for_browsing_or_the_writer() {
+        let state = tempdir().unwrap();
+        let library = Library::open(&state.path().join("library.sqlite")).unwrap();
+        let path = state.path().join("photo.jpg");
+        let valid_at = library.next_resource_revision().unwrap();
+        library
+            .accept_metadata_projection(MetadataProjection {
+                path: path.clone(),
+                source_revision: "100:200:xmp-a".into(),
+                projection_revision: 0,
+                valid_at,
+                status: ResourceLoadStatus::Ready,
+                rating: Some(4),
+                color_label: None,
+                pick_label: None,
+                error: None,
+            })
+            .unwrap();
+        let writer = library.connection.lock();
+        let browsing = library.read_connection();
+        let (sender, receiver) = std::sync::mpsc::channel();
+        let completed = std::thread::scope(|scope| {
+            scope.spawn(|| {
+                assert_eq!(
+                    library
+                        .metadata_projection(&path, "100:200:xmp-a")
+                        .unwrap()
+                        .unwrap()
+                        .rating,
+                    Some(4)
+                );
+                assert!(
+                    library
+                        .image_projection(&path, RenderLevel::Thumbnail, "missing")
+                        .unwrap()
+                        .is_none()
+                );
+                sender.send(()).unwrap();
+            });
+            let completed = receiver.recv_timeout(Duration::from_secs(2));
+            drop(browsing);
+            drop(writer);
+            completed
+        });
+        assert!(
+            completed.is_ok(),
+            "projection reader waited for browsing or indexing"
+        );
+    }
+
+    #[test]
+    #[ignore = "manual WAL contention benchmark; run with --ignored --nocapture"]
+    fn wal_interaction_latency_during_large_index() {
+        let state = tempdir().unwrap();
+        let library = Library::open(&state.path().join("library.sqlite")).unwrap();
+        let root = tempdir().unwrap();
+        let root = root.path().canonicalize().unwrap();
+        std::fs::write(root.join("visible.jpg"), b"jpeg").unwrap();
+        library.add_root(&root).unwrap();
+        library.index_root(&root).unwrap();
+        let template = oxy_fs::scan_index_assets(&root).unwrap().remove(0);
+        let background = root.join("background");
+        let assets: Vec<_> = (0..50_000)
+            .map(|index| {
+                let mut asset = template.clone();
+                asset.name = format!("photo-{index}.jpg");
+                asset.path = background.join(&asset.name);
+                asset.id = format!("asset-{index}");
+                asset
+            })
+            .collect();
+        let scan_id = library.next_scan_id().unwrap();
+        let start = std::sync::Barrier::new(2);
+        let mut reads = Vec::new();
+        let mut writes = Vec::new();
+        std::thread::scope(|scope| {
+            scope.spawn(|| {
+                start.wait();
+                library
+                    .write_asset_index_batch(&root, &background, scan_id, &assets)
+                    .unwrap();
+            });
+            start.wait();
+            for _ in 0..200 {
+                let started = Instant::now();
+                let page = library
+                    .list_assets(&root, &root, &query(None), 0)
+                    .unwrap()
+                    .unwrap();
+                assert_eq!(page.items.len(), 1);
+                library
+                    .metadata_projection(&template.path, "missing")
+                    .unwrap();
+                library
+                    .image_projection(&template.path, RenderLevel::Thumbnail, "missing")
+                    .unwrap();
+                reads.push(started.elapsed());
+                let started = Instant::now();
+                library.next_resource_revision().unwrap();
+                writes.push(started.elapsed());
+            }
+        });
+        reads.sort_unstable();
+        writes.sort_unstable();
+        println!(
+            "50k background writes, 200 foreground samples: read P95 {:?}, max {:?}; revision write P95 {:?}, max {:?}",
+            reads[189], reads[199], writes[189], writes[199]
+        );
+    }
+
+    #[test]
+    #[ignore = "manual large-library indexing benchmark; run with --ignored --nocapture"]
+    fn large_library_index_batch_latency() {
+        let library = Library::in_memory().unwrap();
+        let root = tempdir().unwrap();
+        let root = root.path().canonicalize().unwrap();
+        library.add_root(&root).unwrap();
+        std::fs::write(root.join("template.jpg"), b"jpeg").unwrap();
+        let template = oxy_fs::scan_index_assets(&root).unwrap().remove(0);
+        let scan_id = library.next_scan_id().unwrap();
+        let mut inserted = 0;
+        for target in [1_000, 10_000, 50_000] {
+            while inserted < target {
+                let count = INDEX_WRITE_BATCH_SIZE.min(target - inserted);
+                let assets: Vec<_> = (inserted..inserted + count)
+                    .map(|index| {
+                        let mut asset = template.clone();
+                        asset.name = format!("photo-{index}.jpg");
+                        asset.path = root.join(&asset.name);
+                        asset.id = format!("asset-{index}");
+                        asset
+                    })
+                    .collect();
+                library
+                    .write_asset_index_batch(&root, &root, scan_id, &assets)
+                    .unwrap();
+                inserted += count;
+            }
+            let assets: Vec<_> = (inserted..inserted + INDEX_WRITE_BATCH_SIZE)
+                .map(|index| {
+                    let mut asset = template.clone();
+                    asset.name = format!("photo-{index}.jpg");
+                    asset.path = root.join(&asset.name);
+                    asset.id = format!("asset-{index}");
+                    asset
+                })
+                .collect();
+            let start = std::time::Instant::now();
+            library
+                .write_asset_index_batch(&root, &root, scan_id, &assets)
+                .unwrap();
+            println!(
+                "{target} indexed assets: next {INDEX_WRITE_BATCH_SIZE} writes took {:?}",
+                start.elapsed()
+            );
+            inserted += assets.len();
+        }
+        let connection = library.connection.lock();
+        let count: usize = connection
+            .query_row("SELECT COUNT(*) FROM indexed_asset_search", [], |row| {
+                row.get(0)
+            })
+            .unwrap();
+        assert_eq!(count, inserted);
+    }
+
+    #[test]
+    fn migrates_search_keys_and_replaces_changed_terms_without_duplicates() {
+        let state = tempdir().unwrap();
+        let database = state.path().join("library.sqlite");
+        let root = tempdir().unwrap();
+        let root = root.path().canonicalize().unwrap();
+        std::fs::write(root.join("photo.jpg"), b"jpeg").unwrap();
+        let library = Library::open(&database).unwrap();
+        library.add_root(&root).unwrap();
+        library.index_root(&root).unwrap();
+        // Simulate the pre-migration database, including a non-default FTS rowid.
+        library
+            .connection
+            .lock()
+            .execute_batch(
+                "UPDATE indexed_asset_search SET rowid = 1234;
+             DROP TABLE indexed_asset_search_keys;",
+            )
+            .unwrap();
+        drop(library);
+
+        let library = Library::open(&database).unwrap();
+        let mut assets = oxy_fs::scan_index_assets(&root).unwrap();
+        assets[0].name = "replacement.jpg".into();
+        let scan_id = library.next_scan_id().unwrap();
+        library
+            .write_asset_index_batch(&root, &root, scan_id, &assets)
+            .unwrap();
+        library.finish_index(&root, scan_id, 1, 0).unwrap();
+        assert_eq!(
+            library
+                .list_assets(&root, &root, &query(Some("photo")), 0)
+                .unwrap()
+                .unwrap()
+                .total,
+            0
+        );
+        assert_eq!(
+            library
+                .list_assets(&root, &root, &query(Some("replacement")), 0)
+                .unwrap()
+                .unwrap()
+                .total,
+            1
+        );
+        let connection = library.connection.lock();
+        let (count, rowid): (usize, i64) = connection
+            .query_row(
+                "SELECT COUNT(*), MIN(rowid) FROM indexed_asset_search",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .unwrap();
+        assert_eq!((count, rowid), (1, 1234));
+        drop(connection);
+        drop(library);
+        // Reopening must preserve the migrated key and searchable result.
+        let library = Library::open(&database).unwrap();
+        assert_eq!(
+            library
+                .list_assets(&root, &root, &query(Some("replacement")), 0)
+                .unwrap()
+                .unwrap()
+                .total,
+            1
+        );
+    }
+
+    #[test]
+    fn search_keys_keep_overlapping_roots_independent_and_clean_up() {
+        let library = Library::in_memory().unwrap();
+        let root = tempdir().unwrap();
+        let child = root.path().join("child");
+        std::fs::create_dir(&child).unwrap();
+        std::fs::write(child.join("shared.jpg"), b"jpeg").unwrap();
+        library.add_root(root.path()).unwrap();
+        library.add_root(&child).unwrap();
+        library.index_root(root.path()).unwrap();
+        library.index_root(&child).unwrap();
+        library.remove_root(root.path()).unwrap();
+        let child = child.canonicalize().unwrap();
+        assert_eq!(
+            library
+                .list_assets(&child, &child, &query(Some("shared")), 0)
+                .unwrap()
+                .unwrap()
+                .total,
+            1
+        );
+        std::fs::remove_file(child.join("shared.jpg")).unwrap();
+        library.index_root(&child).unwrap();
+        let connection = library.connection.lock();
+        for table in ["indexed_asset_search", "indexed_asset_search_keys"] {
+            let count: usize = connection
+                .query_row(&format!("SELECT COUNT(*) FROM {table}"), [], |row| {
+                    row.get(0)
+                })
+                .unwrap();
+            assert_eq!(count, 0, "stale rows in {table}");
+        }
     }
 
     #[test]

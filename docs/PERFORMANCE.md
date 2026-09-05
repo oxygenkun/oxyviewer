@@ -16,6 +16,41 @@ end-to-end regression harness that enforces these budgets is described in
 
 ## Verification Log
 
+- 2026-09-05: Disk-backed libraries now use separate read-only WAL connections
+  for browsing/tag queries and resource-projection cache lookups. These readers
+  do not acquire the writer mutex, and multi-statement asset/directory queries
+  use a read transaction to keep completion checks, counts and results in one
+  committed snapshot. Index directory/asset writes stop at 256 rows or an 8 ms
+  cooperative time slice and fairly hand off the writer mutex after committing.
+  The time slice cannot preempt a SQL statement, commit or WAL checkpoint; final
+  generation cleanup remains atomic. In-memory libraries retain a single
+  connection. Concurrency tests hold an uncommitted writer transaction while
+  browsing completes and verify that cache reads also bypass the browsing lock.
+  The manual on-disk debug benchmark
+  `cargo test -p oxy-library wal_interaction_latency_during_large_index -- --ignored --nocapture`
+  sampled 200 foreground interactions during 50k synthetic background asset
+  writes: combined visible-page/cache reads P95 0.56 ms / max 1.96 ms, resource
+  revision writes P95 35.56 ms / max 53.64 ms. This is backend contention
+  coverage, not a release-build UI P95 measurement. Preview/metadata enqueue
+  still holds queue state during projection writes; fair writer handoff reduces
+  index-induced waiting but does not eliminate those queue-lock dependencies.
+
+- 2026-09-05: Asset indexing now maintains an ordinary SQLite key table mapping
+  `(root_path, path)` to a stable FTS rowid. New and changed assets replace FTS
+  rows by rowid instead of scanning the entire FTS table on its `UNINDEXED`
+  path columns for every asset while holding the shared library connection
+  lock. Existing caches migrate their FTS rowids transactionally without a
+  filesystem rescan; root removal and stale-generation cleanup remove both
+  search records and keys. Migration, changed search terms, overlapping roots,
+  and stale-file cleanup have regression coverage. The manual Rust benchmark
+  `cargo test -p oxy-library large_library_index_batch_latency -- --ignored --nocapture`
+  measured the next 256 complete asset writes at 7.2 / 7.5 / 8.1 ms with
+  1k / 10k / 50k records in a debug-build in-memory database. The prior SQL
+  microbenchmark took 71 / 688 / 3457 ms for only the 256 missing-record deletes
+  at those sizes. These are backend microbenchmarks, not release UI latency
+  qualification. Shared-connection contention and whole-directory asset
+  collection still warrant measurement on real large folders.
+
 - 2026-09-05: Filmstrip summary pagination now measures the rendered unloaded
   boundary instead of multiplying an estimated item width. This avoids cumulative
   drift from scrollbar space and fractional CSS sizing, and rechecks on viewport

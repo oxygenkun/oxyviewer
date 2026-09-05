@@ -66,7 +66,7 @@ Rust projection 与前端显示镜像失效。
 
 - `FsCatalog` 的 folder sessions 与内存目录快照；
 - `JobRegistry` 的作业取消 flags；
-- `Library` 的 SQLite connection；
+- `Library` 的 SQLite 写连接、浏览读取连接和资源缓存读取连接；
 - `CacheManager`（当前 preview cache directory、容量策略和配置文件）；
 - `MetadataQueue` / `PreviewQueue` 的 priority、pending/in-flight consumer 与 live projection；
 - `DirectoryTreeQueue` 的分层目录读取优先级；
@@ -77,6 +77,16 @@ Rust projection 与前端显示镜像失效。
 可按 source revision 在重启后恢复。
 
 ## 5. SQLite 资料库
+
+磁盘资料库使用一个共享写连接和两个只读 WAL 连接：文件列表、目录搜索及标签查询走浏览
+连接，metadata/image projection 查询走缓存连接。读取不获取写连接的互斥锁；列表与目录
+查询的完成标记、计数和结果在同一个只读事务快照中读取。内存测试库保留单连接行为。
+
+目录与资产索引写入每批最多 256 条，并在记录之间检查 8 ms 软时间片，达到后提前提交。
+提交后公平释放写锁，让已有等待者先执行；所有写入继续共享同一连接，保留资源 revision
+的事务顺序。单条 SQL、磁盘提交与 WAL checkpoint 无法中途抢占，完成 generation 时的
+旧行清理仍是原子事务。预览与元数据入队阶段仍有持队列锁进行 projection 写入的路径，
+这些写入受益于批次交接，但尚未与队列锁完全解耦。
 
 `oxy-library::Library::open` 在 app data 目录创建 `oxyviewer.sqlite`，启用 WAL，并确保以下逻辑
 结构存在：
