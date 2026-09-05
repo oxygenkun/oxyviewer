@@ -80,8 +80,8 @@ Request + SourceFacts + BackendCapabilities
 
 ### B：事实与计划
 
-- [ ] 引入最小内部 SourceFacts / DecodePlan，先表达当前行为。
-- [ ] planner 用模拟能力测试平台 × 文件特征 × 等级矩阵，不依赖宿主原生解码器。
+- [x] 引入最小内部 SourceFacts / DecodePlan，先表达当前行为。
+- [x] planner 用模拟能力测试平台 × 文件特征 × 等级矩阵，不依赖宿主原生解码器。
 - 验收：未知厂商、能力缺失与现有策略都有明确结果；探测不进入目录首屏。
 
 ### C：统一后端选择
@@ -182,5 +182,24 @@ A 阶段后快速滚动缓存清理告警修复：
 - macOS 格式检查、oxy-media Clippy、8 项 store 测试、workspace 测试通过；workspace Clippy
   仍受已有 oxy-fs 告警阻挡。未启动调试实例或执行真实快速滚动性能测试。
 
-下一小步：进入 B 阶段，先把现有纯路由提取为可测试的 planner，再逐步引入事实与能力；
-继续保留现有产物和 fallback 行为，不在同一步修正所有 HEIF 160px 策略。
+B 阶段已实现：
+
+- 新增内部 `pipeline/planner.rs`，以最小 `SourceFacts`、`BackendCapabilities`、请求和
+  `DecodePlan` 表达原有 preview 路由；planner 为纯函数，不接收路径且不执行文件、缓存或解码 IO。
+- `preview` 使用未探测事实和原有乐观路由能力生成计划，再由原执行函数完成工作。RAW preview 的
+  system fallback 错误组合、HEIF full 的前台 8192 fallback、RAW full 独立 lane、缓存键、锁范围和
+  公开 API 均保持不变；HEIF session 选择仍留在原处，等待 C 阶段统一。
+- HEIF thumbnail/preview 继续对所有厂商请求 160px。未探测和未知厂商仍尝试原有有界 Sony
+  表示提取，已知缺失表示时计划可跳过；没有把 D 阶段的策略修正提前带入。
+- host-independent 单元测试覆盖 3 个平台 × 6 种 `AssetKind` × 3 个 `RenderLevel` 的现有矩阵，
+  并交叉覆盖 HEIF 厂商/快速表示事实，以及 RAW、HEIF、TIFF 能力缺失时的 fallback 或
+  `Unsupported` 结果。测试直接注入能力，不调用宿主原生能力或 fixture。
+- 本步没有向目录打开或首屏发现加入探测；生产 `SourceFacts` 从已有 `AssetKind` 构造，其余事实
+  保持 unknown，原 Sony 文件读取仍只在 HEIF preview 请求执行时按需发生。
+- macOS：格式检查、oxy-media Clippy、7 项 planner 测试、oxy-media 测试和 workspace 测试通过
+  （媒体 66 passed、8 ignored）。workspace Clippy 仍被未修改的
+  `crates/oxy-fs/src/lib.rs:698` 的 `path` 未使用告警阻挡。
+- 未运行 Windows/Linux 原生构建或真机验证，也未运行性能基准；本步未启动调试实例。
+
+下一小步：进入 C 阶段，在不改变 session 生命周期、fallback 与取消语义的前提下，让
+preview/session 共用能力判断和 fallback 机制；不要在该步骤提前修改 HEIF 160px 产物策略。

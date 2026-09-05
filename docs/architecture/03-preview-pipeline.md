@@ -31,7 +31,8 @@ HEVC 解码器或操作系统预览服务。即使原文件可解码，也不应
 
 交互图不随格式改变：网格/列表只进入 `thumbnail`；放大镜固定执行 `preview → full`。
 前端 `renderPlan(kind, surface, platform)` 把等级映射到 renderer 类；后端
-`render_method_for(kind, level, platform)` 再选择实际解码器和尺寸。多个等级可以指向同一产物。
+`pipeline::planner::plan(SourceFacts, Request, BackendCapabilities)` 生成 `DecodePlan`，再由
+`oxy_media::preview` 执行对应解码器和尺寸。多个等级可以指向同一产物。
 例如 Sony HIF 的 `preview` 是 `thumbnail` 的显式别名，而不是一个 160 px 特判。
 
 ## 3. 端到端调用链
@@ -175,7 +176,7 @@ intent。它们只更新队列元数据，不读取或传输图片。
 
 ```mermaid
 flowchart TD
-    request["platform + kind + RenderLevel"] --> policy["render_method_for"]
+    request["SourceFacts + Request + BackendCapabilities"] --> policy["pipeline::planner::plan → DecodePlan"]
     policy -->|RAW Full| rawFull["raw_full"]
     policy -->|RAW Thumbnail/Preview| rawPreview["raw_preview_with_priority + policy size"]
     policy -->|HEIF Full| heifFull["heif_full / source JPEG"]

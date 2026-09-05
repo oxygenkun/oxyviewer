@@ -6,6 +6,7 @@ mod cache;
 mod decode_control;
 mod formats;
 mod heif_service;
+mod pipeline;
 
 #[cfg(target_os = "macos")]
 use backends::apple_image_io;
@@ -13,6 +14,10 @@ use backends::apple_image_io;
 use backends::windows_wic;
 use backends::{ffmpeg_heif, libheif, libraw};
 use formats::heif::quirks::sony;
+use pipeline::planner::{
+    BackendCapabilities, DecodePlan, DecodeStep, PlannedPriority, Platform, Request, SourceFacts,
+    plan,
+};
 
 pub use cache::{CacheUsage, clear_preview_cache, preview_cache_usage, prune_preview_cache};
 use cache::{
@@ -337,6 +342,17 @@ pub fn heif_preview_with_priority(
     max_size: u32,
     priority: HeifDecodePriority,
 ) -> Result<PreviewResult, MediaError> {
+    heif_preview_with_options(path, cache_dir, max_size, priority, true, true)
+}
+
+fn heif_preview_with_options(
+    path: &Path,
+    cache_dir: &Path,
+    max_size: u32,
+    priority: HeifDecodePriority,
+    try_fast_jpeg: bool,
+    allow_decode: bool,
+) -> Result<PreviewResult, MediaError> {
     let total_started = Instant::now();
     let max_size = max_size.max(1);
     fs::create_dir_all(cache_dir)?;
@@ -353,7 +369,8 @@ pub fn heif_preview_with_priority(
     // browsing. Serve it before entering the global HEVC gate: a scrolling
     // viewport must not launch FFmpeg or wait behind full-image decode merely
     // to paint a 160 px placeholder.
-    if max_size <= 160
+    if try_fast_jpeg
+        && max_size <= 160
         && let Ok(display_size) = libheif::dimensions(path)
         && let Ok(image) = sony::extract(path, display_size)
     {
@@ -381,6 +398,9 @@ pub fn heif_preview_with_priority(
             fallback_reason: None,
         });
         return Ok(result);
+    }
+    if !allow_decode {
+        return Err(MediaError::NativeDecoderUnavailable);
     }
 
     let queue_started = Instant::now();
@@ -575,69 +595,18 @@ pub fn decode_priority_for(priority: oxy_domain::PreviewPriority) -> DecodePrior
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[allow(dead_code)]
-enum RenderPlatform {
-    Windows,
-    Macos,
-    Linux,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum RenderMethod {
-    Original,
-    RawPreview(u32),
-    RawFull,
-    HeifPreview(u32),
-    HeifFull,
-    SystemPreview(u32),
-}
-
-const fn current_render_platform() -> RenderPlatform {
+const fn current_platform() -> Platform {
     #[cfg(target_os = "windows")]
     {
-        RenderPlatform::Windows
+        Platform::Windows
     }
     #[cfg(target_os = "macos")]
     {
-        RenderPlatform::Macos
+        Platform::Macos
     }
     #[cfg(target_os = "linux")]
     {
-        RenderPlatform::Linux
-    }
-}
-
-/// Format/platform policy for the semantic render graph. Pixel sizes and
-/// decoder choices live here instead of leaking into frontend interaction
-/// code. A level is allowed to map to the same artifact as another level.
-fn render_method_for(
-    kind: oxy_domain::AssetKind,
-    level: RenderLevel,
-    platform: RenderPlatform,
-) -> RenderMethod {
-    use oxy_domain::AssetKind;
-    match (platform, kind, level) {
-        (_, AssetKind::Jpeg | AssetKind::Png | AssetKind::Webp, _) => RenderMethod::Original,
-
-        (_, AssetKind::Raw, RenderLevel::Thumbnail) => RenderMethod::RawPreview(512),
-        (_, AssetKind::Raw, RenderLevel::Preview) => RenderMethod::RawPreview(4_096),
-        (_, AssetKind::Raw, RenderLevel::Full) => RenderMethod::RawFull,
-
-        // Sony HIF exposes a camera-rendered 160x120 JPEG. Thumbnail and
-        // fit-to-window preview levels intentionally reuse it;
-        // full detail is supplied by the independent HEIF tile session.
-        (_, AssetKind::Heif, RenderLevel::Thumbnail | RenderLevel::Preview) => {
-            RenderMethod::HeifPreview(160)
-        }
-        (_, AssetKind::Heif, RenderLevel::Full) => RenderMethod::HeifFull,
-
-        // The system TIFF path currently tops out at a 4096px image. It still
-        // fulfills the semantic full level even though it is not source-sized.
-        (_, AssetKind::Tiff, RenderLevel::Thumbnail | RenderLevel::Preview) => {
-            RenderMethod::SystemPreview(512)
-        }
-        (_, AssetKind::Tiff, RenderLevel::Full) => RenderMethod::SystemPreview(4_096),
+        Platform::Linux
     }
 }
 
@@ -650,40 +619,102 @@ pub fn preview(
     priority: DecodePriority,
     kind: oxy_domain::AssetKind,
 ) -> Result<PreviewResult, MediaError> {
-    let method = render_method_for(kind, level, current_render_platform());
-    let mut result = match method {
-        RenderMethod::Original => original(path.to_owned()),
-        RenderMethod::RawFull => raw_full(path, cache_dir),
-        RenderMethod::HeifFull => heif_full(path, cache_dir).or_else(|error| {
-            // Keep the documented fallback: if the full-detail decode fails,
-            // serve the largest progressive preview at foreground priority so
-            // the loupe is never left empty.
-            eprintln!(
-                "full-detail HEIF decode failed for {}: {error}",
-                path.display()
-            );
-            heif_preview_with_priority(path, cache_dir, 8_192, DecodePriority::Foreground)
-        }),
-        RenderMethod::RawPreview(max_size) => {
-            raw_preview_with_priority(path, cache_dir, max_size, priority).or_else(|error| {
-                // Fallback to the OS generator, preserving the original error
-                // in the message so diagnostics stay actionable.
-                match system_preview(path, cache_dir, max_size) {
+    // Preserve the pre-planner executor's optimistic route set. Runtime
+    // adapter failures still flow through the same ordered fallbacks and retain
+    // their existing diagnostics; simulated capabilities are tested in the
+    // pure planner without making directory discovery probe media contents.
+    let decode_plan = plan(
+        SourceFacts::unprobed(kind),
+        Request {
+            level,
+            platform: current_platform(),
+        },
+        BackendCapabilities::configured_routes(),
+    );
+    let mut result = execute_decode_plan(path, cache_dir, priority, decode_plan)?;
+    result.render_level = Some(level);
+    Ok(result)
+}
+
+fn execute_decode_plan(
+    path: &Path,
+    cache_dir: &Path,
+    request_priority: DecodePriority,
+    decode_plan: DecodePlan,
+) -> Result<PreviewResult, MediaError> {
+    let DecodePlan::Attempts { first, on_failure } = decode_plan else {
+        return Err(MediaError::NativeDecoderUnavailable);
+    };
+    match (first, on_failure) {
+        (
+            DecodeStep::RawPreview { max_size },
+            Some(DecodeStep::SystemPreview {
+                max_size: fallback_size,
+            }),
+        ) => raw_preview_with_priority(path, cache_dir, max_size, request_priority).or_else(
+            |error| {
+                // Preserve the original LibRaw error when the system fallback
+                // also fails so diagnostics remain actionable.
+                match system_preview(path, cache_dir, fallback_size) {
                     Ok(result) => Ok(result),
                     Err(system_error) => Err(MediaError::LibRaw {
                         path: path.to_owned(),
                         message: format!("{error}; fallback failed: {system_error}"),
                     }),
                 }
-            })
+            },
+        ),
+        (DecodeStep::HeifFull, Some(fallback)) => heif_full(path, cache_dir).or_else(|error| {
+            // Preserve the foreground 8192px fallback after full-detail HEIF
+            // failure so the loupe is not left empty.
+            eprintln!(
+                "full-detail HEIF decode failed for {}: {error}",
+                path.display()
+            );
+            execute_decode_step(path, cache_dir, request_priority, fallback)
+        }),
+        (first, None) => execute_decode_step(path, cache_dir, request_priority, first),
+        // The Stage-B planner only emits the two ordered fallback pairs above.
+        // Treat a future unsupported pairing explicitly rather than silently
+        // changing its error or fallback behavior.
+        (_, Some(_)) => Err(MediaError::NativeDecoderUnavailable),
+    }
+}
+
+fn execute_decode_step(
+    path: &Path,
+    cache_dir: &Path,
+    request_priority: DecodePriority,
+    step: DecodeStep,
+) -> Result<PreviewResult, MediaError> {
+    match step {
+        DecodeStep::Original => original(path.to_owned()),
+        DecodeStep::RawPreview { max_size } => {
+            raw_preview_with_priority(path, cache_dir, max_size, request_priority)
         }
-        RenderMethod::HeifPreview(max_size) => {
-            heif_preview_with_priority(path, cache_dir, max_size, priority)
+        DecodeStep::RawFull => raw_full(path, cache_dir),
+        DecodeStep::HeifPreview {
+            max_size,
+            try_fast_jpeg,
+            allow_decode,
+            priority,
+        } => {
+            let priority = match priority {
+                PlannedPriority::Request => request_priority,
+                PlannedPriority::Foreground => DecodePriority::Foreground,
+            };
+            heif_preview_with_options(
+                path,
+                cache_dir,
+                max_size,
+                priority,
+                try_fast_jpeg,
+                allow_decode,
+            )
         }
-        RenderMethod::SystemPreview(max_size) => system_preview(path, cache_dir, max_size),
-    }?;
-    result.render_level = Some(level);
-    Ok(result)
+        DecodeStep::HeifFull => heif_full(path, cache_dir),
+        DecodeStep::SystemPreview { max_size } => system_preview(path, cache_dir, max_size),
+    }
 }
 
 fn preview_result(path: PathBuf, kind: PreviewKind) -> Result<PreviewResult, MediaError> {
@@ -786,44 +817,6 @@ mod tests {
     }
 
     #[test]
-    fn windows_heif_levels_reuse_the_fast_embedded_artifact() {
-        assert_eq!(
-            render_method_for(
-                oxy_domain::AssetKind::Heif,
-                RenderLevel::Thumbnail,
-                RenderPlatform::Windows,
-            ),
-            RenderMethod::HeifPreview(160)
-        );
-        assert_eq!(
-            render_method_for(
-                oxy_domain::AssetKind::Heif,
-                RenderLevel::Preview,
-                RenderPlatform::Windows,
-            ),
-            RenderMethod::HeifPreview(160)
-        );
-        assert_eq!(
-            render_method_for(
-                oxy_domain::AssetKind::Heif,
-                RenderLevel::Full,
-                RenderPlatform::Windows,
-            ),
-            RenderMethod::HeifFull
-        );
-    }
-
-    #[test]
-    fn heif_fast_artifact_does_not_regress_on_other_platform_profiles() {
-        for platform in [RenderPlatform::Macos, RenderPlatform::Linux] {
-            assert_eq!(
-                render_method_for(oxy_domain::AssetKind::Heif, RenderLevel::Preview, platform,),
-                RenderMethod::HeifPreview(160)
-            );
-        }
-    }
-
-    #[test]
     fn sony_hif_thumbnail_and_preview_levels_share_the_160_artifact() {
         let path = workspace_path("tests/fixtures/DSC00449.HIF");
         let cache = tempfile::tempdir().unwrap();
@@ -849,34 +842,6 @@ mod tests {
         assert_eq!(loupe_base.path, thumbnail.path);
         assert_eq!(thumbnail.render_level, Some(RenderLevel::Thumbnail));
         assert_eq!(loupe_base.render_level, Some(RenderLevel::Preview));
-    }
-
-    #[test]
-    fn render_policy_keeps_sizes_out_of_the_shared_level_contract() {
-        assert_eq!(
-            render_method_for(
-                oxy_domain::AssetKind::Raw,
-                RenderLevel::Preview,
-                RenderPlatform::Windows,
-            ),
-            RenderMethod::RawPreview(4_096)
-        );
-        assert_eq!(
-            render_method_for(
-                oxy_domain::AssetKind::Tiff,
-                RenderLevel::Preview,
-                RenderPlatform::Windows,
-            ),
-            RenderMethod::SystemPreview(512)
-        );
-        assert_eq!(
-            render_method_for(
-                oxy_domain::AssetKind::Tiff,
-                RenderLevel::Full,
-                RenderPlatform::Windows,
-            ),
-            RenderMethod::SystemPreview(4_096)
-        );
     }
 
     #[test]

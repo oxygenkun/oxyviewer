@@ -41,7 +41,7 @@
 | 文件夹会话 | `crates/oxy-fs/src/lib.rs` | `apps/desktop/src/lib/api.ts` |
 | Command 实现/注册 | `apps/desktop/src-tauri/src/commands/*.rs` / `apps/desktop/src-tauri/src/lib.rs` | `invoke(...)` wrappers in `api.ts` |
 | 分页请求 | `FsCatalog::list_assets` | `useInfiniteQuery` in `App.tsx` |
-| 渲染等级 | `render_method_for` / `oxy_media::preview` | `renderPlan` |
+| 渲染等级 | `pipeline::planner::plan` / `DecodePlan` / `oxy_media::preview` | `renderPlan` |
 | 预览优先级 | `PreviewQueue` / `DecodeGate` | selection/visibility priority hints |
 | 调试队列观测 | `get_debug_queue_snapshot` | debug-only, read-only scheduler snapshots; see [`DEBUG_QUEUE_OBSERVABILITY.md`](../DEBUG_QUEUE_OBSERVABILITY.md) |
 | HEIF 完整图 | `HeifDecodeService` / `oxy_media::heif_full` | macOS `Thumbnail` full stage；Windows/Linux `HeifTileCanvas` |
