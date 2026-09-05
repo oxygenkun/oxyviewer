@@ -158,6 +158,18 @@ fn focus_from_tags(tags: &[Tag], display_dimensions: Option<(u32, u32)>) -> Opti
         .and_then(|tag| tag.typed_value.as_ref())
         .and_then(TagValue::to_u32)
         .and_then(|value| u16::try_from(value).ok())
+        .or_else(|| {
+            tags.iter()
+                .find(|tag| tag.group == "HEIF" && tag.name == "Rotation")
+                .and_then(|tag| tag.value.parse::<u16>().ok())
+                .and_then(|rotation| match rotation {
+                    0 => Some(1),
+                    90 => Some(6),
+                    180 => Some(3),
+                    270 => Some(8),
+                    _ => None,
+                })
+        })
         .unwrap_or_else(|| {
             display_dimensions
                 .filter(|(display_width, display_height)| {
@@ -341,6 +353,25 @@ fn split_list(value: &str) -> Vec<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn heif_counter_clockwise_rotation_orients_focus_coordinates() {
+        let tags = [
+            Tag::new("MakerNotes", "FocusLocation", "7008 4672 1204 2277"),
+            Tag::new("MakerNotes", "FocusFrameSize", "219 217 1"),
+            Tag::new("HEIF", "Rotation", "270"),
+        ];
+
+        let focus = focus_from_tags(&tags, Some((4_672, 7_008))).unwrap();
+        assert_eq!(
+            (focus.coordinate_width, focus.coordinate_height),
+            (4_672, 7_008)
+        );
+        assert_eq!(focus.regions[0].center_x, 2_277);
+        assert_eq!(focus.regions[0].center_y, 5_804);
+        assert_eq!(focus.regions[0].width, Some(217));
+        assert_eq!(focus.regions[0].height, Some(219));
+    }
 
     #[test]
     fn normalizes_a_format_neutral_tag_document() {

@@ -56,15 +56,33 @@ pub fn extract(path: &Path, display_size: ImageDimensions) -> Result<EmbeddedJpe
     let image_is_portrait = height > width;
     let display_is_portrait = display_size.height > display_size.width;
     if image_is_portrait != display_is_portrait {
-        // Sony stores this thumbnail with the subject's head at the left edge;
-        // the display transform is therefore 90 degrees clockwise (EXIF 6).
-        jpeg = with_exif_orientation(jpeg, 6);
+        // The JPEG item itself has no orientation tag. Apply the primary HEIF
+        // item's irot transform so the fast thumbnail agrees with libheif's
+        // display-oriented decode. Sony writes both clockwise and
+        // counter-clockwise portrait captures, so aspect ratio alone cannot
+        // choose between EXIF 6 and 8.
+        let orientation = heif_exif_orientation(&bytes).unwrap_or(6);
+        jpeg = with_exif_orientation(jpeg, orientation);
         std::mem::swap(&mut width, &mut height);
     }
     Ok(EmbeddedJpeg {
         bytes: jpeg,
         width,
         height,
+    })
+}
+
+fn heif_exif_orientation(bytes: &[u8]) -> Option<u16> {
+    bytes.windows(9).find_map(|window| {
+        let size = u32::from_be_bytes(window[..4].try_into().ok()?);
+        (size == 9 && &window[4..8] == b"irot").then(|| match window[8] & 0x03 {
+            // HEIF irot stores counter-clockwise quarter turns, while EXIF
+            // orientation names the clockwise display operation.
+            1 => 8,
+            2 => 3,
+            3 => 6,
+            _ => 1,
+        })
     })
 }
 
@@ -95,6 +113,16 @@ fn find(haystack: &[u8], needle: &[u8]) -> Option<usize> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn maps_heif_rotation_to_exif_orientation() {
+        for (quarter_turns, expected) in [(0, 1), (1, 8), (2, 3), (3, 6)] {
+            let mut bytes = vec![0, 0, 0, 9];
+            bytes.extend_from_slice(b"irot");
+            bytes.push(quarter_turns);
+            assert_eq!(heif_exif_orientation(&bytes), Some(expected));
+        }
+    }
 
     #[test]
     fn extracts_repository_sony_sidebar_jpeg() {

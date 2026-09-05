@@ -34,7 +34,8 @@ const LIBRAW_FULL_CACHE_VERSION: &str = "libraw-0.22.2-full-detail-v2";
 // embedded ICC profile, unifying the cache format across every preview stage
 // and format. Old PNG caches are rebuildable and simply ignored.
 const HEIF_FULL_CACHE_VERSION: &str = "heif-source-jpeg-v2";
-const HEIF_CACHE_VERSION: &str = "heif-native-preview-v7";
+// v8 corrects the direction of Sony HIF embedded-JPEG portrait rotation.
+const HEIF_CACHE_VERSION: &str = "heif-native-preview-v8";
 const SYSTEM_CACHE_VERSION: &str = "system-preview-v2";
 /// Cache sizes shared by every format's progressive pipeline. A request for a
 /// smaller size may be satisfied by any larger cached entry (see
