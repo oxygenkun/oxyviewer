@@ -421,3 +421,9 @@
 .resize-handle--filmstrip::after { top: 3px; right: 0; left: 0; height: 1px; }
 .app-shell.sidebar-collapsed > .resize-handle--left,
 .app-shell.inspector-collapsed > .resize-handle--right { display: none; }
+
+/* Keep an empty loupe visually stable while its first image is loading. */
+.loupe__render .thumbnail__fallback { background: #17191c; }
+.loupe__render .thumbnail__fallback::before,
+.loupe__render .thumbnail__fallback::after,
+.loupe__render .thumbnail__fallback i { display: none; }

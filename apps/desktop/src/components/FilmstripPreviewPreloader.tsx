@@ -1,73 +1,46 @@
-import { useEffect, useRef } from "react";
+import { useEffect } from "react";
 import { preloadAssetLoupePreview } from "../lib/loupePreload";
+import { protectBrowserImages } from "../lib/browserImageCache";
+import { imageProjectionKey, useImageProjectionStore } from "../lib/imageProjection";
+import { previewUrl } from "../lib/api";
 import type { AssetSummary } from "../types";
 
 interface FilmstripPreviewPreloaderProps {
   assets: AssetSummary[];
 }
 
-/** Sequentially prepares visible filmstrip items in the supplied priority order. */
+/** Two bounded workers keep a slow NAS read from blocking every neighbor. */
 export function FilmstripPreviewPreloader({ assets }: FilmstripPreviewPreloaderProps) {
-  const completed = useRef(new Set<string>());
-  const candidates = useRef(assets);
-  const running = useRef(false);
-  const runningKey = useRef<string | undefined>(undefined);
-  const controller = useRef<AbortController | undefined>(undefined);
-  const mounted = useRef(true);
-  const pump = useRef<() => void>(() => undefined);
+  const records = useImageProjectionStore((state) => state.records);
+  useEffect(() => {
+    protectBrowserImages(assets.slice(0, 5).flatMap((asset) => [
+      previewUrl(asset),
+      ...(["thumbnail", "preview", "full"] as const).map(
+        (level) => records[imageProjectionKey(asset.path, level)]?.result?.url,
+      ),
+    ].filter((url): url is string => Boolean(url))));
+    return () => protectBrowserImages([]);
+  }, [assets, records]);
 
-  pump.current = () => {
-    if (!mounted.current || running.current) return;
-    const asset = candidates.current.find(
-      (candidate) => !completed.current.has(`${candidate.id}:${candidate.modifiedAtMs}`),
-    );
-    if (!asset) return;
-
-    const key = `${asset.id}:${asset.modifiedAtMs}`;
-    const queueOrder = candidates.current.indexOf(asset);
-    running.current = true;
-    runningKey.current = key;
-    controller.current = new AbortController();
-    window.setTimeout(() => {
-      if (!mounted.current) {
-        running.current = false;
-        return;
-      }
-      const signal = controller.current?.signal;
-      void preloadAssetLoupePreview(asset, queueOrder, signal)
-        .then(() => completed.current.add(key))
-        .catch((error) => {
-          if (signal?.aborted) return;
+  useEffect(() => {
+    const controller = new AbortController();
+    let next = 0;
+    const run = async () => {
+      while (!controller.signal.aborted && next < assets.length) {
+        const rank = next++;
+        const asset = assets[rank];
+        try {
+          await preloadAssetLoupePreview(asset, rank, controller.signal);
+        } catch (error) {
+          if (controller.signal.aborted) return;
           console.warn(`[OxyPreview] filmstrip preload failed for ${asset.name}`, error);
-          completed.current.add(key);
-        })
-        .finally(() => {
-          running.current = false;
-          runningKey.current = undefined;
-          controller.current = undefined;
-          pump.current();
-        });
-    }, 0);
-  };
-
-  useEffect(() => {
-    candidates.current = assets;
-    if (
-      runningKey.current
-      && !assets.some((asset) => `${asset.id}:${asset.modifiedAtMs}` === runningKey.current)
-    ) {
-      controller.current?.abort();
-    }
-    pump.current();
-  }, [assets]);
-
-  useEffect(() => {
-    mounted.current = true;
-    return () => {
-      mounted.current = false;
-      controller.current?.abort();
+        }
+      }
     };
-  }, []);
+    // Defer dispatch so StrictMode's discarded mount cannot start I/O.
+    queueMicrotask(() => { void run(); void run(); });
+    return () => controller.abort();
+  }, [assets]);
 
   return null;
 }

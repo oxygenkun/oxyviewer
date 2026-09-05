@@ -337,6 +337,24 @@ export function Loupe({
     };
   }, [assets, filmstripHeight, scheduleFilmstripMeasurement, thumbnailOrientation]);
 
+  const [navigation, setNavigation] = useState({ id: active.id, index: assets.indexOf(active), direction: 1 });
+  const activeIndex = assets.indexOf(active);
+  if (navigation.id !== active.id) {
+    setNaturalSize(undefined);
+    setHeifFullSize(undefined);
+    setNavigation({ id: active.id, index: activeIndex, direction: activeIndex < navigation.index ? -1 : 1 });
+  }
+  const nearbyPreviewAssets = useMemo(() => {
+    const index = assets.findIndex((asset) => asset.id === active.id);
+    return [0, navigation.direction, -navigation.direction, 2 * navigation.direction, -2 * navigation.direction]
+      .flatMap((delta) => assets[index + delta] ?? []);
+  }, [active.id, assets, navigation.direction]);
+  const preloadAssets = useMemo(() => [
+    ...nearbyPreviewAssets,
+    ...visibleFilmstripIds.flatMap((id) => assets.find((asset) => asset.id === id) ?? [])
+      .filter((asset) => !nearbyPreviewAssets.some((nearby) => nearby.id === asset.id)),
+  ], [assets, nearbyPreviewAssets, visibleFilmstripIds]);
+
   const priorityOrderedAssets = useMemo(
     () => orderBySelectionPriority(assets, active.id, (asset) => asset.id),
     [active.id, assets],
@@ -517,7 +535,7 @@ export function Loupe({
       ref={loupeRef}
       style={{ "--filmstrip-height": `${filmstripHeight}px` } as React.CSSProperties}
     >
-      <FilmstripPreviewPreloader assets={visibleFilmstripAssets} />
+      <FilmstripPreviewPreloader assets={preloadAssets} />
       <div
         className={`loupe__stage ${zoom > 1 ? "is-zoomed" : ""} ${dragging ? "is-dragging" : ""}`}
         ref={stageRef}
@@ -572,6 +590,7 @@ export function Loupe({
             }}
           >
             <Thumbnail
+              key={`thumbnail:${active.id}`}
               asset={active}
               large
               onImageLoad={handleImageLoad}
@@ -581,7 +600,7 @@ export function Loupe({
             />
             {heifUsesTiles ? (
               <HeifTileCanvas
-                key={active.id}
+                key={`heif:${active.id}`}
                 asset={active}
                 displaySharpening={displaySharpening}
                 hardwareAcceleration={hardwareAcceleration}
@@ -589,7 +608,7 @@ export function Loupe({
                 onStatus={setHeifStatus}
               />
             ) : null}
-            {showFocusAreas && mappedFocusRegions.length > 0 ? (
+            {showFocusAreas && Boolean(currentNaturalSize || currentHeifSize) && mappedFocusRegions.length > 0 ? (
               <div className="loupe__focus-overlay" aria-hidden="true">
                 {mappedFocusRegions.map((region, index) => (
                   <i

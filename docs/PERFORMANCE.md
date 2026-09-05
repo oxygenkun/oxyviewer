@@ -458,3 +458,26 @@ landed since the original investigation. Remaining improvements are:
   for cache hits and cold previews are unchanged in shape; the unified JPEG
   cache is expected to be faster on cache write and equal or faster on hit
   versus the prior PNG path.
+
+## Loupe switching cache policy (2026-09-05)
+
+The loupe immediately reuses decoded full, preview, or thumbnail artifacts,
+then upgrades through the existing progressive stages. Empty loupe frames use
+an unchanging neutral background; focus regions wait for the selected image's
+loaded dimensions. Browser resources use LRU retention, with soft protection
+for the selection and two neighbors on each side. The 1,024-entry / 512 MiB
+limits remain hard limits, including when protected images exceed the budget.
+Filmstrip preview warming uses two cancellable workers, ordered by selection,
+navigation direction, nearest neighbors, then the visible strip. Full-resolution
+generation remains selection-driven. Native decode concurrency is unchanged.
+These are scheduling and presentation changes, not new measured NAS latency
+results; cold/warm rapid switching and reverse navigation still need fixture
+qualification against the budgets above.
+
+The Windows HEIF loupe thumbnail and canvas are sibling React nodes and must
+use distinct layer-prefixed keys. Reusing the asset ID for both leaves orphan
+thumbnail nodes after selection changes, displaying a previous photo over the
+current one. `scripts/loupe-switch.browser.js` exercises the real Loupe with
+nine forward/reverse selections and verifies one thumbnail, one canvas, and
+the current source after each switch. This checks reconciliation correctness,
+not native decode latency.

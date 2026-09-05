@@ -4,7 +4,10 @@ import {
   browserImageSourceWhenEnabled,
   clearBrowserImageResources,
   isBrowserImageReady,
+  firstReadyBrowserImage,
   markBrowserImageReady,
+  protectBrowserImages,
+  touchBrowserImage,
   setBrowserImageResourceScope,
 } from "./browserImageCache";
 
@@ -57,7 +60,7 @@ describe("browser image resource gating", () => {
     expect(isBrowserImageReady("asset://newest.jpg")).toBe(true);
   });
 
-  it("does not promote a repeated resource to the back of the FIFO", () => {
+  it("promotes a repeated resource to most recently used", () => {
     markBrowserImageReady("asset://first.jpg", { width: 1, height: 1 });
     markBrowserImageReady("asset://second.jpg", { width: 1, height: 1 });
     markBrowserImageReady("asset://first.jpg", { width: 1, height: 1 });
@@ -65,8 +68,8 @@ describe("browser image resource gating", () => {
       markBrowserImageReady(`asset://entry-${index}.jpg`, { width: 1, height: 1 });
     }
 
-    expect(isBrowserImageReady("asset://first.jpg")).toBe(false);
-    expect(isBrowserImageReady("asset://second.jpg")).toBe(true);
+    expect(isBrowserImageReady("asset://first.jpg")).toBe(true);
+    expect(isBrowserImageReady("asset://second.jpg")).toBe(false);
   });
 
   it("releases retained resources when the asset browser changes", () => {
@@ -78,5 +81,47 @@ describe("browser image resource gating", () => {
 
     setBrowserImageResourceScope("folder-b");
     expect(isBrowserImageReady("asset://folder-a.jpg")).toBe(false);
+  });
+});
+
+describe("loupe cache retention", () => {
+  beforeEach(() => clearBrowserImageResources());
+
+  it("keeps recently displayed images ahead of untouched resources", () => {
+    markBrowserImageReady("a", { width: 8192, height: 8192 });
+    markBrowserImageReady("b", { width: 8192, height: 8192 });
+    touchBrowserImage("a");
+    markBrowserImageReady("c", { width: 1, height: 1 });
+    expect(isBrowserImageReady("a")).toBe(true);
+    expect(isBrowserImageReady("b")).toBe(false);
+  });
+
+  it("protects neighbors but still enforces the decoded memory budget", () => {
+    protectBrowserImages(["a", "b", "c"]);
+    markBrowserImageReady("a", { width: 8192, height: 8192 });
+    markBrowserImageReady("background", { width: 8192, height: 8192 });
+    markBrowserImageReady("b", { width: 8192, height: 8192 });
+    expect(isBrowserImageReady("background")).toBe(false);
+    expect(isBrowserImageReady("a")).toBe(true);
+    markBrowserImageReady("c", { width: 8192, height: 8192 });
+    expect(isBrowserImageReady("a")).toBe(false);
+    expect(isBrowserImageReady("b")).toBe(true);
+    expect(isBrowserImageReady("c")).toBe(true);
+  });
+});
+
+describe("immediate progressive source", () => {
+  beforeEach(() => clearBrowserImageResources());
+
+  it("uses a decoded thumbnail until preview or full pixels are available", () => {
+    const sources = ["full", "preview", "thumbnail"];
+    expect(firstReadyBrowserImage(sources)).toBeUndefined();
+    markBrowserImageReady("thumbnail", { width: 160, height: 120 });
+    expect(firstReadyBrowserImage(sources)).toBe("thumbnail");
+    markBrowserImageReady("preview", { width: 1024, height: 768 });
+    expect(firstReadyBrowserImage(sources)).toBe("preview");
+    markBrowserImageReady("full", { width: 2048, height: 1536 });
+    expect(firstReadyBrowserImage(sources)).toBe("full");
+    expect(firstReadyBrowserImage([undefined, "missing", "thumbnail"])).toBe("thumbnail");
   });
 });

@@ -28,7 +28,7 @@ export async function preloadAssetLoupePreview(
     asset,
     previewMethod.requestLevel,
     signal,
-    "visible",
+    queueOrder === 0 ? "loupe" : "nearby",
     queueOrder,
   );
   if (result) await preloadBrowserImage(result.url, signal);

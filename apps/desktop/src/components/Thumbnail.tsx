@@ -8,8 +8,9 @@ import {
 import {
   browserImageSourceWhenEnabled,
   getBrowserImageSize,
-  isBrowserImageReady,
+  firstReadyBrowserImage,
   markBrowserImageReady,
+  touchBrowserImage,
 } from "../lib/browserImageCache";
 import { perfMark } from "../lib/perfProbe";
 import { imageProjectionKey, useImageProjectionStore } from "../lib/imageProjection";
@@ -147,13 +148,12 @@ export function Thumbnail({
   const thumbnailSource = thumbnailProjection?.result;
   const previewSource = previewProjection?.result;
   const fullSource = fullProjection?.result;
-  const preparedSource = directSource && isBrowserImageReady(directSource)
-    ? directSource
-    : previewSource && isBrowserImageReady(previewSource.url)
-      ? previewSource.url
-      : thumbnailSource && isBrowserImageReady(thumbnailSource.url)
-        ? thumbnailSource.url
-      : undefined;
+  const preparedSource = firstReadyBrowserImage([
+    !fullImageFailed ? fullSource?.url : undefined,
+    directSource,
+    previewSource?.url,
+    thumbnailSource?.url,
+  ]);
   const preparedSize = preparedSource ? getBrowserImageSize(preparedSource) : undefined;
   const visibleImage = displayedImage?.assetId === asset.id
     ? displayedImage
@@ -239,13 +239,13 @@ export function Thumbnail({
   }, [requestPriority]);
 
   useEffect(() => {
-    setLoaded(undefined);
     setDisplayedImage(undefined);
     setFullImageFailed(false);
   }, [asset.id]);
 
   useLayoutEffect(() => {
-    if (!large || !preparedSize) return;
+    if (!large || !preparedSize || visibleImage?.source !== preparedSource) return;
+    if (preparedSource) touchBrowserImage(preparedSource);
     const preparedResult = fullSource?.url === preparedSource
       ? fullSource
       : previewSource?.url === preparedSource
@@ -255,16 +255,17 @@ export function Thumbnail({
           : undefined;
     if (preparedSource) reportImageLoaded(preparedSize, preparedResult, preparedSource);
     onImageLoad?.(preparedSize);
-    if (!ownsFullDetailStage || previewSource?.url !== preparedSource) return;
+    if (!ownsFullDetailStage || (previewSource?.url !== preparedSource && fullSource?.url !== preparedSource)) return;
     setLoaded((current) => current?.assetId === asset.id
       ? current
-      : { assetId: asset.id, mode: "preview" });
+      : { assetId: asset.id, mode: fullSource?.url === preparedSource ? "full" : "preview" });
   }, [
     asset.id,
     asset.kind,
     large,
     onImageLoad,
     ownsFullDetailStage,
+    visibleImage?.source,
     preparedSize,
     preparedSource,
     fullSource,
@@ -375,6 +376,7 @@ export function Thumbnail({
     <div
       className={`thumbnail ${large ? "thumbnail--large" : ""}`}
       style={style}
+      aria-busy={!visibleImage && !failed}
       onContextMenu={onContextMenu}
     >
       {!visibleImage ? (
