@@ -134,11 +134,21 @@ pub(crate) const fn plan(
         }
         (_, AssetKind::Raw, RenderLevel::Full) => DecodePlan::Unsupported,
 
-        // Preserve the current all-HEIF 160 px thumbnail/preview policy. Stage
-        // D, not this mechanical planning extraction, owns narrowing it by
-        // representation facts.
-        (_, AssetKind::Heif, RenderLevel::Thumbnail | RenderLevel::Preview) => {
-            heif_preview_plan(160, facts, capabilities, PlannedPriority::Request)
+        (_, AssetKind::Heif, RenderLevel::Thumbnail) => {
+            let max_size = if matches!(facts.heif_fast_jpeg, Presence::Present) {
+                160
+            } else {
+                512
+            };
+            heif_preview_plan(max_size, facts, capabilities, PlannedPriority::Request)
+        }
+        (_, AssetKind::Heif, RenderLevel::Preview) => {
+            let max_size = if matches!(facts.heif_fast_jpeg, Presence::Present) {
+                160
+            } else {
+                4_096
+            };
+            heif_preview_plan(max_size, facts, capabilities, PlannedPriority::Request)
         }
         (_, AssetKind::Heif, RenderLevel::Full) if capabilities.heif_full => {
             let fallback = if capabilities.heif_preview {
@@ -197,12 +207,10 @@ const fn heif_preview_plan(
     capabilities: BackendCapabilities,
     priority: PlannedPriority,
 ) -> DecodePlan {
-    // The current 160 px fast path tries a bounded Sony extraction whenever
-    // presence is unknown. Vendor never gates the attempt: it is only a clue,
-    // while the representation fact and actual extraction decide support.
-    let try_fast_jpeg = capabilities.heif_fast_jpeg
-        && !matches!(facts.heif_fast_jpeg, Presence::Absent)
-        && matches!(facts.vendor, Vendor::Sony | Vendor::Other | Vendor::Unknown);
+    // A vendor name is only a clue. The fast path is selected exclusively by
+    // the bounded representation fact produced for this source.
+    let try_fast_jpeg =
+        capabilities.heif_fast_jpeg && matches!(facts.heif_fast_jpeg, Presence::Present);
     if capabilities.heif_preview || try_fast_jpeg {
         attempts(
             DecodeStep::HeifPreview {
@@ -267,10 +275,19 @@ mod tests {
                 Some(DecodeStep::SystemPreview { max_size: 4_096 }),
             ),
             (AssetKind::Raw, RenderLevel::Full) => attempts(DecodeStep::RawFull, None),
-            (AssetKind::Heif, RenderLevel::Thumbnail | RenderLevel::Preview) => attempts(
+            (AssetKind::Heif, RenderLevel::Thumbnail) => attempts(
                 DecodeStep::HeifPreview {
-                    max_size: 160,
-                    try_fast_jpeg: true,
+                    max_size: 512,
+                    try_fast_jpeg: false,
+                    allow_decode: true,
+                    priority: PlannedPriority::Request,
+                },
+                None,
+            ),
+            (AssetKind::Heif, RenderLevel::Preview) => attempts(
+                DecodeStep::HeifPreview {
+                    max_size: 4_096,
+                    try_fast_jpeg: false,
                     allow_decode: true,
                     priority: PlannedPriority::Request,
                 },
@@ -315,36 +332,36 @@ mod tests {
     }
 
     #[test]
-    fn heif_file_features_are_host_independent_and_vendor_is_not_a_gate() {
+    fn heif_fast_path_depends_on_representation_not_vendor() {
         let capabilities = BackendCapabilities::configured_routes();
         for platform in PLATFORMS {
             for vendor in [Vendor::Sony, Vendor::Other, Vendor::Unknown] {
-                for level in LEVELS {
-                    for (presence, expected_attempt) in [
-                        (Presence::Present, true),
-                        (Presence::Absent, false),
-                        (Presence::Unknown, true),
-                    ] {
+                for level in [RenderLevel::Thumbnail, RenderLevel::Preview] {
+                    for presence in [Presence::Present, Presence::Absent, Presence::Unknown] {
                         let actual = plan(
                             facts(AssetKind::Heif, vendor, presence),
                             request(platform, level),
                             capabilities,
                         );
-                        let expected = if level == RenderLevel::Full {
-                            expected_with_all_capabilities(AssetKind::Heif, level)
+                        let present = presence == Presence::Present;
+                        let max_size = if present {
+                            160
+                        } else if level == RenderLevel::Thumbnail {
+                            512
                         } else {
+                            4_096
+                        };
+                        assert_eq!(
+                            actual,
                             attempts(
                                 DecodeStep::HeifPreview {
-                                    max_size: 160,
-                                    try_fast_jpeg: expected_attempt,
+                                    max_size,
+                                    try_fast_jpeg: present,
                                     allow_decode: true,
                                     priority: PlannedPriority::Request,
                                 },
                                 None,
-                            )
-                        };
-                        assert_eq!(
-                            actual, expected,
+                            ),
                             "unexpected plan for {platform:?} {vendor:?} {presence:?} {level:?}",
                         );
                     }
@@ -354,25 +371,27 @@ mod tests {
     }
 
     #[test]
-    fn unknown_vendor_with_no_fast_representation_keeps_all_heif_at_160() {
+    fn unknown_vendor_without_a_fast_representation_uses_semantic_sizes() {
         for platform in PLATFORMS {
-            let actual = plan(
-                facts(AssetKind::Heif, Vendor::Unknown, Presence::Absent),
-                request(platform, RenderLevel::Preview),
-                BackendCapabilities::configured_routes(),
-            );
-            assert_eq!(
-                actual,
-                attempts(
-                    DecodeStep::HeifPreview {
-                        max_size: 160,
-                        try_fast_jpeg: false,
-                        allow_decode: true,
-                        priority: PlannedPriority::Request,
-                    },
-                    None,
-                )
-            );
+            for (level, max_size) in [(RenderLevel::Thumbnail, 512), (RenderLevel::Preview, 4_096)]
+            {
+                assert_eq!(
+                    plan(
+                        facts(AssetKind::Heif, Vendor::Unknown, Presence::Absent),
+                        request(platform, level),
+                        BackendCapabilities::configured_routes(),
+                    ),
+                    attempts(
+                        DecodeStep::HeifPreview {
+                            max_size,
+                            try_fast_jpeg: false,
+                            allow_decode: true,
+                            priority: PlannedPriority::Request,
+                        },
+                        None,
+                    )
+                );
+            }
         }
     }
 
@@ -419,7 +438,7 @@ mod tests {
             capabilities.heif_preview = false;
             assert_eq!(
                 plan(
-                    facts(AssetKind::Heif, Vendor::Unknown, Presence::Unknown),
+                    facts(AssetKind::Heif, Vendor::Sony, Presence::Present),
                     request(platform, RenderLevel::Thumbnail),
                     capabilities,
                 ),
@@ -437,7 +456,7 @@ mod tests {
             capabilities.heif_fast_jpeg = false;
             assert_eq!(
                 plan(
-                    facts(AssetKind::Heif, Vendor::Unknown, Presence::Unknown),
+                    facts(AssetKind::Heif, Vendor::Sony, Presence::Present),
                     request(platform, RenderLevel::Thumbnail),
                     capabilities,
                 ),
@@ -453,7 +472,7 @@ mod tests {
                 ),
                 attempts(
                     DecodeStep::HeifPreview {
-                        max_size: 160,
+                        max_size: 512,
                         try_fast_jpeg: false,
                         allow_decode: true,
                         priority: PlannedPriority::Request,

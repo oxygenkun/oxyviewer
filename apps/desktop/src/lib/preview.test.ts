@@ -16,18 +16,18 @@ describe("semantic render graph", () => {
       .toEqual(["preview", "full"]);
   });
 
-  it("maps Windows HEIF preview to the thumbnail artifact and full to tiles", () => {
+  it("keeps HEIF thumbnail and preview requests distinct while full uses tiles", () => {
     const thumbnail = renderPlan("heif", "thumbnail", "windows")[0];
     const [preview, full] = renderPlan("heif", "loupe", "windows");
 
-    expect(preview.method).toEqual({ type: "generatedImage", requestLevel: "thumbnail" });
-    expect(renderMethodKey(preview.method)).toBe(renderMethodKey(thumbnail.method));
+    expect(preview.method).toEqual({ type: "generatedImage", requestLevel: "preview" });
+    expect(renderMethodKey(preview.method)).not.toBe(renderMethodKey(thumbnail.method));
     expect(full.method).toEqual({ type: "heifTiles" });
   });
 
-  it("keeps the platform dimension without regressing the qualified HIF fast path", () => {
+  it("keeps the platform-specific HEIF full method", () => {
     const [preview, full] = renderPlan("heif", "loupe", "macos");
-    expect(preview.method).toEqual({ type: "generatedImage", requestLevel: "thumbnail" });
+    expect(preview.method).toEqual({ type: "generatedImage", requestLevel: "preview" });
     expect(full.method).toEqual({ type: "generatedImage", requestLevel: "full" });
   });
 
@@ -42,13 +42,13 @@ describe("semantic render graph", () => {
     ]);
   });
 
-  it("reuses the filmstrip artifact as a distinct RAW/TIFF loupe fallback", () => {
+  it("reuses filmstrip artifacts when loupe previews are distinct", () => {
     expect(loupeThumbnailFallback("raw", "windows")).toEqual({
       level: "thumbnail",
       method: { type: "generatedImage", requestLevel: "thumbnail" },
     });
     expect(loupeThumbnailFallback("tiff", "windows")?.level).toBe("thumbnail");
-    expect(loupeThumbnailFallback("heif", "windows")).toBeUndefined();
+    expect(loupeThumbnailFallback("heif", "windows")?.level).toBe("thumbnail");
     expect(loupeThumbnailFallback("jpeg", "windows")).toBeUndefined();
   });
 

@@ -741,8 +741,9 @@ fn debug_item(
 
 fn source_revision(modified_at_ms: u64, size_bytes: u64, preview_dir: &std::path::Path) -> String {
     format!(
-        "{modified_at_ms}:{size_bytes}:{}",
-        preview_dir.to_string_lossy()
+        "{modified_at_ms}:{size_bytes}:{}:{}",
+        preview_dir.to_string_lossy(),
+        oxy_media::PREVIEW_POLICY_VERSION
     )
 }
 
@@ -793,6 +794,12 @@ fn priority_from_position(position: SchedulePosition) -> PreviewPriority {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn source_revision_includes_media_policy_version() {
+        let revision = source_revision(12, 34, std::path::Path::new("cache"));
+        assert!(revision.ends_with(oxy_media::PREVIEW_POLICY_VERSION));
+    }
 
     #[test]
     fn selected_order_is_preserved_inside_each_priority_tier() {

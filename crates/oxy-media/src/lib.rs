@@ -7,6 +7,8 @@ mod decode_control;
 mod formats;
 mod heif_service;
 mod pipeline;
+mod presentation;
+mod probe;
 
 #[cfg(target_os = "macos")]
 use backends::apple_image_io;
@@ -24,6 +26,10 @@ use pipeline::{
         SourceFacts, plan,
     },
 };
+use presentation::{
+    CAMERA_JPEG, HEIF_DECODED_JPEG, RAW_DEVELOPED_JPEG, camera_preview_can_satisfy_raw_full,
+};
+use probe::ProbedSource;
 
 pub use cache::{CacheUsage, clear_preview_cache, preview_cache_usage, prune_preview_cache};
 use cache::{
@@ -49,19 +55,24 @@ use std::{
 use tempfile::NamedTempFile;
 use thiserror::Error;
 
-const LIBRAW_CACHE_VERSION: &str = "libraw-0.22.2-v6";
-const LIBRAW_FULL_CACHE_VERSION: &str = "libraw-0.22.2-full-detail-v2";
+const LIBRAW_CACHE_VERSION: &str = "libraw-0.22.2-v7-camera-or-developed-srgb";
+const LIBRAW_FULL_CACHE_VERSION: &str = "libraw-0.22.2-full-detail-v3-srgb";
 // Bumped from `libheif-1.23-sdr-v1` (16-bit PNG) to an 8-bit sRGB JPEG with an
 // embedded ICC profile, unifying the cache format across every preview stage
 // and format. Old PNG caches are rebuildable and simply ignored.
 const HEIF_FULL_CACHE_VERSION: &str = "heif-source-jpeg-v2";
-// v8 corrects the direction of Sony HIF embedded-JPEG portrait rotation.
-const HEIF_CACHE_VERSION: &str = "heif-native-preview-v8";
+// v9 separates positively identified Sony camera JPEGs from decoded primary
+// images and records the display-oriented SDR/sRGB presentation policy.
+const HEIF_CACHE_VERSION: &str = "heif-native-preview-v9-oriented-srgb";
 const SYSTEM_CACHE_VERSION: &str = "system-preview-v2";
 /// Cache sizes shared by every format's progressive pipeline. A request for a
 /// smaller size may be satisfied by any larger cached entry (see
 /// [`larger_cached_preview`]).
 const PREVIEW_CACHE_SIZES: [u32; 2] = [512, 4_096];
+
+/// Included in persisted image projection identities so behavior-changing
+/// media policy cannot reuse a ready projection that points at an older cache.
+pub const PREVIEW_POLICY_VERSION: &str = "media-phase-d-v1";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ImageDimensions {
@@ -197,7 +208,7 @@ pub fn raw_preview_with_priority(
         }
         libraw::Preview::Image(image) => {
             let destination = cache_dir.join(format!("{cache_key}.developed.jpg"));
-            write_jpeg_atomically(&image, &destination, 90)?;
+            write_jpeg_atomically(&image, &destination, 90, RAW_DEVELOPED_JPEG)?;
             (destination, PreviewKind::Developed)
         }
     };
@@ -247,22 +258,15 @@ pub fn raw_full(path: &Path, cache_dir: &Path) -> Result<PreviewResult, MediaErr
         message,
     })?;
     let image = image.unsharpen(0.8, 2);
-    write_jpeg_atomically(&image, &destination, 95)?;
+    write_jpeg_atomically(&image, &destination, 95, RAW_DEVELOPED_JPEG)?;
     preview_result(destination, PreviewKind::Developed)
 }
 
 fn covers_raw_source(candidate: ImageDimensions, source: ImageDimensions) -> bool {
-    let mut candidate_edges = [candidate.width, candidate.height];
-    let mut source_edges = [source.width, source.height];
-    candidate_edges.sort_unstable();
-    source_edges.sort_unstable();
-
-    // Allow the small active-area/crop difference between LibRaw's dimensions
-    // and the camera JPEG. A genuinely reduced preview still falls through.
-    candidate_edges
-        .into_iter()
-        .zip(source_edges)
-        .all(|(candidate, source)| u64::from(candidate) * 100 >= u64::from(source) * 90)
+    // Full explicitly permits a near-full camera render for immediate pixel
+    // inspection. Geometry alone is insufficient: the representation contract
+    // is part of this decision and the result remains `PreviewKind::Embedded`.
+    camera_preview_can_satisfy_raw_full(CAMERA_JPEG, candidate, source)
 }
 
 pub fn heif_full(path: &Path, cache_dir: &Path) -> Result<PreviewResult, MediaError> {
@@ -384,13 +388,47 @@ pub fn heif_preview(
     heif_preview_with_priority(path, cache_dir, max_size, HeifDecodePriority::Background)
 }
 
+fn probe_heif_for_preview(path: &Path, cache_dir: &Path) -> ProbedSource {
+    let cached_fast_representation = preview_cache_key(path, HEIF_CACHE_VERSION, 160)
+        .ok()
+        .map(|key| cache_dir.join(format!("{key}.embedded.jpg")))
+        .is_some_and(|path| path.is_file());
+    if cached_fast_representation {
+        ProbedSource {
+            facts: SourceFacts {
+                kind: oxy_domain::AssetKind::Heif,
+                vendor: pipeline::planner::Vendor::Sony,
+                heif_fast_jpeg: pipeline::planner::Presence::Present,
+            },
+            heif_fast_jpeg: None,
+        }
+    } else {
+        probe::heif(path)
+    }
+}
+
 pub fn heif_preview_with_priority(
     path: &Path,
     cache_dir: &Path,
     max_size: u32,
     priority: HeifDecodePriority,
 ) -> Result<PreviewResult, MediaError> {
-    heif_preview_with_options(path, cache_dir, max_size, priority, true, true)
+    let probed = (max_size <= 160).then(|| probe_heif_for_preview(path, cache_dir));
+    let try_fast_jpeg = probed
+        .as_ref()
+        .is_some_and(|source| source.facts.heif_fast_jpeg == pipeline::planner::Presence::Present);
+    let fast_jpeg = probed
+        .as_ref()
+        .and_then(|source| source.heif_fast_jpeg.as_ref());
+    heif_preview_with_options(
+        path,
+        cache_dir,
+        max_size,
+        priority,
+        try_fast_jpeg,
+        true,
+        fast_jpeg,
+    )
 }
 
 fn heif_preview_with_options(
@@ -400,12 +438,17 @@ fn heif_preview_with_options(
     priority: HeifDecodePriority,
     try_fast_jpeg: bool,
     allow_decode: bool,
+    fast_jpeg: Option<&sony::EmbeddedJpeg>,
 ) -> Result<PreviewResult, MediaError> {
     let total_started = Instant::now();
     let max_size = max_size.max(1);
     fs::create_dir_all(cache_dir)?;
     let cache_key = preview_cache_key(path, HEIF_CACHE_VERSION, max_size)?;
-    let destination = cache_dir.join(format!("{cache_key}.jpg"));
+    let embedded_destination = cache_dir.join(format!("{cache_key}.embedded.jpg"));
+    let destination = cache_dir.join(format!("{cache_key}.decoded.jpg"));
+    if try_fast_jpeg && embedded_destination.is_file() {
+        return preview_result(embedded_destination, PreviewKind::Embedded);
+    }
     if destination.is_file() {
         return preview_result(destination, PreviewKind::Decoded);
     }
@@ -419,15 +462,14 @@ fn heif_preview_with_options(
     // to paint a 160 px placeholder.
     if try_fast_jpeg
         && max_size <= 160
-        && let Ok(display_size) = libheif::dimensions(path)
-        && let Ok(image) = sony::extract(path, display_size)
+        && let Some(image) = fast_jpeg
     {
         let decode_ms = duration_ms(total_started);
         let write_started = Instant::now();
-        write_bytes_atomically(&image.bytes, &destination)?;
+        write_bytes_atomically(&image.bytes, &embedded_destination)?;
         let write_ms = duration_ms(write_started);
         let mut result = PreviewResult {
-            path: destination,
+            path: embedded_destination,
             width: image.width,
             height: image.height,
             kind: PreviewKind::Embedded,
@@ -492,7 +534,7 @@ fn heif_preview_with_options(
     // disk I/O. Releasing it here lets the selected full-resolution session and
     // visible thumbnails progress while this preview is being encoded.
     drop(decode_permit);
-    let cache_write = write_jpeg_atomically_timed(&image, &destination, 90)?;
+    let cache_write = write_jpeg_atomically_timed(&image, &destination, 90, HEIF_DECODED_JPEG)?;
     let mut result = preview_result(destination, PreviewKind::Decoded)?;
     result.diagnostics = Some(PreviewDiagnostics {
         backend: Some(backend.into()),
@@ -579,7 +621,7 @@ fn larger_cached_preview(
     candidates.sort();
     for candidate_size in candidates {
         let key = preview_cache_key(path, backend_tag, candidate_size)?;
-        let candidate = cache_dir.join(format!("{key}.jpg"));
+        let candidate = cache_dir.join(format!("{key}.decoded.jpg"));
         if candidate.is_file() {
             return preview_result(candidate, PreviewKind::Decoded).map(Some);
         }
@@ -673,15 +715,22 @@ pub fn preview(
     // adapter failures still flow through the same ordered fallbacks and retain
     // their existing diagnostics; simulated capabilities are tested in the
     // pure planner without making directory discovery probe media contents.
+    let probed_source = if kind == oxy_domain::AssetKind::Heif
+        && matches!(level, RenderLevel::Thumbnail | RenderLevel::Preview)
+    {
+        probe_heif_for_preview(path, cache_dir)
+    } else {
+        ProbedSource::unprobed(kind)
+    };
     let decode_plan = plan(
-        SourceFacts::unprobed(kind),
+        probed_source.facts,
         Request {
             level,
             platform: current_platform(),
         },
         BackendCapabilities::configured_routes(),
     );
-    let mut result = execute_decode_plan(path, cache_dir, priority, decode_plan)?;
+    let mut result = execute_decode_plan(path, cache_dir, priority, decode_plan, &probed_source)?;
     result.render_level = Some(level);
     Ok(result)
 }
@@ -691,6 +740,7 @@ fn execute_decode_plan(
     cache_dir: &Path,
     request_priority: DecodePriority,
     decode_plan: DecodePlan,
+    probed_source: &ProbedSource,
 ) -> Result<PreviewResult, MediaError> {
     let DecodePlan::Attempts { first, on_failure } = decode_plan else {
         return Err(MediaError::NativeDecoderUnavailable);
@@ -724,10 +774,12 @@ fn execute_decode_plan(
                     "full-detail HEIF decode failed for {}: {error}",
                     path.display()
                 );
-                execute_decode_step(path, cache_dir, request_priority, fallback)
+                execute_decode_step(path, cache_dir, request_priority, fallback, probed_source)
             }
         },
-        (first, None) => execute_decode_step(path, cache_dir, request_priority, first),
+        (first, None) => {
+            execute_decode_step(path, cache_dir, request_priority, first, probed_source)
+        }
         // The Stage-B planner only emits the two ordered fallback pairs above.
         // Treat a future unsupported pairing explicitly rather than silently
         // changing its error or fallback behavior.
@@ -740,6 +792,7 @@ fn execute_decode_step(
     cache_dir: &Path,
     request_priority: DecodePriority,
     step: DecodeStep,
+    probed_source: &ProbedSource,
 ) -> Result<PreviewResult, MediaError> {
     match step {
         DecodeStep::Original => original(path.to_owned()),
@@ -764,6 +817,7 @@ fn execute_decode_step(
                 priority,
                 try_fast_jpeg,
                 allow_decode,
+                probed_source.heif_fast_jpeg.as_ref(),
             )
         }
         DecodeStep::HeifFull => heif_full(path, cache_dir),
@@ -893,9 +947,47 @@ mod tests {
         .unwrap();
 
         assert_eq!((thumbnail.width, thumbnail.height), (120, 160));
+        assert_eq!(thumbnail.kind, PreviewKind::Embedded);
+        assert_eq!(loupe_base.kind, PreviewKind::Embedded);
         assert_eq!(loupe_base.path, thumbnail.path);
         assert_eq!(thumbnail.render_level, Some(RenderLevel::Thumbnail));
         assert_eq!(loupe_base.render_level, Some(RenderLevel::Preview));
+        assert_eq!(fs::read_dir(cache.path()).unwrap().count(), 1);
+    }
+
+    #[test]
+    fn heif_without_identified_fast_representation_uses_semantic_preview_size() {
+        let source = workspace_path("tests/fixtures/DSC00449.HIF");
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("generic.heif");
+        let mut bytes = fs::read(source).unwrap();
+        assert_eq!(&bytes[36..40], b"SHIF");
+        bytes[36..40].copy_from_slice(b"zzzz");
+        fs::write(&path, bytes).unwrap();
+
+        let cache = directory.path().join("cache");
+        let thumbnail = preview(
+            &path,
+            &cache,
+            RenderLevel::Thumbnail,
+            DecodePriority::Visible,
+            oxy_domain::AssetKind::Heif,
+        )
+        .unwrap();
+        let fit = preview(
+            &path,
+            &cache,
+            RenderLevel::Preview,
+            DecodePriority::Foreground,
+            oxy_domain::AssetKind::Heif,
+        )
+        .unwrap();
+
+        assert_eq!(thumbnail.kind, PreviewKind::Decoded);
+        assert_eq!(fit.kind, PreviewKind::Decoded);
+        assert!(thumbnail.width.max(thumbnail.height) > 160);
+        assert!(fit.width.max(fit.height) > thumbnail.width.max(thumbnail.height));
+        assert_ne!(thumbnail.path, fit.path);
     }
 
     #[test]
@@ -904,8 +996,14 @@ mod tests {
         let path = directory.path().join("image.heic");
         fs::write(&path, b"heif").unwrap();
         let key = preview_cache_key(&path, HEIF_CACHE_VERSION, 4_096).unwrap();
-        let cached = directory.path().join(format!("{key}.jpg"));
-        write_jpeg_atomically(&DynamicImage::new_rgb8(32, 16), &cached, 90).unwrap();
+        let cached = directory.path().join(format!("{key}.decoded.jpg"));
+        write_jpeg_atomically(
+            &DynamicImage::new_rgb8(32, 16),
+            &cached,
+            90,
+            HEIF_DECODED_JPEG,
+        )
+        .unwrap();
 
         let result = larger_cached_preview(&path, directory.path(), HEIF_CACHE_VERSION, 512)
             .unwrap()
@@ -925,8 +1023,14 @@ mod tests {
         fs::write(&path, b"raw").unwrap();
         let raw_tag = "libraw-0.22.2-v6";
         let key = preview_cache_key(&path, raw_tag, 4_096).unwrap();
-        let cached = directory.path().join(format!("{key}.jpg"));
-        write_jpeg_atomically(&DynamicImage::new_rgb8(48, 24), &cached, 90).unwrap();
+        let cached = directory.path().join(format!("{key}.decoded.jpg"));
+        write_jpeg_atomically(
+            &DynamicImage::new_rgb8(48, 24),
+            &cached,
+            90,
+            RAW_DEVELOPED_JPEG,
+        )
+        .unwrap();
 
         let result = larger_cached_preview(&path, directory.path(), raw_tag, 512)
             .unwrap()

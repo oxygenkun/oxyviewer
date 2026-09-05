@@ -244,18 +244,18 @@ macOS ImageIO 竖拍尺寸映射和前端区域映射；CI 在三个桌面平台
 
 原生/可移植适配器集中在 `crates/oxy-media/src/backends/`；其中 `libheif.rs` 是具体后端，
 不是 HEIF 格式层。Sony 专用内嵌 JPEG 提取与方向兼容逻辑位于
-`formats/heif/quirks/sony.rs`。这次目录迁移保持下述策略不变；后续分层计划见
-[重构规则与目标](07-media-refactoring.md)。
+`formats/heif/quirks/sony.rs`。
 
-HEIF preview 优先尝试容器内 thumbnail，接受尺寸不足的内嵌图作为快速第一阶段。Windows Sony
-HIF 会直接读取前 2 MiB 内的 160×120 MJPEG item，注入正确 EXIF orientation 后原样写入缓存，
-不进入 HEVC gate，也不进行像素重编码。需要解码
-primary image 时，可使用 macOS ImageIO、FFmpeg 或 libheif 等后端，并限制线程数避免后台
-缩略图吃满 CPU。
+HEIF thumbnail/preview 请求到达后才进行最多 2 MiB 的有界探测，目录发现和首屏枚举不读取媒体
+内容。只有实际识别并验证出 Sony SHIF 快速 JPEG 时，planner 才把 `thumbnail` 与 `preview`
+映射到同一个 160×120 产物；vendor 名称或 unknown 事实本身不会启用该路径。JPEG 注入正确 EXIF
+orientation 后原样写入独立的 embedded cache namespace，不进入 HEVC gate，也不进行像素重编码。
+探测结果会把已读取的 JPEG 交给 executor，避免冷路径重复扫描；热缓存的 embedded suffix 本身
+证明此前识别成功，可直接命中。
 
-HEIF `preview` 与全分辨率 JPEG 是两条渐进路径：前者立即提供内嵌底图，后者提供放大检查。
-当前各平台都将 Sony HIF 的 `thumbnail` 与 `preview` 映射到 160×120 产物；平台策略以后可以在
-有独立 fixture 基准证据时分化。
+没有已识别快速表示的 HEIF 分别使用 512 thumbnail 和 4096 preview，并可使用 macOS ImageIO、
+FFmpeg 或 libheif 等后端。前端不再把所有 HEIF preview 静态别名成 thumbnail；Sony 两个语义请求
+仍会由 Rust 返回同一路径。HEIF full 是另一条渐进路径，用于放大检查。
 后端直接从源 HEIF 生成全尺寸 JPEG 缓存。再次进入相同 HIF 时，loupe 直接显示该 JPG，
 跳过源解码。macOS 冷缓存路径直接生成完整 JPEG，不启动 tile session；Windows/Linux
 冷缓存路径仍启动 session 渐进发布 tile，并在完成后写入这份热缓存。
@@ -275,9 +275,11 @@ macOS 的完整 JPEG 使用 ImageIO 编码；解码 permit 在 primary image 解
 源文件修改或解码算法版本升级都会形成新键。旧文件可能暂时留在 cache 目录，但不会被误用。
 
 RAW/HEIF 的 JPEG 和部分 byte-cache 写入先在目标目录创建临时文件，编码完成后原子持久化到
-目标路径。这样崩溃或取消不会留下看似有效但内容截断的最终文件。统一预览主要写 8-bit JPEG，
-并可嵌入 ICC profile；`system_preview` 当前使用系统生成的 PNG 路径，不应把 JPEG/原子写入
-描述成所有 backend 都已具备的统一保证。
+目标路径。这样崩溃或取消不会留下看似有效但内容截断的最终文件。统一预览主要写 8-bit JPEG。解码后的 HEIF primary 和 RAW development 明确按已应用方向、
+带 ICC 的 sRGB SDR 契约写入；相机 JPEG 则保留原字节、EXIF 方向和原有/未知 profile，不能仅按
+尺寸冒充显影产物。`system_preview` 当前使用系统生成的 PNG 路径，不应把 JPEG/原子写入描述成
+所有 backend 都已具备的统一保证。行为版本同时进入磁盘 cache key 和持久化 image projection 的
+source revision，避免升级后继续返回指向旧策略产物的 ready projection。
 
 ### 10.1 更高质量缓存复用
 
@@ -285,7 +287,9 @@ RAW/HEIF 的 JPEG 和部分 byte-cache 写入先在目标目录创建临时文�
 直接返回更大文件并由浏览器缩小显示。HEIF 还会显式检查自己的 full JPEG 并缩放复用。RAW 的
 512/4096 查询会复用更大的 `.embedded.jpg` 或 `.developed.jpg`；RAW full 在内嵌 JPEG 覆盖源尺寸
 至少 90% 时也直接返回该 4096 缓存。只有实际 LibRaw full development 才写入独立 cache version。
-这些策略统称为 up-tier reuse。
+这些策略统称为 up-tier reuse。HEIF 快速 JPEG 与 decoded primary 使用不同 suffix，通用 HEIF
+up-tier 只查询 decoded 产物；RAW full 的相机 JPEG 替代由表示契约和 90% display-space 覆盖共同
+决定，不能把尺寸更大的 half development 当作 full development。
 
 ### 10.2 容量策略与自定义位置
 

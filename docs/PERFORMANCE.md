@@ -16,6 +16,12 @@ end-to-end regression harness that enforces these budgets is described in
 
 ## Verification Log
 
+- 2026-09-05: Phase D 的 macOS release 后测使用 `tests/fixtures/DSC00449.HIF`、隔离临时冷缓存和
+  `heif_display_bench ... 5 scroll`。经表示事实识别的 Sony 160px JPEG 五次后端总耗时为
+  16/5/3/11/5 ms，端到端函数样本 median 7.90 ms、min 6.80 ms；每次产物为 120×160、约 8.1 KiB。
+  这是 D 后单平台样本，不是与 D 前相同构建的成对比较，也不含 Tauri/WebView paint，不能据此
+  宣称跨平台或完整交互无回归。generic HEIF 512/4096 和 RAW/color fixture 矩阵仍需补测。
+
 - 2026-09-05: Directory browsing persists independent complete snapshots and
   reuses them across process restarts without a completed root index or a
   filesystem stat. Successful background validation atomically replaces the

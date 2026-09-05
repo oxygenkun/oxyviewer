@@ -92,8 +92,8 @@ Request + SourceFacts + BackendCapabilities
 
 ### D：修正策略与产物契约
 
-- [ ] 将 Sony 160px 从全 HEIF 默认策略改为经识别的快速表示。
-- [ ] 明确 RAW 相机预览与显影意图、方向/色彩状态、缓存替代条件与版本。
+- [x] 将 Sony 160px 从全 HEIF 默认策略改为经识别的快速表示。
+- [x] 明确 RAW 相机预览与显影意图、方向/色彩状态、缓存替代条件与版本。
 - 验收：真实 fixtures 覆盖方向、色彩、尺寸、未知厂商、冷/热缓存及失败回退；
   依照 [性能预算](../PERFORMANCE.md) 做同平台、同 fixture、同构建条件比较。
   涉及 renderer/IPC 时同步前端、domain、demo 与对应测试。
@@ -228,5 +228,26 @@ C 阶段已实现：
   `path` 未使用告警阻挡。未运行 Windows/Linux 原生构建或真机验证，也未运行性能基准；
   本阶段未启动调试实例。
 
-下一小步：进入 D 阶段，以按需探测到的表示事实收窄 Sony 160px 快速路径，并明确方向、色彩、
-RAW 相机预览/显影意图与缓存替代契约；不要把本阶段内部 attempt 诊断误报为新的 IPC 契约。
+D 阶段实现记录：
+
+- 新增 request-time `probe.rs`。HEIF thumbnail/preview 仅在实际请求时扫描源文件前 2 MiB，识别并
+  验证 Sony SHIF sidebar JPEG，同时把已读取字节交给 executor；目录发现不执行探测。planner 只在
+  `Presence::Present` 时选择 160px，unknown/absent HEIF 改为 512 thumbnail 与 4096 preview。
+- Sony embedded 与 decoded HEIF preview 使用不同 cache suffix；热 embedded cache 可证明此前探测
+  成功并保留 `PreviewKind::Embedded`，不再被热命中误报为 decoded。HEIF preview cache 升至 v9。
+- 新增内部 presentation artifact contract，显式区分 camera preview、RAW development、HEIF primary，
+  以及 metadata/applied orientation、embedded-or-unknown/sRGB-ICC color 和 SDR。RAW 近全尺寸 camera
+  JPEG 仅在该表示契约成立且 display-space 两边覆盖 90% 时满足 full，尺寸本身不是质量排序。
+- decoded HEIF 与 developed RAW cache 现在写入 sRGB ICC；对应 RAW preview/full cache 分别升至 v7/v3。
+  media policy version 同时进入 Tauri 持久化 image projection revision，旧 ready projection 不会绕过
+  新 cache key。没有增加 IPC 字段，Phase C attempt diagnostics 仍为内部契约。
+- 前端删除全 HEIF 的 preview→thumbnail 静态别名；generic HEIF 能真正请求 4096 preview，已识别 Sony
+  仍由 Rust 让两个语义等级返回同一路径。planner、probe、artifact substitution、projection version、
+  前端 render graph 和 tracked Sony HIF 冷/热路径均有回归测试。
+- 仓库目前仍只有一份可再分发的 Sony HIF camera fixture；unknown-vendor HEIF 使用该真实容器移除
+  Sony compatible brand 后测试，RAW 方向/色彩仍依赖 ignored 的本地 fixture。macOS release 后测的
+  Sony 160px 五次样本 median 7.90 ms（见 `PERFORMANCE.md`），但没有同构建 D 前成对样本，因此不能
+  据此宣称完整 fixture matrix 或性能验收已经完成，也不能外推 Windows/Linux。
+
+下一小步：补齐可再分发的 generic HEIF 与多厂商 RAW/color fixtures，并按 `PERFORMANCE.md` 在各平台
+以相同 fixture、release build 和冷/热条件记录 D 阶段基准。

@@ -1,5 +1,10 @@
-use crate::MediaError;
+use crate::{
+    MediaError,
+    presentation::{ArtifactContract, ColorState},
+};
 use image::{DynamicImage, ImageEncoder, codecs::jpeg::JpegEncoder};
+#[cfg(target_os = "macos")]
+use std::fs;
 use std::{io::Write, path::Path, time::Instant};
 use tempfile::NamedTempFile;
 
@@ -7,8 +12,9 @@ pub(crate) fn write_jpeg_atomically(
     image: &DynamicImage,
     destination: &Path,
     quality: u8,
+    contract: ArtifactContract,
 ) -> Result<(), MediaError> {
-    write_jpeg_atomically_with_icc(image, destination, quality, None)
+    write_jpeg_atomically_with_icc(image, destination, quality, presentation_icc(contract)?)
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -22,17 +28,33 @@ pub(crate) fn write_jpeg_atomically_timed(
     image: &DynamicImage,
     destination: &Path,
     quality: u8,
+    contract: ArtifactContract,
 ) -> Result<CacheWriteTiming, MediaError> {
     let temporary = tempfile::Builder::new()
         .suffix(".jpg")
         .tempfile_in(destination.parent().unwrap_or_else(|| Path::new(".")))?;
+    if contract.color != ColorState::SrgbWithIcc {
+        return Err(MediaError::Color(
+            "decoded JPEG cache requires the sRGB-with-ICC contract".into(),
+        ));
+    }
     let encode_started = Instant::now();
     #[cfg(target_os = "macos")]
-    crate::apple_image_io::write_jpeg(image, temporary.path(), quality)?;
+    {
+        crate::apple_image_io::write_jpeg(image, temporary.path(), quality)?;
+        let profile = presentation_icc(contract)?.expect("sRGB contract has an ICC profile");
+        embed_icc_profile(temporary.path(), &profile)?;
+    }
     #[cfg(any(target_os = "windows", target_os = "linux"))]
     {
         let mut output = temporary.as_file();
-        JpegEncoder::new_with_quality(&mut output, quality).encode_image(image)?;
+        let mut encoder = JpegEncoder::new_with_quality(&mut output, quality);
+        if let Some(profile) = presentation_icc(contract)? {
+            encoder
+                .set_icc_profile(profile)
+                .map_err(|error| MediaError::Color(error.to_string()))?;
+        }
+        encoder.encode_image(image)?;
     }
     let encode_ms = duration_ms(encode_started);
     let sync_started = Instant::now();
@@ -45,6 +67,43 @@ pub(crate) fn write_jpeg_atomically_timed(
         sync_ms,
         commit_ms: duration_ms(commit_started),
     })
+}
+
+#[cfg(target_os = "macos")]
+fn embed_icc_profile(path: &Path, profile: &[u8]) -> Result<(), MediaError> {
+    const MAX_CHUNK: usize = u16::MAX as usize - 16;
+    let jpeg = fs::read(path)?;
+    if !jpeg.starts_with(&[0xff, 0xd8]) {
+        return Err(MediaError::Color("ImageIO produced an invalid JPEG".into()));
+    }
+    let chunk_count = profile.len().div_ceil(MAX_CHUNK);
+    let chunk_count = u8::try_from(chunk_count)
+        .map_err(|_| MediaError::Color("ICC profile requires too many JPEG chunks".into()))?;
+    let mut output = Vec::with_capacity(jpeg.len() + profile.len() + 18 * usize::from(chunk_count));
+    output.extend_from_slice(&jpeg[..2]);
+    for (index, chunk) in profile.chunks(MAX_CHUNK).enumerate() {
+        output.extend_from_slice(&[0xff, 0xe2]);
+        let length = u16::try_from(chunk.len() + 16)
+            .map_err(|_| MediaError::Color("ICC JPEG chunk is too large".into()))?;
+        output.extend_from_slice(&length.to_be_bytes());
+        output.extend_from_slice(b"ICC_PROFILE\0");
+        output.push(u8::try_from(index + 1).unwrap_or(u8::MAX));
+        output.push(chunk_count);
+        output.extend_from_slice(chunk);
+    }
+    output.extend_from_slice(&jpeg[2..]);
+    fs::write(path, output)?;
+    Ok(())
+}
+
+fn presentation_icc(contract: ArtifactContract) -> Result<Option<Vec<u8>>, MediaError> {
+    match contract.color {
+        ColorState::SrgbWithIcc => lcms2::Profile::new_srgb()
+            .icc()
+            .map(Some)
+            .map_err(|error| MediaError::Color(error.to_string())),
+        ColorState::EmbeddedProfileOrUnknown => Ok(None),
+    }
 }
 
 /// Encode `image` as JPEG, optionally embedding an ICC profile in an APP2 chunk.
@@ -143,18 +202,46 @@ mod tests {
             let destination = directory.path().join(format!("{timed}.jpg"));
             let image = DynamicImage::new_rgb8(32, 16);
             if timed {
-                write_jpeg_atomically_timed(&image, &destination, 90).unwrap();
+                write_jpeg_atomically_timed(
+                    &image,
+                    &destination,
+                    90,
+                    crate::presentation::RAW_DEVELOPED_JPEG,
+                )
+                .unwrap();
             } else {
-                write_jpeg_atomically(&image, &destination, 90).unwrap();
+                write_jpeg_atomically(
+                    &image,
+                    &destination,
+                    90,
+                    crate::presentation::RAW_DEVELOPED_JPEG,
+                )
+                .unwrap();
             }
             assert_eq!(image::image_dimensions(&destination).unwrap(), (32, 16));
-            ImageReader::open(&destination).unwrap().decode().unwrap();
+            let mut decoder = ImageReader::open(&destination)
+                .unwrap()
+                .into_decoder()
+                .unwrap();
+            assert!(decoder.icc_profile().unwrap().is_some());
             let original = fs::read(&destination).unwrap();
             let replacement = DynamicImage::new_rgb8(8, 8);
             if timed {
-                write_jpeg_atomically_timed(&replacement, &destination, 90).unwrap();
+                write_jpeg_atomically_timed(
+                    &replacement,
+                    &destination,
+                    90,
+                    crate::presentation::RAW_DEVELOPED_JPEG,
+                )
+                .unwrap();
             } else {
-                write_jpeg_atomically(&replacement, &destination, 90).unwrap();
+                write_jpeg_atomically(
+                    &replacement,
+                    &destination,
+                    90,
+                    crate::presentation::RAW_DEVELOPED_JPEG,
+                )
+                .unwrap();
             }
             assert_eq!(fs::read(&destination).unwrap(), original);
         }

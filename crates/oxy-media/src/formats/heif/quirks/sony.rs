@@ -11,19 +11,31 @@ use std::{fs::File, io::Read, path::Path};
 const SCAN_LIMIT: u64 = 2 * 1024 * 1024;
 const MAX_EDGE: u32 = 512;
 
+#[derive(Debug)]
 pub struct EmbeddedJpeg {
     pub bytes: Vec<u8>,
     pub width: u32,
     pub height: u32,
 }
 
-pub fn extract(path: &Path, display_size: ImageDimensions) -> Result<EmbeddedJpeg, MediaError> {
+#[derive(Debug)]
+pub struct Inspection {
+    pub is_sony: bool,
+    pub embedded_jpeg: Option<EmbeddedJpeg>,
+}
+
+/// Inspect only the bounded SHIF header area and retain a discovered fast
+/// representation so planning and execution do not read the source twice.
+pub fn inspect(
+    path: &Path,
+    display_size: Option<ImageDimensions>,
+) -> Result<Inspection, MediaError> {
     let mut bytes = Vec::new();
     File::open(path)?.take(SCAN_LIMIT).read_to_end(&mut bytes)?;
     if !bytes.windows(4).any(|window| window == b"SHIF") {
-        return Err(MediaError::NativeDecode {
-            backend: "embedded JPEG",
-            message: format!("{} is not a Sony SHIF container", path.display()),
+        return Ok(Inspection {
+            is_sony: false,
+            embedded_jpeg: None,
         });
     }
     let mut best: Option<(u64, Vec<u8>, u32, u32)> = None;
@@ -52,27 +64,73 @@ pub fn extract(path: &Path, display_size: ImageDimensions) -> Result<EmbeddedJpe
         // actual HEIF item; jumping to its EOI would skip the valid image.
         cursor = start + 3;
     }
-    let (_, mut jpeg, mut width, mut height) = best.ok_or_else(|| MediaError::NativeDecode {
-        backend: "embedded JPEG",
-        message: format!("{} has no small embedded JPEG", path.display()),
-    })?;
-    let image_is_portrait = height > width;
-    let display_is_portrait = display_size.height > display_size.width;
-    if image_is_portrait != display_is_portrait {
+    let Some((_, mut jpeg, mut width, mut height)) = best else {
+        return Ok(Inspection {
+            is_sony: true,
+            embedded_jpeg: None,
+        });
+    };
+    let orientation = heif_exif_orientation(&bytes).unwrap_or(1);
+    let needs_axis_swap = matches!(orientation, 6 | 8);
+    let display_size = display_size.or_else(|| {
+        heif_display_dimensions(&bytes).map(|mut dimensions| {
+            if needs_axis_swap {
+                std::mem::swap(&mut dimensions.width, &mut dimensions.height);
+            }
+            dimensions
+        })
+    });
+    let needs_orientation = display_size.map_or(needs_axis_swap, |display_size| {
+        (height > width) != (display_size.height > display_size.width)
+    });
+    if needs_orientation {
         // The JPEG item itself has no orientation tag. Apply the primary HEIF
         // item's irot transform so the fast thumbnail agrees with libheif's
         // display-oriented decode. Sony writes both clockwise and
         // counter-clockwise portrait captures, so aspect ratio alone cannot
         // choose between EXIF 6 and 8.
-        let orientation = heif_exif_orientation(&bytes).unwrap_or(6);
+        let orientation = if orientation != 1 { orientation } else { 6 };
         jpeg = with_exif_orientation(jpeg, orientation);
         std::mem::swap(&mut width, &mut height);
     }
-    Ok(EmbeddedJpeg {
-        bytes: jpeg,
-        width,
-        height,
+    Ok(Inspection {
+        is_sony: true,
+        embedded_jpeg: Some(EmbeddedJpeg {
+            bytes: jpeg,
+            width,
+            height,
+        }),
     })
+}
+
+#[cfg(test)]
+fn extract(path: &Path, display_size: ImageDimensions) -> Result<EmbeddedJpeg, MediaError> {
+    let inspection = inspect(path, Some(display_size))?;
+    inspection
+        .embedded_jpeg
+        .ok_or_else(|| MediaError::NativeDecode {
+            backend: "embedded JPEG",
+            message: if inspection.is_sony {
+                format!("{} has no small embedded JPEG", path.display())
+            } else {
+                format!("{} is not a Sony SHIF container", path.display())
+            },
+        })
+}
+
+fn heif_display_dimensions(bytes: &[u8]) -> Option<ImageDimensions> {
+    bytes
+        .windows(20)
+        .filter_map(|window| {
+            let size = u32::from_be_bytes(window[..4].try_into().ok()?);
+            if size != 20 || &window[4..8] != b"ispe" {
+                return None;
+            }
+            let width = u32::from_be_bytes(window[12..16].try_into().ok()?);
+            let height = u32::from_be_bytes(window[16..20].try_into().ok()?);
+            (width > 0 && height > 0).then_some(ImageDimensions { width, height })
+        })
+        .max_by_key(|dimensions| u64::from(dimensions.width) * u64::from(dimensions.height))
 }
 
 fn heif_exif_orientation(bytes: &[u8]) -> Option<u16> {
@@ -118,6 +176,25 @@ mod tests {
     use super::*;
 
     #[test]
+    fn reads_largest_bounded_ispe_as_display_dimensions() {
+        let mut bytes = Vec::new();
+        for (width, height) in [(512_u32, 512_u32), (4_672, 7_008)] {
+            bytes.extend_from_slice(&20_u32.to_be_bytes());
+            bytes.extend_from_slice(b"ispe");
+            bytes.extend_from_slice(&0_u32.to_be_bytes());
+            bytes.extend_from_slice(&width.to_be_bytes());
+            bytes.extend_from_slice(&height.to_be_bytes());
+        }
+        assert_eq!(
+            heif_display_dimensions(&bytes),
+            Some(ImageDimensions {
+                width: 4_672,
+                height: 7_008,
+            })
+        );
+    }
+
+    #[test]
     fn maps_heif_rotation_to_exif_orientation() {
         for (quarter_turns, expected) in [(0, 1), (1, 8), (2, 3), (3, 6)] {
             let mut bytes = vec![0, 0, 0, 9];
@@ -139,8 +216,7 @@ mod tests {
                 height: 120,
             },
         )
-        .err()
-        .expect("non-Sony input must not use the quirk");
+        .expect_err("non-Sony input must not use the quirk");
         assert!(matches!(error, MediaError::NativeDecode { message, .. }
             if message.contains("not a Sony SHIF container")));
     }
@@ -157,8 +233,7 @@ mod tests {
                 height: 120,
             },
         )
-        .err()
-        .expect("signature alone cannot supply a preview");
+        .expect_err("signature alone cannot supply a preview");
         assert!(matches!(error, MediaError::NativeDecode { message, .. }
             if message.contains("no small embedded JPEG")));
     }

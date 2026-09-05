@@ -49,9 +49,10 @@ const tiffProfile: RenderProfile = {
 
 const heifTileProfile: RenderProfile = {
   thumbnail: { type: "generatedImage", requestLevel: "thumbnail" },
-  // Sony HIF's 160x120 camera JPEG fulfills both semantic levels. Resolving
-  // this alias gives grid and loupe the exact same React Query cache identity.
-  preview: { type: "reuse", level: "thumbnail" },
+  // Rust probes the source representation on demand. Generic HEIF needs a
+  // fit-to-window preview; a recognized Sony quick JPEG may still resolve both
+  // requests to the same artifact path without a format-wide frontend alias.
+  preview: { type: "generatedImage", requestLevel: "preview" },
   full: { type: "heifTiles" },
 };
 
