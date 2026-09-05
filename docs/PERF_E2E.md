@@ -128,7 +128,7 @@ Runner 由 mark 对计算出命名指标，`scenarios.json` 的 `budgets` 引用
 
 ```bash
 # 首次：用 Tauri 正式流程构建嵌入前端资源的 release 应用。
-# 不要用裸 cargo build；它会保留 devUrl 并打开 localhost:1420。
+# 不要用裸 cargo build；它会保留 devUrl 并打开 localhost:15142。
 pnpm tauri build --no-bundle
 
 # 跑全部场景（每个场景默认 3 次）

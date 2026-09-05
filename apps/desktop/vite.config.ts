@@ -18,14 +18,16 @@ export default defineConfig(({ command }) => {
       __OXY_DEBUG__: JSON.stringify(debugBuild),
     },
     server: {
-      port: 1420,
+      port: 15142,
       strictPort: true,
-      host: host || false,
+      // On some Windows configurations, localhost resolves to IPv6 (::1),
+      // which can fail with EACCES even when the IPv4 loopback is available.
+      host: host || "127.0.0.1",
       hmr: host
         ? {
             protocol: "ws",
             host,
-            port: 1421,
+            port: 15143,
           }
         : undefined,
       watch: {
