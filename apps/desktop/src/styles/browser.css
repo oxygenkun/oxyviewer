@@ -8,19 +8,6 @@
     linear-gradient(90deg, transparent 49.9%, rgb(255 255 255 / 1.5%) 50%, transparent 50.1%),
     #0d0f11;
 }
-.workspace-browse-status {
-  position: absolute;
-  bottom: 30px;
-  left: 12px;
-  right: 12px;
-  z-index: 4;
-  padding: 6px 10px;
-  border-radius: 5px;
-  background: #24282f;
-  color: #c5cad3;
-  font-size: 12px;
-  pointer-events: none;
-}
 .workspace-empty {
   display: flex;
   flex-direction: column;

@@ -70,6 +70,7 @@ export function App({ perfScenario }: { perfScenario?: PerfScenario }) {
   const [showOnboarding, setShowOnboarding] = useState(() => !hasSeenFolderOnboarding());
   const [error, setError] = useState<string>();
   const [isRefreshing, setIsRefreshing] = useState(false);
+  const [noticeExpanded, setNoticeExpanded] = useState(false);
   const queryClient = useQueryClient();
   const metadataRecords = useMetadataProjectionStore((state) => state.records);
   const {
@@ -395,6 +396,16 @@ export function App({ perfScenario }: { perfScenario?: PerfScenario }) {
   }, [activeId, assets, assetsQuery.fetchNextPage, filteredFocusAction, filteredFocusRestoreId, select]);
   const currentBrowseProgress = browseProgress?.sessionId === activeSession?.id && browseProgress?.directory === currentPath
     ? browseProgress : assetsQuery.data?.pages[0]?.progress;
+  const notice = error || foldersQuery.isError
+    ? { kind: "error" as const, message: error ?? String(foldersQuery.error), detail: undefined }
+    : currentBrowseProgress?.stage === "stale"
+      ? { kind: "status" as const, message: t("browseSnapshotOffline"), detail: currentBrowseProgress.error }
+      : currentBrowseProgress?.source === "snapshot"
+        ? { kind: "status" as const, message: t("browseSnapshotChecking"), detail: undefined }
+        : undefined;
+  useEffect(() => {
+    setNoticeExpanded(false);
+  }, [notice?.message]);
   useEffect(() => {
     if (assetsLoading || !activeSession || !currentPath) return;
     const requested = performance.now();
@@ -677,11 +688,6 @@ export function App({ perfScenario }: { perfScenario?: PerfScenario }) {
       />
       <section className="workspace">
         <Toolbar total={total} loading={assetsLoading || !activeSession && restoringFolders} t={t} />
-        {currentBrowseProgress?.stage === "stale" ? (
-          <div className="workspace-browse-status" role="status" title={currentBrowseProgress.error}>{t("browseSnapshotOffline")}</div>
-        ) : currentBrowseProgress?.source === "snapshot" ? (
-          <div className="workspace-browse-status" role="status">{t("browseSnapshotChecking")}</div>
-        ) : null}
         {!activeSession ? (
           <div className="workspace-empty">
             <FolderPlus size={29} strokeWidth={1.4} />
@@ -722,6 +728,36 @@ export function App({ perfScenario }: { perfScenario?: PerfScenario }) {
           <span title={currentPath}><i className="status-dot" /> {
             currentPath?.split(/[\\/]/).filter(Boolean).at(-1) ?? t("noFolderOpen")
           }</span>
+          {notice ? (
+            <span className={`statusbar__notice statusbar__notice--${notice.kind}`}>
+              <button
+                className="statusbar__notice-toggle"
+                onClick={() => setNoticeExpanded((expanded) => !expanded)}
+                aria-expanded={noticeExpanded}
+                title={notice.message}
+              >
+                {notice.kind === "error" ? <CircleAlert size={11} /> : null}
+                <span>{notice.message}</span>
+              </button>
+              {noticeExpanded ? (
+                <span className="statusbar__notice-panel" role="status">
+                  <span>{notice.message}</span>
+                  {notice.detail ? <span className="statusbar__notice-detail">{notice.detail}</span> : null}
+                  {notice.kind === "error" ? (
+                    <button
+                      className="statusbar__notice-dismiss"
+                      onClick={() => {
+                        setError(undefined);
+                        setNoticeExpanded(false);
+                      }}
+                      aria-label={t("dismissNotice")}
+                      title={t("dismissNotice")}
+                    >×</button>
+                  ) : null}
+                </span>
+              ) : null}
+            </span>
+          ) : null}
           <span>{assetsLoading || !activeSession && restoringFolders ? t("loading") : `${assets.length.toLocaleString()} / ${total.toLocaleString()} ${t("photos")}`}</span>
           <span
             className="statusbar__thumbnail-orientation"
@@ -774,11 +810,6 @@ export function App({ perfScenario }: { perfScenario?: PerfScenario }) {
           key={`${activeSession.id}:${currentPath}`}
           assets={preloadCandidates}
         />
-      ) : null}
-      {error || foldersQuery.isError ? (
-        <button className="error-toast" onClick={() => setError(undefined)}>
-          <CircleAlert size={16} />{error ?? String(foldersQuery.error)}<span>×</span>
-        </button>
       ) : null}
       {!isTauri() ? <span className="demo-pill">{t("demoHint")}</span> : null}
       {settingsOpen ? <SettingsPanel t={t} /> : null}

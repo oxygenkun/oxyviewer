@@ -42,24 +42,63 @@
 .workspace-error button { display: flex; align-items: center; gap: 6px; padding: 7px 10px; border-radius: 4px; color: #12150e; background: var(--accent); font-size: 0.5625rem; }
 
 .demo-pill { position: absolute; top: 14px; right: 14px; padding: 4px 7px; border: 1px solid #30373a; border-radius: 20px; color: #727a7b; font-size: 0.5rem; }
-.error-toast {
-  position: fixed;
-  z-index: 10;
-  right: 14px;
-  bottom: 34px;
+.statusbar__notice {
+  position: relative;
+  display: flex;
+  min-width: 0;
+}
+.statusbar__notice-toggle {
   display: flex;
   align-items: center;
-  gap: 8px;
-  max-width: 420px;
-  padding: 9px 10px;
-  border: 1px solid #74443e;
-  border-radius: 5px;
-  color: #e5b1a7;
-  background: #281b1a;
-  font-size: 0.5625rem;
-  box-shadow: 0 10px 30px rgb(0 0 0 / 45%);
+  gap: 5px;
+  max-width: 300px;
+  min-width: 0;
+  padding: 2px 6px;
+  border-radius: 4px;
+  color: #8b9397;
+  background: transparent;
+  font: inherit;
 }
-.error-toast span { margin-left: auto; }
+.statusbar__notice-toggle:hover { color: var(--text); background: #1c2125; }
+.statusbar__notice-toggle > span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.statusbar__notice--error .statusbar__notice-toggle { color: #e5b1a7; }
+.statusbar__notice-panel {
+  position: absolute;
+  bottom: calc(100% + 8px);
+  left: 0;
+  z-index: 12;
+  display: grid;
+  gap: 6px;
+  width: max-content;
+  max-width: min(460px, 60vw);
+  padding: 9px 11px;
+  border: 1px solid #30373a;
+  border-radius: 6px;
+  background: #1a1e21;
+  color: #c5cad3;
+  font-size: 0.625rem;
+  line-height: 1.5;
+  text-align: left;
+  white-space: pre-wrap;
+  word-break: break-word;
+  box-shadow: 0 -10px 28px rgb(0 0 0 / 45%);
+}
+.statusbar__notice-detail { color: var(--faint); }
+.statusbar__notice--error .statusbar__notice-panel {
+  border-color: #74443e;
+  background: #281b1a;
+  color: #e5b1a7;
+}
+.statusbar__notice-dismiss {
+  justify-self: end;
+  padding: 0 7px;
+  border-radius: 3px;
+  color: inherit;
+  background: transparent;
+  font-size: 0.75rem;
+  line-height: 1.4;
+}
+.statusbar__notice-dismiss:hover { background: #ffffff14; }
 .debug-queue-launcher {
   position: fixed;
   z-index: 9999;
