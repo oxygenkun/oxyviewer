@@ -47,7 +47,7 @@ import {
 } from "./lib/metadataProjection";
 import { isSameOrDescendantPath, parentFolderPath, relativeFolderPath } from "./lib/folderPaths";
 import { translate } from "./lib/i18n";
-import { LAYOUT_SIZE_LIMITS } from "./lib/layoutSizing";
+import { LAYOUT_SIZE_LIMITS, maxInspectorWidth } from "./lib/layoutSizing";
 import {
   mergeVisibleFolderOrder,
   sortFolderSessions,
@@ -79,6 +79,7 @@ export function App({ perfScenario }: { perfScenario?: PerfScenario }) {
     leftPanelWidth, inspectorWidth, setLeftPanelWidth, setInspectorWidth, uiFontScale,
   } = useWorkspaceStore();
   const appShellRef = useRef<HTMLDivElement>(null);
+  const [appShellWidth, setAppShellWidth] = useState(0);
   const activeDirectoryNoticeRef = useRef<string | undefined>(undefined);
   const filteredFocusRef = useRef<string | undefined>(undefined);
   const t = useCallback((key: Parameters<typeof translate>[1]) => translate(locale, key), [locale]);
@@ -89,6 +90,19 @@ export function App({ perfScenario }: { perfScenario?: PerfScenario }) {
       document.documentElement.style.removeProperty("font-size");
     };
   }, [uiFontScale]);
+
+  useLayoutEffect(() => {
+    const shell = appShellRef.current;
+    if (!shell) return;
+    const updateWidth = () => setAppShellWidth(shell.clientWidth);
+    updateWidth();
+    const observer = new ResizeObserver(updateWidth);
+    observer.observe(shell);
+    return () => observer.disconnect();
+  }, []);
+
+  const inspectorMax = maxInspectorWidth(appShellWidth, leftPanelOpen ? leftPanelWidth : 0);
+  const displayedInspectorWidth = Math.min(inspectorWidth, inspectorMax);
 
   const foldersQuery = useQuery({
     queryKey: ["open-folders"],
@@ -647,7 +661,7 @@ export function App({ perfScenario }: { perfScenario?: PerfScenario }) {
       className={`app-shell ${leftPanelOpen ? "" : "sidebar-collapsed"} ${inspectorOpen ? "" : "inspector-collapsed"}`}
       style={{
         "--left-panel-width": `${leftPanelWidth}px`,
-        "--inspector-width": `${inspectorWidth}px`,
+        "--inspector-width": `${displayedInspectorWidth}px`,
       } as CSSProperties}
     >
       <Sidebar
@@ -791,11 +805,11 @@ export function App({ perfScenario }: { perfScenario?: PerfScenario }) {
         defaultValue={LAYOUT_SIZE_LIMITS.inspector.defaultValue}
         direction={-1}
         label={t("resizeInspector")}
-        max={LAYOUT_SIZE_LIMITS.inspector.max}
+        max={inspectorMax}
         min={LAYOUT_SIZE_LIMITS.inspector.min}
         onCommit={setInspectorWidth}
         targetRef={appShellRef}
-        value={inspectorWidth}
+        value={displayedInspectorWidth}
       />
       <Inspector
         asset={activeAsset}
