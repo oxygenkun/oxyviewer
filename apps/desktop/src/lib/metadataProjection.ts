@@ -4,6 +4,7 @@ import type { AssetSummary, MetadataPatch, MetadataProjection } from "../types";
 interface MetadataProjectionState {
   records: Record<string, MetadataProjection>;
   accept: (projection: MetadataProjection) => void;
+  acceptMany: (projections: readonly MetadataProjection[]) => void;
   invalidateDirectory: (directory: string) => void;
 }
 
@@ -14,6 +15,16 @@ export const useMetadataProjectionStore = create<MetadataProjectionState>((set) 
     const current = state.records[projection.path];
     if (current && current.projectionRevision >= projection.projectionRevision) return state;
     return { records: { ...state.records, [projection.path]: projection } };
+  }),
+  acceptMany: (projections) => set((state) => {
+    let records = state.records;
+    for (const projection of projections) {
+      const current = records[projection.path];
+      if (current && current.projectionRevision >= projection.projectionRevision) continue;
+      if (records === state.records) records = { ...state.records };
+      records[projection.path] = projection;
+    }
+    return records === state.records ? state : { records };
   }),
   invalidateDirectory: (directory) => set((state) => {
     const normalized = directory.replace(/[\\/]+$/, "").toLocaleLowerCase();
@@ -28,6 +39,10 @@ export const useMetadataProjectionStore = create<MetadataProjectionState>((set) 
 
 export function acceptMetadataProjection(projection: MetadataProjection) {
   useMetadataProjectionStore.getState().accept(projection);
+}
+
+export function acceptMetadataProjections(projections: readonly MetadataProjection[]) {
+  useMetadataProjectionStore.getState().acceptMany(projections);
 }
 
 export function applyMetadataProjectionPatch(paths: string[], patch: MetadataPatch) {

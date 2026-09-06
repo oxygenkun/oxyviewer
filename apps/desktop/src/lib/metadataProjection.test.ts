@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it } from "vitest";
 import type { AssetSummary, MetadataProjection } from "../types";
 import {
   acceptMetadataProjection,
+  acceptMetadataProjections,
   applyMetadataProjectionPatch,
   invalidateMetadataDirectory,
   projectAssetMetadata,
@@ -40,6 +41,21 @@ describe("metadata projection mirror", () => {
     const current = useMetadataProjectionStore.getState().records[asset.path];
     expect(current.rating).toBe(5);
     expect(current.pickLabel).toBe("accepted");
+  });
+
+  it("accepts a page of projections in one store update", () => {
+    let updates = 0;
+    const unsubscribe = useMetadataProjectionStore.subscribe(() => { updates += 1; });
+    acceptMetadataProjections([
+      projection(2, 5),
+      { ...projection(1, 1), path: "C:\\photos\\two.jpg" },
+      projection(1, 1),
+    ]);
+    unsubscribe();
+
+    expect(updates).toBe(1);
+    expect(useMetadataProjectionStore.getState().records[asset.path].rating).toBe(5);
+    expect(useMetadataProjectionStore.getState().records["C:\\photos\\two.jpg"].rating).toBe(1);
   });
 
   it("treats an explicit missing value as authoritative", () => {
