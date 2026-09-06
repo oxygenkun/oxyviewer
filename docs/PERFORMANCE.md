@@ -102,16 +102,24 @@ end-to-end regression harness that enforces these budgets is described in
   qualification. Shared-connection contention and whole-directory asset
   collection still warrant measurement on real large folders.
 
-- 2026-09-05: Filmstrip summary pagination now measures the rendered unloaded
-  boundary instead of multiplying an estimated item width. This avoids cumulative
-  drift from scrollbar space and fractional CSS sizing, and rechecks on viewport
-  resize and page completion. The browser regression in
+- 2026-09-05: The filmstrip now virtualizes the complete summary range instead
+  of mounting every loaded asset beside one large unloaded spacer. A jump into
+  an unloaded range renders bounded per-item placeholders and requests sequential
+  250-item pages until the loaded range covers the viewport; page completion
+  retriggers this check without another scroll event. The browser regression in
   `scripts/filmstrip-pagination.browser.js` mounts the real Loupe with 1,473
-  synthetic summaries and delayed pages. All 12 orientation/height/scrollbar-space
-  cases pass boundary and end jumps; six simulated classic-scrollbar cases
-  reproduce the former missed fetch at item 750. Opening does not eagerly fetch
-  additional pages. This verifies pagination behavior in Chromium, not native
-  media latency or the release-build timing budgets above.
+  synthetic summaries and delayed pages, jumps across an unfinished page and
+  then to the end, and keeps mounted asset buttons below 40 (15 near item 510
+  and 10 at the end in the reference Chromium run). Page commits no longer
+  rebuild a selection-priority map or reconcile a background schedule for every
+  loaded filmstrip item; visible and neighboring items retain their scoped work.
+  Metadata enrichment now follows only visible virtual items and commits each
+  returned batch to the Zustand mirror in one update instead of requesting a
+  whole page and copying the growing record map once per asset. Page and metadata
+  projections use React deferred values so scroll input remains urgent while a
+  newly returned page is incorporated. Opening does not eagerly fetch additional
+  pages. This verifies pagination and bounded DOM behavior in
+  Chromium, not native media latency or the release-build timing budgets above.
 
 - 2026-09-04: Fast scrolling now keeps the cheap viewport schedule current
   while filesystem reads and WebView image decode remain paused. Cancelling an
@@ -519,7 +527,9 @@ loaded dimensions. Browser resources use LRU retention, with soft protection
 for the selection and two neighbors on each side. The 1,024-entry / 512 MiB
 limits remain hard limits, including when protected images exceed the budget.
 Filmstrip preview warming uses two cancellable workers, ordered by selection,
-navigation direction, nearest neighbors, then the visible strip. Full-resolution
+navigation direction, nearest neighbors, then the visible strip. A virtualized
+thumbnail remount paints an already decoded browser resource even while cold
+loading is paused, and revisiting it refreshes its LRU position. Full-resolution
 generation remains selection-driven. Native decode concurrency is unchanged.
 These are scheduling and presentation changes, not new measured NAS latency
 results; cold/warm rapid switching and reverse navigation still need fixture
