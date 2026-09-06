@@ -719,6 +719,10 @@ pub fn execute_file_operation(operation: &FileOperation) -> Result<FileOperation
 }
 
 pub fn deletion_mode_for_path(path: &Path) -> FileDeletionMode {
+    #[cfg(target_os = "macos")]
+    if !macos_volume_is_local(path) {
+        return FileDeletionMode::Permanent;
+    }
     #[cfg(target_os = "windows")]
     {
         use std::os::windows::ffi::OsStrExt;
@@ -735,8 +739,28 @@ pub fn deletion_mode_for_path(path: &Path) -> FileDeletionMode {
             return FileDeletionMode::Permanent;
         }
     }
+    #[cfg(not(any(target_os = "macos", target_os = "windows")))]
+    let _ = path;
 
     FileDeletionMode::Trash
+}
+
+#[cfg(target_os = "macos")]
+fn macos_volume_is_local(path: &Path) -> bool {
+    use std::{ffi::CString, mem::MaybeUninit, os::unix::ffi::OsStrExt};
+
+    let Ok(path) = CString::new(path.as_os_str().as_bytes()) else {
+        return false;
+    };
+    let mut stats = MaybeUninit::<libc::statfs>::uninit();
+    // SAFETY: `path` is NUL-terminated and `stats` points to writable, properly
+    // aligned storage which is only assumed initialized after statfs succeeds.
+    if unsafe { libc::statfs(path.as_ptr(), stats.as_mut_ptr()) } != 0 {
+        return false;
+    }
+    // SAFETY: A successful statfs call initialized the complete structure.
+    let stats = unsafe { stats.assume_init() };
+    stats.f_flags & libc::MNT_LOCAL as u32 != 0
 }
 
 #[cfg(target_os = "windows")]
@@ -1439,6 +1463,26 @@ mod tests {
 
         assert_eq!(affected, std::slice::from_ref(&child));
         assert!(!child.exists());
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn local_macos_volume_uses_system_trash() {
+        let directory = tempdir().unwrap();
+
+        assert_eq!(
+            deletion_mode_for_path(directory.path()),
+            FileDeletionMode::Trash
+        );
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn unknown_macos_volume_uses_permanent_deletion() {
+        assert_eq!(
+            deletion_mode_for_path(Path::new("/path/that/does/not/exist")),
+            FileDeletionMode::Permanent
+        );
     }
 
     #[cfg(target_os = "windows")]

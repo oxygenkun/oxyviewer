@@ -2422,6 +2422,7 @@ dependencies = [
 name = "oxy-fs"
 version = "0.1.0"
 dependencies = [
+ "libc",
  "oxy-domain",
  "parking_lot",
  "tempfile",
