@@ -1,6 +1,6 @@
 import { useInfiniteQuery, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Aperture, CircleAlert, FolderPlus, RectangleHorizontal, RectangleVertical } from "lucide-react";
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties } from "react";
+import { useCallback, useDeferredValue, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties } from "react";
 import { AssetBrowser } from "./components/AssetBrowser";
 import { BackgroundPreviewPreloader } from "./components/BackgroundPreviewPreloader";
 import { Inspector } from "./components/Inspector";
@@ -41,6 +41,7 @@ import { acceptDirectoryTreeSnapshot } from "./lib/directoryTreeProjection";
 import { acceptImageProjection, invalidateImageDirectory } from "./lib/imageProjection";
 import {
   acceptMetadataProjection,
+  acceptMetadataProjections,
   invalidateMetadataDirectory,
   projectAssetMetadata,
   useMetadataProjectionStore,
@@ -329,7 +330,7 @@ export function App({ perfScenario }: { perfScenario?: PerfScenario }) {
         pageParam.snapshotRevision,
       );
       const snapshots = await requestMetadata(page.items.map((asset) => asset.path), "filter");
-      snapshots.forEach(acceptMetadataProjection);
+      acceptMetadataProjections(snapshots);
       return page;
     },
     initialPageParam: firstBrowseCursor,
@@ -341,13 +342,6 @@ export function App({ perfScenario }: { perfScenario?: PerfScenario }) {
     () => assetsQuery.data?.pages.flatMap((page) => page.items) ?? [],
     [assetsQuery.data],
   );
-  useEffect(() => {
-    if (progressivelyFilterMetadata || cheapAssets.length === 0) return;
-    void requestMetadata(cheapAssets.map((asset) => asset.path), "visible")
-      .then((snapshots) => snapshots.forEach(acceptMetadataProjection))
-      .catch(() => undefined);
-  }, [cheapAssets, progressivelyFilterMetadata]);
-
   const enrichedAssets = useMemo(() => {
     return cheapAssets.map((asset) => projectAssetMetadata(asset, metadataRecords[asset.path]));
   }, [cheapAssets, metadataRecords]);
@@ -366,6 +360,9 @@ export function App({ perfScenario }: { perfScenario?: PerfScenario }) {
       : enrichedAssets,
     [enrichedAssets, progressivelyEnrichedAssets, progressivelyFilterMetadata, query],
   );
+  // Page and metadata commits are non-urgent; keep active scrolling ahead of
+  // rebuilding the browser projection for a newly returned page.
+  const displayedAssets = useDeferredValue(assets);
   const preloadCandidates = useMemo(() => {
     const visibleIds = new Set(assets.map((asset) => asset.id));
     const candidates = progressivelyFilterMetadata
@@ -389,6 +386,12 @@ export function App({ perfScenario }: { perfScenario?: PerfScenario }) {
   const assetsError = progressivelyFilterMetadata
     ? progressiveMetadataQuery.error
     : assetsQuery.error;
+  const fetchNextAssetsPage = useCallback(() => {
+    if (progressivelyFilterMetadata) return;
+    // Scroll events can race the query's fetching-state render. Repeated calls
+    // must leave the active page request running instead of restarting it.
+    void assetsQuery.fetchNextPage({ cancelRefetch: false });
+  }, [assetsQuery.fetchNextPage, progressivelyFilterMetadata]);
   const filteredFocusAction = focusRestoreAction(
     assets,
     filteredFocusRestoreId,
@@ -402,12 +405,12 @@ export function App({ perfScenario }: { perfScenario?: PerfScenario }) {
       return;
     }
     if (filteredFocusAction === "fetch") {
-      void assetsQuery.fetchNextPage();
+      fetchNextAssetsPage();
     } else if (filteredFocusAction === "fallback" && assets[0]) {
       filteredFocusRef.current = undefined;
       select(assets[0].id);
     }
-  }, [activeId, assets, assetsQuery.fetchNextPage, filteredFocusAction, filteredFocusRestoreId, select]);
+  }, [activeId, assets, fetchNextAssetsPage, filteredFocusAction, filteredFocusRestoreId, select]);
   const currentBrowseProgress = browseProgress?.sessionId === activeSession?.id && browseProgress?.directory === currentPath
     ? browseProgress : assetsQuery.data?.pages[0]?.progress;
   const notice = error || foldersQuery.isError
@@ -720,7 +723,7 @@ export function App({ perfScenario }: { perfScenario?: PerfScenario }) {
           </div>
         ) : (
           <AssetBrowser
-            assets={assets}
+            assets={displayedAssets}
             deletionMode={activeSession.deletionMode}
             restoringActiveId={filteredFocusAction === "none" ? undefined : filteredFocusRestoreId}
             total={total}
@@ -729,9 +732,7 @@ export function App({ perfScenario }: { perfScenario?: PerfScenario }) {
             isFetchingNextPage={progressivelyFilterMetadata
               ? progressiveWorkPending
               : assetsQuery.isFetchingNextPage}
-            fetchNextPage={() => {
-              if (!progressivelyFilterMetadata) void assetsQuery.fetchNextPage();
-            }}
+            fetchNextPage={fetchNextAssetsPage}
             onTrashAsset={(asset) => void handleTrashAsset(asset)}
             onCopyAssetPath={(asset, relative) => void handleCopyPath(activeSession.rootPath, asset.path, relative)}
             onOpenInFileManager={(path) => void handleOpenInFileManager(path)}

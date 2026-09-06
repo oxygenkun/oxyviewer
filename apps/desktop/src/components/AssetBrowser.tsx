@@ -8,8 +8,10 @@ import {
   gridRowForAsset,
   virtualAssetCount,
 } from "../lib/assetViewPosition";
+import { requestMetadata } from "../lib/api";
 import type { MessageKey } from "../lib/i18n";
 import { platformFileManager } from "../lib/folderPaths";
+import { acceptMetadataProjections } from "../lib/metadataProjection";
 import {
   backgroundPreviewIntents,
   PreviewScheduleScope,
@@ -297,6 +299,16 @@ function VirtualGrid({
     () => viewportPreviewIntents(scheduleCandidates, selectedAsset),
     [scheduleCandidates, selectedAsset],
   );
+  const visibleMetadataPaths = scheduleCandidates
+    .filter((candidate) => candidate.visible)
+    .map((candidate) => candidate.asset.path);
+  const visibleMetadataSignature = visibleMetadataPaths.join("\u0000");
+  useEffect(() => {
+    if (!visibleMetadataPaths.length) return;
+    void requestMetadata(visibleMetadataPaths, "visible")
+      .then(acceptMetadataProjections)
+      .catch(() => undefined);
+  }, [visibleMetadataSignature]);
   useEffect(() => {
     // Keep the cheap native schedule synchronized while scrolling. Thumbnail
     // queries and WebView image decodes remain paused by `resourcesEnabled`,
@@ -442,6 +454,16 @@ function VirtualList({
     () => viewportPreviewIntents(scheduleCandidates, selectedAsset),
     [scheduleCandidates, selectedAsset],
   );
+  const visibleMetadataPaths = scheduleCandidates
+    .filter((candidate) => candidate.visible)
+    .map((candidate) => candidate.asset.path);
+  const visibleMetadataSignature = visibleMetadataPaths.join("\u0000");
+  useEffect(() => {
+    if (!visibleMetadataPaths.length) return;
+    void requestMetadata(visibleMetadataPaths, "visible")
+      .then(acceptMetadataProjections)
+      .catch(() => undefined);
+  }, [visibleMetadataSignature]);
   useEffect(() => {
     // Keep the cheap native schedule synchronized while scrolling. Thumbnail
     // queries and WebView image decodes remain paused by `resourcesEnabled`,
