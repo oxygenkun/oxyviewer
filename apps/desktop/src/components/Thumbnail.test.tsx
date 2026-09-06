@@ -85,6 +85,16 @@ describe("filmstrip thumbnail display retention", () => {
     expect(container.querySelector(".thumbnail__fallback")).toBeNull();
   });
 
+  it("paints a decoded image immediately when a virtual item remounts during scrolling", async () => {
+    markBrowserImageReady(url, { width: 160, height: 120 });
+    await render("nearby", asset, false);
+
+    const image = container.querySelector("img");
+    expect(image?.getAttribute("src")).toBe(url);
+    expect(image?.className).not.toContain("thumbnail__pending-image");
+    expect(container.querySelector(".thumbnail__fallback")).toBeNull();
+  });
+
   it("retains a prepared image after cache eviction while loading is disabled", async () => {
     markBrowserImageReady(url, { width: 160, height: 120 });
     await render("loupe");

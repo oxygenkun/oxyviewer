@@ -255,8 +255,11 @@ export function Thumbnail({
   }, [asset.id]);
 
   useLayoutEffect(() => {
-    if (!large || !preparedSize || visibleImage?.source !== preparedSource) return;
+    if (!preparedSize || visibleImage?.source !== preparedSource) return;
     if (preparedSource) touchBrowserImage(preparedSource);
+    // Virtualized thumbnails must refresh their LRU position when revisited,
+    // even while cold resource loading is paused during active scrolling.
+    if (!large) return;
     const preparedResult = fullSource?.url === preparedSource
       ? fullSource
       : previewSource?.url === preparedSource
