@@ -21,9 +21,6 @@ export const MIN_ZOOM = 1;
 export const MAX_PIXEL_ZOOM_PERCENT = 400;
 const FILMSTRIP_VERTICAL_CHROME = 13;
 export const FILMSTRIP_GAP = 5;
-const FILMSTRIP_MIN_PAGE_LOAD_AHEAD = 400;
-const FILMSTRIP_PAGE_LOAD_AHEAD_VIEWPORTS = 2;
-
 export function filmstripItemWidth(
   filmstripHeight: number,
   orientation: ThumbnailOrientation = "landscape",
@@ -34,31 +31,17 @@ export function filmstripItemWidth(
   return Math.max(minWidth, Math.round(itemHeight * ratio));
 }
 
-export function filmstripUnloadedWidth(
-  unloadedCount: number,
-  filmstripHeight: number,
-  orientation: ThumbnailOrientation = "landscape",
-): number {
-  if (unloadedCount <= 0) return 0;
-  return unloadedCount * filmstripItemWidth(filmstripHeight, orientation)
-    + (unloadedCount - 1) * FILMSTRIP_GAP;
-}
-
-/**
- * Starts the next cheap-summary page before the viewport reaches unloaded
- * filmstrip space. The distance scales with the viewport so a fast fling has
- * enough runway even when the filmstrip has been resized to show large items.
- */
+/** Fetches sequential pages until the loaded range covers the virtual viewport. */
 export function shouldFetchFilmstripPage(
-  scrollLeft: number,
-  viewportWidth: number,
-  loadedRight: number,
+  lastRenderedIndex: number | undefined,
+  loadedCount: number,
+  hasNextPage: boolean,
+  isFetchingNextPage: boolean,
 ): boolean {
-  const loadAhead = Math.max(
-    FILMSTRIP_MIN_PAGE_LOAD_AHEAD,
-    viewportWidth * FILMSTRIP_PAGE_LOAD_AHEAD_VIEWPORTS,
-  );
-  return scrollLeft + viewportWidth + loadAhead >= loadedRight;
+  return lastRenderedIndex !== undefined
+    && lastRenderedIndex >= loadedCount - 5
+    && hasNextPage
+    && !isFetchingNextPage;
 }
 
 export interface FilmstripItemRange {

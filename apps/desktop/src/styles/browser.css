@@ -4,6 +4,7 @@
   grid-template-rows: 51px 35px minmax(0, 1fr) 25px;
   min-width: 0;
   min-height: 0;
+  overflow: hidden;
   background:
     linear-gradient(90deg, transparent 49.9%, rgb(255 255 255 / 1.5%) 50%, transparent 50.1%),
     #0d0f11;

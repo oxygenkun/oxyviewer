@@ -1,6 +1,6 @@
 // Run in an isolated agent-browser session opened on the Vite dev server:
 // PowerShell: agent-browser --session filmstrip eval (Get-Content -Raw scripts/filmstrip-pagination.browser.js)
-// Exercises the real Loupe and CSS with delayed summary pages, without native media.
+// Exercises the real virtualized Loupe with delayed summary pages, without native media.
 (async () => {
   const source = await (await fetch('/src/components/Loupe.tsx')).text();
   const version = source.match(/react\.js(\?v=[a-z0-9]+)/)[1];
@@ -9,9 +9,17 @@
   const { QueryClient, QueryClientProvider } = await import(`/node_modules/.vite/deps/@tanstack_react-query.js${version}`);
   const { Loupe } = await import('/src/components/Loupe.tsx');
   const { useWorkspaceStore } = await import('/src/store.ts');
-  const { filmstripItemWidth, shouldFetchFilmstripPage } = await import('/src/lib/loupe.ts');
+  const { filmstripItemWidth } = await import('/src/lib/loupe.ts');
   const pause = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
   const assert = (value, message) => { if (!value) throw new Error(message); };
+  const waitFor = async (predicate, message) => {
+    for (let attempt = 0; attempt < 150; attempt++) {
+      if (predicate()) return;
+      await pause(20);
+    }
+    assert(false, message);
+  };
+
   const container = document.createElement('div');
   container.style.cssText = 'position:fixed;inset:0;z-index:99999;background:#101214';
   document.body.append(container);
@@ -19,13 +27,20 @@
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   const previousState = useWorkspaceStore.getState();
   const assets = Array.from({ length: 1473 }, (_, index) => ({
-    id: `filmstrip-regression-${index}`, path: `/demo/${index}.jpg`, name: `${index}.jpg`,
-    extension: 'jpg', kind: 'jpeg', sizeBytes: 1000, modifiedAtMs: 0, hasSidecar: false,
+    id: `filmstrip-regression-${index}`,
+    path: `/demo/${index}.jpg`,
+    name: `${index}.jpg`,
+    extension: 'jpg',
+    kind: 'jpeg',
+    sizeBytes: 1000,
+    modifiedAtMs: 0,
+    hasSidecar: false,
   }));
-  let count = 750;
+  let count = 250;
   let calls = 0;
   let fetching = false;
   let timer;
+
   const fetchNextPage = () => {
     if (fetching) return;
     calls++;
@@ -35,60 +50,60 @@
       count = Math.min(assets.length, count + 250);
       fetching = false;
       render();
-    }, 100);
+    }, 80);
   };
   function render() {
     root.render(React.createElement(QueryClientProvider, { client }, React.createElement(Loupe, {
-      assets: assets.slice(0, count), total: assets.length, fetchNextPage,
-      hasNextPage: count < assets.length, isFetchingNextPage: fetching,
-      onAssetContextMenu: () => {}, t: (key) => key,
+      assets: assets.slice(0, count),
+      total: assets.length,
+      fetchNextPage,
+      hasNextPage: count < assets.length,
+      isFetchingNextPage: fetching,
+      onAssetContextMenu: () => {},
+      t: (key) => key,
     })));
   }
-  async function waitFor(predicate, message) {
-    for (let attempt = 0; attempt < 100; attempt++) {
-      if (predicate()) return;
-      await pause(30);
-    }
-    assert(false, message);
-  }
-  const results = [];
+
   try {
-    for (const reservedScrollbarHeight of [0, 10]) {
-      for (const orientation of ['landscape', 'portrait']) {
-        for (const height of [116, 180, 300]) {
-          count = 750;
-          calls = 0;
-          fetching = false;
-          useWorkspaceStore.setState({ activeId: assets[0].id, filmstripHeight: height, thumbnailOrientation: orientation });
-          render();
-          await pause(150);
-          const strip = container.querySelector('.filmstrip');
-          strip.scrollLeft = 0;
-          // Headless Chrome uses overlay scrollbars. Also exercise the reduced
-          // content height of a classic Windows horizontal scrollbar.
-          strip.style.paddingBottom = `${6 + reservedScrollbarHeight}px`;
-          await pause(50);
-          assert(calls === 0, 'Opening the filmstrip eagerly fetched summaries');
-          const boundary = container.querySelector('.filmstrip__unloaded');
-          const boundaryLeft = boundary.getBoundingClientRect().left - strip.getBoundingClientRect().left;
-          const jump = boundaryLeft - strip.clientWidth + 100;
-          const estimatedRight = 9 + 750 * (filmstripItemWidth(height, orientation) + 5);
-          const oldWouldFetch = shouldFetchFilmstripPage(jump, strip.clientWidth, estimatedRight);
-          strip.scrollLeft = jump;
-          await waitFor(() => count > 750 && !fetching, 'Scrolling into the unloaded region did not fetch a page');
-          assert(calls === 1, 'Boundary scroll fetched unnecessary pages');
-          // Jump across several pages. Follow-up pages must load even without another scroll event.
-          strip.scrollLeft = strip.scrollWidth;
-          await waitFor(() => count === assets.length && !fetching, 'Fast end jump stalled between pages');
-          await pause(100);
-          assert(!container.querySelector('.filmstrip__unloaded'), 'Unloaded spacer remained after the final page');
-          results.push({ orientation, height, reservedScrollbarHeight, oldWouldFetch, pagesFetched: calls });
-          strip.scrollLeft = 0;
-        }
-      }
-    }
-    assert(results.some((result) => !result.oldWouldFetch), 'Fixture did not reproduce the former boundary drift');
-    return results;
+    useWorkspaceStore.setState({
+      activeId: assets[0].id,
+      filmstripHeight: 180,
+      thumbnailOrientation: 'landscape',
+    });
+    render();
+    await waitFor(() => container.querySelector('.filmstrip__track'), 'Filmstrip did not mount');
+    assert(calls === 0, 'Opening the filmstrip eagerly fetched summaries');
+
+    const strip = container.querySelector('.filmstrip');
+    const stride = filmstripItemWidth(180, 'landscape') + 5;
+    strip.scrollLeft = stride * 510;
+    strip.dispatchEvent(new Event('scroll'));
+    await waitFor(
+      () => count >= 750 && !fetching,
+      'A jump across an unfinished page did not load enough sequential pages',
+    );
+    await waitFor(
+      () => container.querySelector('[data-filmstrip-asset-id="filmstrip-regression-510"]'),
+      'The jumped-to asset did not replace its placeholder',
+    );
+    const mountedAt510 = container.querySelectorAll('[data-filmstrip-asset-id]').length;
+    assert(mountedAt510 < 40, `Filmstrip mounted too many items near 510: ${mountedAt510}`);
+
+    strip.scrollLeft = strip.scrollWidth;
+    strip.dispatchEvent(new Event('scroll'));
+    await waitFor(
+      () => count === assets.length && !fetching,
+      'A fast end jump stalled between sequential pages',
+    );
+    const mountedAtEnd = container.querySelectorAll('[data-filmstrip-asset-id]').length;
+    assert(mountedAtEnd < 40, `Filmstrip mounted too many items at the end: ${mountedAtEnd}`);
+
+    return {
+      pagesFetched: calls,
+      mountedAt510,
+      mountedAtEnd,
+      total: count,
+    };
   } finally {
     clearTimeout(timer);
     root.unmount();

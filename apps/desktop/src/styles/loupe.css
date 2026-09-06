@@ -338,9 +338,8 @@
 .loupe__position-dot--bottom-left { bottom: 5px; left: 5px; }
 .loupe__position-dot--bottom-right { right: 5px; bottom: 5px; }
 .filmstrip {
-  display: flex;
-  align-items: center;
-  gap: 5px;
+  position: relative;
+  display: block;
   min-height: 0;
   padding: 6px 9px;
   overflow-x: auto;
@@ -351,7 +350,13 @@
   scrollbar-color: #656b6e #171a1c;
   scrollbar-width: thin;
 }
+.filmstrip__track {
+  position: relative;
+  height: 100%;
+}
 .filmstrip button {
+  position: absolute;
+  top: 0;
   display: grid;
   grid-template-rows: minmax(0, 1fr) auto auto;
   flex: 0 0 auto;
@@ -374,14 +379,20 @@
 .filmstrip .thumbnail__badge, .filmstrip .thumbnail__fallback span { display: none; }
 .filmstrip__name { overflow: hidden; font-size: 0.5rem; line-height: 12px; text-overflow: ellipsis; white-space: nowrap; }
 .filmstrip button.is-active .filmstrip__name { color: #d4d5d0; }
-.filmstrip__unloaded {
-  align-self: stretch;
-  flex: 0 0 auto;
+.filmstrip__placeholder {
+  position: absolute;
+  top: 0;
+  height: 100%;
   border-radius: 4px;
   background: #15181b;
   opacity: .35;
 }
-.filmstrip__loading { flex: 0 0 auto; padding: 0 10px; color: var(--faint); font: 0.5rem ui-monospace, monospace; }
+.filmstrip__loading {
+  position: sticky;
+  left: 12px;
+  color: var(--faint);
+  font: 0.5rem ui-monospace, monospace;
+}
 
 .resize-handle {
   position: absolute;

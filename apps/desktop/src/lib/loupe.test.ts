@@ -3,7 +3,6 @@ import {
   clampPan,
   clampZoom,
   filmstripItemWidth,
-  filmstripUnloadedWidth,
   fitSize,
   getNavigatorViewport,
   MAX_PIXEL_ZOOM_PERCENT,
@@ -28,9 +27,6 @@ describe("loupe geometry", () => {
     expect(filmstripItemWidth(116, "portrait")).toBe(70);
     expect(filmstripItemWidth(180, "portrait")).toBe(114);
     expect(filmstripItemWidth(300, "portrait")).toBe(195);
-    expect(filmstripUnloadedWidth(3, 180)).toBe(637);
-    expect(filmstripUnloadedWidth(3, 180, "portrait")).toBe(352);
-    expect(filmstripUnloadedWidth(0, 180)).toBe(0);
   });
 
   it("prioritizes visible filmstrip items from the viewport center", () => {
@@ -43,10 +39,12 @@ describe("loupe geometry", () => {
     ], 0, 260)).toEqual(["center", "left", "right"]);
   });
 
-  it("loads the next filmstrip page with viewport-scaled runway", () => {
-    expect(shouldFetchFilmstripPage(6_000, 1_200, 9_500)).toBe(true);
-    expect(shouldFetchFilmstripPage(5_800, 1_200, 9_500)).toBe(false);
-    expect(shouldFetchFilmstripPage(8_900, 200, 9_500)).toBe(true);
+  it("loads sequential pages until they cover a jumped virtual viewport", () => {
+    expect(shouldFetchFilmstripPage(510, 250, true, false)).toBe(true);
+    expect(shouldFetchFilmstripPage(510, 500, true, false)).toBe(true);
+    expect(shouldFetchFilmstripPage(510, 750, true, false)).toBe(false);
+    expect(shouldFetchFilmstripPage(510, 500, true, true)).toBe(false);
+    expect(shouldFetchFilmstripPage(510, 500, false, false)).toBe(false);
   });
 
   it("uses HEIF full-resolution dimensions instead of the 512 px placeholder", () => {
