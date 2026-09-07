@@ -188,14 +188,9 @@ pub(crate) const fn plan(
 
 const fn raw_preview_plan(max_size: u32, capabilities: BackendCapabilities) -> DecodePlan {
     if capabilities.raw_preview {
-        let fallback = if capabilities.system_preview {
-            Some(DecodeStep::SystemPreview { max_size })
-        } else {
-            None
-        };
-        attempts(DecodeStep::RawPreview { max_size }, fallback)
-    } else if capabilities.system_preview {
-        attempts(DecodeStep::SystemPreview { max_size }, None)
+        // Backend ordering, including Apple native fallbacks, is owned by
+        // pipeline::raw. Quick Look is not a cache-compatible RAW backend.
+        attempts(DecodeStep::RawPreview { max_size }, None)
     } else {
         DecodePlan::Unsupported
     }
@@ -266,14 +261,12 @@ mod tests {
             (AssetKind::Jpeg | AssetKind::Png | AssetKind::Webp, _) => {
                 attempts(DecodeStep::Original, None)
             }
-            (AssetKind::Raw, RenderLevel::Thumbnail) => attempts(
-                DecodeStep::RawPreview { max_size: 512 },
-                Some(DecodeStep::SystemPreview { max_size: 512 }),
-            ),
-            (AssetKind::Raw, RenderLevel::Preview) => attempts(
-                DecodeStep::RawPreview { max_size: 4_096 },
-                Some(DecodeStep::SystemPreview { max_size: 4_096 }),
-            ),
+            (AssetKind::Raw, RenderLevel::Thumbnail) => {
+                attempts(DecodeStep::RawPreview { max_size: 512 }, None)
+            }
+            (AssetKind::Raw, RenderLevel::Preview) => {
+                attempts(DecodeStep::RawPreview { max_size: 4_096 }, None)
+            }
             (AssetKind::Raw, RenderLevel::Full) => attempts(DecodeStep::RawFull, None),
             (AssetKind::Heif, RenderLevel::Thumbnail) => attempts(
                 DecodeStep::HeifPreview {
@@ -406,7 +399,7 @@ mod tests {
                     request(platform, RenderLevel::Preview),
                     capabilities,
                 ),
-                attempts(DecodeStep::SystemPreview { max_size: 4_096 }, None,)
+                DecodePlan::Unsupported
             );
 
             capabilities.system_preview = false;

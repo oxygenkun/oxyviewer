@@ -17,7 +17,7 @@ const LIBRAW_IMAGE_BITMAP: c_int = 2;
 
 pub enum Preview {
     EmbeddedJpeg(Vec<u8>),
-    Image(DynamicImage),
+    EmbeddedImage(DynamicImage),
 }
 
 #[repr(C)]
@@ -77,28 +77,22 @@ pub fn dimensions(path: &Path) -> Result<crate::ImageDimensions, String> {
     })
 }
 
-pub fn preview(
-    path: &Path,
-    max_size: u32,
-    preserve_embedded_jpeg: bool,
-) -> Result<Preview, String> {
-    match embedded_preview(path, max_size) {
-        Ok(image) if preserve_embedded_jpeg && image.image_type() == LIBRAW_IMAGE_JPEG => {
-            Ok(Preview::EmbeddedJpeg(image.data().to_vec()))
-        }
-        Ok(image) => image.decode().map(|image| Preview::Image(fit(image, max_size))),
-        Err(embedded_error) => developed_preview(path, false)
-            .map(|image| Preview::Image(fit(image, max_size)))
-            .map_err(|developed_error| {
-                format!(
-                    "embedded preview failed ({embedded_error}); RAW development failed ({developed_error})"
-                )
-            }),
+pub fn embedded(path: &Path, max_size: u32) -> Result<Preview, String> {
+    let image = embedded_preview(path, max_size)?;
+    if image.image_type() == LIBRAW_IMAGE_JPEG {
+        Ok(Preview::EmbeddedJpeg(image.data().to_vec()))
+    } else {
+        image
+            .decode()
+            .map(|image| Preview::EmbeddedImage(fit(image, max_size)))
     }
 }
 
-pub fn full(path: &Path) -> Result<DynamicImage, String> {
-    developed_preview(path, true)
+pub fn developed(path: &Path, max_size: Option<u32>) -> Result<DynamicImage, String> {
+    developed_preview(path, max_size.is_none()).map(|image| match max_size {
+        Some(size) => fit(image, size),
+        None => image,
+    })
 }
 
 fn embedded_preview(path: &Path, max_size: u32) -> Result<ProcessedImage, String> {

@@ -14,7 +14,7 @@
 
 - tauri-driver 目前只支持 Linux（WebKitGTK）和 Windows（WebView2）的
   WebDriver 协议；**macOS 的 WKWebView 没有 WebDriver 支持**，而参考机是
-  Mac，冷解码预算也主要在 macOS 原生解码路径（ImageIO/Quick Look）上。
+  Mac，冷解码预算也主要在 macOS 原生解码路径（ImageIO/Core Image）上。
 - Playwright 驱动 vite 浏览器模式必须 mock IPC，测不到 Rust 解码、缓存、
   优先级队列，冷预览指标失真。
 

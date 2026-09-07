@@ -123,7 +123,7 @@ Request + SourceFacts + BackendCapabilities
 - `cache/encode.rs` 接管通用 JPEG/ICC 编码、计时写入、字节写入与原子提交。
   macOS 计时路径继续使用 ImageIO，Windows/Linux 继续使用 image encoder；已有文件不覆盖。
 - 根模块保留调用位置，cache version、锁范围和释放时机未改。
-  Quick Look 和 HEIF 源转换仍留在原路径，未借机统一其不同写入语义。
+  当时 Quick Look 和 HEIF 源转换仍留在原路径，未借机统一其不同写入语义；后续 RAW/TIFF 路径已移除 Quick Look。
 - 迁移两项 key 测试，新增七项测试，覆盖源身份/大小/mtime、缺失源、ICC、JPEG 可解码性、
   不覆盖已有产物、失败提交清理和缺失父目录。
 - macOS：格式检查、oxy-media Clippy、14 项缓存测试、workspace 测试通过。

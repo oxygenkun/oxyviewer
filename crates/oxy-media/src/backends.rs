@@ -3,6 +3,8 @@
 //! Cross-backend HEIF fallback is owned by `pipeline::heif`.
 
 #[cfg(target_os = "macos")]
+pub(crate) mod apple_core_image;
+#[cfg(target_os = "macos")]
 pub(crate) mod apple_image_io;
 pub(crate) mod ffmpeg_heif;
 pub(crate) mod libheif;

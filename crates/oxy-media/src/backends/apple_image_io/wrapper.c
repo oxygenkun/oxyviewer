@@ -99,6 +99,124 @@ int32_t oxy_apple_image_io_decode_rgba8(const uint8_t *path, size_t path_len,
   return 0;
 }
 
+static CGImageRef oxy_image_in_srgb(CGImageRef image) {
+  size_t width = CGImageGetWidth(image);
+  size_t height = CGImageGetHeight(image);
+  if (width == 0 || height == 0 || width > SIZE_MAX / 4 ||
+      height > SIZE_MAX / (width * 4)) {
+    return NULL;
+  }
+  CGColorSpaceRef color_space = CGColorSpaceCreateWithName(kCGColorSpaceSRGB);
+  CGBitmapInfo bitmap_info =
+      kCGImageAlphaPremultipliedLast | kCGBitmapByteOrder32Big;
+  CGContextRef context = CGBitmapContextCreate(
+      NULL, width, height, 8, width * 4, color_space, bitmap_info);
+  CGColorSpaceRelease(color_space);
+  if (context == NULL) {
+    return NULL;
+  }
+  CGContextDrawImage(context, CGRectMake(0, 0, width, height), image);
+  CGImageRef converted = CGBitmapContextCreateImage(context);
+  CGContextRelease(context);
+  return converted;
+}
+
+int32_t oxy_apple_image_io_render_jpeg(
+    const uint8_t *source_path, size_t source_path_len,
+    const uint8_t *destination_path, size_t destination_path_len,
+    uint32_t max_size, uint8_t quality) {
+  CGImageSourceRef source = oxy_image_source(source_path, source_path_len);
+  if (source == NULL || CGImageSourceGetCount(source) == 0) {
+    if (source != NULL) {
+      CFRelease(source);
+    }
+    return 1;
+  }
+
+  if (max_size == 0) {
+    CFDictionaryRef properties =
+        CGImageSourceCopyPropertiesAtIndex(source, 0, NULL);
+    if (properties != NULL) {
+      CFNumberRef width = CFDictionaryGetValue(properties,
+                                               kCGImagePropertyPixelWidth);
+      CFNumberRef height = CFDictionaryGetValue(properties,
+                                                kCGImagePropertyPixelHeight);
+      int64_t width_value = 0;
+      int64_t height_value = 0;
+      if (width != NULL) {
+        CFNumberGetValue(width, kCFNumberSInt64Type, &width_value);
+      }
+      if (height != NULL) {
+        CFNumberGetValue(height, kCFNumberSInt64Type, &height_value);
+      }
+      int64_t longest = width_value > height_value ? width_value : height_value;
+      if (longest > 0 && longest <= UINT32_MAX) {
+        max_size = (uint32_t)longest;
+      }
+      CFRelease(properties);
+    }
+  }
+  if (max_size == 0) {
+    CFRelease(source);
+    return 2;
+  }
+
+  CFNumberRef size = CFNumberCreate(kCFAllocatorDefault, kCFNumberSInt32Type,
+                                    &max_size);
+  const void *keys[] = {
+      kCGImageSourceCreateThumbnailFromImageAlways,
+      kCGImageSourceCreateThumbnailWithTransform,
+      kCGImageSourceThumbnailMaxPixelSize,
+      kCGImageSourceShouldCacheImmediately,
+  };
+  const void *values[] = {kCFBooleanTrue, kCFBooleanTrue, size, kCFBooleanTrue};
+  CFDictionaryRef decode_options = CFDictionaryCreate(
+      kCFAllocatorDefault, keys, values, 4, &kCFTypeDictionaryKeyCallBacks,
+      &kCFTypeDictionaryValueCallBacks);
+  CGImageRef image =
+      CGImageSourceCreateThumbnailAtIndex(source, 0, decode_options);
+  CFRelease(decode_options);
+  CFRelease(size);
+  CFRelease(source);
+  if (image == NULL) {
+    return 3;
+  }
+  CGImageRef srgb_image = oxy_image_in_srgb(image);
+  CGImageRelease(image);
+  if (srgb_image == NULL) {
+    return 4;
+  }
+
+  CFURLRef destination_url = CFURLCreateFromFileSystemRepresentation(
+      kCFAllocatorDefault, destination_path, destination_path_len, false);
+  if (destination_url == NULL) {
+    CGImageRelease(srgb_image);
+    return 5;
+  }
+  CGImageDestinationRef destination = CGImageDestinationCreateWithURL(
+      destination_url, CFSTR("public.jpeg"), 1, NULL);
+  CFRelease(destination_url);
+  if (destination == NULL) {
+    CGImageRelease(srgb_image);
+    return 6;
+  }
+  float quality_value = (float)quality / 100.0f;
+  CFNumberRef quality_number = CFNumberCreate(
+      kCFAllocatorDefault, kCFNumberFloatType, &quality_value);
+  const void *output_keys[] = {kCGImageDestinationLossyCompressionQuality};
+  const void *output_values[] = {quality_number};
+  CFDictionaryRef output_options = CFDictionaryCreate(
+      kCFAllocatorDefault, output_keys, output_values, 1,
+      &kCFTypeDictionaryKeyCallBacks, &kCFTypeDictionaryValueCallBacks);
+  CGImageDestinationAddImage(destination, srgb_image, output_options);
+  bool finalized = CGImageDestinationFinalize(destination);
+  CFRelease(output_options);
+  CFRelease(quality_number);
+  CFRelease(destination);
+  CGImageRelease(srgb_image);
+  return finalized ? 0 : 7;
+}
+
 int32_t oxy_apple_image_io_write_jpeg(const uint8_t *path, size_t path_len,
                                       const uint8_t *pixels, size_t pixels_len,
                                       uint32_t width, uint32_t height,

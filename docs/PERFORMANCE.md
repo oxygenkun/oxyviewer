@@ -467,13 +467,25 @@ landed since the original investigation. Remaining improvements are:
    end-to-end fixture budget test.
 2. Add cooperative cancellation checkpoints to the expensive development path;
    current scheduling can reorder pending work but does not preempt native decode.
-3. Benchmark the proposed macOS Core Image full-size backend against LibRaw
-   before changing the portable full-detail fallback.
+3. Extend the initial macOS Core Image/ImageIO/LibRaw comparison to additional
+   camera vendors and verify color, orientation, detail, and browser paint time.
 4. Increase thumbnail concurrency only after measuring memory and storage
    pressure. The current single thumbnail lane protects against many concurrent
    half-size RAW fallbacks.
 5. Evaluate RawSpeed/OpenMP only for the measured half-size fallback bottleneck;
    neither improves the normal embedded-preview path.
+
+- 2026-09-06: Compared cache-ready output for the same 42 MiB, 4672x7008 Sony
+  ARW over five serial runs on the reference Apple Silicon Mac. Warm medians at
+  512/4096/full were 350/1381/1619 ms for ImageIO, 455/704/530 ms for Core
+  Image RAW, and 661/4298/15125 ms for LibRaw development. Quick Look measured
+  221/4267/8840 ms but produced 275 KiB/52 MiB/148 MiB PNG artifacts, so it was
+  removed from production planning because it does not satisfy the JPEG cache
+  and transport contract. The measured macOS fallback order is ImageIO -> Core
+  Image -> LibRaw for 512, and Core Image -> ImageIO -> LibRaw for 4096/full.
+  These figures measure native decode, scale, JPEG/PNG encode, and file output;
+  they do not include WebView decode/paint and are not yet a multi-vendor
+  fidelity qualification.
 - 2026-06-12: Full-resolution HEIF display now has a cancellable tile session
   boundary and keeps the 4096 px preview visible during compatibility decode.
   The portable libheif/libde265 backend does not meet the `<1s` hardware target;

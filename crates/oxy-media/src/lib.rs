@@ -10,10 +10,10 @@ mod pipeline;
 mod presentation;
 mod probe;
 
-#[cfg(target_os = "macos")]
-use backends::apple_image_io;
 #[cfg(target_os = "windows")]
 use backends::windows_wic;
+#[cfg(target_os = "macos")]
+use backends::{apple_core_image, apple_image_io};
 use backends::{ffmpeg_heif, libheif, libraw};
 use formats::heif::quirks::sony;
 use pipeline::{
@@ -25,6 +25,7 @@ use pipeline::{
         BackendCapabilities, DecodePlan, DecodeStep, PlannedPriority, Platform, Request,
         SourceFacts, plan,
     },
+    raw::{RawBackend as PlannedRawBackend, backend_plan as raw_backend_plan},
 };
 use presentation::{
     CAMERA_JPEG, HEIF_DECODED_JPEG, RAW_DEVELOPED_JPEG, camera_preview_can_satisfy_raw_full,
@@ -44,19 +45,16 @@ use decode_control::{acquire_file_lock, acquire_raw_full_decode};
 pub use heif_service::{DEFAULT_TILE_SIZE, HeifBackend, HeifDecodeService, HeifTile, TileSink};
 use image::{DynamicImage, ImageReader};
 use oxy_domain::{PreviewDiagnostics, PreviewKind, PreviewResult, RenderLevel};
-#[cfg(target_os = "macos")]
-use std::process::{Command, Stdio};
 use std::{
     fs::{self, File, OpenOptions},
-    io::BufReader,
+    io::{BufReader, Read, Seek, SeekFrom},
     path::{Path, PathBuf},
     time::Instant,
 };
-use tempfile::NamedTempFile;
 use thiserror::Error;
 
-const LIBRAW_CACHE_VERSION: &str = "libraw-0.22.2-v7-camera-or-developed-srgb";
-const LIBRAW_FULL_CACHE_VERSION: &str = "libraw-0.22.2-full-detail-v3-srgb";
+const LIBRAW_CACHE_VERSION: &str = "raw-native-v8-camera-or-developed-srgb";
+const LIBRAW_FULL_CACHE_VERSION: &str = "raw-native-full-v4-srgb";
 // Bumped from `libheif-1.23-sdr-v1` (16-bit PNG) to an 8-bit sRGB JPEG with an
 // embedded ICC profile, unifying the cache format across every preview stage
 // and format. Old PNG caches are rebuildable and simply ignored.
@@ -64,7 +62,7 @@ const HEIF_FULL_CACHE_VERSION: &str = "heif-source-jpeg-v2";
 // v9 separates positively identified Sony camera JPEGs from decoded primary
 // images and records the display-oriented SDR/sRGB presentation policy.
 const HEIF_CACHE_VERSION: &str = "heif-native-preview-v9-oriented-srgb";
-const SYSTEM_CACHE_VERSION: &str = "system-preview-v2";
+const SYSTEM_CACHE_VERSION: &str = "apple-image-io-preview-v3-jpeg";
 /// Cache sizes shared by every format's progressive pipeline. A request for a
 /// smaller size may be satisfied by any larger cached entry (see
 /// [`larger_cached_preview`]).
@@ -72,7 +70,7 @@ const PREVIEW_CACHE_SIZES: [u32; 2] = [512, 4_096];
 
 /// Included in persisted image projection identities so behavior-changing
 /// media policy cannot reuse a ready projection that points at an older cache.
-pub const PREVIEW_POLICY_VERSION: &str = "media-phase-d-v1";
+pub const PREVIEW_POLICY_VERSION: &str = "media-raw-native-v2";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ImageDimensions {
@@ -147,88 +145,51 @@ pub fn raw_preview_with_priority(
     let max_size = max_size.max(1);
     fs::create_dir_all(cache_dir)?;
     let cache_key = preview_cache_key(path, LIBRAW_CACHE_VERSION, max_size)?;
-    for (suffix, kind) in [
-        ("embedded.jpg", PreviewKind::Embedded),
-        ("developed.jpg", PreviewKind::Developed),
-    ] {
-        let destination = cache_dir.join(format!("{cache_key}.{suffix}"));
-        if destination.is_file() {
-            return preview_result(destination, kind);
-        }
+    if let Some(result) = cached_raw_result(cache_dir, &cache_key)? {
+        return Ok(result);
     }
-    // Up-tier reuse: a larger cached RAW preview can satisfy this request
-    // without re-decoding. Mirrors the HEIF path's behavior.
     if let Some(result) = larger_cached_raw_preview(path, cache_dir, max_size)? {
         return Ok(result);
     }
 
-    // Unified decode gate: visible/loupe thumbnails jump ahead of background
-    // overscan. Per-file lock coalesces duplicate work for the same source.
     let _decode_permit = acquire_decode(priority);
-    for (suffix, kind) in [
-        ("embedded.jpg", PreviewKind::Embedded),
-        ("developed.jpg", PreviewKind::Developed),
-    ] {
-        let destination = cache_dir.join(format!("{cache_key}.{suffix}"));
-        if destination.is_file() {
-            return preview_result(destination, kind);
-        }
-    }
-    if let Some(result) = larger_cached_raw_preview(path, cache_dir, max_size)? {
-        return Ok(result);
-    }
-
     let source_lock_key = preview_cache_key(path, "raw-source-decode", 0)?;
     let (_lock_arc, _decode_guard) = acquire_file_lock(&source_lock_key);
-    for (suffix, kind) in [
-        ("embedded.jpg", PreviewKind::Embedded),
-        ("developed.jpg", PreviewKind::Developed),
-    ] {
-        let destination = cache_dir.join(format!("{cache_key}.{suffix}"));
-        if destination.is_file() {
-            return preview_result(destination, kind);
-        }
+    if let Some(result) = cached_raw_result(cache_dir, &cache_key)? {
+        return Ok(result);
     }
     if let Some(result) = larger_cached_raw_preview(path, cache_dir, max_size)? {
         return Ok(result);
     }
 
-    // Preserve the size-selected camera JPEG at every semantic level. Decoding,
-    // resizing, and re-encoding it would serialize a cold ARW grid for no
-    // visual benefit; the WebView can scale the artifact like the HEIF path.
-    let preview = libraw::preview(path, max_size, true).map_err(|message| MediaError::LibRaw {
-        path: path.to_owned(),
-        message,
-    })?;
-    let (destination, kind) = match preview {
-        libraw::Preview::EmbeddedJpeg(data) => {
-            let destination = cache_dir.join(format!("{cache_key}.embedded.jpg"));
-            write_bytes_atomically(&data, &destination)?;
-            (destination, PreviewKind::Embedded)
+    match cache_raw_embedded(path, cache_dir, &cache_key, max_size) {
+        Ok(result) => Ok(result),
+        Err(embedded_error) => {
+            let level = if max_size <= 512 {
+                RenderLevel::Thumbnail
+            } else {
+                RenderLevel::Preview
+            };
+            render_raw_developed(
+                path,
+                cache_dir,
+                &cache_key,
+                Some(max_size),
+                level,
+                90,
+                Some(embedded_error.to_string()),
+            )
         }
-        libraw::Preview::Image(image) => {
-            let destination = cache_dir.join(format!("{cache_key}.developed.jpg"));
-            write_jpeg_atomically(&image, &destination, 90, RAW_DEVELOPED_JPEG)?;
-            (destination, PreviewKind::Developed)
-        }
-    };
-    preview_result(destination, kind)
+    }
 }
 
 pub fn raw_full(path: &Path, cache_dir: &Path) -> Result<PreviewResult, MediaError> {
     fs::create_dir_all(cache_dir)?;
-    let destination = cache_dir.join(format!(
-        "{}.jpg",
-        preview_cache_key(path, LIBRAW_FULL_CACHE_VERSION, 0)?
-    ));
-
-    // Sony ARW files normally contain a camera-rendered JPEG at effectively
-    // the sensor's full resolution. Fast photo viewers use it for immediate
-    // 1:1 inspection. Reuse the loupe cache (or extract it in milliseconds)
-    // instead of demosaicing the frame while the user zooms and pans.
     let source_size = raw_dimensions(path)?;
-    let embedded = raw_preview_with_priority(path, cache_dir, 4_096, DecodePriority::Foreground)?;
-    if embedded.kind == PreviewKind::Embedded
+    let preview_key = preview_cache_key(path, LIBRAW_CACHE_VERSION, 4_096)?;
+    let embedded = cached_raw_embedded(cache_dir, &preview_key)?
+        .or_else(|| cache_raw_embedded(path, cache_dir, &preview_key, 4_096).ok());
+    if let Some(embedded) = embedded
         && covers_raw_source(
             ImageDimensions {
                 width: embedded.width,
@@ -240,26 +201,156 @@ pub fn raw_full(path: &Path, cache_dir: &Path) -> Result<PreviewResult, MediaErr
         return Ok(embedded);
     }
 
-    // Only consult an older developed cache when the embedded image cannot
-    // provide near-full detail. This ordering also upgrades existing installs:
-    // a large, slow-to-load full JPEG from an earlier version no longer masks
-    // the much smaller camera JPEG fast path.
-    if destination.is_file() {
-        return preview_result(destination, PreviewKind::Developed);
+    let cache_key = preview_cache_key(path, LIBRAW_FULL_CACHE_VERSION, 0)?;
+    if let Some(result) = cached_raw_developed(cache_dir, &cache_key)? {
+        return Ok(result);
     }
-
     let _decode_guard = acquire_raw_full_decode();
-    if destination.is_file() {
-        return preview_result(destination, PreviewKind::Developed);
+    if let Some(result) = cached_raw_developed(cache_dir, &cache_key)? {
+        return Ok(result);
     }
+    render_raw_developed(
+        path,
+        cache_dir,
+        &cache_key,
+        None,
+        RenderLevel::Full,
+        95,
+        None,
+    )
+}
 
-    let image = libraw::full(path).map_err(|message| MediaError::LibRaw {
+const RAW_DEVELOPED_SUFFIXES: [&str; 3] =
+    ["core-image.jpg", "image-io.jpg", "libraw-developed.jpg"];
+
+fn cached_raw_embedded(
+    cache_dir: &Path,
+    cache_key: &str,
+) -> Result<Option<PreviewResult>, MediaError> {
+    let path = cache_dir.join(format!("{cache_key}.embedded.jpg"));
+    path.is_file()
+        .then(|| preview_result(path, PreviewKind::Embedded))
+        .transpose()
+}
+
+fn cached_raw_developed(
+    cache_dir: &Path,
+    cache_key: &str,
+) -> Result<Option<PreviewResult>, MediaError> {
+    for suffix in RAW_DEVELOPED_SUFFIXES {
+        let path = cache_dir.join(format!("{cache_key}.{suffix}"));
+        if path.is_file() {
+            return preview_result(path, PreviewKind::Developed).map(Some);
+        }
+    }
+    Ok(None)
+}
+
+fn cached_raw_result(
+    cache_dir: &Path,
+    cache_key: &str,
+) -> Result<Option<PreviewResult>, MediaError> {
+    if let Some(result) = cached_raw_embedded(cache_dir, cache_key)? {
+        return Ok(Some(result));
+    }
+    cached_raw_developed(cache_dir, cache_key)
+}
+
+fn cache_raw_embedded(
+    path: &Path,
+    cache_dir: &Path,
+    cache_key: &str,
+    max_size: u32,
+) -> Result<PreviewResult, MediaError> {
+    let destination = cache_dir.join(format!("{cache_key}.embedded.jpg"));
+    match libraw::embedded(path, max_size).map_err(|message| MediaError::LibRaw {
         path: path.to_owned(),
         message,
-    })?;
-    let image = image.unsharpen(0.8, 2);
-    write_jpeg_atomically(&image, &destination, 95, RAW_DEVELOPED_JPEG)?;
-    preview_result(destination, PreviewKind::Developed)
+    })? {
+        libraw::Preview::EmbeddedJpeg(data) => write_bytes_atomically(&data, &destination)?,
+        libraw::Preview::EmbeddedImage(image) => {
+            write_jpeg_atomically(&image, &destination, 90, CAMERA_JPEG)?;
+        }
+    }
+    preview_result(destination, PreviewKind::Embedded)
+}
+
+fn render_raw_developed(
+    path: &Path,
+    cache_dir: &Path,
+    cache_key: &str,
+    max_size: Option<u32>,
+    level: RenderLevel,
+    quality: u8,
+    initial_error: Option<String>,
+) -> Result<PreviewResult, MediaError> {
+    let mut errors = initial_error.into_iter().collect::<Vec<_>>();
+    for backend in raw_backend_plan(current_platform(), level) {
+        let suffix = match backend {
+            PlannedRawBackend::AppleCoreImage => "core-image.jpg",
+            PlannedRawBackend::AppleImageIo => "image-io.jpg",
+            PlannedRawBackend::LibRawDevelopment => "libraw-developed.jpg",
+        };
+        let destination = cache_dir.join(format!("{cache_key}.{suffix}"));
+        if destination.is_file() {
+            return preview_result(destination, PreviewKind::Developed);
+        }
+        let temporary = tempfile::Builder::new()
+            .suffix(".jpg")
+            .tempfile_in(cache_dir)?;
+        let result = match backend {
+            #[cfg(target_os = "macos")]
+            PlannedRawBackend::AppleCoreImage => {
+                apple_core_image::render_raw_jpeg(path, temporary.path(), max_size, quality)
+            }
+            #[cfg(not(target_os = "macos"))]
+            PlannedRawBackend::AppleCoreImage => Err(MediaError::NativeDecoderUnavailable),
+            #[cfg(target_os = "macos")]
+            PlannedRawBackend::AppleImageIo => {
+                apple_image_io::render_jpeg(path, temporary.path(), max_size, quality)
+            }
+            #[cfg(not(target_os = "macos"))]
+            PlannedRawBackend::AppleImageIo => Err(MediaError::NativeDecoderUnavailable),
+            PlannedRawBackend::LibRawDevelopment => libraw::developed(path, max_size)
+                .map_err(|message| MediaError::LibRaw {
+                    path: path.to_owned(),
+                    message,
+                })
+                .and_then(|image| {
+                    let image = if max_size.is_none() {
+                        image.unsharpen(0.8, 2)
+                    } else {
+                        image
+                    };
+                    write_jpeg_atomically(&image, temporary.path(), quality, RAW_DEVELOPED_JPEG)
+                }),
+        };
+        match result {
+            Ok(()) if has_complete_jpeg_markers(temporary.path())? => {
+                persist_atomically(temporary, &destination)?;
+                return preview_result(destination, PreviewKind::Developed);
+            }
+            Ok(()) => errors.push(format!("{backend:?}: produced a truncated JPEG")),
+            Err(error) => errors.push(format!("{backend:?}: {error}")),
+        }
+    }
+    Err(MediaError::BackendAttempts {
+        attempts: errors.join("; "),
+        source: Box::new(MediaError::NativeDecoderUnavailable),
+    })
+}
+
+fn has_complete_jpeg_markers(path: &Path) -> Result<bool, std::io::Error> {
+    let mut file = File::open(path)?;
+    if file.metadata()?.len() < 4 {
+        return Ok(false);
+    }
+    let mut start = [0_u8; 2];
+    file.read_exact(&mut start)?;
+    file.seek(SeekFrom::End(-2))?;
+    let mut end = [0_u8; 2];
+    file.read_exact(&mut end)?;
+    Ok(start == [0xff, 0xd8] && end == [0xff, 0xd9])
 }
 
 fn covers_raw_source(candidate: ImageDimensions, source: ImageDimensions) -> bool {
@@ -640,10 +731,11 @@ fn larger_cached_raw_preview(
         .filter(|&size| size > max_size)
     {
         let key = preview_cache_key(path, LIBRAW_CACHE_VERSION, candidate_size)?;
-        for (suffix, kind) in [
-            ("embedded.jpg", PreviewKind::Embedded),
-            ("developed.jpg", PreviewKind::Developed),
-        ] {
+        for (suffix, kind) in std::iter::once(("embedded.jpg", PreviewKind::Embedded)).chain(
+            RAW_DEVELOPED_SUFFIXES
+                .into_iter()
+                .map(|suffix| (suffix, PreviewKind::Developed)),
+        ) {
             let candidate = cache_dir.join(format!("{key}.{suffix}"));
             if candidate.is_file() {
                 return preview_result(candidate, kind).map(Some);
@@ -660,13 +752,23 @@ pub fn system_preview(
 ) -> Result<PreviewResult, MediaError> {
     fs::create_dir_all(cache_dir)?;
     let destination = cache_dir.join(format!(
-        "{}.png",
+        "{}.jpg",
         preview_cache_key(path, SYSTEM_CACHE_VERSION, max_size)?
     ));
     if destination.is_file() {
         return preview_result(destination, PreviewKind::System);
     }
-    generate_system_preview(path, &destination, max_size)?;
+    let temporary = tempfile::Builder::new()
+        .suffix(".jpg")
+        .tempfile_in(cache_dir)?;
+    generate_system_preview(path, temporary.path(), max_size)?;
+    if !has_complete_jpeg_markers(temporary.path())? {
+        return Err(MediaError::PreviewGenerationFailed {
+            path: path.to_owned(),
+            message: "native preview produced a truncated JPEG".into(),
+        });
+    }
+    persist_atomically(temporary, &destination)?;
     preview_result(destination, PreviewKind::System)
 }
 
@@ -843,38 +945,7 @@ fn generate_system_preview(
     destination: &Path,
     max_size: u32,
 ) -> Result<(), MediaError> {
-    let output = tempfile::tempdir()?;
-    let result = Command::new("/usr/bin/qlmanage")
-        .arg("-t")
-        .arg("-s")
-        .arg(max_size.to_string())
-        .arg("-o")
-        .arg(output.path())
-        .arg(source)
-        .stdout(Stdio::null())
-        .stderr(Stdio::piped())
-        .output()?;
-    if !result.status.success() {
-        return Err(MediaError::PreviewGenerationFailed {
-            path: source.to_owned(),
-            message: String::from_utf8_lossy(&result.stderr).trim().to_owned(),
-        });
-    }
-    let generated = fs::read_dir(output.path())?
-        .filter_map(Result::ok)
-        .map(|entry| entry.path())
-        .find(|path| path.is_file())
-        .ok_or_else(|| MediaError::PreviewGenerationFailed {
-            path: source.to_owned(),
-            message: "Quick Look did not produce a preview".into(),
-        })?;
-    let temporary = NamedTempFile::new_in(destination.parent().unwrap_or_else(|| Path::new(".")))?;
-    fs::copy(generated, temporary.path())?;
-    match temporary.persist_noclobber(destination) {
-        Ok(_) => Ok(()),
-        Err(_error) if destination.is_file() => Ok(()),
-        Err(error) => Err(MediaError::Io(error.error)),
-    }
+    apple_image_io::render_jpeg(source, destination, Some(max_size), 90)
 }
 
 #[cfg(any(target_os = "windows", target_os = "linux"))]
@@ -1144,9 +1215,75 @@ mod tests {
         let path = directory.path().join("broken.arw");
         fs::write(&path, b"not a raw image").unwrap();
 
-        let error = libraw::preview(&path, 4_096, true).err().unwrap();
-        assert!(error.contains("embedded preview failed"));
-        assert!(error.contains("RAW development failed"));
+        let error = raw_preview(&path, directory.path(), 4_096)
+            .err()
+            .unwrap()
+            .to_string();
+        assert!(error.contains("LibRaw failed"));
+        #[cfg(target_os = "macos")]
+        {
+            assert!(error.contains("AppleCoreImage"));
+            assert!(error.contains("AppleImageIo"));
+        }
+        assert!(error.contains("LibRawDevelopment"));
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    #[ignore = "writes comparison JPEGs to OXY_RAW_COMPARISON_DIR"]
+    fn writes_raw_backend_comparison_artifacts() {
+        use std::fmt::Write as _;
+
+        let source =
+            fs::canonicalize(workspace_path(std::env::var_os("OXY_RAW_FIXTURE").unwrap())).unwrap();
+        let output = PathBuf::from(std::env::var_os("OXY_RAW_COMPARISON_DIR").unwrap());
+        fs::create_dir_all(&output).unwrap();
+        let mut manifest = String::from("backend\tlevel\twidth\theight\tbytes\telapsed_ms\n");
+
+        for (label, max_size) in [
+            ("thumbnail-512", Some(512)),
+            ("preview-4096", Some(4_096)),
+            ("full", None),
+        ] {
+            for backend in [
+                PlannedRawBackend::AppleCoreImage,
+                PlannedRawBackend::AppleImageIo,
+                PlannedRawBackend::LibRawDevelopment,
+            ] {
+                let backend_name = match backend {
+                    PlannedRawBackend::AppleCoreImage => "core-image",
+                    PlannedRawBackend::AppleImageIo => "image-io",
+                    PlannedRawBackend::LibRawDevelopment => "libraw",
+                };
+                let destination = output.join(format!("{backend_name}-{label}.jpg"));
+                let started = Instant::now();
+                match backend {
+                    PlannedRawBackend::AppleCoreImage => {
+                        apple_core_image::render_raw_jpeg(&source, &destination, max_size, 90)
+                            .unwrap();
+                    }
+                    PlannedRawBackend::AppleImageIo => {
+                        apple_image_io::render_jpeg(&source, &destination, max_size, 90).unwrap();
+                    }
+                    PlannedRawBackend::LibRawDevelopment => {
+                        let image = libraw::developed(&source, max_size).unwrap();
+                        write_jpeg_atomically(&image, &destination, 90, RAW_DEVELOPED_JPEG)
+                            .unwrap();
+                    }
+                }
+                let result = preview_result(destination.clone(), PreviewKind::Developed).unwrap();
+                writeln!(
+                    manifest,
+                    "{backend_name}\t{label}\t{}\t{}\t{}\t{}",
+                    result.width,
+                    result.height,
+                    fs::metadata(destination).unwrap().len(),
+                    started.elapsed().as_millis(),
+                )
+                .unwrap();
+            }
+        }
+        fs::write(output.join("manifest.tsv"), manifest).unwrap();
     }
 
     #[test]
@@ -1176,9 +1313,11 @@ mod tests {
         let raw_path =
             fs::canonicalize(workspace_path(std::env::var_os("OXY_RAW_FIXTURE").unwrap())).unwrap();
         let directory = tempfile::tempdir().unwrap();
-        let embedded = match libraw::preview(&raw_path, 4_096, true).unwrap() {
+        let embedded = match libraw::embedded(&raw_path, 4_096).unwrap() {
             libraw::Preview::EmbeddedJpeg(data) => data,
-            libraw::Preview::Image(_) => panic!("fixture did not expose an embedded JPEG"),
+            libraw::Preview::EmbeddedImage(_) => {
+                panic!("fixture did not expose an embedded JPEG")
+            }
         };
 
         let preview = raw_preview(&raw_path, directory.path(), 4_096).unwrap();
@@ -1203,7 +1342,7 @@ mod tests {
 
         assert!(
             matches!(
-                libraw::preview(&raw_path, 512, true).unwrap(),
+                libraw::embedded(&raw_path, 512).unwrap(),
                 libraw::Preview::EmbeddedJpeg(_)
             ),
             "thumbnail requests must preserve the selected embedded JPEG"
@@ -1265,8 +1404,8 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "requires OXY_HEIF_FIXTURE and macOS Quick Look"]
-    fn generates_large_system_fallback_for_heif_fixture() {
+    #[ignore = "requires OXY_HEIF_FIXTURE and macOS ImageIO"]
+    fn generates_large_image_io_fallback_for_heif_fixture() {
         let heif_path = fs::canonicalize(workspace_path(
             std::env::var_os("OXY_HEIF_FIXTURE").unwrap(),
         ))

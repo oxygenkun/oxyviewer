@@ -27,7 +27,7 @@ HEVC 解码器或操作系统预览服务。即使原文件可解码，也不应
 | JPEG/PNG/WebP | 原文件 URL | 原文件 URL | 原文件 URL |
 | RAW | LibRaw 512 | LibRaw 4096 | 近全尺寸内嵌 JPEG；不足时 full development |
 | HEIF/HIF | 内嵌 160×120 JPEG | 复用同一内嵌 JPEG | 源 HEIF 直接转换的完整 JPEG |
-| TIFF | 系统 512 | 系统 512 | 系统 4096（当前最佳可用表示） |
+| TIFF | macOS ImageIO JPEG 512；Windows/Linux 暂不支持 | macOS ImageIO JPEG 512；Windows/Linux 暂不支持 | macOS ImageIO JPEG 4096；Windows/Linux 暂不支持 |
 
 交互图不随格式改变：网格/列表只进入 `thumbnail`；放大镜固定执行 `preview → full`。
 前端 `renderPlan(kind, surface, platform)` 把等级映射到 renderer 类；后端
@@ -205,8 +205,10 @@ RAW `thumbnail` 映射 512，`preview` 映射 4096。thumbnail 请求让 LibRaw 
 像素转换/half-size development 回退。放大镜直接从 `preview` 开始，因为 Sony ARW
 常见的近全尺寸内嵌 JPEG 可以在数毫秒内直接复制；先把它解码、缩放并重编码成 512 反而更慢。
 4096 产物保留合适的
-内嵌 JPEG，避免无意义的解码、缩放、重编码。最终结果进入 JPEG 缓存，macOS Quick Look 是
-兼容性 fallback。
+内嵌 JPEG，避免无意义的解码、缩放、重编码。内嵌表示失败后，macOS 的 512 请求按
+ImageIO → Core Image → LibRaw development 回退，4096 请求按 Core Image → ImageIO →
+LibRaw development 回退；Windows/Linux 使用 LibRaw development。所有生成结果均进入 JPEG
+缓存，不再调用只能生成 PNG 的 Quick Look。
 
 ### 8.2 full
 

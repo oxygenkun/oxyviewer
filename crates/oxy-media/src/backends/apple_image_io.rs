@@ -32,6 +32,14 @@ unsafe extern "C" {
         width: *mut u32,
         height: *mut u32,
     ) -> i32;
+    fn oxy_apple_image_io_render_jpeg(
+        source_path: *const u8,
+        source_path_len: usize,
+        destination_path: *const u8,
+        destination_path_len: usize,
+        max_size: u32,
+        quality: u8,
+    ) -> i32;
     fn oxy_apple_image_io_write_jpeg(
         path: *const u8,
         path_len: usize,
@@ -112,6 +120,33 @@ pub fn decode_rgba8(path: &Path, max_size: u32) -> Result<DynamicImage, MediaErr
     let image = ImageBuffer::<Rgba<u8>, Vec<u8>>::from_vec(width, height, data)
         .ok_or_else(|| native_error("decoded image buffer dimensions do not match"))?;
     Ok(DynamicImage::ImageRgba8(image))
+}
+
+pub fn render_jpeg(
+    source: &Path,
+    destination: &Path,
+    max_size: Option<u32>,
+    quality: u8,
+) -> Result<(), MediaError> {
+    let source = source.as_os_str().as_bytes();
+    let destination = destination.as_os_str().as_bytes();
+    let status = unsafe {
+        oxy_apple_image_io_render_jpeg(
+            source.as_ptr(),
+            source.len(),
+            destination.as_ptr(),
+            destination.len(),
+            max_size.unwrap_or(0),
+            quality,
+        )
+    };
+    if status == 0 {
+        Ok(())
+    } else {
+        Err(native_error(format!(
+            "render JPEG failed at native stage {status}"
+        )))
+    }
 }
 
 pub fn write_jpeg(image: &DynamicImage, path: &Path, quality: u8) -> Result<(), MediaError> {

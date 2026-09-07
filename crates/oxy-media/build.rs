@@ -8,7 +8,7 @@ fn main() {
     let libraw_dir = manifest_dir.join("../../3rdpart/libraw");
     let wrapper = manifest_dir.join("src/backends/libraw/wrapper.cpp");
 
-    build_apple_image_io(&manifest_dir);
+    build_apple_media(&manifest_dir);
 
     println!("cargo:rerun-if-changed={}", wrapper.display());
     println!(
@@ -42,7 +42,7 @@ fn main() {
     build.compile("oxy_libraw");
 }
 
-fn build_apple_image_io(manifest_dir: &Path) {
+fn build_apple_media(manifest_dir: &Path) {
     let target_os = env::var("CARGO_CFG_TARGET_OS").expect("Cargo must provide the target OS");
     match target_os.as_str() {
         "windows" | "linux" => return,
@@ -50,17 +50,28 @@ fn build_apple_image_io(manifest_dir: &Path) {
         target_os => panic!("oxy-media does not support target OS {target_os}"),
     }
 
-    let wrapper = manifest_dir.join("src/backends/apple_image_io/wrapper.c");
-    println!("cargo:rerun-if-changed={}", wrapper.display());
+    let image_io_wrapper = manifest_dir.join("src/backends/apple_image_io/wrapper.c");
+    let core_image_wrapper = manifest_dir.join("src/backends/apple_core_image/wrapper.m");
+    println!("cargo:rerun-if-changed={}", image_io_wrapper.display());
+    println!("cargo:rerun-if-changed={}", core_image_wrapper.display());
     println!("cargo:rustc-link-lib=framework=CoreFoundation");
     println!("cargo:rustc-link-lib=framework=CoreGraphics");
+    println!("cargo:rustc-link-lib=framework=CoreImage");
+    println!("cargo:rustc-link-lib=framework=Foundation");
     println!("cargo:rustc-link-lib=framework=ImageIO");
     println!("cargo:rustc-link-lib=framework=Accelerate");
     cc::Build::new()
         .warnings(false)
         .extra_warnings(false)
-        .file(wrapper)
+        .file(image_io_wrapper)
         .compile("oxy_apple_image_io");
+    cc::Build::new()
+        .warnings(false)
+        .extra_warnings(false)
+        .flag("-fblocks")
+        .flag("-fobjc-arc")
+        .file(core_image_wrapper)
+        .compile("oxy_apple_core_image");
 }
 
 fn add_cpp_sources(build: &mut cc::Build, directory: &Path) {

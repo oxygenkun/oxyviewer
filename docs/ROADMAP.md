@@ -75,7 +75,7 @@ now fixture coverage, cancellation, platform packaging, and conflict safety.
 - [x] Direct JPEG/PNG/WebP display and semantic TIFF preview routing
 - [x] Bundled LibRaw 0.22.2 build, dimensions, embedded RAW preview, half-size
   fallback, 512/4096 caches, and full-resolution development
-- [x] Near-full-size RAW embedded-JPEG fast path and macOS Quick Look fallback
+- [x] Near-full-size RAW embedded-JPEG fast path and measured macOS ImageIO/Core Image RAW JPEG fallbacks
 - [x] HEIF embedded-preview fast path, ICC/HDR-to-SDR conversion, and bounded
   source decoding
 - [x] Direct ImageIO full JPEG on macOS; progressive RGBA/JPEG tile sessions on
@@ -119,8 +119,8 @@ now fixture coverage, cancellation, platform packaging, and conflict safety.
 ### Secondary-format reliability
 
 - [ ] Implement and validate a TIFF preview backend on Windows and Linux. The
-  current generated system-preview implementation uses macOS Quick Look; the
-  other platform stubs report that no native decoder is available.
+  current macOS implementation generates cache-compatible JPEG through ImageIO;
+  the other platform stubs report that no native decoder is available.
 
 ### Metadata reliability
 

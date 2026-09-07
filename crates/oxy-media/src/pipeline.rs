@@ -2,3 +2,4 @@
 
 pub(crate) mod heif;
 pub(crate) mod planner;
+pub(crate) mod raw;
