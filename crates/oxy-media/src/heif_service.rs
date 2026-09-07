@@ -674,8 +674,10 @@ mod tests {
 
     #[test]
     fn successful_begin_supersedes_old_session_and_rejects_late_tiles() {
-        let fixture =
-            Path::new(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/DSC00449.HIF");
+        let Some(fixture) = crate::sony_hif_fixture() else {
+            eprintln!("skipping: Sony HIF fixture unavailable (set OXY_HIF_FIXTURE)");
+            return;
+        };
         let service = HeifDecodeService::default();
         let first = service.begin(&fixture, 1, false, false).unwrap();
         let first_cancelled = {
@@ -718,8 +720,10 @@ mod tests {
 
     #[test]
     fn failed_begin_does_not_replace_the_active_session() {
-        let fixture =
-            Path::new(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/DSC00449.HIF");
+        let Some(fixture) = crate::sony_hif_fixture() else {
+            eprintln!("skipping: Sony HIF fixture unavailable (set OXY_HIF_FIXTURE)");
+            return;
+        };
         let service = HeifDecodeService::default();
         let first = service.begin(&fixture, 1, false, false).unwrap();
 
@@ -730,8 +734,10 @@ mod tests {
 
     #[test]
     fn cancelled_session_does_not_publish_completion() {
-        let fixture =
-            Path::new(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/DSC00449.HIF");
+        let Some(fixture) = crate::sony_hif_fixture() else {
+            eprintln!("skipping: Sony HIF fixture unavailable (set OXY_HIF_FIXTURE)");
+            return;
+        };
         let service = HeifDecodeService::default();
         let session = service.begin(&fixture, 1, false, false).unwrap();
         let cancelled = {
@@ -779,8 +785,10 @@ mod tests {
         if crate::ffmpeg_heif::capability().is_err() {
             return;
         }
-        let fixture =
-            Path::new(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/DSC00449.HIF");
+        let Some(fixture) = crate::sony_hif_fixture() else {
+            eprintln!("skipping: Sony HIF fixture unavailable (set OXY_HIF_FIXTURE)");
+            return;
+        };
         let service = Arc::new(HeifDecodeService::default());
         let first_session = service.begin(&fixture, 1, false, true).unwrap();
         let first_cache = tempfile::tempdir().unwrap();
@@ -837,8 +845,10 @@ mod tests {
         if crate::ffmpeg_heif::capability().is_err() {
             return;
         }
-        let fixture =
-            Path::new(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/DSC00449.HIF");
+        let Some(fixture) = crate::sony_hif_fixture() else {
+            eprintln!("skipping: Sony HIF fixture unavailable (set OXY_HIF_FIXTURE)");
+            return;
+        };
         let service = HeifDecodeService::default();
         let session = service.begin(&fixture, 1, false, false).unwrap();
         assert_eq!(session.backend, HeifBackendKind::FfmpegSoftware);
@@ -898,8 +908,10 @@ mod tests {
         if crate::ffmpeg_heif::capability().is_err() {
             return;
         }
-        let fixture =
-            Path::new(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/DSC00449.HIF");
+        let Some(fixture) = crate::sony_hif_fixture() else {
+            eprintln!("skipping: Sony HIF fixture unavailable (set OXY_HIF_FIXTURE)");
+            return;
+        };
         let service = HeifDecodeService::default();
         let session = service.begin(&fixture, 1, true, true).unwrap();
         assert_eq!(session.backend, HeifBackendKind::FfmpegSoftware);
@@ -909,8 +921,10 @@ mod tests {
     #[cfg(target_os = "macos")]
     #[test]
     fn selects_and_decodes_apple_image_io_fixture() {
-        let fixture =
-            Path::new(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/DSC00449.HIF");
+        let Some(fixture) = crate::sony_hif_fixture() else {
+            eprintln!("skipping: Sony HIF fixture unavailable (set OXY_HIF_FIXTURE)");
+            return;
+        };
         if crate::apple_image_io::can_decode(&fixture).is_err() {
             return;
         }

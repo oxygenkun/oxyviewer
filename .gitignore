@@ -11,3 +11,7 @@ tests/perf/generated/
 tests/perf/.reports/
 
 tests/perf/.generated/
+
+# Real photo fixtures are archived outside git; see tests/fixtures/README.md
+tests/fixtures/*
+!tests/fixtures/README.md

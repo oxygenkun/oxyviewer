@@ -16,6 +16,9 @@ end-to-end regression harness that enforces these budgets is described in
 
 ## Verification Log
 
+> `tests/fixtures/DSC00449.HIF` 等真实照片 fixture 不再纳入 git 历史；获取方式与校验和见
+> `tests/fixtures/README.md`，缺失时相关测试会自动跳过，可用 `OXY_HIF_FIXTURE` 指定路径。
+
 - 2026-09-05: Phase D 的 macOS release 后测使用 `tests/fixtures/DSC00449.HIF`、隔离临时冷缓存和
   `heif_display_bench ... 5 scroll`。经表示事实识别的 Sony 160px JPEG 五次后端总耗时为
   16/5/3/11/5 ms，端到端函数样本 median 7.90 ms、min 6.80 ms；每次产物为 120×160、约 8.1 KiB。

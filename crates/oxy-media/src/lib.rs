@@ -886,6 +886,22 @@ fn generate_system_preview(
     Err(MediaError::NativeDecoderUnavailable)
 }
 
+/// Resolves the Sony HIF test fixture, which is archived outside git (see
+/// `tests/fixtures/README.md`). `OXY_HIF_FIXTURE` overrides the default
+/// `tests/fixtures/DSC00449.HIF` location. Returns `None` when the file is
+/// absent so fixture-dependent tests can skip instead of failing.
+#[cfg(test)]
+pub(crate) fn sony_hif_fixture() -> Option<std::path::PathBuf> {
+    let path = std::env::var_os("OXY_HIF_FIXTURE").map_or_else(
+        || {
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+                .join("../../tests/fixtures/DSC00449.HIF")
+        },
+        std::path::PathBuf::from,
+    );
+    path.is_file().then_some(path)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -909,8 +925,10 @@ mod tests {
     #[test]
     fn heif_session_cache_is_lookup_only_and_comes_from_the_source_heif() {
         let directory = tempfile::tempdir().unwrap();
-        let source =
-            Path::new(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/DSC00449.HIF");
+        let Some(source) = crate::sony_hif_fixture() else {
+            eprintln!("skipping: Sony HIF fixture unavailable (set OXY_HIF_FIXTURE)");
+            return;
+        };
         let cache = directory.path().join("previews");
 
         assert!(cached_heif_session(&source, &cache).unwrap().is_none());
@@ -926,7 +944,10 @@ mod tests {
 
     #[test]
     fn sony_hif_thumbnail_and_preview_levels_share_the_160_artifact() {
-        let path = workspace_path("tests/fixtures/DSC00449.HIF");
+        let Some(path) = crate::sony_hif_fixture() else {
+            eprintln!("skipping: Sony HIF fixture unavailable (set OXY_HIF_FIXTURE)");
+            return;
+        };
         let cache = tempfile::tempdir().unwrap();
 
         let thumbnail = preview(
@@ -957,7 +978,10 @@ mod tests {
 
     #[test]
     fn heif_without_identified_fast_representation_uses_semantic_preview_size() {
-        let source = workspace_path("tests/fixtures/DSC00449.HIF");
+        let Some(source) = crate::sony_hif_fixture() else {
+            eprintln!("skipping: Sony HIF fixture unavailable (set OXY_HIF_FIXTURE)");
+            return;
+        };
         let directory = tempfile::tempdir().unwrap();
         let path = directory.path().join("generic.heif");
         let mut bytes = fs::read(source).unwrap();
@@ -1041,7 +1065,10 @@ mod tests {
 
     #[test]
     fn heif_preview_reports_cold_backend_timing_breakdown() {
-        let path = workspace_path("tests/fixtures/DSC00449.HIF");
+        let Some(path) = crate::sony_hif_fixture() else {
+            eprintln!("skipping: Sony HIF fixture unavailable (set OXY_HIF_FIXTURE)");
+            return;
+        };
         let cache = tempfile::tempdir().unwrap();
 
         let preview = heif_preview(&path, cache.path(), 512).unwrap();

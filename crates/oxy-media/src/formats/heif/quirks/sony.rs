@@ -240,7 +240,10 @@ mod tests {
 
     #[test]
     fn extracts_repository_sony_sidebar_jpeg() {
-        let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/DSC00449.HIF");
+        let Some(path) = crate::sony_hif_fixture() else {
+            eprintln!("skipping: Sony HIF fixture unavailable (set OXY_HIF_FIXTURE)");
+            return;
+        };
         let image = extract(
             &path,
             ImageDimensions {
