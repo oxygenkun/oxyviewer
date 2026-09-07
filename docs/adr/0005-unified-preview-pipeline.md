@@ -81,12 +81,12 @@ thread; the result is simply ignored.
 - Every preview stage and format writes an **8-bit JPEG**. `write_jpeg_atomically_with_icc`
   optionally embeds an ICC profile in an APP2 chunk via `image`'s
   `JpegEncoder::set_icc_profile`.
-- HEIF full-resolution output switched from 16-bit PNG (`write_srgb_png`,
-  retained but unused) to **8-bit sRGB JPEG with embedded ICC**
-  (`write_srgb_jpeg`). 16-bit depth is sacrificed; the existing HDR→SDR
-  tone-map still runs at decode time, so color management is preserved for
-  wide-gamut sources. `HEIF_FULL_CACHE_VERSION` bumped to `heif-sdr-jpeg-v1`
-  so old PNG caches are ignored (they are rebuildable).
+- HEIF full-resolution output switched from the former 16-bit PNG path to a
+  display-oriented **8-bit JPEG** produced by the selected native/FFmpeg
+  backend. The unused in-process high-bit-depth conversion and writer were
+  later removed after full artifacts moved to direct backend transcoding.
+  `HEIF_FULL_CACHE_VERSION` is now `heif-source-jpeg-v2`, so artifacts from
+  older policies are ignored (they are rebuildable).
 - **Up-tier reuse** (`larger_cached_preview`) generalizes the former HEIF-only
   `larger_heif_preview` to any backend tag: a 512 px request can be served
   from a cached 4096 px (or full) entry without re-decoding, with the browser

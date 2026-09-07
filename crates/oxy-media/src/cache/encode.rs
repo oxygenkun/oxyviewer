@@ -41,7 +41,7 @@ pub(crate) fn write_jpeg_atomically_timed(
     let encode_started = Instant::now();
     #[cfg(target_os = "macos")]
     {
-        crate::apple_image_io::write_jpeg(image, temporary.path(), quality)?;
+        crate::backends::apple_image_io::write_jpeg(image, temporary.path(), quality)?;
         let profile = presentation_icc(contract)?.expect("sRGB contract has an ICC profile");
         embed_icc_profile(temporary.path(), &profile)?;
     }

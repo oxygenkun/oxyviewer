@@ -140,7 +140,8 @@ PreviewQueue 使用两个有界 worker，避免一个已经开始且不可抢占
 
 Rust `DecodeGate` 位于 `crates/oxy-media/src/decode_control.rs`，与 RAW full 独立锁、
 HEIF session 缓存写锁和同源锁表一起管理媒体资源准入；它不替代 `oxy-runtime` 的请求调度。
-根模块保留兼容入口。`DecodeGate` 有三档优先级：
+crate 根模块只负责稳定 API re-export；格式执行分别位于 `pipeline::raw`、
+`pipeline::heif_preview` 和 `pipeline::system`。`DecodeGate` 有三档优先级：
 
 | IPC priority | Rust priority | 等待规则 |
 | --- | --- | --- |
@@ -172,7 +173,8 @@ Tauri `get_preview` 的逻辑是：
 `upsert_preview_schedule` 把单项放到某 tier 的队首/队尾，`release_preview_schedule` 释放单项
 intent。它们只更新队列元数据，不读取或传输图片。
 
-`oxy_media::preview` 根据 `(platform, kind, level)` 查表分派。IPC 不接收像素尺寸：
+`pipeline::dispatcher` 中的 `oxy_media::preview` 根据 `(platform, kind, level)` 查表分派。
+IPC 不接收像素尺寸：
 
 ```mermaid
 flowchart TD
@@ -277,10 +279,10 @@ macOS 的完整 JPEG 使用 ImageIO 编码；解码 permit 在 primary image 解
 源文件修改或解码算法版本升级都会形成新键。旧文件可能暂时留在 cache 目录，但不会被误用。
 
 RAW/HEIF 的 JPEG 和部分 byte-cache 写入先在目标目录创建临时文件，编码完成后原子持久化到
-目标路径。这样崩溃或取消不会留下看似有效但内容截断的最终文件。统一预览主要写 8-bit JPEG。解码后的 HEIF primary 和 RAW development 明确按已应用方向、
-带 ICC 的 sRGB SDR 契约写入；相机 JPEG 则保留原字节、EXIF 方向和原有/未知 profile，不能仅按
-尺寸冒充显影产物。`system_preview` 当前使用系统生成的 PNG 路径，不应把 JPEG/原子写入描述成
-所有 backend 都已具备的统一保证。行为版本同时进入磁盘 cache key 和持久化 image projection 的
+目标路径。这样崩溃或取消不会留下看似有效但内容截断的最终文件。统一预览写 8-bit JPEG。
+解码后的 HEIF primary 和 RAW development 明确按已应用方向、带 ICC 的 sRGB SDR 契约写入；
+相机 JPEG 则保留原字节、EXIF 方向和原有/未知 profile，不能仅按尺寸冒充显影产物。
+`system_preview` 同样先写临时 JPEG、校验首尾 marker，再原子提交。行为版本同时进入磁盘 cache key 和持久化 image projection 的
 source revision，避免升级后继续返回指向旧策略产物的 ready projection。
 
 ### 10.1 更高质量缓存复用

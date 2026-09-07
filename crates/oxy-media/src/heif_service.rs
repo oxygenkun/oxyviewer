@@ -9,8 +9,8 @@ use crate::{
 };
 use image::{DynamicImage, RgbaImage};
 use oxy_domain::{
-    HeifBackendKind, HeifCapabilities, HeifDecodeRequest, HeifDecodeSession, HeifDecodeStatus,
-    HeifDiagnostics, HeifStatusEvent, HeifTileReady,
+    HeifBackendKind, HeifCapabilities, HeifDecodeSession, HeifDecodeStatus, HeifDiagnostics,
+    HeifStatusEvent, HeifTileReady,
 };
 use std::{
     collections::HashMap,
@@ -26,17 +26,6 @@ use std::{
 pub const DEFAULT_TILE_SIZE: u32 = 1_024;
 #[cfg(any(target_os = "macos", target_os = "linux"))]
 pub const DEFAULT_TILE_SIZE: u32 = 512;
-pub type TileSink = Box<dyn FnMut(HeifTileReady) + Send>;
-
-pub trait HeifBackend: Send + Sync {
-    fn capabilities(&self) -> HeifCapabilities;
-    fn start_decode(
-        &self,
-        request: HeifDecodeRequest,
-        sink: TileSink,
-    ) -> Result<HeifDecodeSession, MediaError>;
-}
-
 #[derive(Debug, Clone)]
 pub struct HeifTile {
     pub width: u32,
@@ -126,7 +115,7 @@ impl HeifDecodeService {
             hardware_acceleration && !matches!(selected_backend, PlannedHeifBackend::Platform(_));
         #[cfg(target_os = "windows")]
         let expected_tiles = if backend == HeifBackendKind::FfmpegSoftware {
-            crate::ffmpeg_heif::tile_count(path).unwrap_or_else(|_| {
+            crate::backends::ffmpeg_heif::tile_count(path).unwrap_or_else(|_| {
                 tile_coordinates(size.width, size.height, DEFAULT_TILE_SIZE).len()
             })
         } else {
@@ -230,7 +219,7 @@ impl HeifDecodeService {
                 let mut image = image.into_rgba8();
                 #[cfg(target_os = "macos")]
                 if display_sharpening && backend != HeifBackendKind::FfmpegSoftware {
-                    crate::apple_image_io::sharpen_rgba8(&mut image)?;
+                    crate::backends::apple_image_io::sharpen_rgba8(&mut image)?;
                 }
                 #[cfg(any(target_os = "windows", target_os = "linux"))]
                 if display_sharpening && backend != HeifBackendKind::FfmpegSoftware {
@@ -782,7 +771,7 @@ mod tests {
 
     #[test]
     fn completed_session_cache_work_does_not_block_next_selection_decode() {
-        if crate::ffmpeg_heif::capability().is_err() {
+        if crate::backends::ffmpeg_heif::capability().is_err() {
             return;
         }
         let Some(fixture) = crate::sony_hif_fixture() else {
@@ -842,7 +831,7 @@ mod tests {
 
     #[test]
     fn selects_and_decodes_ffmpeg_tile_grid_fixture() {
-        if crate::ffmpeg_heif::capability().is_err() {
+        if crate::backends::ffmpeg_heif::capability().is_err() {
             return;
         }
         let Some(fixture) = crate::sony_hif_fixture() else {
@@ -905,7 +894,7 @@ mod tests {
     #[cfg(target_os = "windows")]
     #[test]
     fn prefers_qualified_ffmpeg_tile_grid_over_slower_wic() {
-        if crate::ffmpeg_heif::capability().is_err() {
+        if crate::backends::ffmpeg_heif::capability().is_err() {
             return;
         }
         let Some(fixture) = crate::sony_hif_fixture() else {
@@ -925,7 +914,7 @@ mod tests {
             eprintln!("skipping: Sony HIF fixture unavailable (set OXY_HIF_FIXTURE)");
             return;
         };
-        if crate::apple_image_io::can_decode(&fixture).is_err() {
+        if crate::backends::apple_image_io::can_decode(&fixture).is_err() {
             return;
         }
         let service = HeifDecodeService::default();

@@ -3,7 +3,8 @@
 //! Run from the workspace root:
 //! `cargo run --release -p oxy-media --bin raw_display_bench -- test/fixtures/media/DSC00529.ARW`
 
-use oxy_media::{raw_dimensions, raw_full, raw_preview};
+use oxy_domain::{AssetKind, RenderLevel};
+use oxy_media::{DecodePriority, dimensions, preview};
 use std::{env, error::Error, path::PathBuf, time::Instant};
 
 fn main() -> Result<(), Box<dyn Error>> {
@@ -13,7 +14,7 @@ fn main() -> Result<(), Box<dyn Error>> {
     );
     let include_full = env::args().any(|argument| argument == "--full");
 
-    let source = raw_dimensions(&path)?;
+    let source = dimensions(&path)?;
     println!(
         "file={} source={}x{}",
         path.display(),
@@ -22,9 +23,15 @@ fn main() -> Result<(), Box<dyn Error>> {
     );
 
     let cache = tempfile::tempdir()?;
-    for size in [512, 4_096] {
+    for (size, level) in [(512, RenderLevel::Thumbnail), (4_096, RenderLevel::Preview)] {
         let started = Instant::now();
-        let preview = raw_preview(&path, cache.path(), size)?;
+        let preview = preview(
+            &path,
+            cache.path(),
+            level,
+            DecodePriority::Background,
+            AssetKind::Raw,
+        )?;
         println!(
             "{size}px preview: {}x{} {:.1}KiB kind={:?} elapsed={:.2?}",
             preview.width,
@@ -37,7 +44,13 @@ fn main() -> Result<(), Box<dyn Error>> {
 
     if include_full {
         let started = Instant::now();
-        let full = raw_full(&path, cache.path())?;
+        let full = preview(
+            &path,
+            cache.path(),
+            RenderLevel::Full,
+            DecodePriority::Foreground,
+            AssetKind::Raw,
+        )?;
         println!(
             "full detail: {}x{} {:.1}MiB kind={:?} elapsed={:.2?}",
             full.width,
