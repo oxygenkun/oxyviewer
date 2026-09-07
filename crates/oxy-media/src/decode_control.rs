@@ -23,7 +23,7 @@ static DECODE_LOCKS: LazyLock<Mutex<HashMap<String, Arc<Mutex<()>>>>> =
 /// Priority for the unified decode gate. Higher priorities jump ahead of
 /// lower-priority waiters but never preempt a running decode.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum DecodePriority {
+pub(crate) enum DecodePriority {
     /// Overscan/off-screen thumbnails — served only when nothing else wants the gate.
     Background,
     /// On-screen thumbnails and filmstrip — served before background work.
@@ -32,10 +32,16 @@ pub enum DecodePriority {
     Foreground,
 }
 
-/// Backwards-compatible alias. HEIF code historically used `HeifDecodePriority`;
-/// the gate is now format-agnostic but the name is retained to avoid churning
-/// `heif_service.rs` and the public re-exports.
-pub type HeifDecodePriority = DecodePriority;
+impl From<oxy_domain::PreviewPriority> for DecodePriority {
+    fn from(priority: oxy_domain::PreviewPriority) -> Self {
+        use oxy_domain::PreviewPriority;
+        match priority {
+            PreviewPriority::Preload | PreviewPriority::Nearby => Self::Background,
+            PreviewPriority::Visible => Self::Visible,
+            PreviewPriority::Loupe => Self::Foreground,
+        }
+    }
+}
 
 struct DecodeGate {
     state: Mutex<DecodeGateState>,
@@ -118,11 +124,6 @@ pub(crate) fn acquire_decode(priority: DecodePriority) -> impl Drop {
     DECODE_GATE.acquire(priority)
 }
 
-/// Backwards-compatible alias for [`acquire_decode`].
-pub(crate) fn acquire_heif_decode(priority: DecodePriority) -> impl Drop {
-    acquire_decode(priority)
-}
-
 pub(crate) fn try_acquire_heif_session_cache_write() -> Option<impl Drop> {
     match HEIF_SESSION_CACHE_WRITE_LOCK.try_lock() {
         Ok(guard) => Some(guard),
@@ -169,6 +170,28 @@ mod tests {
         thread,
         time::{Duration, Instant},
     };
+
+    #[test]
+    fn maps_domain_priority_to_private_gate_priority() {
+        use oxy_domain::PreviewPriority;
+
+        assert_eq!(
+            DecodePriority::from(PreviewPriority::Preload),
+            DecodePriority::Background
+        );
+        assert_eq!(
+            DecodePriority::from(PreviewPriority::Nearby),
+            DecodePriority::Background
+        );
+        assert_eq!(
+            DecodePriority::from(PreviewPriority::Visible),
+            DecodePriority::Visible
+        );
+        assert_eq!(
+            DecodePriority::from(PreviewPriority::Loupe),
+            DecodePriority::Foreground
+        );
+    }
 
     #[test]
     fn decode_permit_releases_gate_during_unwind() {

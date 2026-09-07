@@ -645,7 +645,7 @@ impl PreviewQueue {
                         &path,
                         &preview_dir,
                         level,
-                        oxy_media::decode_priority_for(priority_from_position(position)),
+                        priority_from_position(position),
                         kind,
                     )
                     .map_err(|error| error.to_string());

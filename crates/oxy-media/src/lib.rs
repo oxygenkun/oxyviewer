@@ -10,18 +10,13 @@ mod heif_service;
 mod media_source;
 mod pipeline;
 mod presentation;
-mod probe;
 
 pub use cache::{CacheUsage, clear_preview_cache, preview_cache_usage, prune_preview_cache};
-pub use decode_control::{DecodePriority, HeifDecodePriority};
 pub use error::MediaError;
 pub use heif_service::{DEFAULT_TILE_SIZE, HeifDecodeService, HeifTile};
 pub use media_source::{ImageDimensions, dimensions};
-pub use pipeline::dispatcher::{decode_priority_for, preview};
-pub use pipeline::heif_preview::{cached_heif_session, heif_preview};
-
-pub(crate) use decode_control::{acquire_heif_decode, try_acquire_heif_session_cache_write};
-pub(crate) use pipeline::heif_preview::cache_heif_source_jpeg;
+pub use pipeline::dispatcher::preview;
+pub use pipeline::heif::artifact::cached_heif_full;
 
 /// Included in persisted image projection identities so behavior-changing
 /// media policy cannot reuse a ready projection that points at an older cache.

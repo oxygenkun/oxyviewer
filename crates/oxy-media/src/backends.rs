@@ -1,6 +1,6 @@
 //! Native and portable decoder adapters.
 //! File-format compatibility rules belong in `formats`, not platform copies.
-//! Cross-backend HEIF fallback is owned by `pipeline::heif`.
+//! Cross-backend HEIF fallback is owned by `pipeline::heif::backend`.
 
 #[cfg(target_os = "macos")]
 pub(crate) mod apple_core_image;

@@ -141,7 +141,8 @@ PreviewQueue 使用两个有界 worker，避免一个已经开始且不可抢占
 Rust `DecodeGate` 位于 `crates/oxy-media/src/decode_control.rs`，与 RAW full 独立锁、
 HEIF session 缓存写锁和同源锁表一起管理媒体资源准入；它不替代 `oxy-runtime` 的请求调度。
 crate 根模块只负责稳定 API re-export；格式执行分别位于 `pipeline::raw`、
-`pipeline::heif_preview` 和 `pipeline::system`。`DecodeGate` 有三档优先级：
+`pipeline::heif::artifact` 和 `pipeline::system`，HEIF backend 策略位于
+`pipeline::heif::backend`。`DecodeGate` 有三档优先级：
 
 | IPC priority | Rust priority | 等待规则 |
 | --- | --- | --- |
@@ -178,11 +179,11 @@ IPC 不接收像素尺寸：
 
 ```mermaid
 flowchart TD
-    request["SourceFacts + Request + BackendCapabilities"] --> policy["pipeline::planner::plan → DecodePlan"]
+    request["AssetKind + Request + BackendCapabilities"] --> policy["pipeline::planner::plan → DecodePlan"]
     policy -->|RAW Full| rawFull["raw_full"]
     policy -->|RAW Thumbnail/Preview| rawPreview["raw_preview_with_priority + policy size"]
-    policy -->|HEIF Full| heifFull["heif_full / source JPEG"]
-    policy -->|HEIF Thumbnail/Preview| heifPreview["heif_preview_with_priority + policy size"]
+    policy -->|HEIF Full| heifFull["heif::artifact::full / source JPEG"]
+    policy -->|HEIF Thumbnail/Preview| heifPreview["heif::artifact::preview + policy size"]
     policy -->|TIFF| systemPreview["system_preview + policy size"]
     policy -->|JPEG/PNG/WebP| original["original"]
     rawPreview --> rawFallback{LibRaw 失败?}
@@ -250,12 +251,12 @@ macOS ImageIO 竖拍尺寸映射和前端区域映射；CI 在三个桌面平台
 不是 HEIF 格式层。Sony 专用内嵌 JPEG 提取与方向兼容逻辑位于
 `formats/heif/quirks/sony.rs`。
 
-HEIF thumbnail/preview 请求到达后才进行最多 2 MiB 的有界探测，目录发现和首屏枚举不读取媒体
-内容。只有实际识别并验证出 Sony SHIF 快速 JPEG 时，planner 才把 `thumbnail` 与 `preview`
-映射到同一个 160×120 产物；vendor 名称或 unknown 事实本身不会启用该路径。JPEG 注入正确 EXIF
-orientation 后原样写入独立的 embedded cache namespace，不进入 HEVC gate，也不进行像素重编码。
-探测结果会把已读取的 JPEG 交给 executor，避免冷路径重复扫描；热缓存的 embedded suffix 本身
-证明此前识别成功，可直接命中。
+HEIF thumbnail/preview 请求到达执行器后才进行最多 2 MiB 的有界探测，目录发现、首屏枚举和
+planner 都不读取媒体内容。planner 只声明可以优先尝试快速表示，并分别保留 512 thumbnail 和
+4096 preview 的解码回退尺寸；执行器命中 embedded cache 或实际识别并验证出 Sony SHIF JPEG
+时，直接把两个语义等级映射到同一个 160×120 产物。JPEG 注入正确 EXIF orientation 后原样写入
+独立的 embedded cache namespace，不进入 HEVC gate，也不进行像素重编码。冷路径在一次探测中
+完成识别和字节提取，避免重复扫描；热缓存可直接命中。
 
 没有已识别快速表示的 HEIF 分别使用 512 thumbnail 和 4096 preview，并可使用 macOS ImageIO、
 FFmpeg 或 libheif 等后端。前端不再把所有 HEIF preview 静态别名成 thumbnail；Sony 两个语义请求

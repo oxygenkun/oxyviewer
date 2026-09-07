@@ -1,29 +1,16 @@
 use super::{
-    heif_preview,
+    heif::artifact as heif,
     planner::{
         BackendCapabilities, DecodePlan, DecodeStep, PlannedPriority, Platform, Request, plan,
     },
     raw, system,
 };
-use crate::{DecodePriority, MediaError, media_source::preview_result, probe::ProbedSource};
-use oxy_domain::{PreviewKind, PreviewResult, RenderLevel};
+use crate::{MediaError, decode_control::DecodePriority, media_source::preview_result};
+use oxy_domain::{PreviewKind, PreviewPriority, PreviewResult, RenderLevel};
 use std::path::{Path, PathBuf};
 
 fn original(path: PathBuf) -> Result<PreviewResult, MediaError> {
     preview_result(path, PreviewKind::Original)
-}
-
-/// Convert the IPC-level [`PreviewPriority`] into the unified
-/// [`DecodePriority`]. Kept here (in oxy-media) so the Tauri layer does not
-/// need to know about the gate vocabulary.
-pub fn decode_priority_for(priority: oxy_domain::PreviewPriority) -> DecodePriority {
-    use oxy_domain::PreviewPriority;
-    match priority {
-        PreviewPriority::Preload => DecodePriority::Background,
-        PreviewPriority::Nearby => DecodePriority::Background,
-        PreviewPriority::Visible => DecodePriority::Visible,
-        PreviewPriority::Loupe => DecodePriority::Foreground,
-    }
 }
 
 const fn current_platform() -> Platform {
@@ -47,29 +34,22 @@ pub fn preview(
     path: &Path,
     cache_dir: &Path,
     level: RenderLevel,
-    priority: DecodePriority,
+    priority: PreviewPriority,
     kind: oxy_domain::AssetKind,
 ) -> Result<PreviewResult, MediaError> {
     // Preserve the pre-planner executor's optimistic route set. Runtime
     // adapter failures still flow through the same ordered fallbacks and retain
     // their existing diagnostics; simulated capabilities are tested in the
     // pure planner without making directory discovery probe media contents.
-    let probed_source = if kind == oxy_domain::AssetKind::Heif
-        && matches!(level, RenderLevel::Thumbnail | RenderLevel::Preview)
-    {
-        heif_preview::probe_heif_for_preview(path, cache_dir)
-    } else {
-        ProbedSource::unprobed(kind)
-    };
     let decode_plan = plan(
-        probed_source.facts,
+        kind,
         Request {
             level,
             platform: current_platform(),
         },
         BackendCapabilities::configured_routes(),
     );
-    let mut result = execute_decode_plan(path, cache_dir, priority, decode_plan, &probed_source)?;
+    let mut result = execute_decode_plan(path, cache_dir, priority.into(), decode_plan)?;
     result.render_level = Some(level);
     Ok(result)
 }
@@ -79,7 +59,6 @@ fn execute_decode_plan(
     cache_dir: &Path,
     request_priority: DecodePriority,
     decode_plan: DecodePlan,
-    probed_source: &ProbedSource,
 ) -> Result<PreviewResult, MediaError> {
     let DecodePlan::Attempts { first, on_failure } = decode_plan else {
         return Err(MediaError::NativeDecoderUnavailable);
@@ -104,7 +83,7 @@ fn execute_decode_plan(
                 }
             }
         },
-        (DecodeStep::HeifFull, Some(fallback)) => match heif_preview::heif_full(path, cache_dir) {
+        (DecodeStep::HeifFull, Some(fallback)) => match heif::full(path, cache_dir) {
             result @ Ok(_) | result @ Err(MediaError::Cancelled) => result,
             Err(error) => {
                 // Preserve the foreground 8192px fallback after full-detail
@@ -113,12 +92,10 @@ fn execute_decode_plan(
                     "full-detail HEIF decode failed for {}: {error}",
                     path.display()
                 );
-                execute_decode_step(path, cache_dir, request_priority, fallback, probed_source)
+                execute_decode_step(path, cache_dir, request_priority, fallback)
             }
         },
-        (first, None) => {
-            execute_decode_step(path, cache_dir, request_priority, first, probed_source)
-        }
+        (first, None) => execute_decode_step(path, cache_dir, request_priority, first),
         // The Stage-B planner only emits the two ordered fallback pairs above.
         // Treat a future unsupported pairing explicitly rather than silently
         // changing its error or fallback behavior.
@@ -131,10 +108,9 @@ fn execute_decode_step(
     cache_dir: &Path,
     request_priority: DecodePriority,
     step: DecodeStep,
-    probed_source: &ProbedSource,
 ) -> Result<PreviewResult, MediaError> {
     match step {
-        DecodeStep::Original => original(path.to_owned()),
+        DecodeStep::Original => preview_result(path.to_owned(), PreviewKind::Original),
         DecodeStep::RawPreview { max_size } => {
             raw::preview_with_priority(path, cache_dir, max_size, request_priority)
         }
@@ -149,17 +125,16 @@ fn execute_decode_step(
                 PlannedPriority::Request => request_priority,
                 PlannedPriority::Foreground => DecodePriority::Foreground,
             };
-            heif_preview::heif_preview_with_options(
+            heif::preview(
                 path,
                 cache_dir,
                 max_size,
                 priority,
                 try_fast_jpeg,
                 allow_decode,
-                probed_source.heif_fast_jpeg.as_ref(),
             )
         }
-        DecodeStep::HeifFull => heif_preview::heif_full(path, cache_dir),
+        DecodeStep::HeifFull => heif::full(path, cache_dir),
         DecodeStep::SystemPreview { max_size } => system::preview(path, cache_dir, max_size),
     }
 }

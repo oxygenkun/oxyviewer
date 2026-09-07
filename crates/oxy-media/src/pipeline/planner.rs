@@ -10,44 +10,6 @@ pub(crate) enum Platform {
     Linux,
 }
 
-/// Vendor is compatibility evidence, not a format or backend selector.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-#[allow(dead_code)] // Known facts are simulated until on-demand probe wiring is added.
-pub(crate) enum Vendor {
-    Sony,
-    Other,
-    Unknown,
-}
-
-/// A fact may remain unknown when planning must not perform source I/O.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-#[allow(dead_code)] // Known facts are simulated until on-demand probe wiring is added.
-pub(crate) enum Presence {
-    Present,
-    Absent,
-    Unknown,
-}
-
-/// Minimal source facts consumed by the current routing policy.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) struct SourceFacts {
-    pub(crate) kind: AssetKind,
-    pub(crate) vendor: Vendor,
-    pub(crate) heif_fast_jpeg: Presence,
-}
-
-impl SourceFacts {
-    /// Facts available without opening the media source. More expensive facts
-    /// intentionally stay unknown until an image request needs them.
-    pub(crate) const fn unprobed(kind: AssetKind) -> Self {
-        Self {
-            kind,
-            vendor: Vendor::Unknown,
-            heif_fast_jpeg: Presence::Unknown,
-        }
-    }
-}
-
 /// Routes available to a planner invocation. Production currently supplies the
 /// same optimistic routes as the pre-refactor dispatcher; tests can remove any
 /// route without relying on host-native decoders.
@@ -118,11 +80,11 @@ pub(crate) struct Request {
 }
 
 pub(crate) const fn plan(
-    facts: SourceFacts,
+    kind: AssetKind,
     request: Request,
     capabilities: BackendCapabilities,
 ) -> DecodePlan {
-    match (request.platform, facts.kind, request.level) {
+    match (request.platform, kind, request.level) {
         (_, AssetKind::Jpeg | AssetKind::Png | AssetKind::Webp, _) => {
             attempts(DecodeStep::Original, None)
         }
@@ -135,20 +97,10 @@ pub(crate) const fn plan(
         (_, AssetKind::Raw, RenderLevel::Full) => DecodePlan::Unsupported,
 
         (_, AssetKind::Heif, RenderLevel::Thumbnail) => {
-            let max_size = if matches!(facts.heif_fast_jpeg, Presence::Present) {
-                160
-            } else {
-                512
-            };
-            heif_preview_plan(max_size, facts, capabilities, PlannedPriority::Request)
+            heif_preview_plan(512, capabilities, PlannedPriority::Request)
         }
         (_, AssetKind::Heif, RenderLevel::Preview) => {
-            let max_size = if matches!(facts.heif_fast_jpeg, Presence::Present) {
-                160
-            } else {
-                4_096
-            };
-            heif_preview_plan(max_size, facts, capabilities, PlannedPriority::Request)
+            heif_preview_plan(4_096, capabilities, PlannedPriority::Request)
         }
         (_, AssetKind::Heif, RenderLevel::Full) if capabilities.heif_full => {
             let fallback = if capabilities.heif_preview {
@@ -198,14 +150,12 @@ const fn raw_preview_plan(max_size: u32, capabilities: BackendCapabilities) -> D
 
 const fn heif_preview_plan(
     max_size: u32,
-    facts: SourceFacts,
     capabilities: BackendCapabilities,
     priority: PlannedPriority,
 ) -> DecodePlan {
-    // A vendor name is only a clue. The fast path is selected exclusively by
-    // the bounded representation fact produced for this source.
-    let try_fast_jpeg =
-        capabilities.heif_fast_jpeg && matches!(facts.heif_fast_jpeg, Presence::Present);
+    // Source-dependent selection happens inside the HEIF executor. Planning
+    // only states whether the bounded embedded-JPEG route may be attempted.
+    let try_fast_jpeg = capabilities.heif_fast_jpeg;
     if capabilities.heif_preview || try_fast_jpeg {
         attempts(
             DecodeStep::HeifPreview {
@@ -248,14 +198,6 @@ mod tests {
         Request { level, platform }
     }
 
-    fn facts(kind: AssetKind, vendor: Vendor, heif_fast_jpeg: Presence) -> SourceFacts {
-        SourceFacts {
-            kind,
-            vendor,
-            heif_fast_jpeg,
-        }
-    }
-
     fn expected_with_all_capabilities(kind: AssetKind, level: RenderLevel) -> DecodePlan {
         match (kind, level) {
             (AssetKind::Jpeg | AssetKind::Png | AssetKind::Webp, _) => {
@@ -271,7 +213,7 @@ mod tests {
             (AssetKind::Heif, RenderLevel::Thumbnail) => attempts(
                 DecodeStep::HeifPreview {
                     max_size: 512,
-                    try_fast_jpeg: false,
+                    try_fast_jpeg: true,
                     allow_decode: true,
                     priority: PlannedPriority::Request,
                 },
@@ -280,7 +222,7 @@ mod tests {
             (AssetKind::Heif, RenderLevel::Preview) => attempts(
                 DecodeStep::HeifPreview {
                     max_size: 4_096,
-                    try_fast_jpeg: false,
+                    try_fast_jpeg: true,
                     allow_decode: true,
                     priority: PlannedPriority::Request,
                 },
@@ -311,11 +253,7 @@ mod tests {
             for kind in KINDS {
                 for level in LEVELS {
                     assert_eq!(
-                        plan(
-                            SourceFacts::unprobed(kind),
-                            request(platform, level),
-                            capabilities,
-                        ),
+                        plan(kind, request(platform, level), capabilities,),
                         expected_with_all_capabilities(kind, level),
                         "unexpected plan for {platform:?} {kind:?} {level:?}",
                     );
@@ -325,64 +263,23 @@ mod tests {
     }
 
     #[test]
-    fn heif_fast_path_depends_on_representation_not_vendor() {
+    fn heif_preview_plans_runtime_fast_representation_probe() {
         let capabilities = BackendCapabilities::configured_routes();
-        for platform in PLATFORMS {
-            for vendor in [Vendor::Sony, Vendor::Other, Vendor::Unknown] {
-                for level in [RenderLevel::Thumbnail, RenderLevel::Preview] {
-                    for presence in [Presence::Present, Presence::Absent, Presence::Unknown] {
-                        let actual = plan(
-                            facts(AssetKind::Heif, vendor, presence),
-                            request(platform, level),
-                            capabilities,
-                        );
-                        let present = presence == Presence::Present;
-                        let max_size = if present {
-                            160
-                        } else if level == RenderLevel::Thumbnail {
-                            512
-                        } else {
-                            4_096
-                        };
-                        assert_eq!(
-                            actual,
-                            attempts(
-                                DecodeStep::HeifPreview {
-                                    max_size,
-                                    try_fast_jpeg: present,
-                                    allow_decode: true,
-                                    priority: PlannedPriority::Request,
-                                },
-                                None,
-                            ),
-                            "unexpected plan for {platform:?} {vendor:?} {presence:?} {level:?}",
-                        );
-                    }
-                }
-            }
-        }
-    }
-
-    #[test]
-    fn unknown_vendor_without_a_fast_representation_uses_semantic_sizes() {
         for platform in PLATFORMS {
             for (level, max_size) in [(RenderLevel::Thumbnail, 512), (RenderLevel::Preview, 4_096)]
             {
                 assert_eq!(
-                    plan(
-                        facts(AssetKind::Heif, Vendor::Unknown, Presence::Absent),
-                        request(platform, level),
-                        BackendCapabilities::configured_routes(),
-                    ),
+                    plan(AssetKind::Heif, request(platform, level), capabilities),
                     attempts(
                         DecodeStep::HeifPreview {
                             max_size,
-                            try_fast_jpeg: false,
+                            try_fast_jpeg: true,
                             allow_decode: true,
                             priority: PlannedPriority::Request,
                         },
                         None,
-                    )
+                    ),
+                    "unexpected plan for {platform:?} {level:?}",
                 );
             }
         }
@@ -395,7 +292,7 @@ mod tests {
             capabilities.raw_preview = false;
             assert_eq!(
                 plan(
-                    SourceFacts::unprobed(AssetKind::Raw),
+                    AssetKind::Raw,
                     request(platform, RenderLevel::Preview),
                     capabilities,
                 ),
@@ -405,7 +302,7 @@ mod tests {
             capabilities.system_preview = false;
             assert_eq!(
                 plan(
-                    SourceFacts::unprobed(AssetKind::Raw),
+                    AssetKind::Raw,
                     request(platform, RenderLevel::Preview),
                     capabilities,
                 ),
@@ -415,7 +312,7 @@ mod tests {
             capabilities.raw_full = false;
             assert_eq!(
                 plan(
-                    SourceFacts::unprobed(AssetKind::Raw),
+                    AssetKind::Raw,
                     request(platform, RenderLevel::Full),
                     capabilities,
                 ),
@@ -431,13 +328,13 @@ mod tests {
             capabilities.heif_preview = false;
             assert_eq!(
                 plan(
-                    facts(AssetKind::Heif, Vendor::Sony, Presence::Present),
+                    AssetKind::Heif,
                     request(platform, RenderLevel::Thumbnail),
                     capabilities,
                 ),
                 attempts(
                     DecodeStep::HeifPreview {
-                        max_size: 160,
+                        max_size: 512,
                         try_fast_jpeg: true,
                         allow_decode: false,
                         priority: PlannedPriority::Request,
@@ -449,7 +346,7 @@ mod tests {
             capabilities.heif_fast_jpeg = false;
             assert_eq!(
                 plan(
-                    facts(AssetKind::Heif, Vendor::Sony, Presence::Present),
+                    AssetKind::Heif,
                     request(platform, RenderLevel::Thumbnail),
                     capabilities,
                 ),
@@ -459,7 +356,7 @@ mod tests {
             capabilities.heif_preview = true;
             assert_eq!(
                 plan(
-                    facts(AssetKind::Heif, Vendor::Unknown, Presence::Unknown),
+                    AssetKind::Heif,
                     request(platform, RenderLevel::Thumbnail),
                     capabilities,
                 ),
@@ -478,7 +375,7 @@ mod tests {
             capabilities.heif_full = false;
             assert_eq!(
                 plan(
-                    SourceFacts::unprobed(AssetKind::Heif),
+                    AssetKind::Heif,
                     request(platform, RenderLevel::Full),
                     capabilities,
                 ),
@@ -494,7 +391,7 @@ mod tests {
             capabilities.heif_full = false;
             assert_eq!(
                 plan(
-                    SourceFacts::unprobed(AssetKind::Heif),
+                    AssetKind::Heif,
                     request(platform, RenderLevel::Full),
                     capabilities,
                 ),
@@ -518,11 +415,7 @@ mod tests {
         for platform in PLATFORMS {
             for level in LEVELS {
                 assert_eq!(
-                    plan(
-                        SourceFacts::unprobed(AssetKind::Tiff),
-                        request(platform, level),
-                        capabilities,
-                    ),
+                    plan(AssetKind::Tiff, request(platform, level), capabilities),
                     DecodePlan::Unsupported
                 );
             }

@@ -1,7 +1,8 @@
 use crate::{
-    HeifDecodePriority, MediaError,
+    MediaError,
     backends::libheif,
-    pipeline::heif::{
+    decode_control::{DecodePriority, acquire_decode, try_acquire_heif_session_cache_write},
+    pipeline::heif::backend::{
         BackendExecutionError, HeifBackend as PlannedHeifBackend, HeifBackendPlan, HeifOperation,
         backend_plan, capabilities as backend_capabilities, execute_backend_plan,
         format_attempt_diagnostics,
@@ -172,7 +173,7 @@ impl HeifDecodeService {
                 active.backend_plan.clone(),
             )
         };
-        let decode_permit = crate::acquire_heif_decode(HeifDecodePriority::Foreground);
+        let decode_permit = acquire_decode(DecodePriority::Foreground);
         let queue_wait_ms = elapsed_ms(started);
         if cancelled.load(Ordering::Acquire) {
             return Err(MediaError::Cancelled);
@@ -505,12 +506,12 @@ fn cache_source_jpeg_if_stable(cancelled: &AtomicBool, path: &Path, cache_dir: &
         if cancelled.load(Ordering::Acquire) {
             return false;
         }
-        if let Some(permit) = crate::try_acquire_heif_session_cache_write() {
+        if let Some(permit) = try_acquire_heif_session_cache_write() {
             break permit;
         }
         std::thread::sleep(std::time::Duration::from_millis(20));
     };
-    if let Err(error) = crate::cache_heif_source_jpeg(path, cache_dir) {
+    if let Err(error) = crate::pipeline::heif::artifact::cache_full(path, cache_dir) {
         eprintln!(
             "failed to cache HEIF loupe image {}: {error}",
             path.display()
@@ -762,11 +763,7 @@ mod tests {
         let cancelled = AtomicBool::new(true);
 
         assert!(!cache_source_jpeg_if_stable(&cancelled, &source, &cache));
-        assert!(
-            crate::cached_heif_session(&source, &cache)
-                .unwrap()
-                .is_none()
-        );
+        assert!(crate::cached_heif_full(&source, &cache).unwrap().is_none());
     }
 
     #[test]
@@ -885,7 +882,7 @@ mod tests {
             u64::from(session.width) * u64::from(session.height)
         );
         assert!(
-            crate::cached_heif_session(&fixture, cache.path())
+            crate::cached_heif_full(&fixture, cache.path())
                 .unwrap()
                 .is_some()
         );

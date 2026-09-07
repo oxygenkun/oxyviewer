@@ -35,14 +35,14 @@ force RAW, HEIF, and system previews behind an artificial common decoder trait.
 
 Inventory result:
 
-- Tauri uses `preview`, `decode_priority_for`, `dimensions`, cache maintenance,
-  `PREVIEW_POLICY_VERSION`, `HeifDecodeService`, `cached_heif_session`, and
-  `MediaError`.
-- `cached_heif_session` is an active Tauri lookup for the full HEIF artifact;
+- Tauri uses `preview` (passing domain `PreviewPriority` directly), `dimensions`,
+  cache maintenance, `PREVIEW_POLICY_VERSION`, `HeifDecodeService`,
+  `cached_heif_full`, and `MediaError`.
+- `cached_heif_full` is an active Tauri lookup for the full HEIF artifact;
   it is not a disabled compatibility API and remains public.
-- `heif_preview` remains public because `heif_display_bench` intentionally
-  measures exact pixel-size requests that the semantic dispatcher does not
-  expose.
+- HEIF preview production now has one internal `heif::artifact::preview`
+  function. `heif_display_bench` uses the public semantic dispatcher instead
+  of preserving a separate exact-size facade.
 - The RAW benchmark now uses the unified dispatcher. RAW/system/full helpers
   are crate-private.
 - The unused public `HeifBackend`/`TileSink` shim and the unreachable in-process
@@ -62,18 +62,21 @@ Inventory result:
 ### 3. Move format execution out of `lib.rs`
 
 - [x] Move RAW preview/full/cache execution into `pipeline::raw`.
-- [x] Move HEIF preview/full/source-JPEG execution into a focused HEIF pipeline
-      module without mixing it into decoder adapters.
+- [x] Move HEIF preview/full/source-JPEG execution into
+      `pipeline::heif::artifact` and backend strategy into
+      `pipeline::heif::backend`, without mixing either into decoder adapters.
 - [x] Move system preview execution into its own pipeline module.
 - [x] Keep platform `cfg` branches close to the execution code they control.
 
 ### 4. Isolate unified dispatch
 
-- [x] Move `preview`, decode-plan execution, priority conversion, and platform
-      selection into `pipeline::dispatcher`.
+- [x] Move `preview`, decode-plan execution, and platform selection into
+      `pipeline::dispatcher`; keep domain-to-gate priority conversion private in
+      `decode_control`.
 - [x] Preserve the two explicitly supported fallback pairs and cancellation
       behavior.
-- [x] Re-export only the dispatcher and stable facade APIs from `lib.rs`.
+- [x] Re-export only the dispatcher and stable facade APIs from `lib.rs`; gate
+      priority types remain private implementation details.
 
 ### 5. Reduce shims and duplicated cache flow
 
@@ -83,7 +86,7 @@ Inventory result:
       does not change what is measured.
 - [x] Consolidate exact/up-tier artifact lookup and atomic commit helpers only
       where representation semantics remain explicit.
-- [x] Audit `HeifBackend`, `cached_heif_session`, and the `libheif` dead-code
+- [x] Audit `HeifBackend`, the cached-full HEIF lookup, and the `libheif` dead-code
       exemption; remove or narrow only code proven unused on all supported
       platforms.
 - [x] Correct stale compatibility comments and names without changing IPC

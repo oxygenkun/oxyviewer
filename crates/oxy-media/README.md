@@ -26,7 +26,7 @@ pub fn preview(
     path: &Path,
     cache_dir: &Path,
     level: RenderLevel,
-    priority: DecodePriority,
+    priority: PreviewPriority,
     kind: AssetKind,
 ) -> Result<PreviewResult, MediaError>
 ```
@@ -36,7 +36,7 @@ pub fn preview(
 - `path`：源文件路径。
 - `cache_dir`：应用拥有的扁平 preview cache 目录。
 - `level`：语义等级 `Thumbnail | Preview | Full`；调用者不传具体像素尺寸。
-- `priority`：Rust decode gate 的排队优先级。
+- `priority`：domain/IPC 层的请求优先级；media 内部将其转换为 decode gate 等级。
 - `kind`：调用者已识别的 `AssetKind`。
 - 返回值：`oxy_domain::PreviewResult`，包含 artifact 路径、尺寸、表示种类、渲染等级和可选诊断。
 
@@ -52,23 +52,20 @@ pub fn preview(
 Windows/Linux 当前没有 TIFF system-preview backend，会返回
 `MediaError::NativeDecoderUnavailable`。
 
-### 优先级转换
+### 请求优先级
 
-```rust
-pub fn decode_priority_for(priority: PreviewPriority) -> DecodePriority
-```
+`preview(...)` 直接接收共享 domain 中的 `PreviewPriority`，调用者无需了解 media 内部的
+decode gate 类型。内部映射为：
 
-把 IPC/domain 层优先级转换为 decode gate 优先级：
-
-| `PreviewPriority` | `DecodePriority` |
+| `PreviewPriority` | 内部 gate 等级 |
 | --- | --- |
-| `Loupe` | `Foreground` |
-| `Visible` | `Visible` |
-| `Nearby` | `Background` |
-| `Preload` | `Background` |
+| `Loupe` | foreground |
+| `Visible` | visible |
+| `Nearby` | background |
+| `Preload` | background |
 
-高优先级请求可以越过尚未开始的低优先级请求，但不会抢占已经运行的 decode。
-`HeifDecodePriority` 是 `DecodePriority` 的兼容别名；新代码应使用 `DecodePriority`。
+高优先级请求可以越过尚未开始的低优先级请求，但不会抢占已经运行的 decode。gate 等级是
+`oxy-media` 的私有实现细节，不属于公共 API。
 
 ### 尺寸读取
 
@@ -124,28 +121,18 @@ let diagnostics = service.decode(
 `HeifTile` 可能包含 RGBA bytes，或在 Windows FFmpeg tile-grid 路径中包含已编码 JPEG；这些
 bytes 应通过 `oxy-media://` 协议提供，不应塞入 JSON IPC。
 
-### HEIF cache 查询与尺寸型 benchmark 入口
+### HEIF cache 查询
 
 ```rust
-pub fn cached_heif_session(
+pub fn cached_heif_full(
     path: &Path,
     cache_dir: &Path,
 ) -> Result<Option<PreviewResult>, MediaError>
 ```
 
 这是只读查询：检查完整源 HEIF JPEG 是否已经存在，不会启动 decode。Tauri 用它实现
-`get_cached_heif_full`，并在 session 完成后通知前端 cache 已就绪。
-
-```rust
-pub fn heif_preview(
-    path: &Path,
-    cache_dir: &Path,
-    max_size: u32,
-) -> Result<PreviewResult, MediaError>
-```
-
-该入口保留给 `heif_display_bench` 等需要明确像素尺寸的工具。应用业务代码应调用语义化的
-`preview(...)`，避免在调用层复制尺寸和格式策略。
+`get_cached_heif_full`，并在 session 完成后通知前端 cache 已就绪。HEIF preview 统一通过语义化
+`preview(...)` 入口请求，benchmark 也不再绕过 planner 传递具体像素尺寸。
 
 ### Cache 管理
 
@@ -185,18 +172,16 @@ pub enum MediaError;
 ```mermaid
 flowchart TD
     caller[PreviewQueue worker] --> api[oxy_media::preview]
-    api --> probe{HEIF Thumbnail/Preview?}
-    probe -->|yes| heifProbe[有界探测快速表示]
-    probe -->|no| facts[使用 AssetKind facts]
-    heifProbe --> planner[pipeline::planner::plan]
-    facts --> planner
+    api --> planner[pipeline::planner::plan]
     planner --> decodePlan[DecodePlan]
     decodePlan --> dispatcher[pipeline::dispatcher]
     dispatcher --> raw[pipeline::raw]
-    dispatcher --> heif[pipeline::heif_preview]
+    dispatcher --> heif[pipeline::heif::artifact]
     dispatcher --> system[pipeline::system]
     dispatcher --> original[返回原文件]
+    heif --> heifProbe[按需有界探测快速表示]
     raw --> cache[(preview cache)]
+    heifProbe --> cache
     heif --> cache
     system --> cache
     cache --> result[PreviewResult: path + dimensions + diagnostics]
@@ -204,10 +189,11 @@ flowchart TD
 
 执行阶段遵循以下顺序：
 
-1. HEIF thumbnail/preview 在请求到达时执行有界 probe；目录扫描阶段不探测媒体内容。
-2. planner 根据 `SourceFacts + RenderLevel + Platform + BackendCapabilities` 产生纯数据
-   `DecodePlan`。
-3. dispatcher 只执行 planner 明确给出的 step/fallback，不在 Tauri command 中复制格式分支。
+1. planner 根据 `AssetKind + RenderLevel + Platform + BackendCapabilities` 产生纯数据
+   `DecodePlan`，不读取源文件。
+2. dispatcher 只执行 planner 明确给出的 step/fallback，不在 Tauri command 中复制格式分支。
+3. HEIF thumbnail/preview executor 优先检查 embedded cache，再按需执行有界 probe；目录扫描和
+   planner 阶段不探测媒体内容。
 4. pipeline 先检查精确 cache，再尝试复用更高等级 cache。
 5. 需要源 decode 时先进入优先级 gate，再取得同源文件锁；取得锁后重新检查 cache。
 6. 新 artifact 在 cache 目录中写临时文件，完成编码/校验后原子提交。
@@ -229,7 +215,7 @@ dispatcher 当前只接受 planner 产生的两类有序 fallback：
    fallback 错误文本。
 2. HEIF full 失败后尝试 foreground 8192px HEIF preview，避免放大镜完全空白。
 
-HEIF 内部 backend 顺序由 `pipeline::heif` 决定，并记录 backend 尝试诊断。取消会立即终止
+HEIF 内部 backend 顺序由 `pipeline::heif::backend` 决定，并记录 backend 尝试诊断。取消会立即终止
 计划，不会被解释为“尝试更慢兼容 backend”的许可。
 
 ## HEIF session 调用流程
@@ -254,7 +240,7 @@ sequenceDiagram
     end
     Service-->>Tauri: complete(HeifDiagnostics)
     Service->>Cache: 稳定选择后写完整源 JPEG
-    Tauri->>Cache: cached_heif_session(...)
+    Tauri->>Cache: cached_heif_full(...)
 ```
 
 ## 内部模块边界
@@ -263,9 +249,11 @@ sequenceDiagram
 | --- | --- |
 | `pipeline::planner` | 纯策略：语义等级、格式、平台和能力 → `DecodePlan` |
 | `pipeline::dispatcher` | 执行 `DecodePlan` 和跨格式 fallback |
+| `pipeline::artifact` | 跨格式 decoded preview cache 复用和计时等小型共享机制 |
 | `pipeline::raw` | RAW embedded/developed/full 流程及 backend 顺序 |
-| `pipeline::heif` | HEIF backend 探测、选择、尝试诊断 |
-| `pipeline::heif_preview` | HEIF preview/full artifact 和 source-JPEG cache |
+| `pipeline::heif` | HEIF 子管线门面，仅声明内部子模块 |
+| `pipeline::heif::backend` | HEIF backend 探测、选择、fallback 和尝试诊断 |
+| `pipeline::heif::artifact` | 单一 HEIF `preview` 执行函数、full artifact 和 source-JPEG cache |
 | `pipeline::system` | 平台 system preview |
 | `backends` | ImageIO、Core Image、WIC、FFmpeg、libheif、LibRaw 适配器 |
 | `formats` | 文件格式知识和窄范围兼容规则，例如 Sony SHIF |

@@ -3,8 +3,8 @@
 //! Run from the workspace root:
 //! `cargo run --release -p oxy-media --bin raw_display_bench -- test/fixtures/media/DSC00529.ARW`
 
-use oxy_domain::{AssetKind, RenderLevel};
-use oxy_media::{DecodePriority, dimensions, preview};
+use oxy_domain::{AssetKind, PreviewPriority, RenderLevel};
+use oxy_media::{dimensions, preview};
 use std::{env, error::Error, path::PathBuf, time::Instant};
 
 fn main() -> Result<(), Box<dyn Error>> {
@@ -29,7 +29,7 @@ fn main() -> Result<(), Box<dyn Error>> {
             &path,
             cache.path(),
             level,
-            DecodePriority::Background,
+            PreviewPriority::Preload,
             AssetKind::Raw,
         )?;
         println!(
@@ -48,7 +48,7 @@ fn main() -> Result<(), Box<dyn Error>> {
             &path,
             cache.path(),
             RenderLevel::Full,
-            DecodePriority::Foreground,
+            PreviewPriority::Loupe,
             AssetKind::Raw,
         )?;
         println!(

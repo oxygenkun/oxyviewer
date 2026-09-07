@@ -37,8 +37,7 @@ Sony 160px 快速表示目前被应用于所有 HEIF 的 thumbnail/preview，后
 ```text
 lib.rs                      稳定公开入口与重导出
 service.rs                  请求编排
-probe.rs + probe/           SourceFacts：有界、分阶段识别源文件
-formats.rs + formats/       RAW/HEIF 格式知识、items、局部 quirks
+formats.rs + formats/       RAW/HEIF 格式知识、items、局部 quirks 与有界检查
 backends.rs + backends/     LibRaw/libheif/FFmpeg/ImageIO/WIC 适配与能力
 pipeline.rs + pipeline/     planner、executor、session
 decode_control.rs           媒体解码 gate、独立 lane 锁与同源锁表
@@ -49,19 +48,19 @@ cache.rs + cache/           key、store、encode
 目录按实际迁移逐步建立。FFI 源文件和 build.rs 路径需一起迁移。
 
 ```text
-Request + SourceFacts + BackendCapabilities
+Request + AssetKind + BackendCapabilities
                   ↓
               DecodePlan
                   ↓
        缓存查询 / executor / session
                   ↓
-       后端 → 显示规范化 → 缓存或协议交付
+       有界源检查 → 后端 → 显示规范化 → 缓存或协议交付
 ```
 
-- `SourceFacts` 描述格式族、具体变体、可用表示、尺寸、方向与色彩；未知信息保留未知。
 - Request 描述等级、目标尺寸、优先级、呈现意图和取消信号，而非指定解码库。
 - 能力描述特定输入支持、缩放/full/tile、输出色彩与方向状态、取消和加速证据。
-- planner 使用事实与能力生成可测试的计划，不执行 IO/解码。探测由编排层按需完成。
+- planner 使用请求、格式族与能力生成可测试的计划，不执行 IO/解码。
+- 影响单个格式内部表示选择的有界检查由对应 executor 按需执行，不把结果反向送入 planner。
 - preview 和 full session 使用相同选择机制，但允许不同计划和资源 lane。
 - fallback 顺序用兼容性与性能证据决定，不假设原生后端永远最好。
 - 缓存替代要比较表示、质量和处理策略；影响产物的行为变更需更新 cache version。
@@ -78,11 +77,11 @@ Request + SourceFacts + BackendCapabilities
 - [x] 将 libheif 适配器和 Sony 专用提取器命名对齐职责，整理后端与 FFI。
 - 验收：API、产物、缓存键、fallback 顺序、锁范围不变；原有测试通过。
 
-### B：事实与计划
+### B：请求与计划
 
-- [x] 引入最小内部 SourceFacts / DecodePlan，先表达当前行为。
-- [x] planner 用模拟能力测试平台 × 文件特征 × 等级矩阵，不依赖宿主原生解码器。
-- 验收：未知厂商、能力缺失与现有策略都有明确结果；探测不进入目录首屏。
+- [x] 引入内部 DecodePlan，以 AssetKind、语义请求与能力表达路由。
+- [x] planner 用模拟能力测试平台 × 格式 × 等级矩阵，不依赖宿主原生解码器。
+- 验收：能力缺失与现有策略都有明确结果；源内容探测不进入 planner 或目录首屏。
 
 ### C：统一后端选择（已完成本阶段清单）
 
@@ -133,8 +132,9 @@ Request + SourceFacts + BackendCapabilities
 第三小步已实现：
 
 - `decode_control.rs` 持有统一 DecodeGate、RAW full 独立锁、HEIF session 缓存写锁和同源锁表。
-- 根模块继续导出 DecodePriority/HeifDecodePriority 和内部兼容入口；RAW full 在原位置
-  通过薄 helper 获取同一独立锁，不改变 guard 生命周期、锁顺序或并发度。
+- 本阶段根模块仍导出 `DecodePriority`/`HeifDecodePriority` 和内部兼容入口；后续 facade
+  收紧后，`preview` 改为直接接收 domain `PreviewPriority`，gate 等级已成为 media 私有实现。
+  RAW full 通过同一独立锁，不改变 guard 生命周期、锁顺序或并发度。
 - 迁移两项优先级测试并增加不可抢占断言；新增 permit unwind 释放、同源锁身份/不同源独立、
   源解码 panic 后 poisoned lock 恢复三项测试。
 - 原有同源锁表不回收及其 unsafe lifetime 实现原样保留，不应在未重新设计所有权前删除表项。
@@ -230,11 +230,11 @@ C 阶段已实现：
 
 D 阶段实现记录：
 
-- 新增 request-time `probe.rs`。HEIF thumbnail/preview 仅在实际请求时扫描源文件前 2 MiB，识别并
-  验证 Sony SHIF sidebar JPEG，同时把已读取字节交给 executor；目录发现不执行探测。planner 只在
-  `Presence::Present` 时选择 160px，unknown/absent HEIF 改为 512 thumbnail 与 4096 preview。
-- Sony embedded 与 decoded HEIF preview 使用不同 cache suffix；热 embedded cache 可证明此前探测
-  成功并保留 `PreviewKind::Embedded`，不再被热命中误报为 decoded。HEIF preview cache 升至 v9。
+- HEIF thumbnail/preview 执行器仅在实际请求时扫描源文件前 2 MiB，识别并提取 Sony SHIF sidebar
+  JPEG；目录发现和 planner 不执行探测。planner 只声明优先尝试快速表示，并保留 512 thumbnail 与
+  4096 preview 的解码回退尺寸；执行器命中 embedded cache 或探测成功时直接返回共享的 160px 产物。
+- Sony embedded 与 decoded HEIF preview 使用不同 cache suffix；热 embedded cache 保留
+  `PreviewKind::Embedded`，不再被热命中误报为 decoded。HEIF preview cache 升至 v9。
 - 新增内部 presentation artifact contract，显式区分 camera preview、RAW development、HEIF primary，
   以及 metadata/applied orientation、embedded-or-unknown/sRGB-ICC color 和 SDR。RAW 近全尺寸 camera
   JPEG 仅在该表示契约成立且 display-space 两边覆盖 90% 时满足 full，尺寸本身不是质量排序。
@@ -242,8 +242,8 @@ D 阶段实现记录：
   media policy version 同时进入 Tauri 持久化 image projection revision，旧 ready projection 不会绕过
   新 cache key。没有增加 IPC 字段，Phase C attempt diagnostics 仍为内部契约。
 - 前端删除全 HEIF 的 preview→thumbnail 静态别名；generic HEIF 能真正请求 4096 preview，已识别 Sony
-  仍由 Rust 让两个语义等级返回同一路径。planner、probe、artifact substitution、projection version、
-  前端 render graph 和 tracked Sony HIF 冷/热路径均有回归测试。
+  仍由 Rust 让两个语义等级返回同一路径。planner、运行时 HEIF probe、artifact substitution、
+  projection version、前端 render graph 和 tracked Sony HIF 冷/热路径均有回归测试。
 - 仓库目前仍只有一份可再分发的 Sony HIF camera fixture；unknown-vendor HEIF 使用该真实容器移除
   Sony compatible brand 后测试，RAW 方向/色彩仍依赖 ignored 的本地 fixture。macOS release 后测的
   Sony 160px 五次样本 median 7.90 ms（见 `PERFORMANCE.md`），但没有同构建 D 前成对样本，因此不能

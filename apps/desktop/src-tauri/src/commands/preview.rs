@@ -239,7 +239,7 @@ pub(crate) async fn get_cached_heif_full(
     let preview_dir = state.cache.preview_dir();
     let cache = state.cache.clone();
     let result = tauri::async_runtime::spawn_blocking(move || {
-        oxy_media::cached_heif_session(&path, &preview_dir).map_err(|error| error.to_string())
+        oxy_media::cached_heif_full(&path, &preview_dir).map_err(|error| error.to_string())
     })
     .await
     .map_err(|error| error.to_string())??;
@@ -304,8 +304,7 @@ pub(crate) async fn start_heif_decode(
             },
         );
         if result.is_ok()
-            && let Ok(Some(cached)) =
-                oxy_media::cached_heif_session(&cache_source_path, &preview_dir)
+            && let Ok(Some(cached)) = oxy_media::cached_heif_full(&cache_source_path, &preview_dir)
         {
             cache.mark_used(&cached.path);
             if cache.try_start_prune() {

@@ -20,7 +20,6 @@ pub struct EmbeddedJpeg {
 
 #[derive(Debug)]
 pub struct Inspection {
-    pub is_sony: bool,
     pub embedded_jpeg: Option<EmbeddedJpeg>,
 }
 
@@ -34,7 +33,6 @@ pub fn inspect(
     File::open(path)?.take(SCAN_LIMIT).read_to_end(&mut bytes)?;
     if !bytes.windows(4).any(|window| window == b"SHIF") {
         return Ok(Inspection {
-            is_sony: false,
             embedded_jpeg: None,
         });
     }
@@ -66,7 +64,6 @@ pub fn inspect(
     }
     let Some((_, mut jpeg, mut width, mut height)) = best else {
         return Ok(Inspection {
-            is_sony: true,
             embedded_jpeg: None,
         });
     };
@@ -94,7 +91,6 @@ pub fn inspect(
         std::mem::swap(&mut width, &mut height);
     }
     Ok(Inspection {
-        is_sony: true,
         embedded_jpeg: Some(EmbeddedJpeg {
             bytes: jpeg,
             width,
@@ -110,11 +106,7 @@ fn extract(path: &Path, display_size: ImageDimensions) -> Result<EmbeddedJpeg, M
         .embedded_jpeg
         .ok_or_else(|| MediaError::NativeDecode {
             backend: "embedded JPEG",
-            message: if inspection.is_sony {
-                format!("{} has no small embedded JPEG", path.display())
-            } else {
-                format!("{} is not a Sony SHIF container", path.display())
-            },
+            message: format!("{} has no small embedded JPEG", path.display()),
         })
 }
 
@@ -209,16 +201,20 @@ mod tests {
         let directory = tempfile::tempdir().unwrap();
         let path = directory.path().join("generic.hif");
         std::fs::write(&path, b"not a Sony container").unwrap();
-        let error = extract(
-            &path,
-            ImageDimensions {
-                width: 160,
-                height: 120,
-            },
-        )
-        .expect_err("non-Sony input must not use the quirk");
-        assert!(matches!(error, MediaError::NativeDecode { message, .. }
-            if message.contains("not a Sony SHIF container")));
+        let inspection = inspect(&path, None).unwrap();
+        assert!(inspection.embedded_jpeg.is_none());
+    }
+
+    #[test]
+    fn inspection_does_not_scan_past_the_bounded_header_window() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("late-shif.heic");
+        let mut bytes = vec![0; SCAN_LIMIT as usize + 4];
+        bytes[SCAN_LIMIT as usize..].copy_from_slice(b"SHIF");
+        std::fs::write(&path, bytes).unwrap();
+
+        let inspection = inspect(&path, None).unwrap();
+        assert!(inspection.embedded_jpeg.is_none());
     }
 
     #[test]

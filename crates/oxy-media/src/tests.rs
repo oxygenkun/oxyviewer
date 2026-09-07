@@ -4,22 +4,41 @@ use crate::backends::{apple_core_image, apple_image_io};
 use crate::{
     backends::{libheif, libraw},
     cache::{preview_cache_key, write_jpeg_atomically},
+    decode_control::DecodePriority,
     media_source::preview_result,
     pipeline::{
-        heif_preview::{HEIF_CACHE_VERSION, heif_full, larger_cached_preview},
+        artifact::larger_cached_decoded_preview,
+        heif::artifact::{
+            HEIF_CACHE_VERSION, cache_full, full as heif_full, preview as heif_artifact_preview,
+        },
         raw::{self, RawBackend as PlannedRawBackend, covers_source as covers_raw_source},
         system::preview as system_preview,
     },
     presentation::{HEIF_DECODED_JPEG, RAW_DEVELOPED_JPEG},
 };
 use image::{DynamicImage, ImageDecoder, ImageFormat, ImageReader, Rgb, RgbImage};
-use oxy_domain::{PreviewKind, RenderLevel};
+use oxy_domain::{PreviewKind, PreviewPriority, PreviewResult, RenderLevel};
 use std::{
     fs,
     io::Cursor,
     path::{Path, PathBuf},
     time::{Duration, Instant},
 };
+
+fn benchmark_heif_preview(
+    path: &Path,
+    cache_dir: &Path,
+    max_size: u32,
+) -> Result<PreviewResult, MediaError> {
+    heif_artifact_preview(
+        path,
+        cache_dir,
+        max_size,
+        DecodePriority::Background,
+        max_size <= 160,
+        true,
+    )
+}
 
 fn raw_preview(
     path: &Path,
@@ -49,10 +68,10 @@ fn heif_session_cache_is_lookup_only_and_comes_from_the_source_heif() {
     };
     let cache = directory.path().join("previews");
 
-    assert!(cached_heif_session(&source, &cache).unwrap().is_none());
+    assert!(cached_heif_full(&source, &cache).unwrap().is_none());
 
-    cache_heif_source_jpeg(&source, &cache).unwrap();
-    let cached = cached_heif_session(&source, &cache)
+    cache_full(&source, &cache).unwrap();
+    let cached = cached_heif_full(&source, &cache)
         .unwrap()
         .expect("source HEIF should have a full JPEG cache");
     assert!(cached.width >= 4_672);
@@ -72,7 +91,7 @@ fn sony_hif_thumbnail_and_preview_levels_share_the_160_artifact() {
         &path,
         cache.path(),
         RenderLevel::Thumbnail,
-        DecodePriority::Visible,
+        PreviewPriority::Visible,
         oxy_domain::AssetKind::Heif,
     )
     .unwrap();
@@ -80,7 +99,7 @@ fn sony_hif_thumbnail_and_preview_levels_share_the_160_artifact() {
         &path,
         cache.path(),
         RenderLevel::Preview,
-        DecodePriority::Foreground,
+        PreviewPriority::Loupe,
         oxy_domain::AssetKind::Heif,
     )
     .unwrap();
@@ -112,7 +131,7 @@ fn heif_without_identified_fast_representation_uses_semantic_preview_size() {
         &path,
         &cache,
         RenderLevel::Thumbnail,
-        DecodePriority::Visible,
+        PreviewPriority::Visible,
         oxy_domain::AssetKind::Heif,
     )
     .unwrap();
@@ -120,7 +139,7 @@ fn heif_without_identified_fast_representation_uses_semantic_preview_size() {
         &path,
         &cache,
         RenderLevel::Preview,
-        DecodePriority::Foreground,
+        PreviewPriority::Loupe,
         oxy_domain::AssetKind::Heif,
     )
     .unwrap();
@@ -147,7 +166,7 @@ fn larger_cached_preview_satisfies_smaller_request() {
     )
     .unwrap();
 
-    let result = larger_cached_preview(&path, directory.path(), HEIF_CACHE_VERSION, 512)
+    let result = larger_cached_decoded_preview(&path, directory.path(), HEIF_CACHE_VERSION, 512)
         .unwrap()
         .unwrap();
 
@@ -174,7 +193,7 @@ fn larger_cached_preview_serves_any_backend_tag() {
     )
     .unwrap();
 
-    let result = larger_cached_preview(&path, directory.path(), raw_tag, 512)
+    let result = larger_cached_decoded_preview(&path, directory.path(), raw_tag, 512)
         .unwrap()
         .unwrap();
 
@@ -189,7 +208,7 @@ fn heif_preview_reports_cold_backend_timing_breakdown() {
     };
     let cache = tempfile::tempdir().unwrap();
 
-    let preview = heif_preview(&path, cache.path(), 512).unwrap();
+    let preview = benchmark_heif_preview(&path, cache.path(), 512).unwrap();
     let diagnostics = preview.diagnostics.expect("cold preview diagnostics");
 
     assert!(diagnostics.backend.is_some());
@@ -208,7 +227,7 @@ fn heif_preview_reports_cold_backend_timing_breakdown() {
                 + diagnostics.cache_commit_ms.unwrap()
     );
 
-    let warm = heif_preview(&path, cache.path(), 512).unwrap();
+    let warm = benchmark_heif_preview(&path, cache.path(), 512).unwrap();
     assert!(
         warm.diagnostics.is_none(),
         "warm cache hits skip decode timing"
@@ -577,7 +596,7 @@ fn heif_decode_performance_budget() {
     // Cold 512 px thumbnail via decode_scaled (8-bit fast path).
     let cache_thumb = tempfile::tempdir().unwrap();
     let started = Instant::now();
-    let thumb = heif_preview(&heif_path, cache_thumb.path(), 512).unwrap();
+    let thumb = benchmark_heif_preview(&heif_path, cache_thumb.path(), 512).unwrap();
     let thumb_elapsed = started.elapsed();
     eprintln!("HEIF thumbnail (512): {thumb_elapsed:?}");
     assert!(
@@ -589,7 +608,7 @@ fn heif_decode_performance_budget() {
     // Cold 4096 px loupe preview via decode_scaled.
     let cache_loupe = tempfile::tempdir().unwrap();
     let started = Instant::now();
-    let loupe = heif_preview(&heif_path, cache_loupe.path(), 4_096).unwrap();
+    let loupe = benchmark_heif_preview(&heif_path, cache_loupe.path(), 4_096).unwrap();
     let loupe_elapsed = started.elapsed();
     eprintln!("HEIF loupe (4096): {loupe_elapsed:?}");
     assert!(
@@ -601,7 +620,7 @@ fn heif_decode_performance_budget() {
     // Warm loupe cache hit.
     let started = Instant::now();
     assert_eq!(
-        heif_preview(&heif_path, cache_loupe.path(), 4_096)
+        benchmark_heif_preview(&heif_path, cache_loupe.path(), 4_096)
             .unwrap()
             .path,
         loupe.path

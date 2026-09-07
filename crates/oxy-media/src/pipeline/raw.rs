@@ -2,10 +2,10 @@ use super::{artifact::PREVIEW_CACHE_SIZES, planner::Platform};
 #[cfg(target_os = "macos")]
 use crate::backends::{apple_core_image, apple_image_io};
 use crate::{
-    DecodePriority, ImageDimensions, MediaError,
+    ImageDimensions, MediaError,
     backends::libraw,
     cache::{persist_atomically, preview_cache_key, write_bytes_atomically, write_jpeg_atomically},
-    decode_control::{acquire_decode, acquire_file_lock, acquire_raw_full_decode},
+    decode_control::{DecodePriority, acquire_decode, acquire_file_lock, acquire_raw_full_decode},
     media_source::{has_complete_jpeg_markers, preview_result},
     presentation::{CAMERA_JPEG, RAW_DEVELOPED_JPEG, camera_preview_can_satisfy_raw_full},
 };

@@ -3,7 +3,8 @@
 //! Run from the workspace root:
 //! `cargo run --release -p oxy-media --bin heif_display_bench -- tests/fixtures/DSC00449.HIF 5 all`
 
-use oxy_media::{HeifDecodeService, heif_preview};
+use oxy_domain::{AssetKind, PreviewPriority, RenderLevel};
+use oxy_media::{HeifDecodeService, preview};
 use std::{
     env,
     error::Error,
@@ -24,11 +25,10 @@ fn main() -> Result<(), Box<dyn Error>> {
 
     println!("file={} runs={runs} mode={mode}", path.display());
     if mode == "all" || mode == "preview" || mode == "scroll" {
-        benchmark_preview(&path, 160, runs)?;
+        benchmark_preview(&path, RenderLevel::Thumbnail, runs)?;
     }
     if mode == "all" || mode == "preview" {
-        benchmark_preview(&path, 512, runs)?;
-        benchmark_preview(&path, 4_096, runs)?;
+        benchmark_preview(&path, RenderLevel::Preview, runs)?;
     }
     if mode == "all" || mode == "full" {
         benchmark_tiles(&path, runs)?;
@@ -41,18 +41,22 @@ fn main() -> Result<(), Box<dyn Error>> {
     Ok(())
 }
 
-fn benchmark_preview(path: &Path, size: u32, runs: usize) -> Result<(), Box<dyn Error>> {
+fn benchmark_preview(path: &Path, level: RenderLevel, runs: usize) -> Result<(), Box<dyn Error>> {
     let mut samples = Vec::with_capacity(runs);
     for _ in 0..runs {
         let cache = tempfile::tempdir()?;
         let started = Instant::now();
-        let preview = heif_preview(path, cache.path(), size)?;
+        let preview = preview(
+            path,
+            cache.path(),
+            level,
+            PreviewPriority::Visible,
+            AssetKind::Heif,
+        )?;
         samples.push(started.elapsed());
-        let longest_edge = preview.width.max(preview.height);
-        assert!(longest_edge <= size && longest_edge >= size.saturating_sub(2));
         if let Some(diagnostics) = preview.diagnostics {
             println!(
-                "  {size}px {}x{} {:.1}KiB backend={} queue={}ms source={}ms decode={}ms encode={}ms sync={}ms commit={}ms total={}ms",
+                "  {level:?} {}x{} {:.1}KiB backend={} queue={}ms source={}ms decode={}ms encode={}ms sync={}ms commit={}ms total={}ms",
                 preview.width,
                 preview.height,
                 std::fs::metadata(&preview.path)?.len() as f64 / 1024.0,
@@ -67,7 +71,7 @@ fn benchmark_preview(path: &Path, size: u32, runs: usize) -> Result<(), Box<dyn 
             );
         }
     }
-    print_samples(&format!("{size}px preview"), &mut samples);
+    print_samples(&format!("{level:?} preview"), &mut samples);
     Ok(())
 }
 
