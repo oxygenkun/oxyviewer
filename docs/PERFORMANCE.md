@@ -142,11 +142,14 @@ end-to-end regression harness that enforces these budgets is described in
   down from the reproduced 4.11 s. Three cold loupe runs painted the full
   embedded JPEG in 278 ms median / 290 ms P95.
 
-- 2026-09-04: Windows release linking now declares the AOM archive at the
-  `oxy-media` boundary. The pinned vcpkg libheif port enables AOM but its Rust
-  discovery helper omits that transitive static library; keeping the link
-  directive scoped to the media crate also avoids copying AOM into every
-  downstream Rust staticlib.
+- 2026-09-07: Windows release builds now install the pinned vcpkg libheif port
+  with only its `core` feature. The application discovers HEIF/HEIC/HIF assets
+  and uses libde265 for the required HEVC compatibility decode; it does not
+  currently discover AVIF assets, so neither the AOM AV1 codec nor the default
+  x265 HEVC encoder belongs in the package. This removes both codec builds and
+  the AOM static-link workaround from the release path. CI restores the vcpkg
+  binary archive before installation and saves it immediately afterward, so a
+  later Cargo or packaging failure does not discard the completed native build.
 
 - 2026-09-04: Grid and list rendering now enter a presentation-only phase
   during active scrolling. Virtual rows, cheap summaries, placeholders, and

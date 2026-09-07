@@ -58,13 +58,14 @@ jobs:
         if: runner.os == 'Linux'
         run: sudo apt-get update && sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf
       - name: Restore Windows dependency cache
+        id: vcpkg-cache
         if: runner.os == 'Windows'
-        uses: actions/cache@v5
+        uses: actions/cache/restore@v5
         with:
           path: vcpkg-binary-cache
-          key: vcpkg-${{ runner.os }}-${{ runner.arch }}-libheif-1.23.3-aom-x64-windows-static-md-v1
+          key: vcpkg-${{ runner.os }}-${{ runner.arch }}-libheif-1.23.3-core-x64-windows-static-md-v2
           restore-keys: |
-            vcpkg-${{ runner.os }}-${{ runner.arch }}-libheif-1.23.3-aom-x64-windows-static-md-
+            vcpkg-${{ runner.os }}-${{ runner.arch }}-libheif-1.23.3-core-x64-windows-static-md-
       - name: Windows system dependencies
         if: runner.os == 'Windows'
         shell: pwsh
@@ -72,8 +73,14 @@ jobs:
           VCPKG_DEFAULT_BINARY_CACHE: ${{ github.workspace }}\vcpkg-binary-cache
         run: |
           New-Item -ItemType Directory -Force "$env:VCPKG_DEFAULT_BINARY_CACHE" | Out-Null
-          & "$env:VCPKG_INSTALLATION_ROOT\vcpkg.exe" install "libheif[aom]:x64-windows-static-md" --overlay-ports="${{ github.workspace }}\3rdpart\vcpkg-ports"
+          & "$env:VCPKG_INSTALLATION_ROOT\vcpkg.exe" install "libheif[core]:x64-windows-static-md" --overlay-ports="${{ github.workspace }}\3rdpart\vcpkg-ports"
           "VCPKG_ROOT=$env:VCPKG_INSTALLATION_ROOT" >> $env:GITHUB_ENV
+      - name: Save Windows dependency cache
+        if: runner.os == 'Windows' && steps.vcpkg-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v5
+        with:
+          path: vcpkg-binary-cache
+          key: ${{ steps.vcpkg-cache.outputs.cache-primary-key }}
       - uses: pnpm/action-setup@v4
       - uses: actions/setup-node@v4
         with:
