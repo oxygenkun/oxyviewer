@@ -31,8 +31,6 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: pnpm/action-setup@v4
-        with:
-          version: 10.30.3
       - uses: actions/setup-node@v4
         with:
           node-version: 22
@@ -77,8 +75,6 @@ jobs:
           & "$env:VCPKG_INSTALLATION_ROOT\vcpkg.exe" install "libheif[aom]:x64-windows-static-md" --overlay-ports="${{ github.workspace }}\3rdpart\vcpkg-ports"
           "VCPKG_ROOT=$env:VCPKG_INSTALLATION_ROOT" >> $env:GITHUB_ENV
       - uses: pnpm/action-setup@v4
-        with:
-          version: 10.30.3
       - uses: actions/setup-node@v4
         with:
           node-version: 22
