@@ -621,7 +621,7 @@ fn elapsed_ms(started: Instant) -> u64 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    #[cfg(target_os = "macos")]
+    #[cfg(any(target_os = "macos", target_os = "windows"))]
     use oxy_domain::AccelerationKind;
 
     #[test]
