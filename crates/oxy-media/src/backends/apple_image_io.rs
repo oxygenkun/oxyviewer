@@ -207,8 +207,10 @@ mod tests {
     use super::*;
     #[test]
     fn decodes_repository_heif_fixture() {
-        let fixture =
-            Path::new(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/DSC00449.HIF");
+        let Some(fixture) = crate::sony_hif_fixture() else {
+            eprintln!("skipping: Sony HIF fixture unavailable (set OXY_HIF_FIXTURE)");
+            return;
+        };
         if let Err(error) = can_decode(&fixture) {
             eprintln!("skipping unsupported ImageIO HEIF fixture: {error}");
             return;
@@ -231,8 +233,10 @@ mod tests {
 
     #[test]
     fn transcodes_repository_heif_directly_to_jpeg() {
-        let fixture =
-            Path::new(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/DSC00449.HIF");
+        let Some(fixture) = crate::sony_hif_fixture() else {
+            eprintln!("skipping: Sony HIF fixture unavailable (set OXY_HIF_FIXTURE)");
+            return;
+        };
         if can_decode(&fixture).is_err() {
             return;
         }

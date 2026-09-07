@@ -848,8 +848,10 @@ mod tests {
         if capability().is_err() {
             return;
         }
-        let fixture =
-            Path::new(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/DSC00449.HIF");
+        let Some(fixture) = crate::sony_hif_fixture() else {
+            eprintln!("skipping: Sony HIF fixture unavailable (set OXY_HIF_FIXTURE)");
+            return;
+        };
         let image = decode_full_rgba8(
             &fixture,
             ImageDimensions {
@@ -867,8 +869,10 @@ mod tests {
         if capability().is_err() {
             return;
         }
-        let fixture =
-            Path::new(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/DSC00449.HIF");
+        let Some(fixture) = crate::sony_hif_fixture() else {
+            eprintln!("skipping: Sony HIF fixture unavailable (set OXY_HIF_FIXTURE)");
+            return;
+        };
         let output = tempfile::Builder::new().suffix(".jpg").tempfile().unwrap();
         transcode_full_jpeg(
             &fixture,
@@ -892,10 +896,10 @@ mod tests {
         if capability().is_err() {
             return;
         }
-        let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/DSC00449.HIF");
-        if !path.is_file() {
+        let Some(path) = crate::sony_hif_fixture() else {
+            eprintln!("skipping: Sony HIF fixture unavailable (set OXY_HIF_FIXTURE)");
             return;
-        }
+        };
         let image = decode_scaled_preview(&path, 512).unwrap();
         assert_eq!(image.width().max(image.height()), 512);
     }
@@ -906,8 +910,10 @@ mod tests {
         if capability().is_err() {
             return;
         }
-        let fixture =
-            Path::new(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/DSC00449.HIF");
+        let Some(fixture) = crate::sony_hif_fixture() else {
+            eprintln!("skipping: Sony HIF fixture unavailable (set OXY_HIF_FIXTURE)");
+            return;
+        };
         let ffmpeg = decode_full_rgba8(
             &fixture,
             ImageDimensions {

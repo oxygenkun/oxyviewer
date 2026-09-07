@@ -431,7 +431,10 @@ mod tests {
 
     #[test]
     fn reads_chroma_subsampling_from_repository_hif() {
-        let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/DSC00449.HIF");
+        let Some(path) = crate::sony_hif_fixture() else {
+            eprintln!("skipping: Sony HIF fixture unavailable (set OXY_HIF_FIXTURE)");
+            return;
+        };
         let document = NativeMetadataReader.read(&path, None).unwrap();
         assert_eq!(
             document.capture.chroma_subsampling.as_deref(),

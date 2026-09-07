@@ -1331,6 +1331,22 @@ fn escape_xml(value: &str) -> String {
         .replace('\'', "&apos;")
 }
 
+/// Resolves the Sony HIF test fixture, which is archived outside git (see
+/// `tests/fixtures/README.md`). `OXY_HIF_FIXTURE` overrides the default
+/// `tests/fixtures/DSC00449.HIF` location. Returns `None` when the file is
+/// absent so fixture-dependent tests can skip instead of failing.
+#[cfg(test)]
+pub(crate) fn sony_hif_fixture() -> Option<std::path::PathBuf> {
+    let path = std::env::var_os("OXY_HIF_FIXTURE").map_or_else(
+        || {
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+                .join("../../tests/fixtures/DSC00449.HIF")
+        },
+        std::path::PathBuf::from,
+    );
+    path.is_file().then_some(path)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1734,7 +1750,10 @@ mod tests {
 
     #[test]
     fn reads_repository_hif_embedded_rating_without_exiftool() {
-        let hif = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/DSC00449.HIF");
+        let Some(hif) = crate::sony_hif_fixture() else {
+            eprintln!("skipping: Sony HIF fixture unavailable (set OXY_HIF_FIXTURE)");
+            return;
+        };
         let metadata = read_metadata_with_exiftool(
             &hif,
             AssetKind::Heif,
@@ -1839,7 +1858,10 @@ mod tests {
 
     #[test]
     fn reads_and_orients_repository_sony_hif_focus_metadata() {
-        let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/DSC00449.HIF");
+        let Some(path) = crate::sony_hif_fixture() else {
+            eprintln!("skipping: Sony HIF fixture unavailable (set OXY_HIF_FIXTURE)");
+            return;
+        };
         let (capture, focus) = read_capture_details(&path, Some((4_672, 7_008))).unwrap();
         let focus = focus.expect("repository HIF fixture has Sony FocusLocation");
 

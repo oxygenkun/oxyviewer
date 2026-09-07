@@ -174,8 +174,10 @@ mod tests {
             eprintln!("skipping WIC HEIF decode test: {error}");
             return;
         }
-        let fixture =
-            Path::new(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/DSC00449.HIF");
+        let Some(fixture) = crate::sony_hif_fixture() else {
+            eprintln!("skipping: Sony HIF fixture unavailable (set OXY_HIF_FIXTURE)");
+            return;
+        };
         if let Err(error) = can_decode(&fixture) {
             eprintln!("skipping unsupported WIC HEIF fixture: {error}");
             return;

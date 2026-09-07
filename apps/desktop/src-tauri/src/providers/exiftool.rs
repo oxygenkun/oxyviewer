@@ -317,8 +317,14 @@ mod tests {
         assert_eq!(status.source, Some("managed"));
         assert_eq!(status.version.as_deref(), Some(VERSION));
 
-        let fixture =
-            Path::new(env!("CARGO_MANIFEST_DIR")).join("../../../tests/fixtures/DSC00449.HIF");
+        let fixture = std::env::var_os("OXY_HIF_FIXTURE").map_or_else(
+            || Path::new(env!("CARGO_MANIFEST_DIR")).join("../../../tests/fixtures/DSC00449.HIF"),
+            std::path::PathBuf::from,
+        );
+        if !fixture.is_file() {
+            eprintln!("skipping: Sony HIF fixture unavailable (set OXY_HIF_FIXTURE)");
+            return;
+        }
         let hif = temp.path().join("round-trip.HIF");
         fs::copy(fixture, &hif).unwrap();
         let facade = manager.facade();
