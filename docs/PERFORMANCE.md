@@ -16,6 +16,15 @@ end-to-end regression harness that enforces these budgets is described in
 
 ## Verification Log
 
+- 2026-09-09: On the reported 383-entry SMB HIF folder, three release/WebView continuous-scroll
+  runs per implementation measured stop-to-whole-viewport readiness. Median times at the three
+  stops changed from 1067/889/820 ms to 397/391/394 ms. The fixes bound the normal Sony prefix read
+  to 256 KiB (2 MiB fallback), remove generation-read contention with background publication, and
+  avoid unchanged manifest rewrites during prune. Worker count and the 160 ms scroll-idle gate
+  are unchanged. App artifact caches were isolated/cold; OS/NAS caches were not cleared.
+  Reproduce with `--folder <path> --grid-scroll --cold-cache --runs 3`;
+  [case details and validation limits](tasks/nas-hif-grid-latency.md).
+
 - 2026-09-08: Final media-cache review fixes were measured with a rebuilt macOS release binary,
   three isolated packaged-WebView runs per route, and repository fixtures. Median/P95 first-preview
   times were JPEG cold 86/89 ms and warm 70/72 ms; HIF cold 59/69 ms; ARW cold 61/69 ms and warm

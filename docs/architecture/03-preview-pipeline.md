@@ -275,8 +275,9 @@ macOS ImageIO 竖拍尺寸映射和前端区域映射；CI 在三个桌面平台
 不是 HEIF 格式层。Sony 专用内嵌 JPEG 提取与方向兼容逻辑位于
 `formats/heif/quirks/sony.rs`。
 
-HEIF thumbnail/preview 请求到达执行器后才进行最多 2 MiB 的有界探测，目录发现和首屏枚举
-都不读取媒体内容。dispatcher 分别保留 512 thumbnail 和
+HEIF thumbnail/preview 请求到达执行器后才进行有界探测：先读 256 KiB，只有识别出完整的
+top-level meta box 和有效 Sony JPEG 才提前返回；JPEG 或元数据不完整时继续读到原有 2 MiB
+上限。目录发现和首屏枚举都不读取媒体内容。dispatcher 分别保留 512 thumbnail 和
 4096 preview 的解码回退尺寸；执行器命中 embedded cache 或实际识别并验证出 Sony SHIF JPEG
 时，直接把两个语义等级映射到同一个 160×120 产物。JPEG 注入正确 EXIF orientation 后原样写入
 独立的 embedded cache namespace，不进入 HEVC gate，也不进行像素重编码。冷路径在一次探测中
@@ -333,6 +334,11 @@ resource 记录的 file revision 失效。v2 recency/lease 位于 manifest 和 l
 返回后可后台清理；异步 publication 必须在真正提交完成后清理，同一时刻最多一个维护任务。当前
 WebView resource 的磁盘 lease 会跨 cache instance 保护文件；clear 使它不再成为新 lookup 命中，但
 延迟删除活跃文件。
+
+未超容量时，prune 只统计用量，不扫描租约映射或重写 manifest；超容量时也只重写实际删去
+artifact 记录的 manifest。前台 active resource lookup 读取 cache generation 时，只使用跨进程
+cache shared lock，不等待后台 publish 持有的进程内 operation mutex；clear 仍使用 exclusive
+lock，因此 generation 一致性不依赖异步持久化的文件写入速度。
 
 前端 projection 可被缩略图和大图共享。`mediaResourceLease.ts` 按 resource ID 记录本地使用者，
 仅最后一位退出时释放后端租约；释放延迟一个 microtask，以免 StrictMode/effect 替换在同一轮

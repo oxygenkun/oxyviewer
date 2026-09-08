@@ -53,6 +53,9 @@ pub fn preview(
 | HEIF/HIF | 160 快速表示或 512 decode | 160 快速表示或 4096 decode | 完整源图 JPEG |
 | TIFF | macOS system preview 512 | macOS system preview 512 | macOS system preview 4096 |
 
+Sony JPEG 探测先读 256 KiB；完整 meta box 和有效 JPEG 均在此范围时立即返回，避免 NAS 上
+每张 thumbnail 固定读取 2 MiB。元数据或 JPEG 不完整时沿用 2 MiB 有界回退，不使用固定相机偏移。
+
 Windows/Linux 当前没有 TIFF system-preview backend，会返回
 `MediaError::NativeDecoderUnavailable`。
 

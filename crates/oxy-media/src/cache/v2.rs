@@ -679,16 +679,26 @@ impl DiskMediaCache {
             .unwrap_or_else(std::sync::PoisonError::into_inner);
         let cache_lock = self.open_cache_lock()?;
         FileExt::lock_exclusive(&cache_lock)?;
-        let mut protected = self.protected_paths()?;
-        if let Some(path) = protected_path {
-            protected.push(path.to_owned());
-        }
         let mut artifacts = collect_artifacts(&self.inner.root)?;
-        artifacts.sort_by_key(|artifact| artifact.modified);
         let mut total = artifacts
             .iter()
             .map(|artifact| artifact.size_bytes)
             .sum::<u64>();
+        // A completed thumbnail can request maintenance while the next one
+        // is looking up its cache. Under budget, do not hold the global
+        // exclusive lock to scan leases or rewrite/fsync every manifest.
+        if total <= max_size_bytes {
+            FileExt::unlock(&cache_lock)?;
+            return Ok(V2CacheUsage {
+                size_bytes: total,
+                artifact_count: artifacts.len(),
+            });
+        }
+        let mut protected = self.protected_paths()?;
+        if let Some(path) = protected_path {
+            protected.push(path.to_owned());
+        }
+        artifacts.sort_by_key(|artifact| artifact.modified);
         for artifact in &artifacts {
             if total <= max_size_bytes {
                 break;
@@ -876,11 +886,9 @@ impl DiskMediaCache {
 
 impl MediaCache for DiskMediaCache {
     fn generation(&self) -> Result<u64, MediaError> {
-        let _operation = self
-            .inner
-            .operation
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        // The generation file is protected by the cross-process cache lock.
+        // Do not serialize this read behind a publisher's in-process mutex:
+        // active UI lookups must not wait for unrelated artifact fsync/SMB I/O.
         let cache_lock = self.open_cache_lock()?;
         FileExt::lock_shared(&cache_lock)?;
         let generation = self.current_generation_unlocked()?;
@@ -1703,7 +1711,11 @@ fn repair_all_manifests(root: &Path, generation: u64) -> Result<(), MediaError> 
             if manifest.cache_generation != generation {
                 continue;
             }
+            let original_len = manifest.artifacts.len();
             retain_valid_artifacts(&source.path(), &mut manifest.artifacts)?;
+            if manifest.artifacts.len() == original_len {
+                continue;
+            }
             let mut temporary = NamedTempFile::new_in(source.path())?;
             serde_json::to_writer(&mut temporary, &manifest)
                 .map_err(|error| MediaError::CacheManifest(error.to_string()))?;
@@ -2041,6 +2053,95 @@ mod tests {
         drop(publication);
         maintenance.clear().unwrap();
         assert!(!path.exists());
+    }
+
+    #[test]
+    fn generation_read_does_not_wait_for_the_publication_operation_mutex() {
+        let (directory, _) = fixture();
+        let cache = DiskMediaCache::new(directory.path(), 8).unwrap();
+        let expected = cache.generation().unwrap();
+        let operation = cache.inner.operation.lock().unwrap();
+        let reader = cache.clone();
+        let (sender, receiver) = std::sync::mpsc::channel();
+        let worker = thread::spawn(move || sender.send(reader.generation()).unwrap());
+        let observed = receiver.recv_timeout(Duration::from_secs(1));
+        // Release before asserting so the old blocking implementation fails
+        // the test without leaving a blocked worker behind.
+        drop(operation);
+        worker.join().unwrap();
+        assert_eq!(observed.unwrap().unwrap(), expected);
+    }
+
+    #[test]
+    fn generation_read_still_waits_for_the_cross_process_clear_lock() {
+        let (directory, _) = fixture();
+        let cache = DiskMediaCache::new(directory.path(), 8).unwrap();
+        let lock = cache.open_cache_lock().unwrap();
+        FileExt::lock_exclusive(&lock).unwrap();
+        let reader = cache.clone();
+        let (sender, receiver) = std::sync::mpsc::channel();
+        let worker = thread::spawn(move || sender.send(reader.generation()).unwrap());
+        let before_clear = receiver.recv_timeout(Duration::from_millis(50));
+        write_generation(cache.root(), 7).unwrap();
+        FileExt::unlock(&lock).unwrap();
+        worker.join().unwrap();
+        assert!(matches!(
+            before_clear,
+            Err(std::sync::mpsc::RecvTimeoutError::Timeout)
+        ));
+        assert_eq!(receiver.recv().unwrap().unwrap(), 7);
+    }
+
+    #[test]
+    fn prune_under_budget_does_not_rewrite_manifests() {
+        let (directory, source) = fixture();
+        let cache = DiskMediaCache::new(directory.path(), 8).unwrap();
+        let publication = cache
+            .publish(pending(&source, 512, cache.generation().unwrap()))
+            .unwrap();
+        let manifest_path = cache.source_dir(&source).join(MANIFEST_FILE);
+        let modified = SystemTime::UNIX_EPOCH + Duration::from_secs(1_000_000);
+        File::options()
+            .write(true)
+            .open(&manifest_path)
+            .unwrap()
+            .set_times(fs::FileTimes::new().set_modified(modified))
+            .unwrap();
+        let before = fs::metadata(&manifest_path).unwrap().modified().unwrap();
+        let usage = cache.prune(u64::MAX).unwrap();
+        assert_eq!(usage.artifact_count, 1);
+        assert_eq!(usage.size_bytes, publication.artifact.byte_size);
+        assert_eq!(
+            fs::metadata(&manifest_path).unwrap().modified().unwrap(),
+            before
+        );
+        assert!(cache.lookup(&request(&source, 512)).unwrap().is_some());
+    }
+
+    #[test]
+    fn prune_does_not_rewrite_unchanged_leased_manifest_when_over_budget() {
+        let (directory, source) = fixture();
+        let cache = DiskMediaCache::new(directory.path(), 8).unwrap();
+        let publication = cache
+            .publish(pending(&source, 512, cache.generation().unwrap()))
+            .unwrap();
+        let manifest_path = cache.source_dir(&source).join(MANIFEST_FILE);
+        let modified = SystemTime::UNIX_EPOCH + Duration::from_secs(1_000_000);
+        File::options()
+            .write(true)
+            .open(&manifest_path)
+            .unwrap()
+            .set_times(fs::FileTimes::new().set_modified(modified))
+            .unwrap();
+        let before = fs::metadata(&manifest_path).unwrap().modified().unwrap();
+        // The publication lease keeps this artifact alive even at a zero budget.
+        let usage = cache.prune(0).unwrap();
+        assert_eq!(usage.artifact_count, 1);
+        assert_eq!(usage.size_bytes, publication.artifact.byte_size);
+        assert_eq!(
+            fs::metadata(&manifest_path).unwrap().modified().unwrap(),
+            before
+        );
     }
 
     #[test]
