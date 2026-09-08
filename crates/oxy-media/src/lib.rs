@@ -17,7 +17,7 @@ pub use error::MediaError;
 pub use heif_service::{HeifDecodeService, HeifTile, HeifTileData, HeifTilePublication};
 pub use media_source::{ImageDimensions, dimensions};
 pub use pipeline::dispatcher::preview;
-pub use pipeline::heif::artifact::{cached_heif_full, full_uses_artifact};
+pub use pipeline::heif::artifact::full_uses_artifact;
 pub use policy::preview_policy_revision;
 
 /// Resolves the Sony HIF test fixture, which is archived outside git (see

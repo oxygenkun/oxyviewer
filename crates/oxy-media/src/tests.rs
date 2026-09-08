@@ -8,7 +8,9 @@ use crate::{
     media_source::preview_result,
     pipeline::{
         artifact::larger_cached_decoded_preview,
-        heif::artifact::{cache_full, full as heif_full, preview as heif_artifact_preview},
+        heif::artifact::{
+            cache_full, cached_heif_full, full as heif_full, preview as heif_artifact_preview,
+        },
         raw::{self, RawBackend as PlannedRawBackend, covers_source as covers_raw_source},
         system::preview as system_preview,
     },

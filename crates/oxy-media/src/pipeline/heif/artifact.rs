@@ -306,7 +306,7 @@ pub(crate) fn full(
 /// Looks up a full-resolution JPEG previously converted from the source HEIF.
 /// The Tauri HEIF session path uses this lookup to publish a completed full
 /// artifact without starting another source decode.
-pub fn cached_heif_full(
+pub(crate) fn cached_heif_full(
     path: &Path,
     cache_dir: &Path,
 ) -> Result<Option<PreviewResult>, MediaError> {
@@ -330,33 +330,6 @@ pub(crate) fn cache_full(path: &Path, cache_dir: &Path) -> Result<PathBuf, Media
 fn full_cache_path(path: &Path, cache_dir: &Path) -> Result<PathBuf, MediaError> {
     let cache_key = preview_cache_key(path, HEIF_FULL, 0)?;
     Ok(cache_dir.join(format!("{cache_key}.jpg")))
-}
-
-#[cfg(test)]
-mod delivery_tests {
-    use super::*;
-
-    #[test]
-    fn sharpening_always_uses_tiles_without_touching_the_canonical_cache() {
-        let directory = tempfile::tempdir().unwrap();
-        let source = directory.path().join("source.heif");
-        std::fs::write(&source, b"cache identity").unwrap();
-
-        assert!(!full_uses_artifact(&source, directory.path(), true).unwrap());
-    }
-
-    #[test]
-    fn a_valid_canonical_full_cache_is_delivered_as_an_artifact() {
-        let directory = tempfile::tempdir().unwrap();
-        let source = directory.path().join("source.heif");
-        std::fs::write(&source, b"cache identity").unwrap();
-        let destination = full_cache_path(&source, directory.path()).unwrap();
-        image::DynamicImage::new_rgb8(32, 16)
-            .save(&destination)
-            .unwrap();
-
-        assert!(full_uses_artifact(&source, directory.path(), false).unwrap());
-    }
 }
 
 fn transcode_heif_source(
@@ -402,4 +375,31 @@ fn transcode_heif_source(
         PlannedHeifBackend::Libheif => "libheif",
     };
     Ok((backend, format_attempt_diagnostics(&result.diagnostics)))
+}
+
+#[cfg(test)]
+mod delivery_tests {
+    use super::*;
+
+    #[test]
+    fn sharpening_always_uses_tiles_without_touching_the_canonical_cache() {
+        let directory = tempfile::tempdir().unwrap();
+        let source = directory.path().join("source.heif");
+        std::fs::write(&source, b"cache identity").unwrap();
+
+        assert!(!full_uses_artifact(&source, directory.path(), true).unwrap());
+    }
+
+    #[test]
+    fn a_valid_canonical_full_cache_is_delivered_as_an_artifact() {
+        let directory = tempfile::tempdir().unwrap();
+        let source = directory.path().join("source.heif");
+        std::fs::write(&source, b"cache identity").unwrap();
+        let destination = full_cache_path(&source, directory.path()).unwrap();
+        image::DynamicImage::new_rgb8(32, 16)
+            .save(&destination)
+            .unwrap();
+
+        assert!(full_uses_artifact(&source, directory.path(), false).unwrap());
+    }
 }

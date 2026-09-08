@@ -97,7 +97,7 @@ impl HeifDecodeService {
     ) -> Result<HeifDecodeSession, MediaError> {
         let size = libheif::dimensions(path)?;
         let cached = display_sharpening
-            .then(|| crate::cached_heif_full(path, cache_dir))
+            .then(|| crate::pipeline::heif::artifact::cached_heif_full(path, cache_dir))
             .transpose()?
             .flatten();
         let (decode_path, backend_plan) = cached.map_or_else(
@@ -781,7 +781,11 @@ mod tests {
         let cancelled = AtomicBool::new(true);
 
         assert!(!cache_source_jpeg_if_stable(&cancelled, &source, &cache));
-        assert!(crate::cached_heif_full(&source, &cache).unwrap().is_none());
+        assert!(
+            crate::pipeline::heif::artifact::cached_heif_full(&source, &cache)
+                .unwrap()
+                .is_none()
+        );
     }
 
     #[test]
@@ -891,7 +895,7 @@ mod tests {
             u64::from(session.width) * u64::from(session.height)
         );
         assert!(
-            crate::cached_heif_full(&fixture, cache.path())
+            crate::pipeline::heif::artifact::cached_heif_full(&fixture, cache.path())
                 .unwrap()
                 .is_some()
         );

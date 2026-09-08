@@ -121,16 +121,10 @@ bytes 应通过 `oxy-media://` 协议提供，不应塞入 JSON IPC。
 
 ### HEIF cache 查询
 
-```rust
-pub fn cached_heif_full(
-    path: &Path,
-    cache_dir: &Path,
-) -> Result<Option<PreviewResult>, MediaError>
-```
-
-这是只读查询：检查完整源 HEIF JPEG 是否已经存在，不会启动 decode。Tauri 的
-`start_heif_full` 由 Rust 统一决定直接返回 artifact projection，还是返回 tile session；前端不再
-维护平台策略或单独查询缓存。HEIF preview 统一通过语义化 `preview(...)` 入口请求。
+内部的 `cached_heif_full` 只读查询会检查完整源 HEIF JPEG 是否已经存在，不会启动 decode。
+它属于 HEIF pipeline 的实现细节，不是 crate 的公共 API。Tauri 的 `start_heif_full` 由 Rust
+统一决定直接返回 artifact projection，还是返回 tile session；前端不再维护平台策略或单独查询
+缓存。HEIF preview 统一通过语义化 `preview(...)` 入口请求。
 
 ### Cache 管理
 
@@ -231,7 +225,7 @@ sequenceDiagram
     end
     Service-->>Tauri: complete(HeifDiagnostics)
     Service->>Cache: 稳定选择后写完整源 JPEG
-    Tauri->>Cache: cached_heif_full(...)
+    Service->>Cache: cached_heif_full(...)
 ```
 
 ## 内部模块边界
