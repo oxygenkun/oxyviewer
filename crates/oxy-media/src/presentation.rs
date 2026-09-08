@@ -17,12 +17,15 @@ pub(crate) enum ArtifactContract {
     CameraPreview,
     RawDevelopedSrgb,
     HeifPrimarySrgb,
+    HeifPrimaryUnconverted,
 }
 
 impl ArtifactContract {
     pub(crate) const fn color(self) -> ColorState {
         match self {
-            Self::CameraPreview => ColorState::EmbeddedProfileOrUnknown,
+            Self::CameraPreview | Self::HeifPrimaryUnconverted => {
+                ColorState::EmbeddedProfileOrUnknown
+            }
             Self::RawDevelopedSrgb | Self::HeifPrimarySrgb => ColorState::SrgbWithIcc,
         }
     }
@@ -31,6 +34,7 @@ impl ArtifactContract {
 pub(crate) const CAMERA_JPEG: ArtifactContract = ArtifactContract::CameraPreview;
 pub(crate) const RAW_DEVELOPED_JPEG: ArtifactContract = ArtifactContract::RawDevelopedSrgb;
 pub(crate) const HEIF_DECODED_JPEG: ArtifactContract = ArtifactContract::HeifPrimarySrgb;
+pub(crate) const HEIF_UNCONVERTED_JPEG: ArtifactContract = ArtifactContract::HeifPrimaryUnconverted;
 
 /// A camera JPEG may stand in for pixel inspection only under the explicit
 /// camera-rendered policy and only when it covers the RAW display dimensions.
@@ -93,5 +97,9 @@ mod tests {
         assert_eq!(HEIF_DECODED_JPEG.color(), ColorState::SrgbWithIcc);
         assert_eq!(RAW_DEVELOPED_JPEG.color(), ColorState::SrgbWithIcc);
         assert_eq!(CAMERA_JPEG.color(), ColorState::EmbeddedProfileOrUnknown);
+        assert_eq!(
+            HEIF_UNCONVERTED_JPEG.color(),
+            ColorState::EmbeddedProfileOrUnknown
+        );
     }
 }

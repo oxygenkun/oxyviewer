@@ -17,7 +17,22 @@ pub fn dimensions(path: &Path) -> Result<ImageDimensions, MediaError> {
     })
 }
 
-pub fn decode_scaled(path: &Path, max_size: u32) -> Result<DynamicImage, MediaError> {
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum DecodeProvenance {
+    ContainerThumbnail,
+    Primary { native_detail: bool },
+}
+
+pub struct ScaledDecode {
+    pub image: DynamicImage,
+    pub provenance: DecodeProvenance,
+}
+
+pub fn decode_scaled(
+    path: &Path,
+    max_size: u32,
+    allow_undersized_thumbnail: bool,
+) -> Result<ScaledDecode, MediaError> {
     let context = open(path)?;
     let handle = context
         .primary_image_handle()
@@ -34,16 +49,22 @@ pub fn decode_scaled(path: &Path, max_size: u32) -> Result<DynamicImage, MediaEr
             .filter_map(|id| handle.thumbnail(id).ok())
             .collect::<Vec<_>>();
         thumbnails.sort_by_key(|thumbnail| thumbnail.width().max(thumbnail.height()));
-        if let Some(thumbnail) = thumbnails
+        let thumbnail = thumbnails
             .iter()
             .find(|thumbnail| thumbnail.width().max(thumbnail.height()) >= max_size)
-            .or_else(|| thumbnails.last())
-        {
-            if let Ok(image) =
+            .or_else(|| {
+                may_use_undersized_thumbnail(allow_undersized_thumbnail)
+                    .then(|| thumbnails.last())
+                    .flatten()
+            });
+        if let Some(thumbnail) = thumbnail
+            && let Ok(image) =
                 decode_preview_handle(thumbnail, path, Some(preview_thread_limit(max_size)))
-            {
-                return Ok(image.thumbnail(max_size, max_size));
-            }
+        {
+            return Ok(ScaledDecode {
+                image: image.thumbnail(max_size, max_size),
+                provenance: DecodeProvenance::ContainerThumbnail,
+            });
         }
     }
 
@@ -77,7 +98,16 @@ pub fn decode_scaled(path: &Path, max_size: u32) -> Result<DynamicImage, MediaEr
             path: path.to_owned(),
             message: "decoded image has no interleaved RGB plane".into(),
         })?;
-    image_from_rgb8_plane(plane.data, plane.width, plane.height, plane.stride)
+    Ok(ScaledDecode {
+        image: image_from_rgb8_plane(plane.data, plane.width, plane.height, plane.stride)?,
+        provenance: DecodeProvenance::Primary {
+            native_detail: max_size >= original_longest,
+        },
+    })
+}
+
+const fn may_use_undersized_thumbnail(allow_interim: bool) -> bool {
+    allow_interim
 }
 
 pub fn decode_full_rgb8(path: &Path) -> Result<DynamicImage, MediaError> {
@@ -181,6 +211,12 @@ mod tests {
             version >= [1, 23, 3],
             "linked libheif {version:?} is older than the required 1.23.3"
         );
+    }
+
+    #[test]
+    fn undersized_thumbnail_fallback_requires_interim_permission() {
+        assert!(may_use_undersized_thumbnail(true));
+        assert!(!may_use_undersized_thumbnail(false));
     }
 
     #[test]

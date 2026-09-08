@@ -11,6 +11,7 @@ use std::{
     cmp::Ordering,
     collections::{BinaryHeap, HashSet},
     path::{Path, PathBuf},
+    sync::Arc,
     time::{Duration, Instant},
 };
 use thiserror::Error;
@@ -51,7 +52,7 @@ pub enum LibraryError {
 pub struct Library {
     directory_snapshots: browsing::DirectorySnapshots,
     pub foreground: oxy_runtime::ForegroundGate,
-    connection: Mutex<Connection>,
+    connection: Arc<Mutex<Connection>>,
     // Disk libraries use WAL readers that never acquire the writer mutex.
     // Plain in-memory databases cannot share WAL; tests retain one connection.
     reader: Option<Mutex<Connection>>,
@@ -382,13 +383,14 @@ impl Library {
             )?;
             Ok(Mutex::new(reader))
         };
+        let connection = Arc::new(Mutex::new(connection));
         Ok(Self {
             reader: Some(open_reader()?),
             projection_reader: Some(open_reader()?),
-            connection: Mutex::new(connection),
+            connection: connection.clone(),
             indexing_roots: Mutex::new(HashSet::new()),
             index_gate: Mutex::new(()),
-            directory_snapshots: browsing::DirectorySnapshots::default(),
+            directory_snapshots: browsing::DirectorySnapshots::new(connection),
             foreground: oxy_runtime::ForegroundGate::default(),
         })
     }
@@ -509,13 +511,14 @@ impl Library {
         browsing::ensure_schema(&connection)?;
         ensure_search_keys(&mut connection)?;
         normalize_root_order(&mut connection)?;
+        let connection = Arc::new(Mutex::new(connection));
         Ok(Self {
-            connection: Mutex::new(connection),
+            connection: connection.clone(),
             reader: None,
             projection_reader: None,
             indexing_roots: Mutex::new(HashSet::new()),
             index_gate: Mutex::new(()),
-            directory_snapshots: browsing::DirectorySnapshots::default(),
+            directory_snapshots: browsing::DirectorySnapshots::new(connection),
             foreground: oxy_runtime::ForegroundGate::default(),
         })
     }
@@ -728,8 +731,23 @@ impl Library {
             return Ok(current);
         }
         candidate.projection_revision = next_resource_revision(&transaction)?;
-        let result_json = candidate
-            .result
+        // Resource descriptors identify entries in the current process registry.
+        // Persist only restart-safe artifact facts; a caller restoring a managed
+        // file must register it again in its own process.
+        let persisted_result = candidate.result.as_ref().and_then(|result| {
+            let restart_safe = matches!(
+                result.persistence,
+                Some(oxy_domain::MediaPersistence::Persisted)
+                    | Some(oxy_domain::MediaPersistence::NotApplicable)
+                    | None
+            ) && result.path.is_file();
+            restart_safe.then(|| {
+                let mut result = result.clone();
+                result.resource = None;
+                result
+            })
+        });
+        let result_json = persisted_result
             .as_ref()
             .map(serde_json::to_string)
             .transpose()?;
@@ -2650,8 +2668,10 @@ mod tests {
     #[test]
     fn image_projection_round_trips_artifact_without_pixel_payload() {
         let library = Library::in_memory().unwrap();
-        let path = PathBuf::from("C:/photos/one.HIF");
-        let artifact = PathBuf::from("C:/cache/one-preview.jpg");
+        let directory = tempdir().unwrap();
+        let path = directory.path().join("one.HIF");
+        let artifact = directory.path().join("one-preview.jpg");
+        std::fs::write(&artifact, b"restart-safe artifact").unwrap();
         let valid_at = library.next_resource_revision().unwrap();
         let accepted = library
             .accept_image_projection(ImageProjection {
@@ -2667,6 +2687,9 @@ mod tests {
                     height: 1067,
                     kind: oxy_domain::PreviewKind::Decoded,
                     render_level: RenderLevel::Preview,
+                    resource: None,
+                    satisfaction: None,
+                    persistence: None,
                     diagnostics: None,
                 }),
                 error: None,
@@ -2679,6 +2702,90 @@ mod tests {
             .unwrap()
             .unwrap();
         assert_eq!(cached.result.unwrap().path, artifact);
+    }
+
+    #[test]
+    fn image_projection_strips_process_local_resource_before_sqlite_persistence() {
+        let library = Library::in_memory().unwrap();
+        let directory = tempdir().unwrap();
+        let source = directory.path().join("source.HIF");
+        let artifact = directory.path().join("artifact.jpg");
+        std::fs::write(&artifact, b"restart-safe artifact").unwrap();
+        let valid_at = library.next_resource_revision().unwrap();
+        let projection = ImageProjection {
+            path: source.clone(),
+            source_revision: "source-revision".into(),
+            projection_revision: 0,
+            valid_at,
+            status: ResourceLoadStatus::Ready,
+            level: RenderLevel::Preview,
+            result: Some(oxy_domain::PreviewResult {
+                path: artifact,
+                width: 16,
+                height: 8,
+                kind: oxy_domain::PreviewKind::Decoded,
+                render_level: RenderLevel::Preview,
+                resource: Some(oxy_domain::MediaResourceDescriptor {
+                    resource_id: "old-process-resource".into(),
+                    url: "oxy-media://localhost/resource/old-process-resource".into(),
+                    media_type: "image/jpeg".into(),
+                }),
+                satisfaction: Some(oxy_domain::MediaSatisfaction::Satisfied),
+                persistence: Some(oxy_domain::MediaPersistence::Persisted),
+                diagnostics: None,
+            }),
+            error: None,
+        };
+        let accepted = library.accept_image_projection(projection).unwrap();
+        assert!(accepted.result.unwrap().resource.is_some());
+
+        let restored = library
+            .image_projection(&source, RenderLevel::Preview, "source-revision")
+            .unwrap()
+            .unwrap();
+        assert!(restored.result.unwrap().resource.is_none());
+    }
+
+    #[test]
+    fn pending_resource_only_projection_is_not_restart_persisted() {
+        let library = Library::in_memory().unwrap();
+        let source = PathBuf::from("pending.HIF");
+        let valid_at = library.next_resource_revision().unwrap();
+        library
+            .accept_image_projection(ImageProjection {
+                path: source.clone(),
+                source_revision: "source-revision".into(),
+                projection_revision: 0,
+                valid_at,
+                status: ResourceLoadStatus::Ready,
+                level: RenderLevel::Preview,
+                result: Some(oxy_domain::PreviewResult {
+                    path: PathBuf::new(),
+                    width: 16,
+                    height: 8,
+                    kind: oxy_domain::PreviewKind::Embedded,
+                    render_level: RenderLevel::Preview,
+                    resource: Some(oxy_domain::MediaResourceDescriptor {
+                        resource_id: "pending-resource".into(),
+                        url: "oxy-media://localhost/resource/pending-resource".into(),
+                        media_type: "image/jpeg".into(),
+                    }),
+                    satisfaction: Some(oxy_domain::MediaSatisfaction::Interim),
+                    persistence: Some(oxy_domain::MediaPersistence::Pending),
+                    diagnostics: None,
+                }),
+                error: None,
+            })
+            .unwrap();
+
+        assert!(
+            library
+                .image_projection(&source, RenderLevel::Preview, "source-revision")
+                .unwrap()
+                .unwrap()
+                .result
+                .is_none()
+        );
     }
 
     #[test]
@@ -2727,7 +2834,11 @@ mod tests {
         let path = state.path().join("shared.HIF");
         let older = first.next_resource_revision().unwrap();
         let newer = second.next_resource_revision().unwrap();
-        let make_projection = |valid_at, artifact: &str| ImageProjection {
+        let old_artifact = state.path().join("old.jpg");
+        let new_artifact = state.path().join("new.jpg");
+        std::fs::write(&old_artifact, b"old").unwrap();
+        std::fs::write(&new_artifact, b"new").unwrap();
+        let make_projection = |valid_at, artifact: &Path| ImageProjection {
             path: path.clone(),
             source_revision: "same-image-source".into(),
             projection_revision: 0,
@@ -2735,24 +2846,27 @@ mod tests {
             status: ResourceLoadStatus::Ready,
             level: RenderLevel::Thumbnail,
             result: Some(oxy_domain::PreviewResult {
-                path: PathBuf::from(artifact),
+                path: artifact.to_owned(),
                 width: 160,
                 height: 120,
                 kind: oxy_domain::PreviewKind::Embedded,
                 render_level: RenderLevel::Thumbnail,
+                resource: None,
+                satisfaction: None,
+                persistence: None,
                 diagnostics: None,
             }),
             error: None,
         };
 
         second
-            .accept_image_projection(make_projection(newer, "new.jpg"))
+            .accept_image_projection(make_projection(newer, &new_artifact))
             .unwrap();
         let winner = first
-            .accept_image_projection(make_projection(older, "old.jpg"))
+            .accept_image_projection(make_projection(older, &old_artifact))
             .unwrap();
 
         assert_eq!(winner.valid_at, newer);
-        assert_eq!(winner.result.unwrap().path, PathBuf::from("new.jpg"));
+        assert_eq!(winner.result.unwrap().path, new_artifact);
     }
 }

@@ -86,6 +86,16 @@ PNG、TIFF 和 WebP。唯一事实来源是 `oxy-fs` 的 `kind_for_extension`；
 继续遵循原有安全边界。当前扫描一次枚举文件和 XMP，Windows 复用 DirEntry 属性；准确的
 size/mtime 仍供排序与预览缓存键使用，不发布临时文件系统顺序的页面。
 
+macOS 使用 `getattrlistbulk` 将名字、类型、数据长度和精确 mtime 一起批量读取，避免每张照片
+单独 stat；不支持该 API 的文件系统回退到 portable scanner。symlink 和缺失的属性仍按普通
+metadata 规则读取目标。批量记录使用有界、对齐缓冲并校验长度/名字偏移；XMP 配对和完整排序
+不变。诊断中批量调用耗时计入 enumeration，attributes 记录之后的配对工作，不能直接把它与
+portable scanner 的逐项 stat 阶段做同名比较。
+
+完整内存快照发布后，由容量 64、按目录合并的单 worker 持久化 JSON/SQLite；序列化不再阻塞
+首屏。epoch/revision/快照身份与失效 tombstone 共用 fencing，防止旧写入恢复失效数据；正常
+shutdown 排空已接受的持久化工作。队列压力采用背压，不丢弃已接受的正常重启持久化任务。
+
 刷新和文件操作同时使相关磁盘/内存快照失效，以 epoch 拒绝迟到结果；磁盘失效标记阻止旧根
 索引回填。分页携带 `snapshotRevision`，后台更新保留上一份不可变列表；收到更新事件后前端
 从第一页重取，保留选中 asset ID。每次进程首次读取核对一次，之后外部变化需显式刷新；没有

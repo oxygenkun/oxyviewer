@@ -1,12 +1,13 @@
 # oxy-media
 
 `oxy-media` 是 OxyViewer 的媒体预览执行层。它负责把语义化的渲染请求转换为本地缓存
-artifact，并管理 RAW/HEIF/TIFF 的解码后端、优先级、fallback、并发限制和 HEIF 渐进 tile
-session。
+artifact/受控资源，并管理 RAW/HEIF/TIFF 的解码后端、优先级、fallback、并发限制和 HEIF 渐进
+tile session。
 
 本 crate 不负责目录扫描、资源分类、SQLite projection 状态或前端调度。调用者应先通过
 `oxy-fs` 获得 `AssetKind`，再把具体资源交给这里处理。图片字节不会通过普通 JSON IPC 返回；
-预览接口返回本地 artifact 路径，HEIF tile 则通过自定义协议读取。
+应用入口返回 registry 生成的不可变 resource descriptor，兼容入口仍可同步返回 managed path，HEIF
+tile 继续通过同一 `oxy-media` 自定义协议读取。
 
 更完整的架构背景见：
 
@@ -32,15 +33,16 @@ pub fn preview(
 ) -> Result<PreviewResult, MediaError>
 ```
 
-这是普通预览请求的主入口，也是 Tauri preview worker 对可解码格式调用的唯一入口。
+这是同步兼容入口。Tauri preview worker 使用保留同一 dispatcher 的
+`preview_for_app_with_completion(...)`：先返回受控资源，再接收异步 persistence completion。
 
 - `path`：源文件路径。
-- `cache_dir`：应用拥有的扁平 preview cache 目录。
+- `cache_dir`：应用拥有的 preview cache 父目录；v2 在其中使用固定分层布局。
 - `level`：语义等级 `Thumbnail | Preview | Full`；调用者不传具体像素尺寸。
 - `priority`：domain/IPC 层的请求优先级；media 内部将其转换为 decode gate 等级。
 - `kind`：调用者已识别的 `AssetKind`。
 - `cancellation`：所有 consumer 离开后由 preview queue 触发的协作取消 token。
-- 返回值：`oxy_domain::PreviewResult`，包含 artifact 路径、尺寸、表示种类、渲染等级和可选诊断。
+- 返回值：`oxy_domain::PreviewResult`，包含 artifact 路径、尺寸、表示种类、渲染等级、满足状态、持久化状态和可选诊断；应用入口还包含受控 resource descriptor。
 
 当前语义映射：
 
@@ -125,6 +127,20 @@ bytes 应通过 `oxy-media://` 协议提供，不应塞入 JSON IPC。
 它属于 HEIF pipeline 的实现细节，不是 crate 的公共 API。Tauri 的 `start_heif_full` 由 Rust
 统一决定直接返回 artifact projection，还是返回 tile session；前端不再维护平台策略或单独查询
 缓存。HEIF preview 统一通过语义化 `preview(...)` 入口请求。
+
+### 资源发布与多级 cache
+
+`DiskMediaCache` 以 source revision 目录和 manifest 保存同图多个真实能力 artifact。匹配由尺寸、
+native detail、表示、方向、色彩、锐化和 policy revision 决定，先选 `Satisfied`，再按请求策略选择
+`Interim`。`ArtifactPublisher` 对 encoded `Arc<[u8]>` 和 registry 共享同一所有权；native staged file
+先由 registry 接管，cache worker 复制文件作为原子提交输入，不重复 decode，也不要求 UI 等 manifest
+同步。成功后 resource 在 read lease 安全点切到 managed file。HEIF tile session 是专用传输路径：
+它从本次已解码、未锐化的规范像素（Windows FFmpeg 路径为已取得 JPEG tiles 的拼接结果）生成 Full
+cache，不再次解码源 HEIF；显示锐化只作用于发布瓦片。
+
+publisher 的有界队列和 pending-byte budget 控制后台工作；resource registry 另有 entry/memory budget。
+协议 materialization reservation 只覆盖 Rust 生成 `Response<Vec<u8>>` body 前的复制，不覆盖 Tauri
+接管 body 后到 WebView 消费完成的生命周期。
 
 ### Cache 管理
 

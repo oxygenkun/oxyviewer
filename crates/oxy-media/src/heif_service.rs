@@ -62,6 +62,7 @@ struct ActiveSession {
     generation: u64,
     path: PathBuf,
     decode_path: PathBuf,
+    source_revision: crate::cache::SourceRevision,
     display_sharpening: bool,
     cancelled: Arc<AtomicBool>,
     backend_plan: HeifBackendPlan,
@@ -71,6 +72,7 @@ enum SessionDecode {
     Image {
         image: DynamicImage,
         codec: &'static str,
+        presentation: crate::cache::ArtifactPresentation,
     },
     #[cfg(target_os = "windows")]
     EncodedTiles(Vec<crate::backends::ffmpeg_heif::EncodedTile>),
@@ -95,6 +97,9 @@ impl HeifDecodeService {
         generation: u64,
         display_sharpening: bool,
     ) -> Result<HeifDecodeSession, MediaError> {
+        // Capture the identity before any source probing or decode. Session
+        // pixels may be persisted after a dwell, but always retain this fence.
+        let source_revision = crate::cache::SourceRevision::observe(path)?;
         let size = libheif::dimensions(path)?;
         let cached = display_sharpening
             .then(|| crate::pipeline::heif::artifact::cached_heif_full(path, cache_dir))
@@ -126,6 +131,7 @@ impl HeifDecodeService {
             generation,
             path: path.to_owned(),
             decode_path,
+            source_revision,
             display_sharpening,
             cancelled: Arc::new(AtomicBool::new(false)),
             backend_plan,
@@ -167,7 +173,7 @@ impl HeifDecodeService {
         G: FnMut(&HeifDiagnostics),
     {
         let started = Instant::now();
-        let (path, decode_path, cancelled, display_sharpening, backend_plan) = {
+        let (path, decode_path, source_revision, cancelled, display_sharpening, backend_plan) = {
             let state = self
                 .state
                 .lock()
@@ -181,6 +187,7 @@ impl HeifDecodeService {
             (
                 active.path.clone(),
                 active.decode_path.clone(),
+                active.source_revision.clone(),
                 Arc::clone(&active.cancelled),
                 active.display_sharpening,
                 active.backend_plan.clone(),
@@ -192,6 +199,9 @@ impl HeifDecodeService {
         let queue_wait_ms = elapsed_ms(started);
         if cancelled.load(Ordering::Acquire) {
             return Err(MediaError::Cancelled);
+        }
+        if crate::cache::SourceRevision::observe(&path)? != source_revision {
+            return Err(MediaError::StaleSourceRevision);
         }
         let decode_started = Instant::now();
         let decoded = execute_backend_plan(
@@ -205,16 +215,27 @@ impl HeifDecodeService {
         let acceleration = decoded.backend.acceleration();
         let fallback_reason = format_attempt_diagnostics(&decoded.diagnostics);
         let tile_started = Instant::now();
-        let codec = match decoded.value {
+        let (codec, canonical_image) = match decoded.value {
             #[cfg(target_os = "windows")]
             SessionDecode::EncodedTiles(tiles) => {
+                let mut canonical = RgbaImage::new(session.width, session.height);
+                for tile in &tiles {
+                    let decoded_tile = image::load_from_memory(&tile.jpeg)?.into_rgba8();
+                    copy_rgba_tile(&mut canonical, &decoded_tile, tile.x, tile.y)?;
+                }
                 for tile in tiles {
-                    let stored = HeifTile {
-                        width: tile.width,
-                        height: tile.height,
-                        payload: HeifTileData::Jpeg(Arc::from(tile.jpeg)),
+                    let stored = if display_sharpening {
+                        crop_rgba_rect(&canonical, tile.x, tile.y, tile.width, tile.height, true)
+                    } else {
+                        HeifTile {
+                            width: tile.width,
+                            height: tile.height,
+                            payload: HeifTileData::Jpeg(Arc::from(tile.jpeg)),
+                        }
                     };
-                    let event = tile_event(session, tile.x, tile.y, tile.width, tile.height, true);
+                    let encoded = !display_sharpening;
+                    let event =
+                        tile_event(session, tile.x, tile.y, tile.width, tile.height, encoded);
                     if !self.publish_tile_if_current(
                         session,
                         &cancelled,
@@ -225,33 +246,35 @@ impl HeifDecodeService {
                         return Err(MediaError::Cancelled);
                     }
                 }
-                "FFmpeg HEVC tile-grid"
+                (
+                    "FFmpeg HEVC tile-grid",
+                    Some((
+                        DynamicImage::ImageRgba8(canonical),
+                        crate::pipeline::heif::artifact::backend_presentation(
+                            PlannedHeifBackend::Ffmpeg,
+                        ),
+                    )),
+                )
             }
-            SessionDecode::Image { image, codec } => {
-                // Native adapters already return RGBA8. Compatibility adapters
-                // may return RGB8, so normalize once before tile cropping.
-                let mut image = image.into_rgba8();
-                #[cfg(target_os = "macos")]
-                if display_sharpening && backend != HeifBackendKind::FfmpegSoftware {
-                    crate::backends::apple_image_io::sharpen_rgba8(&mut image)?;
-                }
-                #[cfg(any(target_os = "windows", target_os = "linux"))]
-                if display_sharpening && backend != HeifBackendKind::FfmpegSoftware {
-                    let width = image.width();
-                    let height = image.height();
-                    let sharpened = crop_rgba(&image, 0, 0, width.max(height), true);
-                    image = RgbaImage::from_raw(width, height, sharpened.rgba.to_vec())
-                        .expect("full-frame HEIF sharpening preserves image dimensions");
-                }
+            SessionDecode::Image {
+                image,
+                codec,
+                presentation,
+            } => {
+                // Keep canonical pixels unsharpened for cache persistence and
+                // apply display sharpening only while cropping. Presentation
+                // facts come from the selected backend; fallback RGB is not
+                // assumed to have undergone an sRGB transform.
+                let image = image.into_rgba8();
                 for (x, y) in tile_coordinates(image.width(), image.height(), session.tile_size) {
-                    let tile = crop_rgba(&image, x, y, session.tile_size, false);
+                    let tile = crop_rgba(&image, x, y, session.tile_size, display_sharpening);
                     let event = tile_event(session, x, y, tile.width, tile.height, false);
                     if !self.publish_tile_if_current(session, &cancelled, tile, event, &mut publish)
                     {
                         return Err(MediaError::Cancelled);
                     }
                 }
-                codec
+                (codec, Some((DynamicImage::ImageRgba8(image), presentation)))
             }
         };
         // Do not let a large JPEG encode or fsync serialize the next selected
@@ -270,7 +293,17 @@ impl HeifDecodeService {
         if !self.complete_if_current(session, &cancelled, diagnostics.clone(), &mut complete) {
             return Err(MediaError::Cancelled);
         }
-        cache_source_jpeg_if_stable(&cancelled, &path, cache_dir);
+        if backend != HeifBackendKind::CachedArtifact
+            && let Some((image, presentation)) = canonical_image.as_ref()
+        {
+            cache_session_image_if_stable(
+                &cancelled,
+                &source_revision,
+                cache_dir,
+                image,
+                *presentation,
+            );
+        }
         Ok(diagnostics)
     }
 
@@ -416,17 +449,20 @@ fn decode_session_backend(
     backend: PlannedHeifBackend,
     session: &HeifDecodeSession,
     path: &Path,
-    display_sharpening: bool,
+    _display_sharpening: bool,
 ) -> Result<SessionDecode, MediaError> {
+    let presentation = crate::pipeline::heif::artifact::backend_presentation(backend);
     match backend {
         PlannedHeifBackend::CachedArtifact => Ok(SessionDecode::Image {
             image: image::ImageReader::open(path)?.decode()?,
             codec: "cached full JPEG",
+            presentation,
         }),
         #[cfg(target_os = "windows")]
         PlannedHeifBackend::Platform(_) => Ok(SessionDecode::Image {
             image: crate::backends::windows_wic::decode_full_rgba8(path)?,
             codec: "Windows WIC HEIF decoder",
+            presentation,
         }),
         #[cfg(target_os = "macos")]
         PlannedHeifBackend::Platform(_) => Ok(SessionDecode::Image {
@@ -435,6 +471,7 @@ fn decode_session_backend(
                 session.width.max(session.height),
             )?,
             codec: "Apple ImageIO HEIF decoder",
+            presentation,
         }),
         #[cfg(target_os = "linux")]
         PlannedHeifBackend::Platform(_) => Err(MediaError::NativeDecoderUnavailable),
@@ -449,7 +486,7 @@ fn decode_session_backend(
                             width: session.width,
                             height: session.height,
                         },
-                        display_sharpening,
+                        false,
                     )?,
                 ));
             }
@@ -462,9 +499,10 @@ fn decode_session_backend(
                             width: session.width,
                             height: session.height,
                         },
-                        display_sharpening,
+                        false,
                     )?,
                     codec: "FFmpeg HEVC tile-grid",
+                    presentation,
                 })
             }
         }
@@ -475,21 +513,29 @@ fn decode_session_backend(
                     width: session.width,
                     height: session.height,
                 },
-                display_sharpening,
+                false,
             )?,
             codec: "FFmpeg HEVC tile-grid",
+            presentation,
         }),
         PlannedHeifBackend::Libheif => Ok(SessionDecode::Image {
             image: libheif::decode_full_rgb8(path)?,
             codec: "libheif/libde265",
+            presentation,
         }),
     }
 }
 
-fn cache_source_jpeg_if_stable(cancelled: &AtomicBool, path: &Path, cache_dir: &Path) -> bool {
+fn cache_session_image_if_stable(
+    cancelled: &AtomicBool,
+    source_revision: &crate::cache::SourceRevision,
+    cache_dir: &Path,
+    image: &DynamicImage,
+    presentation: crate::cache::ArtifactPresentation,
+) -> bool {
     // A short dwell period prevents a fast arrow-key sweep from launching a
     // full-resolution JPEG encode for every transient selection.
-    for _ in 0..5 {
+    for _ in 0..25 {
         if cancelled.load(Ordering::Acquire) {
             return false;
         }
@@ -504,13 +550,44 @@ fn cache_source_jpeg_if_stable(cancelled: &AtomicBool, path: &Path, cache_dir: &
         }
         std::thread::sleep(std::time::Duration::from_millis(20));
     };
-    if let Err(error) = crate::pipeline::heif::artifact::cache_full(path, cache_dir) {
+    if let Err(error) = crate::pipeline::heif::artifact::cache_full_image(
+        source_revision,
+        cache_dir,
+        image,
+        presentation,
+    ) {
         eprintln!(
             "failed to cache HEIF loupe image {}: {error}",
-            path.display()
+            source_revision.canonical_path.display()
         );
+        return false;
     }
     true
+}
+
+#[cfg(target_os = "windows")]
+fn copy_rgba_tile(
+    destination: &mut RgbaImage,
+    tile: &RgbaImage,
+    x: u32,
+    y: u32,
+) -> Result<(), MediaError> {
+    if x.saturating_add(tile.width()) > destination.width()
+        || y.saturating_add(tile.height()) > destination.height()
+    {
+        return Err(MediaError::CacheArtifact(
+            "decoded HEIF tile exceeds the display canvas".into(),
+        ));
+    }
+    let destination_stride = destination.width() as usize * 4;
+    let tile_stride = tile.width() as usize * 4;
+    for row in 0..tile.height() as usize {
+        let source_start = row * tile_stride;
+        let destination_start = (y as usize + row) * destination_stride + x as usize * 4;
+        destination.as_mut()[destination_start..destination_start + tile_stride]
+            .copy_from_slice(&tile.as_raw()[source_start..source_start + tile_stride]);
+    }
+    Ok(())
 }
 
 fn crop_rgba(
@@ -522,6 +599,17 @@ fn crop_rgba(
 ) -> HeifTile {
     let width = tile_size.min(image.width() - x);
     let height = tile_size.min(image.height() - y);
+    crop_rgba_rect(image, x, y, width, height, display_sharpening)
+}
+
+fn crop_rgba_rect(
+    image: &RgbaImage,
+    x: u32,
+    y: u32,
+    width: u32,
+    height: u32,
+    display_sharpening: bool,
+) -> HeifTile {
     let row_bytes = width as usize * 4;
     let source_stride = image.width() as usize * 4;
     let source = image.as_raw();
@@ -779,8 +867,53 @@ mod tests {
         let cache = directory.path().join("previews");
         std::fs::write(&source, b"cache identity fixture").unwrap();
         let cancelled = AtomicBool::new(true);
+        let source_revision = crate::cache::SourceRevision::observe(&source).unwrap();
 
-        assert!(!cache_source_jpeg_if_stable(&cancelled, &source, &cache));
+        assert!(!cache_session_image_if_stable(
+            &cancelled,
+            &source_revision,
+            &cache,
+            &DynamicImage::new_rgb8(8, 4),
+            crate::pipeline::heif::artifact::backend_presentation(PlannedHeifBackend::Libheif,),
+        ));
+        assert!(
+            crate::pipeline::heif::artifact::cached_heif_full(&source, &cache)
+                .unwrap()
+                .is_none()
+        );
+    }
+
+    #[test]
+    fn source_replacement_during_session_dwell_cannot_publish_old_pixels() {
+        let Some(fixture) = crate::sony_hif_fixture() else {
+            eprintln!("skipping: Sony HIF fixture unavailable (set OXY_HIF_FIXTURE)");
+            return;
+        };
+        let directory = tempfile::tempdir().unwrap();
+        let source = directory.path().join("replacement.HIF");
+        std::fs::copy(&fixture, &source).unwrap();
+        let revision = crate::cache::SourceRevision::observe(&source).unwrap();
+        let dimensions = libheif::dimensions(&source).unwrap();
+        let image = DynamicImage::new_rgb8(dimensions.width, dimensions.height);
+        let cache = directory.path().join("previews");
+        let cancelled = AtomicBool::new(false);
+        let replacement = std::fs::read(&fixture).unwrap();
+        let replacer = {
+            let source = source.clone();
+            std::thread::spawn(move || {
+                std::thread::sleep(std::time::Duration::from_millis(200));
+                std::fs::write(source, replacement).unwrap();
+            })
+        };
+
+        assert!(!cache_session_image_if_stable(
+            &cancelled,
+            &revision,
+            &cache,
+            &image,
+            crate::pipeline::heif::artifact::backend_presentation(PlannedHeifBackend::Libheif,),
+        ));
+        replacer.join().unwrap();
         assert!(
             crate::pipeline::heif::artifact::cached_heif_full(&source, &cache)
                 .unwrap()

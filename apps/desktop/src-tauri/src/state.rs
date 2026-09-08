@@ -12,6 +12,7 @@ pub(crate) struct AppState {
     pub(crate) library: Arc<Library>,
     pub(crate) cache: Arc<cache::CacheManager>,
     pub(crate) heif: Arc<oxy_media::HeifDecodeService>,
+    pub(crate) media_resources: oxy_media::ResourceRegistry,
     pub(crate) metadata: oxy_metadata::MetadataFacade,
     pub(crate) metadata_queue: jobs::metadata::MetadataQueue,
     pub(crate) preview_queue: jobs::preview::PreviewQueue,

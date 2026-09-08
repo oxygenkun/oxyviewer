@@ -4,14 +4,15 @@ import {
   cancelHeifDecode,
   heifTileUrl,
   isTauri,
+  renewMediaResource,
   startHeifFull,
 } from "../lib/api";
+import { retainMediaResource, releaseUnretainedMediaResource } from "../lib/mediaResourceLease";
 import { expectedHeifTiles, HeifTileProgressTracker } from "../lib/heifTileProgress";
 import { perfMark, isPerfActive } from "../lib/perfProbe";
 import { beginPreviewDebug } from "../lib/previewDebug";
 import type {
   AssetSummary,
-  HeifDecodeSession,
   HeifDecodeStatus,
   HeifDiagnostics,
   HeifStatusEvent,
@@ -44,6 +45,19 @@ export function HeifTileCanvas({
     ? cachedImage.result
     : undefined;
 
+  const resourceId = visibleCachedImage?.resource?.resourceId;
+  useEffect(() => {
+    if (!resourceId) return;
+    const release = retainMediaResource(resourceId);
+    const renew = () => void renewMediaResource(resourceId).catch(() => {});
+    renew();
+    const timer = window.setInterval(renew, 60_000);
+    return () => {
+      window.clearInterval(timer);
+      release();
+    };
+  }, [resourceId]);
+
   useEffect(() => {
     if (!isTauri()) return;
     const generation = ++nextGeneration;
@@ -60,7 +74,11 @@ export function HeifTileCanvas({
     const track = __OXY_DEBUG__ || isPerfActive();
     let sessionId: string | undefined;
     let disposed = false;
+    const tileRequests = new AbortController();
     const unlisten: Array<() => void> = [];
+    const stopListeners = () => {
+      for (const stop of unlisten.splice(0)) stop();
+    };
     const pendingTiles: HeifTileReady[] = [];
     const pendingStatuses: HeifStatusEvent[] = [];
     let progress: HeifTileProgressTracker | undefined;
@@ -69,7 +87,6 @@ export function HeifTileCanvas({
     let firstTileFetched = false;
     let firstPaintFrame: number | undefined;
     let completionPaintFrame: number | undefined;
-    let startFrame: number | undefined;
     let frontendFetchWorkMs = 0;
     let frontendDrawWorkMs = 0;
     let slowestTileMs = 0;
@@ -113,7 +130,7 @@ export function HeifTileCanvas({
       const tileStarted = track ? performance.now() : 0;
       const fetchStarted = tileStarted;
       try {
-        const response = await fetch(heifTileUrl(tile.url));
+        const response = await fetch(heifTileUrl(tile.url), { signal: tileRequests.signal });
         if (!response.ok) throw new Error(`tile fetch returned ${response.status}`);
         const encoded = tile.payload === "jpeg";
         const payload = encoded
@@ -136,8 +153,14 @@ export function HeifTileCanvas({
         const drawStarted = track ? performance.now() : 0;
         if (payload instanceof Blob) {
           const bitmap = await createImageBitmap(payload);
-          context.drawImage(bitmap, tile.x, tile.y, tile.width, tile.height);
-          bitmap.close();
+          try {
+            // The same canvas may now belong to a different selection. Decoding
+            // is asynchronous even after the network response has completed.
+            if (disposed) return;
+            context.drawImage(bitmap, tile.x, tile.y, tile.width, tile.height);
+          } finally {
+            bitmap.close();
+          }
         } else {
           context.putImageData(
             new ImageData(payload, tile.width, tile.height),
@@ -163,7 +186,7 @@ export function HeifTileCanvas({
           debug?.mark("all-tiles-drawn", detail?.());
         }
       } catch (error) {
-        if (track) {
+        if (!disposed && track) {
           const settled = progress?.settle(tile, false);
           perfMark("heif:tile-error", { assetName: asset.name, x: tile.x, y: tile.y });
           debug?.mark("tile-error", {
@@ -238,6 +261,10 @@ export function HeifTileCanvas({
         }
         if (payload.sessionId === sessionId) handleTile(payload);
       }));
+      if (disposed) {
+        stopListeners();
+        return;
+      }
       unlisten.push(await listen<HeifStatusEvent>("heif-decode-status", ({ payload }) => {
         if (disposed || payload.generation !== generation) return;
         if (!sessionId) {
@@ -246,6 +273,10 @@ export function HeifTileCanvas({
         }
         if (payload.sessionId === sessionId) handleStatus(payload);
       }));
+      if (disposed) {
+        stopListeners();
+        return;
+      }
       if (__OXY_DEBUG__) debug?.mark("listeners-ready");
       const presentation = await startHeifFull(
         asset.path,
@@ -254,7 +285,10 @@ export function HeifTileCanvas({
       );
       if (presentation.delivery === "artifact") {
         const result = presentation.result;
-        if (disposed) return;
+        if (disposed) {
+          if (result.resource) releaseUnretainedMediaResource(result.resource.resourceId);
+          return;
+        }
         setCachedImage({ identity: cacheIdentity, result });
         perfMark("heif:full-cache-hit", {
           assetName: asset.name,
@@ -304,15 +338,16 @@ export function HeifTileCanvas({
         .filter((event) => event.sessionId === session.id)
         .forEach(handleStatus);
     };
-    // Defer backend creation by one frame. React StrictMode intentionally
-    // mounts, cleans up, and remounts effects; starting immediately lets the
-    // throwaway mount create an orphan decode before it has a session id to
-    // cancel. The cleanup below cancels that scheduled start, so only the
-    // durable mount reaches the backend.
-    startFrame = requestAnimationFrame(() => {
-      startFrame = undefined;
+    // Defer one microtask so React StrictMode can dispose its throwaway effect,
+    // but do not gate backend/session creation on a paint frame. A hidden or
+    // temporarily occluded packaged WebView may suspend requestAnimationFrame;
+    // full-detail HEIF work must still start independently of preview painting.
+    queueMicrotask(() => {
+      if (disposed) return;
       void start()
         .catch((error) => {
+          stopListeners();
+          if (disposed) return;
           onStatus("failed");
           if (__OXY_DEBUG__) debug?.fail(error, detail?.());
         });
@@ -320,10 +355,11 @@ export function HeifTileCanvas({
 
     return () => {
       disposed = true;
-      if (startFrame !== undefined) cancelAnimationFrame(startFrame);
+      tileRequests.abort();
+      tileQueue.length = 0;
       if (firstPaintFrame !== undefined) cancelAnimationFrame(firstPaintFrame);
       if (completionPaintFrame !== undefined) cancelAnimationFrame(completionPaintFrame);
-      unlisten.forEach((stop) => stop());
+      stopListeners();
       if (sessionId) void cancelHeifDecode(sessionId);
       if (__OXY_DEBUG__) debug?.cancel(detail?.());
     };
@@ -343,6 +379,13 @@ export function HeifTileCanvas({
       src={visibleCachedImage.url}
       alt=""
       draggable={false}
+      onLoad={() => perfMark("image:loaded", {
+        assetName: asset.name,
+        stage: "full",
+        renderLevel: "full",
+        width: visibleCachedImage.width,
+        height: visibleCachedImage.height,
+      })}
     />
   ) : (
     <canvas className="loupe__heif-canvas" ref={canvasRef} />

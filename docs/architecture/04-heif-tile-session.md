@@ -192,9 +192,9 @@ tile 中心到整图中心的平方距离排序，因此最接近画面中心的
 每个 `HeifTile` 包含宽、高和显式 payload：`Rgba { stride, bytes }` 或 `Jpeg(bytes)`。tile 放入
 service 的 HashMap，event 只携带可定位它的 metadata 和 URL。
 
-macOS 的“标准”高倍查看锐化在完整 RGBA 图上通过 Accelerate/vImage 执行轻量亮度 unsharp
-mask，再切成瓦片。它只改变内存中的显示瓦片，不修改原文件或缓存；先整图处理也保证 512 px
-瓦片边界能够读取相邻像素，不产生格状接缝。用户可在设置中关闭该显示增强。
+“标准”高倍查看锐化在从完整规范 RGBA 裁切显示瓦片时执行轻量亮度 unsharp mask。计算仍从
+完整图读取相邻像素，所以 512 px 瓦片边界不会产生格状接缝；规范 RGBA 本身保持未锐化并用于
+Full cache。它只改变内存中的显示瓦片，不修改原文件或缓存，用户可在设置中关闭该显示增强。
 
 需要准确理解：当前中心优先优化的是**完整解码之后的发布顺序**。对于非 grid-aware backend，
 它并没有让 HEVC 只解中心区域。真正的 early tile decode 仍属于未来 adapter 优化。
@@ -248,7 +248,9 @@ width × height × 4 bytes
 
 例如 7008 × 4672 约 125 MiB，仅计算一份紧密 RGBA；decoder 中间帧、完整 `DynamicImage`、
 tile copies 和 Canvas backing store 会继续增加峰值。当前开始新 session 时清空旧 tile，但单个
-session 仍可能同时持有完整图和所有瓦片。进行并发或预加载优化前必须测量峰值 RSS。
+session 仍可能同时持有完整图和所有瓦片。规范缓存编码在串行 HEIF cache-write lane 中执行，不复制
+另一份完整 RGBA；Windows FFmpeg 的 JPEG tiles 会拼入这一个规范 buffer。进行并发或预加载优化前
+必须测量峰值 RSS。
 
 ## 12. 本章检查点
 

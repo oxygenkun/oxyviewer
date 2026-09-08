@@ -70,11 +70,13 @@ Rust projection 与前端显示镜像失效。
 - `CacheManager`（当前 preview cache directory、容量策略和配置文件）；
 - `MetadataQueue` / `PreviewQueue` 的 priority、pending/in-flight consumer 与 live projection；
 - `DirectoryTreeQueue` 的分层目录读取优先级；
-- `HeifDecodeService` 当前 session、tiles 和 diagnostics。
+- `HeifDecodeService` 当前 session、tiles 和 diagnostics；
+- `ResourceRegistry` 的受控、进程命名空间资源和 UI/read lease。
 
-队列和 HEIF tiles 只活在 Rust 进程内；已接受的 metadata/image projection 写入 SQLite，图片
-像素写入 preview cache。关闭应用后 sessions、jobs、目录快照和 HEIF tiles 消失，projection
-可按 source revision 在重启后恢复。
+队列、resource ID 和 HEIF tiles 只活在 Rust 进程内。已接受的 metadata/image projection 写入 SQLite，
+但 image result 序列化前会剥离 resource descriptor，Pending/Skipped 且没有稳定文件的结果不持久化。
+重启后只有有效 managed/original path 可恢复，并须重新注册当前进程 resource；旧 URL 永远不会因为
+计数器复用指向另一张图。
 
 ## 5. SQLite 资料库
 
@@ -189,13 +191,13 @@ preview cache 默认位于 Tauri `app_cache_dir()/previews`。用户可以在设
 
 - 删除不会损坏源照片；
 - 下次请求可重新生成；
-- key 包含源文件身份和 decoder version；
-- 先写临时文件再原子持久化；
-- 同 backend tag 的 4096 stage 可以满足 512 请求；HEIF 另有 full-cache 复用路径。
-- 容量上限为 1–500 GB，默认 10 GB；预览返回后在后台按最近使用时间清理最旧文件，同一时刻
-  最多运行一个清理任务；
-- 当前请求返回的 artifact 在当次清理中受保护，避免 WebView 首次读取与清理竞争；
-- “清空缓存”只删除专属 `previews` 目录第一层的普通文件，不递归跟随任意用户路径。
+- source revision 包含 canonical path、文件身份、长度和高精度 mtime；variant 包含表示与显示策略；
+- `media-cache-v2/<prefix>/<source-revision>/manifest.json` 允许同图多能力 artifact 共存；
+- matcher 只允许兼容高清向下满足，低清只能作为显式 Interim；
+- encoded/staged resource 先供 UI，再由有界 worker 原子持久化；完成后更新 projection 并清理容量；
+- 容量上限为 1–500 GB，默认 10 GB；同一时刻最多运行一个清理任务；
+- registry lease 和跨进程 marker 保护活跃 artifact；clear 后旧资源可读但不再成为新 lookup 命中；
+- clear/prune 只识别固定 owned layout、manifest/artifact extension 和 staging 目录，不跟随 symlink。
 
 切换缓存位置只影响后续请求，不自动搬迁或删除旧位置中的缓存。这样切换是快速且可恢复的，
 同时不会把目录迁移 I/O 放进照片浏览关键路径。旧位置可由用户切回后显式清空。

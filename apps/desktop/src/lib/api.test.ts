@@ -3,6 +3,7 @@ import type { AssetSummary } from "../types";
 
 const mocks = vi.hoisted(() => ({
   invoke: vi.fn(),
+  listen: vi.fn(),
   beginPreviewDebug: vi.fn(() => undefined),
 }));
 
@@ -12,7 +13,7 @@ vi.mock("@tauri-apps/api/core", () => ({
 }));
 
 vi.mock("@tauri-apps/api/event", () => ({
-  listen: vi.fn(),
+  listen: mocks.listen,
 }));
 
 vi.mock("@tauri-apps/plugin-dialog", () => ({
@@ -23,7 +24,14 @@ vi.mock("./previewDebug", () => ({
   beginPreviewDebug: mocks.beginPreviewDebug,
 }));
 
-import { deletePaths, generatedPreview, startHeifFull } from "./api";
+import { deletePaths, generatedPreview, heifTileUrl, startHeifFull } from "./api";
+import {
+  acceptImageProjection,
+  clearImageProjections,
+  imageProjectionKey,
+  useImageProjectionStore,
+} from "./imageProjection";
+import { mediaProtocolUrl } from "./mediaProtocolUrl";
 
 const asset: AssetSummary = {
   id: "raw-1",
@@ -38,7 +46,9 @@ const asset: AssetSummary = {
 
 describe("generated preview cancellation", () => {
   afterEach(() => {
+    clearImageProjections();
     mocks.invoke.mockReset();
+    mocks.listen.mockReset();
     mocks.beginPreviewDebug.mockClear();
     vi.unstubAllGlobals();
   });
@@ -61,6 +71,166 @@ describe("generated preview cancellation", () => {
       level: "thumbnail",
       requestId: expect.any(String),
     });
+  });
+
+  it("uses a registered media resource before its managed path exists", async () => {
+    vi.stubGlobal("window", { __TAURI_INTERNALS__: {} });
+    mocks.invoke.mockResolvedValue({
+      path: asset.path,
+      sourceRevision: "revision",
+      projectionRevision: 1,
+      validAt: 1,
+      status: "ready",
+      level: "thumbnail",
+      result: {
+        path: "C:\\cache\\pending.jpg",
+        width: 160,
+        height: 120,
+        kind: "embedded",
+        renderLevel: "thumbnail",
+        resource: {
+          resourceId: "resource-1",
+          url: "oxy-media://localhost/resource/resource-1",
+          mediaType: "image/jpeg",
+        },
+        satisfaction: "satisfied",
+        persistence: "pending",
+      },
+    });
+
+    await expect(generatedPreview(asset, "thumbnail")).resolves.toMatchObject({
+      url: "oxy-media://localhost/resource/resource-1",
+      persistence: "pending",
+    });
+  });
+
+  it("settles a displayable Interim preview without hiding it behind its upgrade", async () => {
+    vi.stubGlobal("window", { __TAURI_INTERNALS__: {} });
+    mocks.invoke.mockResolvedValue({
+      path: asset.path,
+      sourceRevision: "interim-revision",
+      projectionRevision: 1,
+      validAt: 1,
+      status: "ready",
+      level: "preview",
+      result: {
+        path: "C:\\cache\\interim.jpg",
+        width: 160,
+        height: 120,
+        kind: "embedded",
+        renderLevel: "preview",
+        resource: {
+          resourceId: "resource-interim",
+          url: "oxy-media://localhost/resource/resource-interim",
+          mediaType: "image/jpeg",
+        },
+        satisfaction: "interim",
+        persistence: "pending",
+      },
+    });
+    const controller = new AbortController();
+
+    await expect(generatedPreview(asset, "preview", controller.signal)).resolves.toMatchObject({
+      satisfaction: "interim",
+      url: "oxy-media://localhost/resource/resource-interim",
+    });
+    expect(mocks.invoke).not.toHaveBeenCalledWith(
+      "cancel_preview_request",
+      expect.anything(),
+    );
+  });
+
+  it("retains Interim pixels when native publishes a terminal upgrade failure", async () => {
+    vi.stubGlobal("window", { __TAURI_INTERNALS__: {} });
+    mocks.invoke.mockImplementation((command: string) => {
+      if (command === "cancel_preview_request") return Promise.resolve(true);
+      if (command === "get_preview") {
+        return Promise.resolve({
+          path: asset.path,
+          sourceRevision: "upgrade-failure-revision",
+          projectionRevision: 1,
+          validAt: 1,
+          status: "ready",
+          level: "preview",
+          result: {
+            path: "C:\\cache\\interim.jpg",
+            width: 160,
+            height: 120,
+            kind: "embedded",
+            renderLevel: "preview",
+            resource: {
+              resourceId: "resource-interim-failure",
+              url: "oxy-media://localhost/resource/resource-interim-failure",
+              mediaType: "image/jpeg",
+            },
+            satisfaction: "interim",
+            persistence: "pending",
+          },
+        });
+      }
+      return Promise.reject(new Error(`unexpected command ${command}`));
+    });
+    const controller = new AbortController();
+    await expect(generatedPreview(asset, "preview", controller.signal)).resolves.toMatchObject({
+      satisfaction: "interim",
+    });
+
+    acceptImageProjection({
+      path: asset.path,
+      sourceRevision: "upgrade-failure-revision",
+      projectionRevision: 2,
+      validAt: 1,
+      status: "error",
+      level: "preview",
+      error: "decoder failed",
+    });
+
+    expect(useImageProjectionStore.getState().records[
+      imageProjectionKey(asset.path, "preview")
+    ]).toMatchObject({
+      status: "error",
+      error: "decoder failed",
+      result: {
+        satisfaction: "interim",
+        resource: { resourceId: "resource-interim-failure" },
+      },
+    });
+  });
+
+  it("settles an undersized Interim thumbnail because it has no upgrade phase", async () => {
+    vi.stubGlobal("window", { __TAURI_INTERNALS__: {} });
+    mocks.invoke.mockResolvedValue({
+      path: asset.path,
+      sourceRevision: "thumbnail-interim-revision",
+      projectionRevision: 1,
+      validAt: 1,
+      status: "ready",
+      level: "thumbnail",
+      result: {
+        path: "C:\\cache\\thumbnail-interim.jpg",
+        width: 160,
+        height: 120,
+        kind: "embedded",
+        renderLevel: "thumbnail",
+        resource: {
+          resourceId: "resource-thumbnail-interim",
+          url: "oxy-media://localhost/resource/resource-thumbnail-interim",
+          mediaType: "image/jpeg",
+        },
+        satisfaction: "interim",
+        persistence: "pending",
+      },
+    });
+    const controller = new AbortController();
+
+    await expect(generatedPreview(asset, "thumbnail", controller.signal)).resolves.toMatchObject({
+      satisfaction: "interim",
+      url: "oxy-media://localhost/resource/resource-thumbnail-interim",
+    });
+    expect(mocks.invoke).not.toHaveBeenCalledWith(
+      "cancel_preview_request",
+      expect.anything(),
+    );
   });
 
   it("does not leave a debug WAIT entry for an already-cancelled request", async () => {
@@ -97,13 +267,36 @@ describe("file deletion", () => {
   });
 });
 
+describe("media protocol URL normalization", () => {
+  afterEach(() => vi.unstubAllGlobals());
+
+  it("uses the WebView2 HTTP form for resources and tiles on Windows", () => {
+    vi.stubGlobal("navigator", { userAgent: "Windows" });
+    const controlled = "oxy-media://localhost/resource/resource-1";
+
+    expect(mediaProtocolUrl(controlled)).toBe(
+      "http://oxy-media.localhost/resource/resource-1",
+    );
+    expect(heifTileUrl("oxy-media://localhost/tile/session/1/0/0")).toBe(
+      "http://oxy-media.localhost/tile/session/1/0/0",
+    );
+  });
+
+  it("leaves the custom scheme unchanged outside Windows", () => {
+    vi.stubGlobal("navigator", { userAgent: "Macintosh" });
+    expect(mediaProtocolUrl("oxy-media://localhost/resource/resource-1")).toBe(
+      "oxy-media://localhost/resource/resource-1",
+    );
+  });
+});
+
 describe("HEIF full delivery", () => {
   afterEach(() => {
     mocks.invoke.mockReset();
     vi.unstubAllGlobals();
   });
 
-  it("converts a Rust-selected artifact projection into a display URL", async () => {
+  it("uses the controlled resource URL selected by Rust for a full artifact", async () => {
     vi.stubGlobal("window", { __TAURI_INTERNALS__: {} });
     mocks.invoke.mockResolvedValue({
       delivery: "artifact",
@@ -120,6 +313,11 @@ describe("HEIF full delivery", () => {
           height: 4672,
           kind: "decoded",
           renderLevel: "full",
+          resource: {
+            resourceId: "full-resource",
+            url: "oxy-media://localhost/resource/full-resource",
+            mediaType: "image/jpeg",
+          },
         },
       },
     });
@@ -128,7 +326,9 @@ describe("HEIF full delivery", () => {
 
     expect(presentation.delivery).toBe("artifact");
     if (presentation.delivery === "artifact") {
-      expect(presentation.result.url).toBe("asset:///cache/full.jpg");
+      expect(presentation.result.url).toBe(
+        "oxy-media://localhost/resource/full-resource",
+      );
     }
     expect(mocks.invoke).toHaveBeenCalledWith("start_heif_full", {
       path: asset.path,

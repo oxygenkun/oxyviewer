@@ -1,11 +1,12 @@
 use oxy_domain::{CacheSettings, CacheSettingsUpdate};
+use oxy_media::MediaCache;
 use serde::{Deserialize, Serialize};
 use std::{
     fs::{self, File, FileTimes},
     path::{Path, PathBuf},
     sync::{
         RwLock,
-        atomic::{AtomicBool, Ordering},
+        atomic::{AtomicU8, Ordering},
     },
     time::SystemTime,
 };
@@ -14,6 +15,9 @@ pub const DEFAULT_MAX_SIZE_BYTES: u64 = 10 * 1024 * 1024 * 1024;
 pub const MIN_MAX_SIZE_BYTES: u64 = 1024 * 1024 * 1024;
 pub const MAX_MAX_SIZE_BYTES: u64 = 500 * 1024 * 1024 * 1024;
 const CUSTOM_CACHE_FOLDER: &str = "OxyViewer Cache";
+const PRUNE_IDLE: u8 = 0;
+const PRUNE_RUNNING: u8 = 1;
+const PRUNE_PENDING: u8 = 2;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -32,7 +36,7 @@ pub struct CacheManager {
     default_preview_dir: PathBuf,
     config_path: PathBuf,
     config: RwLock<PersistedCacheConfig>,
-    prune_running: AtomicBool,
+    prune_state: AtomicU8,
 }
 
 impl CacheManager {
@@ -59,7 +63,7 @@ impl CacheManager {
             default_preview_dir,
             config_path,
             config: RwLock::new(config),
-            prune_running: AtomicBool::new(false),
+            prune_state: AtomicU8::new(PRUNE_IDLE),
         };
         fs::create_dir_all(manager.preview_dir()).map_err(|error| error.to_string())?;
         Ok(manager)
@@ -87,14 +91,18 @@ impl CacheManager {
             .unwrap_or_else(std::sync::PoisonError::into_inner);
         let location =
             resolve_preview_dir(&self.default_preview_dir, config.custom_parent.as_deref());
-        let usage = oxy_media::preview_cache_usage(&location).map_err(|error| error.to_string())?;
+        let legacy_usage =
+            oxy_media::preview_cache_usage(&location).map_err(|error| error.to_string())?;
+        let v2_usage = oxy_media::DiskMediaCache::new(&location, 256)
+            .and_then(|cache| cache.usage())
+            .map_err(|error| error.to_string())?;
         Ok(CacheSettings {
             location,
             default_location: self.default_preview_dir.clone(),
             custom_parent: config.custom_parent.clone(),
             is_custom_location: config.custom_parent.is_some(),
             max_size_bytes: config.max_size_bytes,
-            used_size_bytes: usage.size_bytes,
+            used_size_bytes: legacy_usage.size_bytes.saturating_add(v2_usage.size_bytes),
         })
     }
 
@@ -123,19 +131,36 @@ impl CacheManager {
             .config
             .write()
             .unwrap_or_else(std::sync::PoisonError::into_inner) = next;
-        oxy_media::prune_preview_cache(&preview_dir, update.max_size_bytes, None)
+        let v2 =
+            oxy_media::DiskMediaCache::new(&preview_dir, 256).map_err(|error| error.to_string())?;
+        let v2_usage = v2
+            .prune(update.max_size_bytes)
             .map_err(|error| error.to_string())?;
+        oxy_media::prune_preview_cache(
+            &preview_dir,
+            update.max_size_bytes.saturating_sub(v2_usage.size_bytes),
+            None,
+        )
+        .map_err(|error| error.to_string())?;
         self.settings()
     }
 
     pub fn clear(&self) -> Result<CacheSettings, String> {
         let preview_dir = self.preview_dir();
+        oxy_media::DiskMediaCache::new(&preview_dir, 256)
+            .and_then(|cache| cache.clear())
+            .map_err(|error| error.to_string())?;
         oxy_media::clear_preview_cache(&preview_dir).map_err(|error| error.to_string())?;
         self.settings()
     }
 
     pub fn mark_used(&self, path: &Path) {
-        if path.parent() != Some(self.preview_dir().as_path()) {
+        let cache_dir = self.preview_dir();
+        let is_legacy = path.parent() == Some(cache_dir.as_path());
+        // V2 artifacts are immutable and resource IDs record their observed
+        // file revision. Recency for v2 belongs in its manifest; touching the
+        // file here would invalidate an already-registered resource.
+        if !is_legacy {
             return;
         }
         if let Ok(file) = File::options().write(true).open(path) {
@@ -144,13 +169,79 @@ impl CacheManager {
     }
 
     pub fn try_start_prune(&self) -> bool {
-        self.prune_running
-            .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
-            .is_ok()
+        loop {
+            match self.prune_state.load(Ordering::Acquire) {
+                PRUNE_IDLE => {
+                    if self
+                        .prune_state
+                        .compare_exchange(
+                            PRUNE_IDLE,
+                            PRUNE_RUNNING,
+                            Ordering::AcqRel,
+                            Ordering::Acquire,
+                        )
+                        .is_ok()
+                    {
+                        return true;
+                    }
+                }
+                PRUNE_RUNNING => {
+                    if self
+                        .prune_state
+                        .compare_exchange(
+                            PRUNE_RUNNING,
+                            PRUNE_PENDING,
+                            Ordering::AcqRel,
+                            Ordering::Acquire,
+                        )
+                        .is_ok()
+                    {
+                        return false;
+                    }
+                }
+                PRUNE_PENDING => return false,
+                _ => unreachable!("invalid prune state"),
+            }
+        }
     }
 
-    pub fn finish_prune(&self) {
-        self.prune_running.store(false, Ordering::Release);
+    /// Completes one prune pass. Returns true while this worker owns a latched
+    /// follow-up pass requested by a publication that overlapped the first.
+    pub fn finish_prune(&self) -> bool {
+        loop {
+            match self.prune_state.load(Ordering::Acquire) {
+                PRUNE_PENDING => {
+                    if self
+                        .prune_state
+                        .compare_exchange(
+                            PRUNE_PENDING,
+                            PRUNE_RUNNING,
+                            Ordering::AcqRel,
+                            Ordering::Acquire,
+                        )
+                        .is_ok()
+                    {
+                        return true;
+                    }
+                }
+                PRUNE_RUNNING => {
+                    if self
+                        .prune_state
+                        .compare_exchange(
+                            PRUNE_RUNNING,
+                            PRUNE_IDLE,
+                            Ordering::AcqRel,
+                            Ordering::Acquire,
+                        )
+                        .is_ok()
+                    {
+                        return false;
+                    }
+                }
+                PRUNE_IDLE => return false,
+                _ => unreachable!("invalid prune state"),
+            }
+        }
     }
 
     pub fn prune_after_write(&self, protected_path: &Path) -> Result<(), String> {
@@ -158,12 +249,23 @@ impl CacheManager {
         // An in-flight decode may have completed in the previous location.
         // Leave that old artifact alone; the selected location is authoritative
         // for all subsequent requests.
-        if protected_path.parent() != Some(cache_dir.as_path()) {
+        let is_legacy = protected_path.parent() == Some(cache_dir.as_path());
+        let v2 =
+            oxy_media::DiskMediaCache::new(&cache_dir, 256).map_err(|error| error.to_string())?;
+        let is_v2 = protected_path.starts_with(v2.root());
+        if !is_legacy && !is_v2 {
             return Ok(());
         }
-        oxy_media::prune_preview_cache(&cache_dir, self.max_size_bytes(), Some(protected_path))
-            .map(|_| ())
-            .map_err(|error| error.to_string())
+        let v2_usage = v2
+            .prune_with_protected(self.max_size_bytes(), is_v2.then_some(protected_path))
+            .map_err(|error| error.to_string())?;
+        oxy_media::prune_preview_cache(
+            &cache_dir,
+            self.max_size_bytes().saturating_sub(v2_usage.size_bytes),
+            is_legacy.then_some(protected_path),
+        )
+        .map(|_| ())
+        .map_err(|error| error.to_string())
     }
 
     fn persist(&self, config: &PersistedCacheConfig) -> Result<(), String> {
@@ -189,6 +291,10 @@ fn valid_limit(value: u64) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::{
+        sync::{Arc, Barrier},
+        thread,
+    };
 
     #[test]
     fn custom_cache_is_always_scoped_to_an_app_owned_child() {
@@ -213,6 +319,78 @@ mod tests {
                 .join("previews")
         );
         assert!(settings.is_custom_location);
+    }
+
+    #[test]
+    fn marking_v2_resource_used_does_not_mutate_its_immutable_file_revision() {
+        let parent = tempfile::tempdir().unwrap();
+        let preview_dir = parent.path().join("previews");
+        let manager =
+            CacheManager::load(preview_dir.clone(), parent.path().join("settings.json")).unwrap();
+        let v2 = oxy_media::DiskMediaCache::new(&preview_dir, 8).unwrap();
+        let source_dir = v2.root().join("aa");
+        std::fs::create_dir(&source_dir).unwrap();
+        let artifact = source_dir.join("artifact.jpg");
+        std::fs::write(&artifact, b"immutable resource bytes").unwrap();
+        let registry = oxy_media::ResourceRegistry::new(1, 1024);
+        let resource = registry
+            .register_file(
+                &artifact,
+                "image/jpeg",
+                oxy_media::DisplayDimensions {
+                    width: 1,
+                    height: 1,
+                },
+                oxy_media::ArtifactRepresentation::Decoded,
+            )
+            .unwrap();
+
+        manager.mark_used(&artifact);
+
+        assert!(registry.resolve(&resource.descriptor.resource_id).is_some());
+    }
+
+    #[test]
+    fn completion_prune_latches_an_overlapping_follow_up() {
+        let parent = tempfile::tempdir().unwrap();
+        let manager = CacheManager::load(
+            parent.path().join("default/previews"),
+            parent.path().join("settings.json"),
+        )
+        .unwrap();
+
+        assert!(manager.try_start_prune());
+        assert!(!manager.try_start_prune());
+        assert!(manager.finish_prune());
+        assert!(!manager.finish_prune());
+        assert!(manager.try_start_prune());
+        assert!(!manager.finish_prune());
+    }
+
+    #[test]
+    fn completion_prune_preserves_a_barrier_overlapped_trigger() {
+        let parent = tempfile::tempdir().unwrap();
+        let manager = Arc::new(
+            CacheManager::load(
+                parent.path().join("default/previews"),
+                parent.path().join("settings.json"),
+            )
+            .unwrap(),
+        );
+        assert!(manager.try_start_prune());
+        let barrier = Arc::new(Barrier::new(2));
+        let requester = {
+            let manager = Arc::clone(&manager);
+            let barrier = Arc::clone(&barrier);
+            thread::spawn(move || {
+                barrier.wait();
+                assert!(!manager.try_start_prune());
+            })
+        };
+        barrier.wait();
+        requester.join().unwrap();
+        assert!(manager.finish_prune());
+        assert!(!manager.finish_prune());
     }
 
     #[test]

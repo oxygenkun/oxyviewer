@@ -12,10 +12,19 @@ import { acceptImageProjection, clearImageProjections } from "../lib/imageProjec
 import type { AssetSummary, PreviewPriority } from "../types";
 import { Thumbnail } from "./Thumbnail";
 
-vi.mock("../lib/api", () => ({
-  isTauri: () => false,
+const apiMocks = vi.hoisted(() => ({
+  tauri: false,
   generatedPreview: vi.fn(),
+  renewMediaResource: vi.fn(() => Promise.resolve(true)),
+  releaseMediaResource: vi.fn(() => Promise.resolve()),
+}));
+
+vi.mock("../lib/api", () => ({
+  isTauri: () => apiMocks.tauri,
+  generatedPreview: apiMocks.generatedPreview,
   previewUrl: (asset: AssetSummary) => asset.path,
+  renewMediaResource: apiMocks.renewMediaResource,
+  releaseMediaResource: apiMocks.releaseMediaResource,
 }));
 vi.mock("@tauri-apps/api/core", () => ({ convertFileSrc: (path: string) => path }));
 
@@ -28,7 +37,7 @@ let container: HTMLDivElement;
 let root: Root;
 let client: QueryClient;
 
-function project(revision: number) {
+function project(revision: number, resourceId?: string) {
   acceptImageProjection({
     path: asset.path, sourceRevision: "source-1", projectionRevision: revision,
     validAt: 1, status: "ready", level: "thumbnail",
@@ -38,6 +47,13 @@ function project(revision: number) {
       height: 120,
       kind: "embedded",
       renderLevel: "thumbnail",
+      ...(resourceId ? {
+        resource: {
+          resourceId,
+          url: `oxy-media://localhost/resource/${resourceId}`,
+          mediaType: "image/jpeg",
+        },
+      } : {}),
     },
   });
 }
@@ -55,6 +71,10 @@ async function render(priority: PreviewPriority, currentAsset = asset, enabled =
 }
 
 beforeEach(() => {
+  apiMocks.tauri = false;
+  apiMocks.generatedPreview.mockReset();
+  apiMocks.renewMediaResource.mockClear();
+  apiMocks.releaseMediaResource.mockClear();
   vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
   vi.stubGlobal("__OXY_DEBUG__", false);
   vi.spyOn(navigator, "userAgent", "get").mockReturnValue("Windows");
@@ -123,6 +143,62 @@ describe("filmstrip thumbnail display retention", () => {
     await render("visible");
     expect(container.querySelector("img")).toBe(image);
     expect(image?.className).not.toContain("thumbnail__pending-image");
+  });
+
+  it("renews the active resource and releases it when the projection changes", async () => {
+    project(2, "resource-1");
+    await render("visible");
+    expect(apiMocks.renewMediaResource).toHaveBeenCalledWith("resource-1");
+
+    await act(async () => project(3, "resource-2"));
+    await render("visible");
+    expect(apiMocks.releaseMediaResource).toHaveBeenCalledWith("resource-1");
+    expect(apiMocks.renewMediaResource).toHaveBeenCalledWith("resource-2");
+  });
+
+  it("aborts a pending Interim upgrade when its TanStack subscriber unmounts", async () => {
+    apiMocks.tauri = true;
+    const signals: AbortSignal[] = [];
+    apiMocks.generatedPreview.mockImplementation((
+      requested: AssetSummary,
+      _level: string,
+      signal: AbortSignal,
+    ) => {
+      signals.push(signal);
+      if (requested.id === asset.id) {
+        acceptImageProjection({
+          path: requested.path,
+          sourceRevision: "source-1",
+          projectionRevision: 2,
+          validAt: 1,
+          status: "ready",
+          level: "thumbnail",
+          result: {
+            path: url,
+            width: 160,
+            height: 120,
+            kind: "embedded",
+            renderLevel: "thumbnail",
+            satisfaction: "interim",
+            resource: {
+              resourceId: "resource-interim",
+              url: "oxy-media://localhost/resource/resource-interim",
+              mediaType: "image/jpeg",
+            },
+          },
+        });
+      }
+      return new Promise((_resolve, reject) => {
+        signal.addEventListener("abort", () => reject(signal.reason), { once: true });
+      });
+    });
+
+    await render("visible");
+    expect(signals.some((signal) => !signal.aborted)).toBe(true);
+    await render("visible", { ...asset, id: "b", path: "/photos/b.hif" });
+
+    expect(signals.filter((_, index) => index === 0 || index === 1)
+      .some((signal) => signal.aborted)).toBe(true);
   });
 
   it("never carries the retained image over to another asset", async () => {

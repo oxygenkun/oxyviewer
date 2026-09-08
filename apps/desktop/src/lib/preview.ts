@@ -30,9 +30,9 @@ const SURFACE_LEVELS: Record<RenderSurface, readonly RenderLevel[]> = {
 };
 
 const originalProfile: RenderProfile = {
-  thumbnail: { type: "originalImage" },
-  preview: { type: "originalImage" },
-  full: { type: "originalImage" },
+  thumbnail: { type: "generatedImage", requestLevel: "thumbnail" },
+  preview: { type: "reuse", level: "thumbnail" },
+  full: { type: "reuse", level: "thumbnail" },
 };
 
 const rawProfile: RenderProfile = {

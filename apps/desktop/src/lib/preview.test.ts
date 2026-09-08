@@ -54,10 +54,10 @@ describe("semantic render graph", () => {
     expect(loupeThumbnailFallback("jpeg", "windows")).toBeUndefined();
   });
 
-  it("uses the original image for browser-native raster formats", () => {
+  it("registers one reusable original resource for browser-native raster formats", () => {
     expect(renderPlan("jpeg", "loupe", "windows").map((step) => step.method)).toEqual([
-      { type: "originalImage" },
-      { type: "originalImage" },
+      { type: "generatedImage", requestLevel: "thumbnail" },
+      { type: "generatedImage", requestLevel: "thumbnail" },
     ]);
   });
 

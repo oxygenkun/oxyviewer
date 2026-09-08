@@ -416,6 +416,30 @@ pub struct PreviewDiagnostics {
     pub fallback_reason: Option<String>,
 }
 
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub enum MediaSatisfaction {
+    Satisfied,
+    Interim,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub enum MediaPersistence {
+    NotApplicable,
+    Pending,
+    Persisted,
+    Skipped,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct MediaResourceDescriptor {
+    pub resource_id: String,
+    pub url: String,
+    pub media_type: String,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct PreviewResult {
@@ -428,6 +452,12 @@ pub struct PreviewResult {
     /// multiple levels (for example Sony HIF's 160 px JPEG for thumbnail and
     /// preview).
     pub render_level: RenderLevel,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub resource: Option<MediaResourceDescriptor>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub satisfaction: Option<MediaSatisfaction>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub persistence: Option<MediaPersistence>,
     /// Optional decode diagnostics. Populated by decoders that measure
     /// backend/timing; absent for cache hits and direct passthrough.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -611,6 +641,8 @@ pub struct DirectoryBrowseProgress {
     pub resolve_ms: u64,
     pub enumeration_ms: u64,
     pub attributes_ms: u64,
+    pub snapshot_serialize_ms: u64,
+    pub snapshot_persist_ms: u64,
     pub sort_ms: u64,
     pub error: Option<String>,
 }

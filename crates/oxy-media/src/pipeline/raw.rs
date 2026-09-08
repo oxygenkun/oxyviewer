@@ -1,26 +1,36 @@
-use super::artifact::PREVIEW_CACHE_SIZES;
 #[cfg(target_os = "macos")]
 use crate::backends::{apple_core_image, apple_image_io};
 use crate::{
     ImageDimensions, MediaError,
     backends::libraw,
+    cache::write_jpeg_atomically,
     cache::{
-        cache_tempfile, persist_atomically, preview_cache_key, write_bytes_atomically_cancelled,
-        write_jpeg_atomically, write_jpeg_atomically_cancelled,
+        ArtifactPresentation, ArtifactRepresentation, CacheColorState, DetailRequirement,
+        OrientationRequirement, OrientationState, PresentationRequirement,
+        RepresentationRequirement, SharpeningState,
     },
     decode_control::{
         DecodePriority, acquire_decode, acquire_file_lock, acquire_raw_full_decode, file_lock,
     },
-    media_source::{cached_preview_result, has_complete_jpeg_markers, preview_result},
+    media_source::has_complete_jpeg_markers,
+    pipeline::artifact::{
+        ArtifactCache, ArtifactPreparation, applied_srgb, applied_srgb_requirement,
+    },
     policy::{RAW_FULL, RAW_PREVIEW},
-    presentation::{CAMERA_JPEG, RAW_DEVELOPED_JPEG, camera_preview_can_satisfy_raw_full},
+    presentation::{CAMERA_JPEG, RAW_DEVELOPED_JPEG},
 };
-use oxy_domain::{PreviewKind, PreviewResult, RenderLevel};
+use image::{ImageDecoder, ImageReader, metadata::Orientation};
+use oxy_domain::{PreviewResult, RenderLevel};
 use oxy_runtime::CancellationToken;
-use std::path::Path;
+use std::{
+    collections::VecDeque,
+    io::Cursor,
+    path::Path,
+    sync::{Arc, Mutex, OnceLock},
+};
 
-const RAW_DEVELOPED_SUFFIXES: [&str; 3] =
-    ["core-image.jpg", "image-io.jpg", "libraw-developed.jpg"];
+const FAILED_EMBEDDED_CAPACITY: usize = 256;
+static FAILED_EMBEDDED_REVISIONS: OnceLock<Mutex<VecDeque<String>>> = OnceLock::new();
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum RawBackend {
@@ -57,11 +67,44 @@ pub(crate) fn dimensions(path: &Path) -> Result<ImageDimensions, MediaError> {
     })
 }
 
+fn display_requirement() -> PresentationRequirement {
+    PresentationRequirement {
+        orientation: OrientationRequirement::DisplayCorrect,
+        color: crate::cache::ColorRequirement::Any,
+        sharpening: SharpeningState::None,
+    }
+}
+
+pub(crate) fn preview_request(
+    artifacts: &ArtifactCache,
+    max_size: u32,
+    allow_interim: bool,
+) -> crate::cache::CacheRequest {
+    artifacts.request(
+        DetailRequirement::Display {
+            min_long_edge: max_size,
+        },
+        RepresentationRequirement::AnyDisplay,
+        display_requirement(),
+        allow_interim,
+    )
+}
+
+pub(crate) fn full_developed_request(artifacts: &ArtifactCache) -> crate::cache::CacheRequest {
+    artifacts.request(
+        DetailRequirement::NativeDetail,
+        RepresentationRequirement::Exact(ArtifactRepresentation::Developed),
+        applied_srgb_requirement(),
+        false,
+    )
+}
+
 pub(crate) fn preview_with_priority(
     path: &Path,
     cache_dir: &Path,
     max_size: u32,
     priority: DecodePriority,
+    allow_interim: bool,
     cancellation: &CancellationToken,
 ) -> Result<PreviewResult, MediaError> {
     let max_size = max_size.max(1);
@@ -70,45 +113,37 @@ pub(crate) fn preview_with_priority(
     } else {
         RenderLevel::Preview
     };
-    std::fs::create_dir_all(cache_dir)?;
-    let cache_key = preview_cache_key(path, RAW_PREVIEW, max_size)?;
-    if let Some(result) = cached_result(cache_dir, &cache_key, level)? {
-        return Ok(result);
-    }
-    if let Some(result) = larger_cached_preview(path, cache_dir, max_size, level)? {
+    let artifacts = ArtifactCache::new(path, cache_dir)?;
+    let request = preview_request(&artifacts, max_size, allow_interim);
+    if let Some(result) = artifacts.lookup(&request, level)? {
         return Ok(result);
     }
 
-    let _decode_permit = acquire_decode(priority, &|| cancellation.is_cancelled())?;
-    let source_lock_key = preview_cache_key(path, "raw-source-decode", 0)?;
-    let source_lock = file_lock(&source_lock_key);
-    let _decode_guard = acquire_file_lock(&source_lock, &|| cancellation.is_cancelled())?;
-    if cancellation.is_cancelled() {
-        return Err(MediaError::Cancelled);
+    let embedded = produce_embedded(path, &artifacts, max_size, level, cancellation);
+    if let Ok(result) = &embedded
+        && (allow_interim || result.satisfaction == Some(oxy_domain::MediaSatisfaction::Satisfied))
+    {
+        return Ok(result.clone());
     }
-    if let Some(result) = cached_result(cache_dir, &cache_key, level)? {
-        return Ok(result);
-    }
-    if let Some(result) = larger_cached_preview(path, cache_dir, max_size, level)? {
-        return Ok(result);
-    }
-
-    let result = match cache_embedded(path, cache_dir, &cache_key, max_size, level, cancellation) {
-        Ok(result) => Ok(result),
-        Err(embedded_error) => render_developed(
-            path,
-            cache_dir,
-            &cache_key,
-            Some(max_size),
-            level,
-            Some(embedded_error.to_string()),
-            cancellation,
-        ),
-    };
-    if cancellation.is_cancelled() {
-        return Err(MediaError::Cancelled);
-    }
-    result
+    artifacts.coordinate_work(
+        &request,
+        level,
+        "raw-compatible-development",
+        || cancellation.is_cancelled(),
+        |generation| {
+            let _decode_permit = acquire_decode(priority, &|| cancellation.is_cancelled())?;
+            render_developed(
+                path,
+                &artifacts,
+                Some(max_size),
+                level,
+                embedded.err().map(|error| error.to_string()),
+                generation,
+                &request,
+                cancellation,
+            )
+        },
+    )
 }
 
 pub(crate) fn full(
@@ -116,21 +151,33 @@ pub(crate) fn full(
     cache_dir: &Path,
     cancellation: &CancellationToken,
 ) -> Result<PreviewResult, MediaError> {
-    std::fs::create_dir_all(cache_dir)?;
+    let artifacts = ArtifactCache::new(path, cache_dir)?;
+    let hot_request = full_developed_request(&artifacts);
+    if let Some(result) = artifacts.lookup(&hot_request, RenderLevel::Full)? {
+        return Ok(result);
+    }
     let source_size = dimensions(path)?;
-    let preview_key = preview_cache_key(path, RAW_PREVIEW, 4_096)?;
-    let embedded = cached_embedded(cache_dir, &preview_key, RenderLevel::Full)?.or_else(|| {
-        cache_embedded(
-            path,
-            cache_dir,
-            &preview_key,
-            4_096,
-            RenderLevel::Full,
-            cancellation,
-        )
-        .ok()
-    });
-    if let Some(embedded) = embedded
+    let request = artifacts.request(
+        DetailRequirement::Native {
+            source: source_size.into(),
+        },
+        RepresentationRequirement::RawNative {
+            allow_camera_preview: true,
+        },
+        display_requirement(),
+        false,
+    );
+    let production_request = artifacts.request(
+        request.detail,
+        request.representation,
+        request.presentation,
+        true,
+    );
+    if let Some(result) = artifacts.lookup(&request, RenderLevel::Full)? {
+        return Ok(result);
+    }
+
+    if let Ok(embedded) = produce_embedded(path, &artifacts, 4_096, RenderLevel::Full, cancellation)
         && covers_source(
             ImageDimensions {
                 width: embedded.width,
@@ -141,125 +188,150 @@ pub(crate) fn full(
     {
         return Ok(embedded);
     }
-
-    let cache_key = preview_cache_key(path, RAW_FULL, 0)?;
-    if let Some(result) = cached_developed(cache_dir, &cache_key, RenderLevel::Full)? {
-        return Ok(result);
-    }
     if cancellation.is_cancelled() {
         return Err(MediaError::Cancelled);
     }
-    let _decode_guard = acquire_raw_full_decode(&|| cancellation.is_cancelled())?;
-    if cancellation.is_cancelled() {
-        return Err(MediaError::Cancelled);
-    }
-    if let Some(result) = cached_developed(cache_dir, &cache_key, RenderLevel::Full)? {
-        return Ok(result);
-    }
-    render_developed(
-        path,
-        cache_dir,
-        &cache_key,
-        None,
+    artifacts.coordinate_work(
+        &hot_request,
         RenderLevel::Full,
-        None,
-        cancellation,
+        "raw-compatible-development",
+        || cancellation.is_cancelled(),
+        |generation| {
+            let _decode_guard = acquire_raw_full_decode(&|| cancellation.is_cancelled())?;
+            render_developed(
+                path,
+                &artifacts,
+                None,
+                RenderLevel::Full,
+                None,
+                generation,
+                &production_request,
+                cancellation,
+            )
+        },
     )
 }
 
-fn cached_embedded(
-    cache_dir: &Path,
-    cache_key: &str,
-    level: RenderLevel,
-) -> Result<Option<PreviewResult>, MediaError> {
-    let path = cache_dir.join(format!("{cache_key}.embedded.jpg"));
-    cached_preview_result(path, PreviewKind::Embedded, level)
-}
-
-fn cached_developed(
-    cache_dir: &Path,
-    cache_key: &str,
-    level: RenderLevel,
-) -> Result<Option<PreviewResult>, MediaError> {
-    for suffix in RAW_DEVELOPED_SUFFIXES {
-        let path = cache_dir.join(format!("{cache_key}.{suffix}"));
-        if let Some(result) = cached_preview_result(path, PreviewKind::Developed, level)? {
-            return Ok(Some(result));
-        }
-    }
-    Ok(None)
-}
-
-fn cached_result(
-    cache_dir: &Path,
-    cache_key: &str,
-    level: RenderLevel,
-) -> Result<Option<PreviewResult>, MediaError> {
-    if let Some(result) = cached_embedded(cache_dir, cache_key, level)? {
-        return Ok(Some(result));
-    }
-    cached_developed(cache_dir, cache_key, level)
-}
-
-fn cache_embedded(
+fn produce_embedded(
     path: &Path,
-    cache_dir: &Path,
-    cache_key: &str,
+    artifacts: &ArtifactCache,
     max_size: u32,
     level: RenderLevel,
     cancellation: &CancellationToken,
 ) -> Result<PreviewResult, MediaError> {
-    let destination = cache_dir.join(format!("{cache_key}.embedded.jpg"));
-    match libraw::embedded(path, max_size).map_err(|message| MediaError::LibRaw {
+    let embedded_lock = file_lock(&artifacts.source_lock_key("raw-embedded-extract"));
+    let _embedded_guard = acquire_file_lock(&embedded_lock, &|| cancellation.is_cancelled())?;
+    let request = artifacts.request(
+        DetailRequirement::Display {
+            min_long_edge: max_size,
+        },
+        RepresentationRequirement::Exact(ArtifactRepresentation::Embedded),
+        display_requirement(),
+        true,
+    );
+    let generation = match artifacts.prepare(&request, level)? {
+        ArtifactPreparation::Cached(result) => return Ok(*result),
+        ArtifactPreparation::Generate { cache_generation } => cache_generation,
+    };
+    let revision_id = artifacts.source_revision_id();
+    if embedded_extraction_failed(revision_id) {
+        return Err(MediaError::CacheArtifact(
+            "embedded RAW extraction previously failed for this source revision".into(),
+        ));
+    }
+    let extracted = libraw::embedded(path, max_size).map_err(|message| MediaError::LibRaw {
         path: path.to_owned(),
         message,
-    })? {
+    });
+    let extracted = match extracted {
+        Ok(extracted) => extracted,
+        Err(error) => {
+            record_embedded_extraction_failure(revision_id);
+            return Err(error);
+        }
+    };
+    let (bytes, dimensions) = match extracted {
         libraw::Preview::EmbeddedJpeg(data) => {
-            write_bytes_atomically_cancelled(&data, &destination, || cancellation.is_cancelled())?;
+            let dimensions = {
+                let reader = ImageReader::new(Cursor::new(&data)).with_guessed_format()?;
+                let mut decoder = reader.into_decoder()?;
+                oriented_dimensions(decoder.dimensions(), decoder.orientation()?)
+            };
+            (Arc::from(data), dimensions)
         }
         libraw::Preview::EmbeddedImage(image) => {
-            write_jpeg_atomically_cancelled(&image, &destination, 90, CAMERA_JPEG, || {
-                cancellation.is_cancelled()
-            })?;
+            let destination = artifacts.temporary_output(".jpg")?;
+            write_jpeg_atomically(&image, &destination, 90, CAMERA_JPEG)?;
+            let dimensions = image::image_dimensions(&destination)?;
+            (Arc::from(std::fs::read(&destination)?), dimensions)
         }
+    };
+    if cancellation.is_cancelled() {
+        return Err(MediaError::Cancelled);
     }
-    preview_result(destination, PreviewKind::Embedded, level)
+    artifacts.publish(
+        bytes,
+        dimensions.into(),
+        ArtifactRepresentation::Embedded,
+        ArtifactPresentation {
+            orientation: OrientationState::Metadata,
+            color: CacheColorState::EmbeddedOrUnknown,
+            sharpening: SharpeningState::None,
+        },
+        false,
+        format!("{RAW_PREVIEW}:embedded:{max_size}"),
+        level,
+        generation,
+        &request,
+    )
 }
 
+fn embedded_extraction_failed(revision_id: &str) -> bool {
+    FAILED_EMBEDDED_REVISIONS
+        .get_or_init(|| Mutex::new(VecDeque::new()))
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .iter()
+        .any(|candidate| candidate == revision_id)
+}
+
+fn record_embedded_extraction_failure(revision_id: &str) {
+    let mut failed = FAILED_EMBEDDED_REVISIONS
+        .get_or_init(|| Mutex::new(VecDeque::new()))
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    failed.retain(|candidate| candidate != revision_id);
+    failed.push_back(revision_id.to_owned());
+    while failed.len() > FAILED_EMBEDDED_CAPACITY {
+        failed.pop_front();
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
 fn render_developed(
     path: &Path,
-    cache_dir: &Path,
-    cache_key: &str,
+    artifacts: &ArtifactCache,
     max_size: Option<u32>,
     level: RenderLevel,
     initial_error: Option<String>,
+    generation: u64,
+    request: &crate::cache::CacheRequest,
     cancellation: &CancellationToken,
 ) -> Result<PreviewResult, MediaError> {
     let quality = if level == RenderLevel::Full { 95 } else { 90 };
     let mut errors = initial_error.into_iter().collect::<Vec<_>>();
     for backend in backend_plan(level) {
-        let suffix = match backend {
-            RawBackend::AppleCoreImage => "core-image.jpg",
-            RawBackend::AppleImageIo => "image-io.jpg",
-            RawBackend::LibRawDevelopment => "libraw-developed.jpg",
-        };
-        let destination = cache_dir.join(format!("{cache_key}.{suffix}"));
-        if let Some(result) =
-            cached_preview_result(destination.clone(), PreviewKind::Developed, level)?
-        {
-            return Ok(result);
-        }
-        let temporary = cache_tempfile(&destination, ".jpg")?;
+        let destination = artifacts.temporary_output(".jpg")?;
         let result = match backend {
             #[cfg(target_os = "macos")]
             RawBackend::AppleCoreImage => {
-                apple_core_image::render_raw_jpeg(path, temporary.path(), max_size, quality)
+                apple_core_image::render_raw_jpeg(path, &destination, max_size, quality)
             }
             #[cfg(not(target_os = "macos"))]
             RawBackend::AppleCoreImage => Err(MediaError::NativeDecoderUnavailable),
             #[cfg(target_os = "macos")]
             RawBackend::AppleImageIo => {
-                apple_image_io::render_jpeg(path, temporary.path(), max_size, quality)
+                apple_image_io::render_jpeg(path, &destination, max_size, quality)
             }
             #[cfg(not(target_os = "macos"))]
             RawBackend::AppleImageIo => Err(MediaError::NativeDecoderUnavailable),
@@ -274,16 +346,34 @@ fn render_developed(
                     } else {
                         image
                     };
-                    write_jpeg_atomically(&image, temporary.path(), quality, RAW_DEVELOPED_JPEG)
+                    write_jpeg_atomically(&image, &destination, quality, RAW_DEVELOPED_JPEG)
                 }),
         };
         match result {
-            Ok(()) if has_complete_jpeg_markers(temporary.path())? => {
+            Ok(()) if has_complete_jpeg_markers(&destination)? => {
                 if cancellation.is_cancelled() {
                     return Err(MediaError::Cancelled);
                 }
-                persist_atomically(temporary, &destination)?;
-                return preview_result(destination, PreviewKind::Developed, level);
+                let dimensions = image::image_dimensions(&destination)?.into();
+                return artifacts.publish_staged(
+                    destination,
+                    dimensions,
+                    ArtifactRepresentation::Developed,
+                    applied_srgb(),
+                    max_size.is_none_or(|target| dimensions.width.max(dimensions.height) < target),
+                    format!(
+                        "{}:{backend:?}:{}",
+                        if max_size.is_none() {
+                            RAW_FULL
+                        } else {
+                            RAW_PREVIEW
+                        },
+                        max_size.unwrap_or_default()
+                    ),
+                    level,
+                    generation,
+                    request,
+                );
             }
             Ok(()) => errors.push(format!("{backend:?}: produced a truncated JPEG")),
             Err(error) => errors.push(format!("{backend:?}: {error}")),
@@ -295,42 +385,58 @@ fn render_developed(
     })
 }
 
-pub(crate) fn covers_source(candidate: ImageDimensions, source: ImageDimensions) -> bool {
-    // Full explicitly permits a near-full camera render for immediate pixel
-    // inspection. Geometry alone is insufficient: the representation contract
-    // is part of this decision and the result remains `PreviewKind::Embedded`.
-    camera_preview_can_satisfy_raw_full(CAMERA_JPEG, candidate, source)
+fn oriented_dimensions(dimensions: (u32, u32), orientation: Orientation) -> (u32, u32) {
+    if matches!(
+        orientation,
+        Orientation::Rotate90
+            | Orientation::Rotate270
+            | Orientation::Rotate90FlipH
+            | Orientation::Rotate270FlipH
+    ) {
+        (dimensions.1, dimensions.0)
+    } else {
+        dimensions
+    }
 }
 
-fn larger_cached_preview(
-    path: &Path,
-    cache_dir: &Path,
-    max_size: u32,
-    level: RenderLevel,
-) -> Result<Option<PreviewResult>, MediaError> {
-    for candidate_size in PREVIEW_CACHE_SIZES
-        .iter()
-        .copied()
-        .filter(|&size| size > max_size)
-    {
-        let key = preview_cache_key(path, RAW_PREVIEW, candidate_size)?;
-        for (suffix, kind) in std::iter::once(("embedded.jpg", PreviewKind::Embedded)).chain(
-            RAW_DEVELOPED_SUFFIXES
-                .into_iter()
-                .map(|suffix| (suffix, PreviewKind::Developed)),
-        ) {
-            let candidate = cache_dir.join(format!("{key}.{suffix}"));
-            if let Some(result) = cached_preview_result(candidate, kind, level)? {
-                return Ok(Some(result));
-            }
-        }
-    }
-    Ok(None)
+pub(crate) fn covers_source(candidate: ImageDimensions, source: ImageDimensions) -> bool {
+    crate::presentation::camera_preview_can_satisfy_raw_full(CAMERA_JPEG, candidate, source)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn failed_embedded_extraction_is_not_repeated_and_metadata_is_bounded() {
+        let prefix = format!("raw-failure-test-{:?}-", std::thread::current().id());
+        let first = format!("{prefix}0");
+        record_embedded_extraction_failure(&first);
+        record_embedded_extraction_failure(&first);
+        assert!(embedded_extraction_failed(&first));
+        for index in 1..=FAILED_EMBEDDED_CAPACITY {
+            record_embedded_extraction_failure(&format!("{prefix}{index}"));
+        }
+        assert!(!embedded_extraction_failed(&first));
+        let failed = FAILED_EMBEDDED_REVISIONS
+            .get()
+            .unwrap()
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        assert!(failed.len() <= FAILED_EMBEDDED_CAPACITY);
+    }
+
+    #[test]
+    fn embedded_jpeg_dimensions_follow_exif_orientation() {
+        assert_eq!(
+            oriented_dimensions((6_192, 4_128), Orientation::Rotate90),
+            (4_128, 6_192)
+        );
+        assert_eq!(
+            oriented_dimensions((6_192, 4_128), Orientation::FlipHorizontal),
+            (6_192, 4_128)
+        );
+    }
 
     #[test]
     #[cfg(target_os = "macos")]

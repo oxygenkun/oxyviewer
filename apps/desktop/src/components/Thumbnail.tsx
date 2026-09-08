@@ -4,6 +4,7 @@ import {
   generatedPreview,
   isTauri,
   previewUrl,
+  renewMediaResource,
 } from "../lib/api";
 import {
   browserImageSourceWhenEnabled,
@@ -13,6 +14,7 @@ import {
   touchBrowserImage,
 } from "../lib/browserImageCache";
 import { perfMark } from "../lib/perfProbe";
+import { retainMediaResource } from "../lib/mediaResourceLease";
 import { imageProjectionKey, useImageProjectionStore } from "../lib/imageProjection";
 import {
   assetRenderQueryKey,
@@ -145,9 +147,17 @@ export function Thumbnail({
     staleTime: Infinity,
     retry: 0,
   });
+  const refetchPreview = previewQuery.refetch;
+  const refetchFull = fullQuery.refetch;
   const thumbnailSource = thumbnailProjection?.result;
   const previewSource = previewProjection?.result;
   const fullSource = fullProjection?.result;
+  const resourceIds = [
+    thumbnailSource?.resource?.resourceId,
+    previewSource?.resource?.resourceId,
+    fullSource?.resource?.resourceId,
+  ].filter((id): id is string => Boolean(id));
+  const resourceIdentity = [...new Set(resourceIds)].sort().join("\u0000");
   const preparedSource = firstReadyBrowserImage([
     !fullImageFailed ? fullSource?.url : undefined,
     directSource,
@@ -202,6 +212,28 @@ export function Thumbnail({
       height: size.height,
     });
   };
+
+  useEffect(() => {
+    const ids = resourceIdentity ? resourceIdentity.split("\u0000") : [];
+    if (ids.length === 0) return;
+    const releases = ids.map(retainMediaResource);
+    let disposed = false;
+    const renew = async () => {
+      const live = await Promise.all(ids.map((id) => renewMediaResource(id).catch(() => false)));
+      if (disposed || live.every(Boolean)) return;
+      // A bounded registry may evict an unmounted/expired descriptor while its
+      // managed file remains valid. Re-enter Rust so it can register a fresh
+      // current-process resource instead of retrying the immutable stale URL.
+      await Promise.all([refetchPreview(), refetchFull()]);
+    };
+    void renew();
+    const timer = window.setInterval(() => void renew(), 60_000);
+    return () => {
+      disposed = true;
+      window.clearInterval(timer);
+      releases.forEach((release) => release());
+    };
+  }, [refetchFull, refetchPreview, resourceIdentity]);
 
   useEffect(() => setFailed(false), [source]);
   useEffect(() => {

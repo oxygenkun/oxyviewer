@@ -1,5 +1,7 @@
 use crate::MediaError;
-use image::{DynamicImage, ImageBuffer, Rgba, RgbaImage};
+#[cfg(test)]
+use image::RgbaImage;
+use image::{DynamicImage, ImageBuffer, Rgba};
 use std::{
     fs::File,
     io::{Read, Seek, SeekFrom},
@@ -56,6 +58,7 @@ unsafe extern "C" {
         destination_path_len: usize,
         quality: u8,
     ) -> i32;
+    #[cfg(test)]
     fn oxy_apple_image_io_sharpen_rgba8(
         pixels: *mut u8,
         pixels_len: usize,
@@ -150,6 +153,7 @@ pub fn render_jpeg(
 }
 
 pub fn write_jpeg(image: &DynamicImage, path: &Path, quality: u8) -> Result<(), MediaError> {
+    let _guard = lock_heif_transcode();
     let converted;
     let rgba = if let Some(rgba) = image.as_rgba8() {
         rgba
@@ -169,12 +173,15 @@ pub fn write_jpeg(image: &DynamicImage, path: &Path, quality: u8) -> Result<(), 
             quality,
         )
     };
-    if status == 0 {
+    if status != 0 {
+        return Err(native_error(format!(
+            "JPEG encode failed at native stage {status}"
+        )));
+    }
+    if has_complete_jpeg_markers(path)? {
         Ok(())
     } else {
-        Err(native_error(format!(
-            "JPEG encode failed at native stage {status}"
-        )))
+        Err(native_error("native finalize produced a truncated JPEG"))
     }
 }
 
@@ -214,6 +221,7 @@ fn has_complete_jpeg_markers(path: &Path) -> Result<bool, std::io::Error> {
     Ok(start == [0xff, 0xd8] && end == [0xff, 0xd9])
 }
 
+#[cfg(test)]
 pub fn sharpen_rgba8(image: &mut RgbaImage) -> Result<(), MediaError> {
     let width = image.width();
     let height = image.height();
@@ -267,7 +275,7 @@ mod tests {
     }
 
     #[test]
-    fn transcodes_repository_heif_directly_to_jpeg() {
+    fn transcodes_orientation_sensitive_heif_to_applied_display_pixels() {
         let Some(fixture) = crate::sony_hif_fixture() else {
             eprintln!("skipping: Sony HIF fixture unavailable (set OXY_HIF_FIXTURE)");
             return;
@@ -281,6 +289,16 @@ mod tests {
             .unwrap()
             .decode()
             .unwrap();
+        let display_dimensions = crate::backends::libheif::dimensions(&fixture).unwrap();
+        assert_eq!(
+            (display_dimensions.width, display_dimensions.height),
+            (4672, 7008)
+        );
+        let presented = decode_rgba8(&fixture, u32::MAX).unwrap();
+        assert_eq!(
+            (decoded.width(), decoded.height()),
+            (presented.width(), presented.height())
+        );
         let mut edges = [decoded.width(), decoded.height()];
         edges.sort_unstable();
         assert_eq!(edges, [4672, 7008]);

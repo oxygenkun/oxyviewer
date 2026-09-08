@@ -26,7 +26,6 @@ const GENERATED_DIR = path.join(PERF_DIR, "generated");
 const REPORTS_DIR = path.join(PERF_DIR, ".reports");
 const SCENARIOS_PATH = path.join(PERF_DIR, "scenarios.json");
 const BASELINE_PATH = path.join(PERF_DIR, "baseline.json");
-const BUNDLE_ID = "app.oxyviewer.desktop";
 
 // ---------------------------------------------------------------------------
 // Arguments
@@ -186,21 +185,29 @@ function prepareFixture(name, fixture) {
 }
 
 // ---------------------------------------------------------------------------
-// Cache management (cold runs)
+// Runner-owned application state (never the normal user cache/database)
 // ---------------------------------------------------------------------------
 
-function previewCacheDir() {
-  if (process.platform === "darwin") {
-    return path.join(os.homedir(), "Library", "Caches", BUNDLE_ID, "previews");
+function hasManagedArtifact(cacheDir) {
+  const root = path.join(cacheDir, "media-cache-v2");
+  if (!fs.statSync(root, { throwIfNoEntry: false })?.isDirectory()) return false;
+  for (const prefix of fs.readdirSync(root, { withFileTypes: true })) {
+    if (!prefix.isDirectory() || !/^[0-9a-f]{2}$/.test(prefix.name)) continue;
+    const prefixPath = path.join(root, prefix.name);
+    for (const source of fs.readdirSync(prefixPath, { withFileTypes: true })) {
+      if (!source.isDirectory() || !/^[0-9a-f]{64}$/.test(source.name)) continue;
+      const hasArtifact = fs
+        .readdirSync(path.join(prefixPath, source.name), { withFileTypes: true })
+        .some((entry) => entry.isFile() && entry.name.endsWith(".jpg"));
+      if (hasArtifact) return true;
+    }
   }
-  if (process.platform === "win32") {
-    return path.join(process.env.LOCALAPPDATA ?? path.join(os.homedir(), "AppData", "Local"), BUNDLE_ID, "previews");
-  }
-  return path.join(process.env.XDG_CACHE_HOME ?? path.join(os.homedir(), ".cache"), BUNDLE_ID, "previews");
+  return false;
 }
 
-function clearPreviewCache() {
-  fs.rmSync(previewCacheDir(), { recursive: true, force: true });
+function clearIsolatedState(runtime, clearData = false) {
+  fs.rmSync(runtime.cacheDir, { recursive: true, force: true });
+  if (clearData) fs.rmSync(runtime.dataDir, { recursive: true, force: true });
 }
 
 // ---------------------------------------------------------------------------
@@ -212,11 +219,23 @@ function defaultAppBinary() {
   return path.join(ROOT, "target", "release", name);
 }
 
-function runScenarioOnce(appBinary, scenarioPayload, timeoutMs, verbose) {
+function runScenarioOnce(
+  appBinary,
+  scenarioPayload,
+  runtime,
+  timeoutMs,
+  verbose,
+  settleAfterReportMs = 0,
+) {
   return new Promise((resolve) => {
     fs.rmSync(scenarioPayload.reportPath, { force: true });
     const child = spawn(appBinary, [], {
-      env: { ...process.env, OXY_PERF_SCENARIO: JSON.stringify(scenarioPayload) },
+      env: {
+        ...process.env,
+        OXY_PERF_SCENARIO: JSON.stringify(scenarioPayload),
+        OXY_PERF_DATA_DIR: runtime.dataDir,
+        OXY_PERF_CACHE_DIR: runtime.cacheDir,
+      },
       stdio: ["ignore", "pipe", "pipe"],
       detached: process.platform !== "win32",
     });
@@ -237,13 +256,17 @@ function runScenarioOnce(appBinary, scenarioPayload, timeoutMs, verbose) {
     const poll = setInterval(() => {
       if (fs.existsSync(scenarioPayload.reportPath)) {
         clearInterval(poll);
-        kill();
-        try {
-          const report = JSON.parse(fs.readFileSync(scenarioPayload.reportPath, "utf8"));
-          resolve({ ok: true, report, stderr });
-        } catch (error) {
-          resolve({ ok: false, error: `invalid report: ${error}`, stderr });
-        }
+        const finish = () => {
+          kill();
+          try {
+            const report = JSON.parse(fs.readFileSync(scenarioPayload.reportPath, "utf8"));
+            resolve({ ok: true, report, stderr });
+          } catch (error) {
+            resolve({ ok: false, error: `invalid report: ${error}`, stderr });
+          }
+        };
+        if (settleAfterReportMs > 0) setTimeout(finish, settleAfterReportMs);
+        else finish();
       } else if (Date.now() > deadline) {
         clearInterval(poll);
         kill();
@@ -275,6 +298,27 @@ function computeMetrics(report, selectName) {
   const firstPainted = markTime(report, "harness:first-page-painted");
   if (openRequested !== undefined && firstPainted !== undefined) {
     metrics.firstPageMs = firstPainted - openRequested;
+  }
+  const firstPageReturned = report.marks.find((mark) => mark.name === "assets:first-page-returned");
+  if (firstPageReturned) {
+    const returnedAt = firstPageReturned.t;
+    if (openRequested !== undefined) metrics.firstPageReturnMs = returnedAt - openRequested;
+    if (firstPainted !== undefined) metrics.firstPagePaintMs = firstPainted - returnedAt;
+    for (const [detail, metric] of [
+      ["cacheMs", "browse:cacheMs"],
+      ["resolveMs", "browse:resolveMs"],
+      ["enumerationMs", "browse:enumerationMs"],
+      ["attributesMs", "browse:attributesMs"],
+      ["snapshotSerializeMs", "browse:snapshotSerializeMs"],
+      ["snapshotPersistMs", "browse:snapshotPersistMs"],
+      ["sortMs", "browse:sortMs"],
+      ["elapsedMs", "browse:nativeMs"],
+      ["ipcMs", "browse:ipcMs"],
+    ]) {
+      if (firstPageReturned.detail?.[detail] !== undefined) {
+        metrics[metric] = firstPageReturned.detail[detail];
+      }
+    }
   }
   const select = markTime(report, "harness:select");
   if (select !== undefined && selectName) {
@@ -410,6 +454,11 @@ async function main() {
       continue;
     }
     const runs = args.runs ?? scenario.runs ?? 3;
+    const runtime = {
+      dataDir: path.join(REPORTS_DIR, ".runtime", name, "data"),
+      cacheDir: path.join(REPORTS_DIR, ".runtime", name, "cache", "previews"),
+    };
+    fs.rmSync(path.join(REPORTS_DIR, ".runtime", name), { recursive: true, force: true });
     const selectName = scenario.selectName
       ?? (scenario.fixture.type === "file" ? path.basename(scenario.fixture.path) : undefined);
     console.log(`\n== ${name} == runs=${runs} coldCache=${Boolean(scenario.coldCache)} folder=${folder}`);
@@ -427,25 +476,77 @@ async function main() {
 
     if (scenario.warmup && !scenario.coldCache) {
       if (args.verbose) console.log("  warmup run (not measured)");
-      if (scenario.clearCacheBeforeWarmup) clearPreviewCache();
-      await runScenarioOnce(
+      if (scenario.clearCacheBeforeWarmup) clearIsolatedState(runtime, true);
+      const warmup = await runScenarioOnce(
         appBinary,
         payload(`${name}.warmup.json`, scenario.warmupAwaitMarks),
+        runtime,
         scenario.timeoutMs ?? 30_000,
         args.verbose,
+        scenario.warmupSettleMs ?? 0,
       );
+      if (!warmup.ok) {
+        const message = `${name}: warmup failed: ${warmup.error}`;
+        failures.push(message);
+        console.error(`  WARMUP FAILED: ${warmup.error}; measured runs rejected`);
+        if (warmup.stderr) console.error(`  stderr tail: ${warmup.stderr.slice(-2000)}`);
+        continue;
+      }
+      const warmupMetrics = computeMetrics(warmup.report, selectName);
+      if (!warmupMetrics.completed) {
+        failures.push(`${name}: warmup timed out or required marks were missing`);
+        console.error("  WARMUP INCOMPLETE: measured runs rejected");
+        continue;
+      }
+      if (scenario.requireWarmArtifact
+        && !hasManagedArtifact(runtime.cacheDir)) {
+        failures.push(`${name}: warmup did not publish a managed cache artifact`);
+        console.error("  WARMUP INCOMPLETE: no managed cache artifact; measured runs rejected");
+        continue;
+      }
     }
 
     const samples = [];
     for (let run = 0; run < runs; run += 1) {
-      if (scenario.coldCache) clearPreviewCache();
+      if (scenario.coldCache) clearIsolatedState(runtime, true);
       const reportName = `${name}.run${run + 1}.json`;
-      const result = await runScenarioOnce(appBinary, payload(reportName), scenario.timeoutMs ?? 30_000, args.verbose);
+      const result = await runScenarioOnce(
+        appBinary,
+        payload(reportName),
+        runtime,
+        scenario.timeoutMs ?? 30_000,
+        args.verbose,
+      );
       if (!result.ok) {
         console.error(`  run ${run + 1}: FAILED to produce report: ${result.error}`);
         if (result.stderr) console.error(`  stderr tail: ${result.stderr.slice(-2000)}`);
         failures.push(`${name} run ${run + 1}: ${result.error}`);
         continue;
+      }
+      if (scenario.expectedHeifBackend) {
+        const backend = result.report.marks.find((mark) =>
+          mark.name === "heif:backend-complete"
+          && mark.detail?.assetName === selectName
+        )?.detail?.diagnostics?.backend;
+        if (backend !== scenario.expectedHeifBackend) {
+          const error = `expected HEIF backend ${scenario.expectedHeifBackend}, received ${backend ?? "none"}`;
+          console.error(`  run ${run + 1}: REJECTED: ${error}`);
+          failures.push(`${name} run ${run + 1}: ${error}`);
+          continue;
+        }
+      }
+      if (scenario.expectedPreviewBackend) {
+        const backend = result.report.marks.find((mark) =>
+          mark.name === "preview:result"
+          && mark.detail?.assetName === selectName
+          && mark.detail?.diagnostics?.backend
+        )?.detail?.diagnostics?.backend;
+        if (backend !== scenario.expectedPreviewBackend) {
+          const error = `expected preview backend ${scenario.expectedPreviewBackend}, received ${backend ?? "none"}`;
+          console.error(`  run ${run + 1}: REJECTED: ${error}`);
+          failures.push(`${name} run ${run + 1}: ${error}`);
+          continue;
+        }
       }
       const metrics = computeMetrics(result.report, selectName);
       samples.push(metrics);

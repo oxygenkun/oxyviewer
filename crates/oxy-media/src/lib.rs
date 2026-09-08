@@ -11,14 +11,30 @@ mod media_source;
 mod pipeline;
 mod policy;
 mod presentation;
+mod publication;
 
-pub use cache::{CacheUsage, clear_preview_cache, preview_cache_usage, prune_preview_cache};
+pub use cache::{
+    ArtifactLease, ArtifactLocation, ArtifactPresentation, ArtifactRepresentation, CacheColorState,
+    CacheHit, CacheLookup, CachePublication, CacheRequest, CacheUsage, ColorRequirement,
+    DetailRequirement, DiskMediaCache, DisplayDimensions, MEDIA_CACHE_POLICY_REVISION,
+    MediaArtifact, MediaCache, MemoryMediaCache, OrientationRequirement, OrientationState,
+    PendingArtifact, PendingStagedArtifact, PresentationRequirement, RepresentationRequirement,
+    Satisfaction, SharpeningState, SourceRevision, V2CacheUsage, VariantIdentity,
+    clear_preview_cache, preview_cache_usage, prune_preview_cache, satisfies,
+};
 pub use error::MediaError;
 pub use heif_service::{HeifDecodeService, HeifTile, HeifTileData, HeifTilePublication};
 pub use media_source::{ImageDimensions, dimensions};
-pub use pipeline::dispatcher::preview;
+pub use pipeline::dispatcher::{
+    AppPreview, preview, preview_for_app, preview_for_app_upgrade, preview_for_app_with_completion,
+};
 pub use pipeline::heif::artifact::full_uses_artifact;
 pub use policy::preview_policy_revision;
+pub use publication::{
+    ArtifactPublisher, PersistenceCompletion, PersistenceFailure, PersistenceStatus,
+    ProducedArtifact, ProducedPayload, PublishedArtifact, ResourceDescriptor, ResourceHandle,
+    ResourcePayload, ResourceReadLease, ResourceRegistry, shared_resource_registry,
+};
 
 /// Resolves the Sony HIF test fixture, which is archived outside git (see
 /// `tests/fixtures/README.md`). `OXY_HIF_FIXTURE` overrides the default

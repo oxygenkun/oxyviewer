@@ -1,4 +1,4 @@
-import { convertFileSrc, invoke } from "@tauri-apps/api/core";
+import { invoke } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { open } from "@tauri-apps/plugin-dialog";
 import type {
@@ -40,6 +40,7 @@ import type {
 import { preloadBrowserImage } from "./browserImageCache";
 import { browserPreloadQueue, priorityWeight } from "./previewQueue";
 import { acceptImageProjection } from "./imageProjection";
+import { mediaProtocolUrl } from "./mediaProtocolUrl";
 import { acceptMetadataProjection } from "./metadataProjection";
 import { perfMark } from "./perfProbe";
 import { recordBrowseTiming } from "./browseDiagnostics";
@@ -214,7 +215,7 @@ export async function listAssets(
   });
   if (!cursor) {
     recordBrowseTiming("first-page-returned", { directory, ipcMs: performance.now() - started, ...page.progress });
-    perfMark("assets:first-page-returned", { directory, total: page.total });
+    perfMark("assets:first-page-returned", { directory, total: page.total, ipcMs: performance.now() - started, ...page.progress });
   }
   return page;
 }
@@ -739,10 +740,9 @@ export async function closeDebugQueueWindow(): Promise<void> {
 }
 
 export function previewUrl(asset: AssetSummary): string | undefined {
-  if (!isTauri() || asset.kind === "raw" || asset.kind === "heif" || asset.kind === "tiff") {
-    return undefined;
-  }
-  return convertFileSrc(asset.path);
+  // Native raster files use the same registered resource boundary as every
+  // other format. Browser demo assets remain ordinary browser URLs.
+  return isTauri() ? undefined : asset.path;
 }
 
 export async function generatedPreview(
@@ -808,7 +808,12 @@ export async function generatedPreview(
       diagnostics: result.diagnostics,
     });
     debug?.complete({ diagnostics: result.diagnostics });
-    return { ...result, url: convertFileSrc(result.path) };
+    if (!result.resource) throw new Error("Ready image projection has no registered resource");
+    // Interim is a displayable query result, not a promise to hide behind.
+    // Rust keeps the native request alive through its upgrade and publishes
+    // either Satisfied or terminal Error into the projection store. Settling
+    // here also lets independent full-detail renderers (HEIF tiles) start.
+    return { ...result, url: mediaProtocolUrl(result.resource.url) };
   } catch (error) {
     if (signal?.aborted) debug?.cancel();
     else debug?.fail(error);
@@ -816,6 +821,16 @@ export async function generatedPreview(
   } finally {
     signal?.removeEventListener("abort", stopWaiting);
   }
+}
+
+export async function renewMediaResource(resourceId: string): Promise<boolean> {
+  if (!isTauri()) return true;
+  return invoke<boolean>("renew_media_resource", { resourceId });
+}
+
+export async function releaseMediaResource(resourceId: string): Promise<void> {
+  if (!isTauri()) return;
+  await invoke("release_media_resource", { resourceId });
 }
 
 export async function reconcilePreviewSchedule(
@@ -880,7 +895,13 @@ export async function preloadAssetThumbnail(
     return;
   }
   const result = await generatedPreview(asset, "thumbnail", signal, "preload");
-  if (result) await preloadBrowserImage(result.url, signal);
+  if (result) {
+    await browserPreloadQueue.enqueue(
+      priorityWeight("preload"),
+      signal,
+      () => preloadBrowserImage(result.url, signal),
+    );
+  }
 }
 
 export async function startHeifFull(
@@ -900,9 +921,10 @@ export async function startHeifFull(
   if (presentation.delivery === "artifact") {
     const result = presentation.projection.result;
     if (!result) throw new Error("ready HEIF full projection has no artifact");
+    if (!result.resource) throw new Error("Ready HEIF artifact has no registered resource");
     return {
       ...presentation,
-      result: { ...result, url: convertFileSrc(result.path) },
+      result: { ...result, url: mediaProtocolUrl(result.resource.url) },
     };
   }
   perfMark("heif:decode-session", { path, sessionId: presentation.session.id });
@@ -919,9 +941,7 @@ export async function getHeifCapabilities(): Promise<HeifCapabilities[]> {
 }
 
 export function heifTileUrl(url: string): string {
-  return navigator.userAgent.includes("Windows")
-    ? url.replace("oxy-media://localhost", "http://oxy-media.localhost")
-    : url;
+  return mediaProtocolUrl(url);
 }
 
 /** Returns the E2E performance scenario injected by the runner, if any. */

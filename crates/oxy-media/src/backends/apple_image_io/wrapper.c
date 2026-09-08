@@ -275,68 +275,13 @@ int32_t oxy_apple_image_io_transcode_jpeg(
     const uint8_t *source_path, size_t source_path_len,
     const uint8_t *destination_path, size_t destination_path_len,
     uint8_t quality) {
-  CGImageSourceRef source = oxy_image_source(source_path, source_path_len);
-  if (source == NULL || CGImageSourceGetCount(source) == 0) {
-    if (source != NULL) {
-      CFRelease(source);
-    }
-    return 1;
-  }
-
-  CFURLRef destination_url = CFURLCreateFromFileSystemRepresentation(
-      kCFAllocatorDefault, destination_path, destination_path_len, false);
-  if (destination_url == NULL) {
-    CFRelease(source);
-    return 2;
-  }
-  CGImageDestinationRef destination = CGImageDestinationCreateWithURL(
-      destination_url, CFSTR("public.jpeg"), 1, NULL);
-  CFRelease(destination_url);
-  if (destination == NULL) {
-    CFRelease(source);
-    return 3;
-  }
-
-  float quality_value = (float)quality / 100.0f;
-  CFNumberRef quality_number = CFNumberCreate(
-      kCFAllocatorDefault, kCFNumberFloatType, &quality_value);
-
-  CGImageRef image = CGImageSourceCreateImageAtIndex(source, 0, NULL);
-  if (image == NULL) {
-    CFRelease(quality_number);
-    CFRelease(destination);
-    CFRelease(source);
-    return 4;
-  }
-  CFMutableDictionaryRef output_properties = CFDictionaryCreateMutable(
-      kCFAllocatorDefault, 2, &kCFTypeDictionaryKeyCallBacks,
-      &kCFTypeDictionaryValueCallBacks);
-  CFDictionarySetValue(output_properties,
-                       kCGImageDestinationLossyCompressionQuality,
-                       quality_number);
-  CFDictionaryRef source_properties =
-      CGImageSourceCopyPropertiesAtIndex(source, 0, NULL);
-  if (source_properties != NULL) {
-    CFTypeRef orientation =
-        CFDictionaryGetValue(source_properties, kCGImagePropertyOrientation);
-    if (orientation != NULL) {
-      CFDictionarySetValue(output_properties, kCGImagePropertyOrientation,
-                           orientation);
-    }
-    CFRelease(source_properties);
-  }
-
-  // Keep the source decode and JPEG encode inside ImageIO. No 125 MiB RGBA
-  // allocation crosses the native boundary back into Rust. Copying the source
-  // properties retains the HEIF display orientation and color metadata.
-  CGImageDestinationAddImage(destination, image, output_properties);
-  bool finalized = CGImageDestinationFinalize(destination);
-  CFRelease(output_properties);
-  CGImageRelease(image);
-  CFRelease(quality_number);
-  CFRelease(destination);
-  CFRelease(source);
-  return finalized ? 0 : 5;
+  // The shared render path requests ImageIO's transform-aware thumbnail at
+  // native size, then explicitly draws through an sRGB bitmap before encode.
+  // This produces pixel-applied orientation and color facts; copying EXIF
+  // orientation metadata alone would make cached JPEG tile coordinates wrong.
+  return oxy_apple_image_io_render_jpeg(
+      source_path, source_path_len, destination_path, destination_path_len, 0,
+      quality);
 }
 
 int32_t oxy_apple_image_io_sharpen_rgba8(uint8_t *pixels, size_t pixels_len,

@@ -3,18 +3,17 @@ use super::*;
 use crate::backends::{apple_core_image, apple_image_io};
 use crate::{
     backends::{libheif, libraw},
-    cache::{preview_cache_key, write_jpeg_atomically},
+    cache::write_jpeg_atomically,
     decode_control::DecodePriority,
     media_source::preview_result,
     pipeline::{
-        artifact::larger_cached_decoded_preview,
         heif::artifact::{
             cache_full, cached_heif_full, full as heif_full, preview as heif_artifact_preview,
         },
         raw::{self, RawBackend as PlannedRawBackend, covers_source as covers_raw_source},
         system::preview as system_preview,
     },
-    presentation::{HEIF_DECODED_JPEG, RAW_DEVELOPED_JPEG},
+    presentation::RAW_DEVELOPED_JPEG,
 };
 use image::{DynamicImage, ImageDecoder, ImageFormat, ImageReader, Rgb, RgbImage};
 use oxy_domain::{AssetKind, PreviewKind, PreviewPriority, PreviewResult, RenderLevel};
@@ -38,6 +37,8 @@ fn benchmark_heif_preview(
         DecodePriority::Background,
         max_size <= 160,
         true,
+        true,
+        false,
         &CancellationToken::default(),
     )
 }
@@ -52,6 +53,7 @@ fn raw_preview(
         cache_dir,
         max_size,
         DecodePriority::Background,
+        true,
         &CancellationToken::default(),
     )
 }
@@ -88,6 +90,106 @@ fn heif_session_cache_is_lookup_only_and_comes_from_the_source_heif() {
 }
 
 #[test]
+fn app_original_preview_uses_a_registered_direct_file_resource() {
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("original.jpg");
+    DynamicImage::new_rgb8(32, 16).save(&path).unwrap();
+    let result = preview_for_app(
+        &path,
+        directory.path(),
+        RenderLevel::Thumbnail,
+        PreviewPriority::Visible,
+        AssetKind::Jpeg,
+        &CancellationToken::default(),
+    )
+    .unwrap();
+    let resource = result.resource.expect("app preview resource");
+    assert_eq!(
+        result.persistence,
+        Some(oxy_domain::MediaPersistence::NotApplicable)
+    );
+    let resolved = shared_resource_registry()
+        .resolve(&resource.resource_id)
+        .expect("registered original resource");
+    assert!(
+        matches!(resolved.payload, ResourcePayload::File(ref registered) if registered == &path.canonicalize().unwrap())
+    );
+    shared_resource_registry().release(&resource.resource_id);
+}
+
+#[test]
+fn app_embedded_jpeg_is_readable_while_cache_persistence_is_pending() {
+    let Some(path) = crate::sony_hif_fixture() else {
+        eprintln!("skipping: Sony HIF fixture unavailable (set OXY_HIF_FIXTURE)");
+        return;
+    };
+    let cache = tempfile::tempdir().unwrap();
+    let result = preview_for_app(
+        &path,
+        cache.path(),
+        RenderLevel::Preview,
+        PreviewPriority::Loupe,
+        AssetKind::Heif,
+        &CancellationToken::default(),
+    )
+    .unwrap();
+    assert_eq!(
+        result.satisfaction,
+        Some(oxy_domain::MediaSatisfaction::Interim)
+    );
+    assert_eq!(
+        result.persistence,
+        Some(oxy_domain::MediaPersistence::Pending)
+    );
+    let resource = result.resource.expect("embedded resource");
+    let resolved = shared_resource_registry()
+        .resolve(&resource.resource_id)
+        .expect("resource remains readable");
+    assert!(
+        matches!(resolved.payload, ResourcePayload::Encoded(ref bytes) if bytes.starts_with(&[0xff, 0xd8]))
+    );
+    shared_resource_registry().release(&resource.resource_id);
+}
+
+#[cfg(target_os = "macos")]
+#[test]
+fn app_interim_hif_can_upgrade_to_a_satisfied_preview() {
+    let Some(path) = crate::sony_hif_fixture() else {
+        eprintln!("skipping: Sony HIF fixture unavailable (set OXY_HIF_FIXTURE)");
+        return;
+    };
+    let cache = tempfile::tempdir().unwrap();
+    let interim = preview_for_app(
+        &path,
+        cache.path(),
+        RenderLevel::Preview,
+        PreviewPriority::Loupe,
+        AssetKind::Heif,
+        &CancellationToken::default(),
+    )
+    .unwrap();
+    assert_eq!(
+        interim.satisfaction,
+        Some(oxy_domain::MediaSatisfaction::Interim)
+    );
+
+    let upgrade = preview_for_app_upgrade(
+        &path,
+        cache.path(),
+        RenderLevel::Preview,
+        PreviewPriority::Loupe,
+        AssetKind::Heif,
+        &CancellationToken::default(),
+    )
+    .unwrap();
+    assert_eq!(
+        upgrade.result.satisfaction,
+        Some(oxy_domain::MediaSatisfaction::Satisfied)
+    );
+    assert!(upgrade.result.width.max(upgrade.result.height) >= 4_096);
+}
+
+#[test]
 fn sony_hif_thumbnail_and_preview_levels_share_the_160_artifact() {
     let Some(path) = crate::sony_hif_fixture() else {
         eprintln!("skipping: Sony HIF fixture unavailable (set OXY_HIF_FIXTURE)");
@@ -120,7 +222,22 @@ fn sony_hif_thumbnail_and_preview_levels_share_the_160_artifact() {
     assert_eq!(loupe_base.path, thumbnail.path);
     assert_eq!(thumbnail.render_level, RenderLevel::Thumbnail);
     assert_eq!(loupe_base.render_level, RenderLevel::Preview);
-    assert_eq!(preview_cache_usage(cache.path()).unwrap().file_count, 1);
+    assert_eq!(
+        thumbnail.satisfaction,
+        Some(oxy_domain::MediaSatisfaction::Interim)
+    );
+    assert_eq!(
+        loupe_base.satisfaction,
+        Some(oxy_domain::MediaSatisfaction::Interim)
+    );
+    assert_eq!(
+        DiskMediaCache::new(cache.path(), 8)
+            .unwrap()
+            .usage()
+            .unwrap()
+            .artifact_count,
+        1
+    );
 }
 
 #[test]
@@ -164,67 +281,6 @@ fn heif_without_identified_fast_representation_uses_semantic_preview_size() {
 }
 
 #[test]
-fn larger_cached_preview_satisfies_smaller_request() {
-    let directory = tempfile::tempdir().unwrap();
-    let path = directory.path().join("image.heic");
-    fs::write(&path, b"heif").unwrap();
-    let key = preview_cache_key(&path, crate::policy::HEIF_PREVIEW, 4_096).unwrap();
-    let cached = directory.path().join(format!("{key}.decoded.jpg"));
-    write_jpeg_atomically(
-        &DynamicImage::new_rgb8(32, 16),
-        &cached,
-        90,
-        HEIF_DECODED_JPEG,
-    )
-    .unwrap();
-
-    let result = larger_cached_decoded_preview(
-        &path,
-        directory.path(),
-        crate::policy::HEIF_PREVIEW,
-        512,
-        RenderLevel::Thumbnail,
-    )
-    .unwrap()
-    .unwrap();
-
-    assert_eq!(result.path, cached);
-    assert_eq!((result.width, result.height), (32, 16));
-}
-
-#[test]
-fn larger_cached_preview_serves_any_backend_tag() {
-    // The unified cache lookup must work for non-HEIF backends too. A
-    // synthetic RAW-style tag with a 4096 entry should satisfy a 512
-    // request without re-decoding.
-    let directory = tempfile::tempdir().unwrap();
-    let path = directory.path().join("image.arw");
-    fs::write(&path, b"raw").unwrap();
-    let raw_tag = "libraw-0.22.2-v6";
-    let key = preview_cache_key(&path, raw_tag, 4_096).unwrap();
-    let cached = directory.path().join(format!("{key}.decoded.jpg"));
-    write_jpeg_atomically(
-        &DynamicImage::new_rgb8(48, 24),
-        &cached,
-        90,
-        RAW_DEVELOPED_JPEG,
-    )
-    .unwrap();
-
-    let result = larger_cached_decoded_preview(
-        &path,
-        directory.path(),
-        raw_tag,
-        512,
-        RenderLevel::Thumbnail,
-    )
-    .unwrap()
-    .unwrap();
-
-    assert_eq!(result.path, cached);
-}
-
-#[test]
 fn heif_preview_reports_cold_backend_timing_breakdown() {
     let Some(path) = crate::sony_hif_fixture() else {
         eprintln!("skipping: Sony HIF fixture unavailable (set OXY_HIF_FIXTURE)");
@@ -240,22 +296,18 @@ fn heif_preview_reports_cold_backend_timing_breakdown() {
     assert!(diagnostics.source_wait_ms.is_some());
     assert!(diagnostics.decode_ms.is_some());
     assert!(diagnostics.encode_ms.is_some());
-    assert!(diagnostics.cache_sync_ms.is_some());
-    assert!(diagnostics.cache_commit_ms.is_some());
+    assert!(diagnostics.cache_sync_ms.is_none());
+    assert!(diagnostics.cache_commit_ms.is_none());
     assert!(diagnostics.total_ms.is_some());
     assert!(
         diagnostics.total_ms.unwrap()
-            >= diagnostics.decode_ms.unwrap()
-                + diagnostics.encode_ms.unwrap()
-                + diagnostics.cache_sync_ms.unwrap()
-                + diagnostics.cache_commit_ms.unwrap()
+            >= diagnostics.decode_ms.unwrap() + diagnostics.encode_ms.unwrap()
     );
 
     let warm = benchmark_heif_preview(&path, cache.path(), 512).unwrap();
-    assert!(
-        warm.diagnostics.is_none(),
-        "warm cache hits skip decode timing"
-    );
+    let warm_diagnostics = warm.diagnostics.expect("warm cache provenance");
+    assert_eq!(warm_diagnostics.backend.as_deref(), Some("cached artifact"));
+    assert!(warm_diagnostics.decode_ms.is_none());
 }
 
 #[test]
@@ -394,12 +446,32 @@ fn extracts_preview_from_raw_fixture() {
     let preview_size = dimensions(&preview.path, AssetKind::Jpeg).unwrap();
 
     assert!(raw_size.width > 0 && raw_size.height > 0);
-    assert!(preview_size.width <= 512 && preview_size.height <= 512);
-    assert_eq!(
-        raw_size.width >= raw_size.height,
-        preview_size.width >= preview_size.height,
-        "preview orientation must match RAW output dimensions"
-    );
+    assert!(preview_size.width > 0 && preview_size.height > 0);
+    if preview_size.width.max(preview_size.height) < 512 {
+        assert_eq!(
+            preview.satisfaction,
+            Some(oxy_domain::MediaSatisfaction::Interim)
+        );
+    }
+    let reader = ImageReader::open(&preview.path)
+        .unwrap()
+        .with_guessed_format()
+        .unwrap();
+    let mut decoder = reader.into_decoder().unwrap();
+    let encoded = decoder.dimensions();
+    let orientation = decoder.orientation().unwrap();
+    let expected_display = if matches!(
+        orientation,
+        image::metadata::Orientation::Rotate90
+            | image::metadata::Orientation::Rotate270
+            | image::metadata::Orientation::Rotate90FlipH
+            | image::metadata::Orientation::Rotate270FlipH
+    ) {
+        (encoded.1, encoded.0)
+    } else {
+        encoded
+    };
+    assert_eq!((preview.width, preview.height), expected_display);
     assert!(preview.path.is_file());
 }
 
@@ -493,10 +565,19 @@ fn decodes_full_resolution_heif_fixture() {
         (original_size.width, original_size.height)
     );
     assert!(full.path.is_file());
+    let mut cached =
+        heif_full(&heif_path, directory.path(), &CancellationToken::default()).unwrap();
     assert_eq!(
-        heif_full(&heif_path, directory.path(), &CancellationToken::default(),).unwrap(),
-        full
+        cached
+            .diagnostics
+            .as_ref()
+            .and_then(|detail| detail.backend.as_deref()),
+        Some("cached artifact")
     );
+    // Artifact identity/capability are unchanged, but this request's backend
+    // diagnostics must describe the cache hit rather than replaying a decode.
+    cached.diagnostics = full.diagnostics.clone();
+    assert_eq!(cached, full);
 
     let mut decoder = ImageReader::open(&full.path)
         .unwrap()
@@ -519,6 +600,7 @@ fn generates_large_image_io_fallback_for_heif_fixture() {
         directory.path(),
         original.width.max(original.height).min(8_192),
         RenderLevel::Full,
+        true,
     )
     .unwrap();
 
@@ -567,7 +649,7 @@ fn fixture_preview_performance_budgets() {
                 } else {
                     RenderLevel::Preview
                 };
-                system_preview(&fixture, cache.path(), size, level)
+                system_preview(&fixture, cache.path(), size, level, true)
             }
         };
 

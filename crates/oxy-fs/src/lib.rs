@@ -19,6 +19,9 @@ use std::{
 };
 use thiserror::Error;
 
+#[cfg(target_os = "macos")]
+mod bulk_attributes;
+
 const DEFAULT_PAGE_SIZE: usize = 250;
 const MAX_PAGE_SIZE: usize = 1_000;
 
@@ -564,10 +567,23 @@ pub struct ScanProgress {
     pub attributes_ms: u64,
 }
 
+const SCAN_PROGRESS_INTERVAL: usize = 256;
+
 /// One enumeration supplies file types and sidecar pairing. On Windows,
 /// DirEntry::metadata reuses enumeration attributes instead of a path stat.
 /// Keep size/mtime accurate because sorting and preview cache keys need them.
 pub fn scan_assets_with_progress(
+    root: &Path,
+    mut report: impl FnMut(ScanProgress),
+) -> Result<Vec<AssetSummary>, FsError> {
+    #[cfg(target_os = "macos")]
+    if let Some(assets) = bulk_attributes::scan(root, &mut report)? {
+        return Ok(assets);
+    }
+    scan_assets_portable(root, report)
+}
+
+fn scan_assets_portable(
     root: &Path,
     mut report: impl FnMut(ScanProgress),
 ) -> Result<Vec<AssetSummary>, FsError> {
@@ -576,7 +592,7 @@ pub fn scan_assets_with_progress(
     report(progress);
     let mut entries = Vec::new();
     let mut sidecars = HashSet::new();
-    for entry in fs::read_dir(root)? {
+    for (entry_index, entry) in fs::read_dir(root)?.enumerate() {
         let entry = entry?;
         let path = entry.path();
         let file_type = entry.file_type()?;
@@ -596,20 +612,22 @@ pub fn scan_assets_with_progress(
             .and_then(kind_for_extension)
             .is_some()
         {
-            entries.push(entry);
+            entries.push((entry, file_type.is_symlink()));
             progress.discovered_count += 1;
         }
-        progress.enumeration_ms = started.elapsed().as_millis() as u64;
-        report(progress);
+        if (entry_index + 1) % SCAN_PROGRESS_INTERVAL == 0 {
+            progress.enumeration_ms = started.elapsed().as_millis() as u64;
+            report(progress);
+        }
     }
     progress.enumeration_ms = started.elapsed().as_millis() as u64;
     progress.reading_attributes = true;
     report(progress);
     let attributes_started = Instant::now();
     let mut assets = Vec::with_capacity(entries.len());
-    for entry in entries {
+    for (entry_index, (entry, is_symlink)) in entries.into_iter().enumerate() {
         let path = entry.path();
-        let metadata = if entry.file_type()?.is_symlink() {
+        let metadata = if is_symlink {
             fs::metadata(&path)
         } else {
             entry.metadata()
@@ -625,8 +643,10 @@ pub fn scan_assets_with_progress(
                 assets.push(summary);
             }
         }
-        progress.attributes_ms = attributes_started.elapsed().as_millis() as u64;
-        report(progress);
+        if (entry_index + 1) % SCAN_PROGRESS_INTERVAL == 0 {
+            progress.attributes_ms = attributes_started.elapsed().as_millis() as u64;
+            report(progress);
+        }
     }
     progress.discovered_count = assets.len();
     progress.attributes_ms = attributes_started.elapsed().as_millis() as u64;
@@ -635,10 +655,13 @@ pub fn scan_assets_with_progress(
 }
 
 fn sidecar_key(path: &Path) -> PathBuf {
+    // Sidecar extension matching is portable and case-insensitive, while the
+    // stem keeps the filesystem's native case semantics on Unix.
+    let extension_normalized = path.with_extension("xmp");
     if cfg!(windows) {
-        PathBuf::from(path.to_string_lossy().to_lowercase())
+        PathBuf::from(extension_normalized.to_string_lossy().to_lowercase())
     } else {
-        path.to_owned()
+        extension_normalized
     }
 }
 
@@ -678,7 +701,20 @@ pub fn page_assets(
         items.push(summary);
     }
 
-    items.sort_unstable_by(|left, right| compare_assets(left, right, query.sort));
+    if matches!(query.sort, AssetSort::Name) {
+        let mut keyed = items
+            .into_iter()
+            .map(|summary| (summary.name.to_ascii_lowercase(), summary))
+            .collect::<Vec<_>>();
+        keyed.sort_unstable_by(|(left_key, left), (right_key, right)| {
+            left_key
+                .cmp(right_key)
+                .then_with(|| left.name.cmp(&right.name))
+        });
+        items = keyed.into_iter().map(|(_, summary)| summary).collect();
+    } else {
+        items.sort_unstable_by(|left, right| compare_assets(left, right, query.sort));
+    }
     if matches!(query.direction, SortDirection::Descending) {
         items.reverse();
     }
@@ -856,6 +892,20 @@ fn summary_from_metadata(
     metadata: &fs::Metadata,
     has_sidecar: bool,
 ) -> Result<Option<AssetSummary>, FsError> {
+    summary_from_attributes(
+        path,
+        metadata.len(),
+        metadata.modified().map(epoch_ms).unwrap_or_default(),
+        has_sidecar,
+    )
+}
+
+fn summary_from_attributes(
+    path: &Path,
+    size_bytes: u64,
+    modified_at_ms: u64,
+    has_sidecar: bool,
+) -> Result<Option<AssetSummary>, FsError> {
     let Some(extension) = path.extension().and_then(|value| value.to_str()) else {
         return Ok(None);
     };
@@ -874,8 +924,8 @@ fn summary_from_metadata(
         name,
         extension: extension.to_ascii_uppercase(),
         kind,
-        size_bytes: metadata.len(),
-        modified_at_ms: metadata.modified().map(epoch_ms).unwrap_or_default(),
+        size_bytes,
+        modified_at_ms,
         has_sidecar,
         rating: None,
         color_label: None,
@@ -1106,15 +1156,59 @@ mod tests {
     }
 
     #[test]
+    fn scan_progress_is_batched_without_changing_complete_summaries() {
+        let directory = tempdir().unwrap();
+        for index in 0..513 {
+            fs::write(
+                directory.path().join(format!("image-{index:04}.jpg")),
+                vec![b'x'; index % 17 + 1],
+            )
+            .unwrap();
+        }
+        fs::write(directory.path().join("image-0001.xmp"), "sidecar").unwrap();
+
+        let mut progress = Vec::new();
+        let mut reported = scan_assets_with_progress(directory.path(), |update| {
+            progress.push(update);
+        })
+        .unwrap();
+        let mut unreported = scan_index_assets(directory.path()).unwrap();
+        reported.sort_by(|left, right| left.name.cmp(&right.name));
+        unreported.sort_by(|left, right| left.name.cmp(&right.name));
+
+        assert_eq!(reported, unreported);
+        assert_eq!(reported.len(), 513);
+        assert_eq!(reported[1].size_bytes, 2);
+        assert!(reported[1].has_sidecar);
+        assert_eq!(progress.first().unwrap().discovered_count, 0);
+        assert!(!progress.first().unwrap().reading_attributes);
+        assert!(
+            progress
+                .iter()
+                .any(|update| update.reading_attributes && update.attributes_ms == 0)
+        );
+        let completed = progress.last().unwrap();
+        assert!(completed.reading_attributes);
+        assert_eq!(completed.discovered_count, reported.len());
+        assert!(
+            progress.len() <= 8,
+            "progress was not batched: {}",
+            progress.len()
+        );
+    }
+
+    #[test]
     fn index_asset_scan_pairs_sidecars_from_one_directory_enumeration() {
         let directory = tempdir().unwrap();
         File::create(directory.path().join("paired.CR3")).unwrap();
-        File::create(directory.path().join("paired.xmp")).unwrap();
+        File::create(directory.path().join("paired.XMP")).unwrap();
+        File::create(directory.path().join("CaseSensitive.CR3")).unwrap();
+        File::create(directory.path().join("casesensitive.XMP")).unwrap();
         File::create(directory.path().join("plain.jpg")).unwrap();
 
         let assets = scan_index_assets(directory.path()).unwrap();
 
-        assert_eq!(assets.len(), 2);
+        assert_eq!(assets.len(), 3);
         assert!(
             assets
                 .iter()
@@ -1128,6 +1222,14 @@ mod tests {
                 .find(|asset| asset.name == "plain.jpg")
                 .unwrap()
                 .has_sidecar
+        );
+        assert_eq!(
+            assets
+                .iter()
+                .find(|asset| asset.name == "CaseSensitive.CR3")
+                .unwrap()
+                .has_sidecar,
+            cfg!(windows)
         );
     }
 
@@ -1366,6 +1468,51 @@ mod tests {
         assert_eq!(first.total, 2);
         assert_eq!(first.next_cursor, Some(1));
         assert_eq!(first.items.len(), 1);
+    }
+
+    #[test]
+    fn name_sort_keeps_case_insensitive_order_and_tie_breaks_across_pages() {
+        let directory = tempdir().unwrap();
+        for name in ["one.jpg", "two.jpg", "three.jpg"] {
+            File::create(directory.path().join(name)).unwrap();
+        }
+        let mut assets = scan_assets(directory.path()).unwrap();
+        for (asset, name) in assets.iter_mut().zip(["a.jpg", "A.jpg", "b.jpg"]) {
+            asset.name = name.into();
+        }
+        let query = AssetQuery {
+            page_size: Some(2),
+            ..AssetQuery::default()
+        };
+
+        let first = page_assets(&assets, &query, 0);
+        let second = page_assets(&assets, &query, 2);
+        assert_eq!(
+            first
+                .items
+                .iter()
+                .chain(&second.items)
+                .map(|asset| asset.name.as_str())
+                .collect::<Vec<_>>(),
+            ["A.jpg", "a.jpg", "b.jpg"]
+        );
+
+        let descending = page_assets(
+            &assets,
+            &AssetQuery {
+                direction: SortDirection::Descending,
+                ..query
+            },
+            0,
+        );
+        assert_eq!(
+            descending
+                .items
+                .iter()
+                .map(|asset| asset.name.as_str())
+                .collect::<Vec<_>>(),
+            ["b.jpg", "a.jpg"]
+        );
     }
 
     #[test]

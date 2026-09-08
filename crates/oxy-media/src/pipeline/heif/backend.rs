@@ -566,11 +566,16 @@ fn classify_error(error: &MediaError) -> AttemptOutcome {
         MediaError::Io(_) => AttemptOutcome::Io,
         MediaError::Image(_) => AttemptOutcome::Corrupt,
         MediaError::BackendAttempts { source, .. } => classify_error(source),
-        MediaError::Cancelled => AttemptOutcome::Cancelled,
+        MediaError::Cancelled
+        | MediaError::StaleCacheGeneration
+        | MediaError::StaleSourceRevision => AttemptOutcome::Cancelled,
         MediaError::NativeDecode { .. }
         | MediaError::LibRaw { .. }
         | MediaError::Heif { .. }
         | MediaError::Color(_)
+        | MediaError::CacheManifest(_)
+        | MediaError::CacheArtifact(_)
+        | MediaError::ResourceBudgetExhausted
         | MediaError::PreviewGenerationFailed { .. } => AttemptOutcome::DecodeFailed,
     }
 }

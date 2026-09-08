@@ -16,6 +16,38 @@ end-to-end regression harness that enforces these budgets is described in
 
 ## Verification Log
 
+- 2026-09-08: Final media-cache review fixes were measured with a rebuilt macOS release binary,
+  three isolated packaged-WebView runs per route, and repository fixtures. Median/P95 first-preview
+  times were JPEG cold 86/89 ms and warm 70/72 ms; HIF cold 59/69 ms; ARW cold 61/69 ms and warm
+  44/51 ms. The explicitly named sharpened `warm-loupe-hif-tiles` route rejected non-cache backends;
+  after a successful warmup and managed-artifact check, all three runs used `cachedArtifact`: first
+  preview 45/53 ms, first tile 244/252 ms, and all tiles 564/572 ms. The 150 ms warm preview gate passes,
+  but tile completion has no 150 ms claim. Warmup failures/missing marks now invalidate measurements.
+  The 100k scenario was corrected to clear isolated data before every sample: first-page paint was
+  753/759/763 ms (median 759, P95 763), comprising 645/646/659 ms to first-page IPC return plus
+  104/108/113 ms from return to paint. A later instrumented run, after batching scanner progress,
+  deferring rebuildable snapshot serialization/persistence behind bounded coalesced epoch/revision
+  fencing, and caching name sort keys, measured 519/498/465 ms (median 498, P95 519). Its median/P95
+  split was 84/110 ms enumeration, 330/341 ms accurate size/mtime attributes, 0/0 ms response-path
+  snapshot serialization, 0/0 ms snapshot persistence/enqueue, 10/11 ms sorting, 435/452 ms native,
+  437/454 ms IPC, and 57/79 ms return-to-double-rAF paint. The gate remains failed without weakening
+  the 300 ms paint metric or the complete-summary contract. The intermediate synchronous-persistence
+  measurement is documented in `tasks/media-cache-redesign.md`; it is paired implementation evidence,
+  not a historical baseline claim. Windows/Linux lock, rename/sharing and packaged protocol behavior remain
+  unverified environment gates.
+
+- 2026-09-08: Media-cache v2 application acceptance used a freshly built macOS release binary and
+  runner-owned app data/cache under `tests/perf/.reports/.runtime/`; no normal user database/cache was
+  read or cleared. Final single packaged-WebView samples measured cold/warm JPEG at 61/57 ms, cold HIF
+  at 62 ms to first preview (461 ms first full tile), and cold/warm `DSC00529.ARW` at 62/39 ms. A warm
+  HIF run reached first preview in 38 ms and first/all tiles in 336/491 ms, but timed out waiting for the
+  scenario's `image:loaded@full` mark, so its 150 ms full-artifact gate is not passed. The 100k
+  synthetic-directory first-page sample was 1039 ms and remains above the 300 ms budget. These
+  are one-run functional samples, not a new baseline or P95. Windows/Linux protocol/CSP and cache
+  lock/rename/sharing matrices remain unverified. The custom-protocol materialization budget covers
+  Rust's concurrent `Vec<u8>` construction only; Tauri owns the response body after return and exposes
+  no response-drop accounting hook.
+
 > `tests/fixtures/DSC00449.HIF` 等真实照片 fixture 不再纳入 git 历史；获取方式与校验和见
 > `tests/fixtures/README.md`，缺失时相关测试会自动跳过，可用 `OXY_HIF_FIXTURE` 指定路径。
 
@@ -560,3 +592,43 @@ current one. `scripts/loupe-switch.browser.js` exercises the real Loupe with
 nine forward/reverse selections and verifies one thumbnail, one canvas, and
 the current source after each switch. This checks reconciliation correctness,
 not native decode latency.
+
+
+## Media cache final local verification (2026-09-08)
+
+The parent agent directly rebuilt the release app and ran each route three times
+with runner-owned isolated data/cache after the final fixes. Median / observed
+P95 (the maximum of only three samples), in milliseconds:
+
+| Route | First preview | Additional observation |
+| --- | --- | --- |
+| JPEG cold | 57 / 63 | Original-file resource; no managed copy |
+| JPEG warm | 53 / 71 | Original-file/OS cache route, not a managed-cache claim |
+| RAW cold | 53 / 61 | `DSC00529.ARW` |
+| RAW warm | 41 / 43 | Persisted-artifact warmup and measured cache-hit provenance required |
+| HIF cold | 45 / 48 | First tile 332 / 334 |
+| HIF warm tiles | 39 / 39 | `cachedArtifact`; first tile 232 / 235, all tiles 537 / 538 |
+
+All six preview gates passed. The 150 ms warm budget is not a claim about full
+tile completion. A restored projection now reports this request's validated cache
+hit rather than replaying old decoder timing/provenance. An earlier warm-RAW run
+failed that provenance gate, exposing the missing restore diagnostic; it was fixed
+and all three fresh runs passed rather than weakening the gate.
+
+The macOS batch-attribute 100k cold run recorded 637 / 197 / 195 ms first-page
+paint (median 197, observed P95/max 637), with enumeration median 100 ms including
+attribute acquisition and final pairing median 12 ms. The 637 ms sample was an
+initial enumeration outlier, not discarded. There is no historical baseline
+comparison or tail-latency qualification. The owner subsequently made 300 ms a
+reference target rather than a strict completion gate for this cache task.
+
+`HeifTileCanvas` starts sessions after one microtask rather than waiting for a
+requestAnimationFrame that an occluded WKWebView can suspend. Tests keep all RAF
+callbacks undelivered and verify StrictMode starts one session, cancellation,
+late-listener cleanup and direct-artifact resource leasing. Native sRGB JPEG
+outputs now receive explicit ICC APP2 metadata when ImageIO omits it, with a 64 KiB
+in-place shift buffer and no pixel re-encoding; real HIF Full/RAW fixture tests
+verify the result. Windows/Linux native behavior remains unqualified because the
+owner did not provide runners. Rust protocol budgets cover materialization only,
+not buffers retained by Tauri/WebView after handoff; no total-process peak-memory
+or cross-platform scrolling-latency claim is made by these samples.

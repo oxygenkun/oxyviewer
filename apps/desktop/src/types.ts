@@ -233,6 +233,15 @@ export interface PreviewDiagnostics {
   fallbackReason?: string;
 }
 
+export type MediaSatisfaction = "satisfied" | "interim";
+export type MediaPersistence = "notApplicable" | "pending" | "persisted" | "skipped";
+
+export interface MediaResourceDescriptor {
+  resourceId: string;
+  url: string;
+  mediaType: string;
+}
+
 export interface PreviewResult {
   path: string;
   url: string;
@@ -240,6 +249,9 @@ export interface PreviewResult {
   height: number;
   kind: PreviewKind;
   renderLevel: RenderLevel;
+  resource?: MediaResourceDescriptor;
+  satisfaction?: MediaSatisfaction;
+  persistence?: MediaPersistence;
   diagnostics?: PreviewDiagnostics;
 }
 
@@ -292,6 +304,8 @@ export interface DirectoryBrowseProgress {
   resolveMs: number;
   enumerationMs: number;
   attributesMs: number;
+  snapshotSerializeMs: number;
+  snapshotPersistMs: number;
   sortMs: number;
   error?: string;
 }

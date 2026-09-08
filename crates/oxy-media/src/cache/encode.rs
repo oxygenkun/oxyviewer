@@ -2,10 +2,8 @@ use crate::{
     MediaError,
     presentation::{ArtifactContract, ColorState},
 };
-use image::{DynamicImage, ImageEncoder, codecs::jpeg::JpegEncoder};
-#[cfg(target_os = "macos")]
-use std::fs;
-use std::{io::Write, path::Path, time::Instant};
+use image::{DynamicImage, ImageDecoder, ImageEncoder, ImageReader, codecs::jpeg::JpegEncoder};
+use std::path::Path;
 use tempfile::NamedTempFile;
 
 pub(crate) fn cache_tempfile(
@@ -52,84 +50,57 @@ pub(crate) fn write_jpeg_atomically_cancelled(
     )
 }
 
-#[derive(Debug, Clone, Copy)]
-pub(crate) struct CacheWriteTiming {
-    pub(crate) encode_ms: u64,
-    pub(crate) sync_ms: u64,
-    pub(crate) commit_ms: u64,
-}
-
-pub(crate) fn write_jpeg_atomically_timed(
-    image: &DynamicImage,
-    destination: &Path,
-    quality: u8,
-    contract: ArtifactContract,
-    cancelled: impl Fn() -> bool,
-) -> Result<CacheWriteTiming, MediaError> {
-    let temporary = cache_tempfile(destination, ".jpg")?;
-    if contract.color() != ColorState::SrgbWithIcc {
-        return Err(MediaError::Color(
-            "decoded JPEG cache requires the sRGB-with-ICC contract".into(),
-        ));
+/// Attach the explicit sRGB profile to an already color-converted native JPEG.
+/// ImageIO may omit ICC for its named sRGB space. Insert APP2 without pixel
+/// decoding/re-encoding or a second full-image allocation. The caller owns and
+/// leases this unpublished staging file, so a failed write is simply discarded.
+pub(crate) fn ensure_srgb_icc(path: &Path) -> Result<(), MediaError> {
+    use std::io::{Read, Seek, SeekFrom, Write};
+    let has_profile = ImageReader::open(path)?
+        .into_decoder()?
+        .icc_profile()?
+        .is_some();
+    if has_profile {
+        return Ok(());
     }
-    let encode_started = Instant::now();
-    #[cfg(target_os = "macos")]
-    {
-        crate::backends::apple_image_io::write_jpeg(image, temporary.path(), quality)?;
-        let profile = presentation_icc(contract)?.expect("sRGB contract has an ICC profile");
-        embed_icc_profile(temporary.path(), &profile)?;
+    let profile = lcms2::Profile::new_srgb()
+        .icc()
+        .map_err(|error| MediaError::Color(error.to_string()))?;
+    let length = u16::try_from(profile.len() + 16)
+        .map_err(|_| MediaError::Color("sRGB ICC profile is too large for JPEG APP2".into()))?;
+    let mut segment = Vec::with_capacity(profile.len() + 18);
+    segment.extend_from_slice(&[0xff, 0xe2]);
+    segment.extend_from_slice(&length.to_be_bytes());
+    segment.extend_from_slice(b"ICC_PROFILE\0");
+    segment.extend_from_slice(&[1, 1]);
+    segment.extend_from_slice(&profile);
+    let mut file = std::fs::OpenOptions::new()
+        .read(true)
+        .write(true)
+        .open(path)?;
+    let mut magic = [0; 2];
+    file.read_exact(&mut magic)?;
+    if magic != [0xff, 0xd8] {
+        return Err(MediaError::Color("native sRGB output is not JPEG".into()));
     }
-    #[cfg(any(target_os = "windows", target_os = "linux"))]
-    {
-        let mut output = temporary.as_file();
-        let mut encoder = JpegEncoder::new_with_quality(&mut output, quality);
-        if let Some(profile) = presentation_icc(contract)? {
-            encoder
-                .set_icc_profile(profile)
-                .map_err(|error| MediaError::Color(error.to_string()))?;
-        }
-        encoder.encode_image(image)?;
+    let mut end = file.metadata()?.len();
+    let shift = segment.len() as u64;
+    file.set_len(
+        end.checked_add(shift)
+            .ok_or_else(|| MediaError::Color("JPEG length overflow".into()))?,
+    )?;
+    let mut buffer = [0_u8; 64 * 1024];
+    while end > 2 {
+        let count = (end - 2).min(buffer.len() as u64) as usize;
+        let start = end - count as u64;
+        file.seek(SeekFrom::Start(start))?;
+        file.read_exact(&mut buffer[..count])?;
+        file.seek(SeekFrom::Start(start + shift))?;
+        file.write_all(&buffer[..count])?;
+        end = start;
     }
-    let encode_ms = duration_ms(encode_started);
-    let sync_started = Instant::now();
-    temporary.as_file().sync_all()?;
-    let sync_ms = duration_ms(sync_started);
-    if cancelled() {
-        return Err(MediaError::Cancelled);
-    }
-    let commit_started = Instant::now();
-    persist_noclobber(temporary, destination)?;
-    Ok(CacheWriteTiming {
-        encode_ms,
-        sync_ms,
-        commit_ms: duration_ms(commit_started),
-    })
-}
-
-#[cfg(target_os = "macos")]
-fn embed_icc_profile(path: &Path, profile: &[u8]) -> Result<(), MediaError> {
-    const MAX_CHUNK: usize = u16::MAX as usize - 16;
-    let jpeg = fs::read(path)?;
-    if !jpeg.starts_with(&[0xff, 0xd8]) {
-        return Err(MediaError::Color("ImageIO produced an invalid JPEG".into()));
-    }
-    let chunk_count = profile.len().div_ceil(MAX_CHUNK);
-    let chunk_count = u8::try_from(chunk_count)
-        .map_err(|_| MediaError::Color("ICC profile requires too many JPEG chunks".into()))?;
-    let mut output = Vec::with_capacity(jpeg.len() + profile.len() + 18 * usize::from(chunk_count));
-    output.extend_from_slice(&jpeg[..2]);
-    for (index, chunk) in profile.chunks(MAX_CHUNK).enumerate() {
-        output.extend_from_slice(&[0xff, 0xe2]);
-        let length = u16::try_from(chunk.len() + 16)
-            .map_err(|_| MediaError::Color("ICC JPEG chunk is too large".into()))?;
-        output.extend_from_slice(&length.to_be_bytes());
-        output.extend_from_slice(b"ICC_PROFILE\0");
-        output.push(u8::try_from(index + 1).unwrap_or(u8::MAX));
-        output.push(chunk_count);
-        output.extend_from_slice(chunk);
-    }
-    output.extend_from_slice(&jpeg[2..]);
-    fs::write(path, output)?;
+    file.seek(SeekFrom::Start(2))?;
+    file.write_all(&segment)?;
     Ok(())
 }
 
@@ -168,43 +139,12 @@ fn write_jpeg_atomically_with_icc(
     persist_noclobber(temporary, destination)
 }
 
-pub(crate) fn write_bytes_atomically(data: &[u8], destination: &Path) -> Result<(), MediaError> {
-    write_bytes_atomically_cancelled(data, destination, || false)
-}
-
-pub(crate) fn write_bytes_atomically_cancelled(
-    data: &[u8],
-    destination: &Path,
-    cancelled: impl Fn() -> bool,
-) -> Result<(), MediaError> {
-    let mut temporary = cache_tempfile(destination, ".tmp")?;
-    temporary.write_all(data)?;
-    temporary.as_file().sync_all()?;
-    if cancelled() {
-        return Err(MediaError::Cancelled);
-    }
-    persist_noclobber(temporary, destination)
-}
-
-pub(crate) fn persist_atomically(
-    temporary: NamedTempFile,
-    destination: &Path,
-) -> Result<(), MediaError> {
-    temporary.as_file().sync_all()?;
-
-    persist_noclobber(temporary, destination)
-}
-
 fn persist_noclobber(temporary: NamedTempFile, destination: &Path) -> Result<(), MediaError> {
     match temporary.persist_noclobber(destination) {
         Ok(_) => Ok(()),
         Err(_error) if destination.is_file() => Ok(()),
         Err(error) => Err(MediaError::Io(error.error)),
     }
-}
-
-fn duration_ms(started: Instant) -> u64 {
-    started.elapsed().as_millis().try_into().unwrap_or(u64::MAX)
 }
 
 #[cfg(test)]
@@ -221,15 +161,8 @@ mod tests {
             .count()
     }
 
-    #[test]
-    fn byte_writes_preserve_existing_artifact_and_remove_temporary_files() {
-        let directory = tempfile::tempdir().unwrap();
-        let destination = directory.path().join("preview.jpg");
-        write_bytes_atomically(b"first", &destination).unwrap();
-        write_bytes_atomically(b"second", &destination).unwrap();
-
-        assert_eq!(fs::read(&destination).unwrap(), b"first");
-        assert_eq!(direct_file_count(directory.path()), 1);
+    fn assert_no_temporary_files(path: &Path) {
+        assert_eq!(fs::read_dir(path.join(".tmp")).unwrap().count(), 0);
     }
 
     #[test]
@@ -240,19 +173,68 @@ mod tests {
         fs::write(destination.join("keep"), b"keep").unwrap();
 
         assert!(matches!(
-            write_bytes_atomically(b"image", &destination),
+            write_jpeg_atomically(
+                &DynamicImage::new_rgb8(32, 16),
+                &destination,
+                90,
+                crate::presentation::RAW_DEVELOPED_JPEG,
+            ),
             Err(MediaError::Io(_))
         ));
         assert_eq!(fs::read(destination.join("keep")).unwrap(), b"keep");
         assert!(destination.is_dir());
         assert_eq!(direct_file_count(directory.path()), 0);
+        assert_no_temporary_files(directory.path());
+    }
+
+    #[test]
+    fn native_profile_attachment_preserves_encoded_bytes_and_is_idempotent() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("native.jpg");
+        let mut state = 0x1234_5678_u32;
+        let image = image::RgbImage::from_fn(512, 512, |_, _| {
+            state ^= state << 13;
+            state ^= state >> 17;
+            state ^= state << 5;
+            let bytes = state.to_le_bytes();
+            image::Rgb([bytes[0], bytes[1], bytes[2]])
+        });
+        let mut original = Vec::new();
+        JpegEncoder::new_with_quality(&mut original, 95)
+            .encode_image(&image)
+            .unwrap();
+        assert!(original.len() > 64 * 1024);
+        fs::write(&path, &original).unwrap();
+        ensure_srgb_icc(&path).unwrap();
+        let tagged = fs::read(&path).unwrap();
+        let inserted = tagged.len() - original.len();
+        assert_eq!(&tagged[inserted + 2..], &original[2..]);
+        assert!(
+            ImageReader::open(&path)
+                .unwrap()
+                .into_decoder()
+                .unwrap()
+                .icc_profile()
+                .unwrap()
+                .is_some()
+        );
+        ensure_srgb_icc(&path).unwrap();
+        assert_eq!(fs::read(&path).unwrap(), tagged);
     }
 
     #[test]
     fn missing_parent_is_not_created_by_writer() {
         let directory = tempfile::tempdir().unwrap();
         let parent = directory.path().join("missing");
-        assert!(write_bytes_atomically(b"image", &parent.join("preview.jpg")).is_err());
+        assert!(
+            write_jpeg_atomically(
+                &DynamicImage::new_rgb8(32, 16),
+                &parent.join("preview.jpg"),
+                90,
+                crate::presentation::RAW_DEVELOPED_JPEG,
+            )
+            .is_err()
+        );
         assert!(!parent.exists());
     }
 
@@ -260,7 +242,7 @@ mod tests {
     fn cancellation_after_encode_skips_cache_commit() {
         let directory = tempfile::tempdir().unwrap();
         let destination = directory.path().join("cancelled.jpg");
-        let error = write_jpeg_atomically_timed(
+        let error = write_jpeg_atomically_cancelled(
             &DynamicImage::new_rgb8(32, 16),
             &destination,
             90,
@@ -272,61 +254,37 @@ mod tests {
         assert!(matches!(error, MediaError::Cancelled));
         assert!(!destination.exists());
         assert_eq!(direct_file_count(directory.path()), 0);
+        assert_no_temporary_files(directory.path());
     }
 
     #[test]
-    fn jpeg_writers_produce_decodable_images_without_overwriting() {
+    fn jpeg_writer_produces_decodable_image_without_overwriting() {
         let directory = tempfile::tempdir().unwrap();
-        for timed in [false, true] {
-            let destination = directory.path().join(format!("{timed}.jpg"));
-            let image = DynamicImage::new_rgb8(32, 16);
-            if timed {
-                write_jpeg_atomically_timed(
-                    &image,
-                    &destination,
-                    90,
-                    crate::presentation::RAW_DEVELOPED_JPEG,
-                    || false,
-                )
-                .unwrap();
-            } else {
-                write_jpeg_atomically(
-                    &image,
-                    &destination,
-                    90,
-                    crate::presentation::RAW_DEVELOPED_JPEG,
-                )
-                .unwrap();
-            }
-            assert_eq!(image::image_dimensions(&destination).unwrap(), (32, 16));
-            let mut decoder = ImageReader::open(&destination)
-                .unwrap()
-                .into_decoder()
-                .unwrap();
-            assert!(decoder.icc_profile().unwrap().is_some());
-            let original = fs::read(&destination).unwrap();
-            let replacement = DynamicImage::new_rgb8(8, 8);
-            if timed {
-                write_jpeg_atomically_timed(
-                    &replacement,
-                    &destination,
-                    90,
-                    crate::presentation::RAW_DEVELOPED_JPEG,
-                    || false,
-                )
-                .unwrap();
-            } else {
-                write_jpeg_atomically(
-                    &replacement,
-                    &destination,
-                    90,
-                    crate::presentation::RAW_DEVELOPED_JPEG,
-                )
-                .unwrap();
-            }
-            assert_eq!(fs::read(&destination).unwrap(), original);
-        }
-        assert_eq!(direct_file_count(directory.path()), 2);
+        let destination = directory.path().join("preview.jpg");
+        write_jpeg_atomically(
+            &DynamicImage::new_rgb8(32, 16),
+            &destination,
+            90,
+            crate::presentation::RAW_DEVELOPED_JPEG,
+        )
+        .unwrap();
+        assert_eq!(image::image_dimensions(&destination).unwrap(), (32, 16));
+        let mut decoder = ImageReader::open(&destination)
+            .unwrap()
+            .into_decoder()
+            .unwrap();
+        assert!(decoder.icc_profile().unwrap().is_some());
+        let original = fs::read(&destination).unwrap();
+        write_jpeg_atomically(
+            &DynamicImage::new_rgb8(8, 8),
+            &destination,
+            90,
+            crate::presentation::RAW_DEVELOPED_JPEG,
+        )
+        .unwrap();
+        assert_eq!(fs::read(&destination).unwrap(), original);
+        assert_eq!(direct_file_count(directory.path()), 1);
+        assert_no_temporary_files(directory.path());
     }
 
     #[test]

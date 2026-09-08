@@ -1,5 +1,7 @@
+use crate::state::cache::CacheManager;
 use oxy_domain::{
-    AssetKind, DebugQueueItem, DebugQueueState, ImageProjection, OmittedScheduleAction,
+    AssetKind, DebugQueueItem, DebugQueueState, ImageProjection, MediaPersistence,
+    MediaResourceDescriptor, MediaSatisfaction, OmittedScheduleAction, PreviewKind,
     PreviewOmittedPolicy, PreviewPriority, PreviewResult, PreviewScheduleIntent, RenderLevel,
     ResourceLoadStatus, SchedulePlacement,
 };
@@ -47,9 +49,22 @@ struct WorkRequest {
     cancellation: CancellationToken,
 }
 
+impl WorkRequest {
+    fn remove_waiter(&mut self, request_id: &str) -> bool {
+        let previous_len = self.waiters.len();
+        self.waiters.retain(|waiter| waiter.id != request_id);
+        let removed = self.waiters.len() != previous_len;
+        if removed && self.waiters.is_empty() {
+            self.cancellation.cancel();
+        }
+        removed
+    }
+}
+
 struct Waiter {
     id: String,
     sender: Sender<Result<ImageProjection, String>>,
+    interim_delivered: bool,
 }
 
 pub struct PreviewRequest {
@@ -111,15 +126,17 @@ pub struct PreviewQueue {
     work: Arc<(Mutex<WorkState>, Condvar)>,
     projections: Arc<RwLock<HashMap<(PathBuf, RenderLevel), ImageProjection>>>,
     library: Arc<Library>,
+    cache: Arc<CacheManager>,
     request_generation: Arc<AtomicU64>,
 }
 
 impl PreviewQueue {
-    pub fn new(app: AppHandle, library: Arc<Library>) -> Self {
+    pub fn new(app: AppHandle, library: Arc<Library>, cache: Arc<CacheManager>) -> Self {
         let queue = Self {
             work: Arc::new((Mutex::new(WorkState::default()), Condvar::new())),
             projections: Arc::new(RwLock::new(HashMap::new())),
             library,
+            cache,
             request_generation: Arc::new(AtomicU64::new(0)),
         };
         for worker_index in 0..PREVIEW_WORKER_COUNT {
@@ -146,46 +163,46 @@ impl PreviewQueue {
         } = request;
         let requested_position = schedule_position(priority, queue_order);
         let source_revision =
-            source_revision(modified_at_ms, size_bytes, &preview_dir, kind, level);
+            source_revision(&path, modified_at_ms, size_bytes, &preview_dir, kind, level)?;
         let state_key = (path.clone(), level);
-        if let Some(cached) = self
+        let memory_projection = self
             .projections
             .read()
             .expect("image projection lock poisoned")
             .get(&state_key)
-            .filter(|projection| {
-                projection.source_revision == source_revision
-                    && projection.status == ResourceLoadStatus::Ready
-                    && projection
-                        .result
-                        .as_ref()
-                        .is_some_and(|result| result.path.is_file())
-            })
-            .cloned()
-        {
-            let (sender, receiver) = mpsc::channel();
-            let _ = sender.send(Ok(cached.clone()));
-            return Ok((cached, receiver));
+            .filter(|projection| projection.source_revision == source_revision)
+            .cloned();
+        if let Some(cached) = memory_projection {
+            let cached = restore_projection_resource(cached, &preview_dir)?;
+            self.projections
+                .write()
+                .expect("image projection lock poisoned")
+                .insert(state_key.clone(), cached.clone());
+            if projection_is_terminal(&cached)
+                && cached.result.as_ref().is_some_and(preview_result_is_live)
+            {
+                let (sender, receiver) = mpsc::channel();
+                let _ = sender.send(Ok(cached.clone()));
+                return Ok((cached, receiver));
+            }
         }
         if let Some(cached) = self
             .library
             .image_projection(&path, level, &source_revision)
             .map_err(|error| error.to_string())?
-            .filter(|projection| {
-                projection.status == ResourceLoadStatus::Ready
-                    && projection
-                        .result
-                        .as_ref()
-                        .is_some_and(|result| result.path.is_file())
-            })
         {
+            let cached = restore_projection_resource(cached, &preview_dir)?;
             self.projections
                 .write()
                 .expect("image projection lock poisoned")
-                .insert(state_key, cached.clone());
-            let (sender, receiver) = mpsc::channel();
-            let _ = sender.send(Ok(cached.clone()));
-            return Ok((cached, receiver));
+                .insert(state_key.clone(), cached.clone());
+            if projection_is_terminal(&cached)
+                && cached.result.as_ref().is_some_and(preview_result_is_live)
+            {
+                let (sender, receiver) = mpsc::channel();
+                let _ = sender.send(Ok(cached.clone()));
+                return Ok((cached, receiver));
+            }
         }
 
         let (sender, receiver) = mpsc::channel();
@@ -225,6 +242,7 @@ impl PreviewQueue {
                 .push(Waiter {
                     id: request_id,
                     sender,
+                    interim_delivered: false,
                 });
             let projection = self
                 .projections
@@ -247,6 +265,7 @@ impl PreviewQueue {
                 current.waiters.push(Waiter {
                     id: request_id,
                     sender,
+                    interim_delivered: false,
                 });
                 effective_position
             });
@@ -291,6 +310,7 @@ impl PreviewQueue {
             waiters: vec![Waiter {
                 id: request_id,
                 sender,
+                interim_delivered: false,
             }],
             cancellation: CancellationToken::default(),
         };
@@ -357,12 +377,7 @@ impl PreviewQueue {
             let mut request = request
                 .lock()
                 .expect("active preview request lock poisoned");
-            let previous_len = request.waiters.len();
-            request.waiters.retain(|waiter| waiter.id != request_id);
-            changed |= request.waiters.len() != previous_len;
-            if request.waiters.is_empty() {
-                request.cancellation.cancel();
-            }
+            changed |= request.remove_waiter(request_id);
         }
         changed
     }
@@ -558,6 +573,191 @@ impl PreviewQueue {
         Ok(projection)
     }
 
+    #[allow(clippy::too_many_arguments)]
+    fn run_interim_upgrade(
+        &self,
+        app: &AppHandle,
+        path: &std::path::Path,
+        preview_dir: &std::path::Path,
+        kind: AssetKind,
+        source_revision: &str,
+        level: RenderLevel,
+        valid_at: u64,
+        priority: PreviewPriority,
+        cancellation: &CancellationToken,
+    ) -> Result<Option<ImageProjection>, String> {
+        // Thumbnail Interim is the terminal display contract: this level has no
+        // native upgrade phase, and the frontend settles it as displayable.
+        if level == RenderLevel::Thumbnail || cancellation.is_cancelled() {
+            return Ok(None);
+        }
+        let upgrade = match oxy_media::preview_for_app_upgrade(
+            path,
+            preview_dir,
+            level,
+            priority,
+            kind,
+            cancellation,
+        ) {
+            Ok(upgrade) => upgrade,
+            Err(_) if cancellation.is_cancelled() => return Ok(None),
+            Err(error) => {
+                let message = error.to_string();
+                let projection = self.transition_interim_upgrade_error(
+                    path,
+                    source_revision,
+                    level,
+                    valid_at,
+                    message.clone(),
+                )?;
+                let _ = app.emit(IMAGE_PROJECTION_UPDATED_EVENT, projection);
+                return Err(message);
+            }
+        };
+        if upgrade.result.satisfaction != Some(MediaSatisfaction::Satisfied) {
+            let message = "preview upgrade did not produce a satisfied artifact".to_owned();
+            let projection = self.transition_interim_upgrade_error(
+                path,
+                source_revision,
+                level,
+                valid_at,
+                message.clone(),
+            )?;
+            let _ = app.emit(IMAGE_PROJECTION_UPDATED_EVENT, projection);
+            return Err(message);
+        }
+        let resource_id = upgrade
+            .result
+            .resource
+            .as_ref()
+            .map(|resource| resource.resource_id.clone());
+        let projection = self.transition(
+            path.to_owned(),
+            ProjectionUpdate {
+                source_revision: source_revision.to_owned(),
+                level,
+                valid_at,
+                status: ResourceLoadStatus::Ready,
+                result: Some(upgrade.result),
+                error: None,
+            },
+        );
+        let projection = projection?;
+        let _ = app.emit(IMAGE_PROJECTION_UPDATED_EVENT, projection.clone());
+        for completion in upgrade.completions {
+            if resource_id.is_some() {
+                self.spawn_persistence_completion(
+                    app.clone(),
+                    path.to_owned(),
+                    source_revision.to_owned(),
+                    level,
+                    valid_at,
+                    completion,
+                );
+            }
+        }
+        Ok(Some(projection))
+    }
+
+    fn transition_interim_upgrade_error(
+        &self,
+        path: &std::path::Path,
+        source_revision: &str,
+        level: RenderLevel,
+        valid_at: u64,
+        error: String,
+    ) -> Result<ImageProjection, String> {
+        self.transition(
+            path.to_owned(),
+            ProjectionUpdate {
+                source_revision: source_revision.to_owned(),
+                level,
+                valid_at,
+                status: ResourceLoadStatus::Error,
+                result: None,
+                error: Some(error),
+            },
+        )
+    }
+
+    fn spawn_persistence_completion(
+        &self,
+        app: AppHandle,
+        path: PathBuf,
+        source_revision: String,
+        level: RenderLevel,
+        valid_at: u64,
+        completion: Receiver<oxy_media::PersistenceCompletion>,
+    ) {
+        let queue = self.clone();
+        std::thread::spawn(move || {
+            let Ok(completion) = completion.recv() else {
+                return;
+            };
+            let (resource_id, managed_path, persistence) = match completion {
+                oxy_media::PersistenceCompletion::Persisted { resource_id, path } => {
+                    (resource_id, Some(path), MediaPersistence::Persisted)
+                }
+                oxy_media::PersistenceCompletion::Failed { resource_id, .. } => {
+                    (resource_id, None, MediaPersistence::Skipped)
+                }
+            };
+            let current = queue
+                .projections
+                .read()
+                .expect("image projection lock poisoned")
+                .get(&(path.clone(), level))
+                .filter(|projection| {
+                    projection.source_revision == source_revision
+                        && projection.valid_at == valid_at
+                        && projection.result.as_ref().and_then(|result| {
+                            result
+                                .resource
+                                .as_ref()
+                                .map(|resource| &resource.resource_id)
+                        }) == Some(&resource_id)
+                })
+                .cloned();
+            let Some(current) = current else {
+                return;
+            };
+            let Some(mut result) = current.result else {
+                return;
+            };
+            if let Some(managed_path) = managed_path {
+                result.path = managed_path.clone();
+                queue.cache.mark_used(&managed_path);
+                if queue.cache.try_start_prune() {
+                    let cache = Arc::clone(&queue.cache);
+                    std::thread::spawn(move || {
+                        loop {
+                            if let Err(error) = cache.prune_after_write(&managed_path) {
+                                eprintln!("preview cache pruning failed: {error}");
+                            }
+                            if !cache.finish_prune() {
+                                break;
+                            }
+                        }
+                    });
+                }
+            }
+            result.persistence = Some(persistence);
+            if let Ok(projection) = queue.transition(
+                path,
+                ProjectionUpdate {
+                    source_revision,
+                    level,
+                    valid_at,
+                    status: ResourceLoadStatus::Ready,
+                    result: Some(result),
+                    error: None,
+                },
+            ) {
+                let _ = app.emit(IMAGE_PROJECTION_UPDATED_EVENT, projection);
+            }
+        });
+    }
+
     fn spawn_worker(&self, app: AppHandle, worker_index: usize) {
         let queue = self.clone();
         std::thread::Builder::new()
@@ -623,15 +823,18 @@ impl PreviewQueue {
                             request.cancellation.clone(),
                         )
                     };
-                    let result = oxy_media::preview(
-                        &path,
-                        &preview_dir,
-                        level,
-                        priority_from_position(position),
-                        kind,
-                        &cancellation,
-                    )
-                    .map_err(|error| error.to_string());
+                    let (result, completions) =
+                        match oxy_media::preview_for_app_with_completion(
+                            &path,
+                            &preview_dir,
+                            level,
+                            priority_from_position(position),
+                            kind,
+                            &cancellation,
+                        ) {
+                            Ok(preview) => (Ok(preview.result), preview.completions),
+                            Err(error) => (Err(error.to_string()), Vec::new()),
+                        };
                     let projection = match &result {
                         Ok(result) => queue.transition(
                             path.clone(),
@@ -645,9 +848,9 @@ impl PreviewQueue {
                             },
                         ),
                         Err(error) => queue.transition(
-                            path,
+                            path.clone(),
                             ProjectionUpdate {
-                                source_revision,
+                                source_revision: source_revision.clone(),
                                 level,
                                 valid_at,
                                 status: ResourceLoadStatus::Error,
@@ -678,6 +881,53 @@ impl PreviewQueue {
                     {
                         let _ = app.emit(IMAGE_PROJECTION_UPDATED_EVENT, projection);
                     }
+                    for completion in completions {
+                        queue.spawn_persistence_completion(
+                            app.clone(),
+                            path.clone(),
+                            source_revision.clone(),
+                            level,
+                            valid_at,
+                            completion,
+                        );
+                    }
+                    let is_interim = result.as_ref().is_ok_and(|result| {
+                        result.satisfaction == Some(MediaSatisfaction::Interim)
+                    });
+                    if is_interim {
+                        // Keep the request active after the displayable Interim
+                        // reply. Its subscribers and cancellation token continue
+                        // to own the no-Interim upgrade and its queue priority.
+                        let mut active = request
+                            .lock()
+                            .expect("active preview request lock poisoned");
+                        for waiter in &mut active.waiters {
+                            if !waiter.interim_delivered {
+                                let _ = waiter.sender.send(accepted.clone());
+                                waiter.interim_delivered = true;
+                            }
+                        }
+                        drop(active);
+                    }
+                    let final_accepted = if is_interim {
+                        match queue.run_interim_upgrade(
+                            &app,
+                            &path,
+                            &preview_dir,
+                            kind,
+                            &source_revision,
+                            level,
+                            valid_at,
+                            priority_from_position(position),
+                            &cancellation,
+                        ) {
+                            Ok(Some(projection)) => Ok(projection),
+                            Ok(None) => accepted.clone(),
+                            Err(error) => Err(error),
+                        }
+                    } else {
+                        accepted.clone()
+                    };
                     let waiters = {
                         let mut work = queue.work.0.lock().expect("preview queue lock poisoned");
                         let waiters = std::mem::take(
@@ -694,8 +944,11 @@ impl PreviewQueue {
                         waiters
                     };
                     for waiter in waiters {
-                        let _ = waiter.sender.send(accepted.clone());
+                        if !waiter.interim_delivered {
+                            let _ = waiter.sender.send(final_accepted.clone());
+                        }
                     }
+                    queue.work.1.notify_all();
                 }
             })
             .expect("failed to start image projection worker");
@@ -722,18 +975,122 @@ fn debug_item(
     }
 }
 
+fn projection_is_terminal(projection: &ImageProjection) -> bool {
+    projection.status == ResourceLoadStatus::Ready
+        && projection.result.as_ref().is_some_and(|result| {
+            projection.level == RenderLevel::Thumbnail
+                || result.satisfaction != Some(MediaSatisfaction::Interim)
+        })
+}
+
+fn restore_projection_resource(
+    mut projection: ImageProjection,
+    preview_dir: &std::path::Path,
+) -> Result<ImageProjection, String> {
+    let expected_source =
+        oxy_media::SourceRevision::observe(&projection.path).map_err(|error| error.to_string())?;
+    if !projection
+        .source_revision
+        .starts_with(&format!("{}:", expected_source.revision_id))
+    {
+        return Ok(projection);
+    }
+    let Some(result) = projection.result.as_mut() else {
+        return Ok(projection);
+    };
+    if result.resource.as_ref().is_some_and(|resource| {
+        oxy_media::shared_resource_registry().contains(&resource.resource_id)
+    }) {
+        return Ok(projection);
+    }
+    result.resource = None;
+    if !result.path.is_file() {
+        return Ok(projection);
+    }
+    let representation = match result.kind {
+        PreviewKind::Original => oxy_media::ArtifactRepresentation::Original,
+        PreviewKind::Embedded => oxy_media::ArtifactRepresentation::Embedded,
+        PreviewKind::Decoded => oxy_media::ArtifactRepresentation::Decoded,
+        PreviewKind::Developed => oxy_media::ArtifactRepresentation::Developed,
+        PreviewKind::System => oxy_media::ArtifactRepresentation::System,
+    };
+    let disk_cache =
+        oxy_media::DiskMediaCache::new(preview_dir, 256).map_err(|error| error.to_string())?;
+    let lease = if result.path.starts_with(disk_cache.root()) {
+        let Some(lease) = disk_cache
+            .validate_and_lease_path(&result.path, &expected_source)
+            .map_err(|error| error.to_string())?
+        else {
+            return Ok(projection);
+        };
+        Some(lease)
+    } else {
+        None
+    };
+    if lease.is_some() {
+        // This request restored a validated disk artifact, not the decoder
+        // invocation whose historical timings may be stored in the projection.
+        result.diagnostics = Some(oxy_domain::PreviewDiagnostics {
+            backend: Some("cached artifact".into()),
+            ..Default::default()
+        });
+    }
+    let handle = oxy_media::shared_resource_registry()
+        .register_file_with_lease(
+            &result.path,
+            media_type_for(&result.path),
+            oxy_media::DisplayDimensions {
+                width: result.width,
+                height: result.height,
+            },
+            representation,
+            lease,
+        )
+        .map_err(|error| error.to_string())?;
+    result.resource = Some(MediaResourceDescriptor {
+        resource_id: handle.descriptor.resource_id,
+        url: handle.descriptor.url,
+        media_type: handle.descriptor.media_type,
+    });
+    Ok(projection)
+}
+
+fn media_type_for(path: &std::path::Path) -> &'static str {
+    match path
+        .extension()
+        .and_then(std::ffi::OsStr::to_str)
+        .unwrap_or_default()
+        .to_ascii_lowercase()
+        .as_str()
+    {
+        "png" => "image/png",
+        "webp" => "image/webp",
+        _ => "image/jpeg",
+    }
+}
+
+fn preview_result_is_live(result: &PreviewResult) -> bool {
+    result.resource.as_ref().is_some_and(|resource| {
+        oxy_media::shared_resource_registry().contains(&resource.resource_id)
+    })
+}
+
 fn source_revision(
+    path: &std::path::Path,
     modified_at_ms: u64,
     size_bytes: u64,
     preview_dir: &std::path::Path,
     kind: AssetKind,
     level: RenderLevel,
-) -> String {
-    format!(
-        "{modified_at_ms}:{size_bytes}:{}:{}",
+) -> Result<String, String> {
+    let media_revision =
+        oxy_media::SourceRevision::observe(path).map_err(|error| error.to_string())?;
+    Ok(format!(
+        "{}:{modified_at_ms}:{size_bytes}:{}:{}",
+        media_revision.revision_id,
         preview_dir.to_string_lossy(),
         oxy_media::preview_policy_revision(kind, level)
-    )
+    ))
 }
 
 fn runtime_placement(placement: SchedulePlacement) -> QueuePlacement {
@@ -785,18 +1142,288 @@ mod tests {
     use super::*;
 
     #[test]
-    fn source_revision_includes_media_policy_version() {
+    fn interim_projection_is_displayable_but_not_terminal() {
+        let projection = ImageProjection {
+            path: PathBuf::from("image.HIF"),
+            source_revision: "source".into(),
+            projection_revision: 1,
+            valid_at: 1,
+            status: ResourceLoadStatus::Ready,
+            level: RenderLevel::Preview,
+            result: Some(PreviewResult {
+                path: PathBuf::new(),
+                width: 160,
+                height: 120,
+                kind: PreviewKind::Embedded,
+                render_level: RenderLevel::Preview,
+                resource: None,
+                satisfaction: Some(MediaSatisfaction::Interim),
+                persistence: Some(MediaPersistence::Pending),
+                diagnostics: None,
+            }),
+            error: None,
+        };
+        assert!(!projection_is_terminal(&projection));
+        let mut thumbnail = projection.clone();
+        thumbnail.level = RenderLevel::Thumbnail;
+        thumbnail.result.as_mut().unwrap().render_level = RenderLevel::Thumbnail;
+        assert!(projection_is_terminal(&thumbnail));
+        let mut satisfied = projection;
+        satisfied.result.as_mut().unwrap().satisfaction = Some(MediaSatisfaction::Satisfied);
+        assert!(projection_is_terminal(&satisfied));
+    }
+
+    #[test]
+    fn failed_interim_upgrade_publishes_a_terminal_error_and_retains_display_result() {
+        let state = tempfile::tempdir().unwrap();
+        let library = Arc::new(Library::in_memory().unwrap());
+        let cache = Arc::new(
+            CacheManager::load(
+                state.path().join("previews"),
+                state.path().join("cache-config.json"),
+            )
+            .unwrap(),
+        );
+        let queue = PreviewQueue {
+            work: Arc::new((Mutex::new(WorkState::default()), Condvar::new())),
+            projections: Arc::new(RwLock::new(HashMap::new())),
+            library,
+            cache,
+            request_generation: Arc::new(AtomicU64::new(0)),
+        };
+        let path = state.path().join("image.HIF");
+        std::fs::write(&path, b"source").unwrap();
+        let interim = PreviewResult {
+            path: state.path().join("interim.jpg"),
+            width: 160,
+            height: 120,
+            kind: PreviewKind::Embedded,
+            render_level: RenderLevel::Preview,
+            resource: None,
+            satisfaction: Some(MediaSatisfaction::Interim),
+            persistence: Some(MediaPersistence::Pending),
+            diagnostics: None,
+        };
+        queue
+            .transition(
+                path.clone(),
+                ProjectionUpdate {
+                    source_revision: "source".into(),
+                    level: RenderLevel::Preview,
+                    valid_at: 1,
+                    status: ResourceLoadStatus::Ready,
+                    result: Some(interim.clone()),
+                    error: None,
+                },
+            )
+            .unwrap();
+
+        let terminal = queue
+            .transition_interim_upgrade_error(
+                &path,
+                "source",
+                RenderLevel::Preview,
+                1,
+                "decoder failed".into(),
+            )
+            .unwrap();
+
+        assert_eq!(terminal.status, ResourceLoadStatus::Error);
+        assert_eq!(terminal.error.as_deref(), Some("decoder failed"));
+        assert_eq!(terminal.result, Some(interim));
+    }
+
+    #[test]
+    fn restored_managed_projection_reports_this_cache_hit_not_historical_decode() {
+        use oxy_media::MediaCache;
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("source.raw");
+        std::fs::write(&path, b"source").unwrap();
+        let source = oxy_media::SourceRevision::observe(&path).unwrap();
+        let cache = oxy_media::DiskMediaCache::new(directory.path(), 8).unwrap();
+        let png: &[u8] = &[
+            137, 80, 78, 71, 13, 10, 26, 10, 0, 0, 0, 13, 73, 72, 68, 82, 0, 0, 0, 1, 0, 0, 0, 1,
+            8, 2, 0, 0, 0, 144, 119, 83, 222, 0, 0, 0, 12, 73, 68, 65, 84, 120, 156, 99, 248, 207,
+            192, 0, 0, 3, 1, 1, 0, 201, 254, 146, 239, 0, 0, 0, 0, 73, 69, 78, 68, 174, 66, 96,
+            130,
+        ];
+        let publication = cache
+            .publish(oxy_media::PendingArtifact {
+                source_revision: source.clone(),
+                variant: oxy_media::VariantIdentity {
+                    representation: oxy_media::ArtifactRepresentation::Embedded,
+                    presentation: oxy_media::ArtifactPresentation {
+                        orientation: oxy_media::OrientationState::Applied,
+                        color: oxy_media::CacheColorState::EmbeddedOrUnknown,
+                        sharpening: oxy_media::SharpeningState::None,
+                    },
+                    policy_revision: oxy_media::MEDIA_CACHE_POLICY_REVISION,
+                    target: "test".into(),
+                },
+                actual_dimensions: oxy_media::DisplayDimensions {
+                    width: 1,
+                    height: 1,
+                },
+                native_detail: false,
+                media_type: "image/png".into(),
+                extension: "png".into(),
+                bytes: Arc::from(png),
+                cache_generation: cache.generation().unwrap(),
+            })
+            .unwrap();
+        let oxy_media::ArtifactLocation::Managed(managed_path) = publication.artifact.location
+        else {
+            panic!("expected managed artifact");
+        };
+        let projection = ImageProjection {
+            path,
+            source_revision: format!("{}:projection", source.revision_id),
+            projection_revision: 1,
+            valid_at: 1,
+            status: ResourceLoadStatus::Ready,
+            level: RenderLevel::Preview,
+            result: Some(PreviewResult {
+                path: managed_path,
+                width: 1,
+                height: 1,
+                kind: PreviewKind::Embedded,
+                render_level: RenderLevel::Preview,
+                resource: None,
+                satisfaction: Some(MediaSatisfaction::Interim),
+                persistence: Some(MediaPersistence::Persisted),
+                diagnostics: Some(oxy_domain::PreviewDiagnostics {
+                    backend: Some("old decoder".into()),
+                    decode_ms: Some(3000),
+                    ..Default::default()
+                }),
+            }),
+            error: None,
+        };
+        let restored = restore_projection_resource(projection, directory.path()).unwrap();
+        let result = restored.result.unwrap();
+        assert!(result.resource.is_some());
+        let diagnostics = result.diagnostics.unwrap();
+        assert_eq!(diagnostics.backend.as_deref(), Some("cached artifact"));
+        assert_eq!(diagnostics.decode_ms, None);
+    }
+
+    #[test]
+    fn restored_projection_registers_a_new_process_resource() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("original.jpg");
+        std::fs::write(&path, b"original bytes").unwrap();
+        let source = oxy_media::SourceRevision::observe(&path).unwrap();
+        let projection = ImageProjection {
+            path: path.clone(),
+            source_revision: format!("{}:projection", source.revision_id),
+            projection_revision: 1,
+            valid_at: 1,
+            status: ResourceLoadStatus::Ready,
+            level: RenderLevel::Thumbnail,
+            result: Some(PreviewResult {
+                path,
+                width: 8,
+                height: 4,
+                kind: PreviewKind::Original,
+                render_level: RenderLevel::Thumbnail,
+                resource: Some(MediaResourceDescriptor {
+                    resource_id: "resource-from-old-process".into(),
+                    url: "oxy-media://localhost/resource/resource-from-old-process".into(),
+                    media_type: "image/jpeg".into(),
+                }),
+                satisfaction: Some(MediaSatisfaction::Satisfied),
+                persistence: Some(MediaPersistence::NotApplicable),
+                diagnostics: None,
+            }),
+            error: None,
+        };
+        let restored = restore_projection_resource(projection, directory.path()).unwrap();
+        let resource = restored.result.unwrap().resource.unwrap();
+        assert_ne!(resource.resource_id, "resource-from-old-process");
+        assert!(oxy_media::shared_resource_registry().contains(&resource.resource_id));
+    }
+
+    #[test]
+    fn projection_accepts_live_resource_but_rejects_missing_resource_and_path() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("original.jpg");
+        std::fs::write(&path, b"registered resource").unwrap();
+        let registry = oxy_media::shared_resource_registry();
+        let handle = registry
+            .register_file(
+                &path,
+                "image/jpeg",
+                oxy_media::DisplayDimensions {
+                    width: 8,
+                    height: 4,
+                },
+                oxy_media::ArtifactRepresentation::Original,
+            )
+            .unwrap();
+        let mut result = PreviewResult {
+            path: directory.path().join("pending.jpg"),
+            width: 8,
+            height: 4,
+            kind: oxy_domain::PreviewKind::Original,
+            render_level: RenderLevel::Thumbnail,
+            resource: Some(oxy_domain::MediaResourceDescriptor {
+                resource_id: handle.descriptor.resource_id,
+                url: handle.descriptor.url,
+                media_type: "image/jpeg".into(),
+            }),
+            satisfaction: Some(oxy_domain::MediaSatisfaction::Satisfied),
+            persistence: Some(oxy_domain::MediaPersistence::Pending),
+            diagnostics: None,
+        };
+        assert!(preview_result_is_live(&result));
+        registry.release(&result.resource.as_ref().unwrap().resource_id);
+        result.resource.as_mut().unwrap().resource_id = "missing-resource".into();
+        assert!(!preview_result_is_live(&result));
+    }
+
+    #[test]
+    fn source_revision_includes_strong_media_identity_and_policy_version() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("source.hif");
+        std::fs::write(&path, b"source revision").unwrap();
+        let media_revision = oxy_media::SourceRevision::observe(&path).unwrap();
         let revision = source_revision(
+            &path,
             12,
             34,
             std::path::Path::new("cache"),
             AssetKind::Heif,
             RenderLevel::Full,
-        );
+        )
+        .unwrap();
+        assert!(revision.starts_with(&media_revision.revision_id));
         assert!(revision.ends_with(oxy_media::preview_policy_revision(
             AssetKind::Heif,
             RenderLevel::Full,
         )));
+    }
+
+    #[test]
+    fn interim_upgrade_stays_cancellable_after_its_display_reply() {
+        let (sender, _receiver) = mpsc::channel();
+        let cancellation = CancellationToken::default();
+        let mut request = WorkRequest {
+            path: PathBuf::from("image.HIF"),
+            preview_dir: PathBuf::from("cache"),
+            kind: AssetKind::Heif,
+            source_revision: "source".into(),
+            level: RenderLevel::Preview,
+            valid_at: 1,
+            waiters: vec![Waiter {
+                id: "consumer".into(),
+                sender,
+                interim_delivered: true,
+            }],
+            cancellation: cancellation.clone(),
+        };
+
+        assert!(request.remove_waiter("consumer"));
+        assert!(cancellation.is_cancelled());
     }
 
     #[test]

@@ -2,6 +2,7 @@ import type { AssetSummary } from "../types";
 import { generatedPreview, isTauri, previewUrl } from "./api";
 import { preloadBrowserImage } from "./browserImageCache";
 import { renderPlan } from "./preview";
+import { browserPreloadQueue, orderedPriorityWeight } from "./previewQueue";
 
 /**
  * Warms the first useful loupe stage in both React Query and the WebView image
@@ -17,9 +18,15 @@ export async function preloadAssetLoupePreview(
 
   const previewStep = renderPlan(asset.kind, "loupe")[0];
   const previewMethod = previewStep.method;
+  const priority = queueOrder === 0 ? "loupe" : "nearby";
+  const preload = (source: string) => browserPreloadQueue.enqueue(
+    orderedPriorityWeight(priority, queueOrder),
+    signal,
+    () => preloadBrowserImage(source, signal),
+  );
   if (previewMethod.type === "originalImage") {
     const source = previewUrl(asset);
-    if (source) await preloadBrowserImage(source, signal);
+    if (source) await preload(source);
     return;
   }
   if (previewMethod.type !== "generatedImage") return;
@@ -28,8 +35,8 @@ export async function preloadAssetLoupePreview(
     asset,
     previewMethod.requestLevel,
     signal,
-    queueOrder === 0 ? "loupe" : "nearby",
+    priority,
     queueOrder,
   );
-  if (result) await preloadBrowserImage(result.url, signal);
+  if (result) await preload(result.url);
 }

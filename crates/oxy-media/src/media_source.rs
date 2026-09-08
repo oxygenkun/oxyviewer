@@ -45,26 +45,11 @@ pub(crate) fn preview_result(
         height: size.height,
         kind,
         render_level: level,
+        resource: None,
+        satisfaction: None,
+        persistence: None,
         diagnostics: None,
     })
-}
-
-pub(crate) fn cached_preview_result(
-    path: PathBuf,
-    kind: PreviewKind,
-    level: RenderLevel,
-) -> Result<Option<PreviewResult>, MediaError> {
-    if !path.is_file() {
-        return Ok(None);
-    }
-    match preview_result(path.clone(), kind, level) {
-        Ok(result) => Ok(Some(result)),
-        Err(_) => match std::fs::remove_file(path) {
-            Ok(()) => Ok(None),
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(None),
-            Err(error) => Err(error.into()),
-        },
-    }
 }
 
 pub(crate) fn has_complete_jpeg_markers(path: &Path) -> Result<bool, std::io::Error> {
@@ -78,23 +63,4 @@ pub(crate) fn has_complete_jpeg_markers(path: &Path) -> Result<bool, std::io::Er
     let mut end = [0_u8; 2];
     file.read_exact(&mut end)?;
     Ok(start == [0xff, 0xd8] && end == [0xff, 0xd9])
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn corrupted_cached_artifact_is_removed_for_rebuild() {
-        let directory = tempfile::tempdir().unwrap();
-        let path = directory.path().join("corrupted.jpg");
-        std::fs::write(&path, b"not a jpeg").unwrap();
-
-        let result =
-            cached_preview_result(path.clone(), PreviewKind::Decoded, RenderLevel::Preview)
-                .unwrap();
-
-        assert!(result.is_none());
-        assert!(!path.exists());
-    }
 }

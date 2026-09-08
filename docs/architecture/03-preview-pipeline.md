@@ -64,7 +64,26 @@ sequenceDiagram
     Thumbnail->>ReactQuery: 前一 level 可见后请求下一 level
 ```
 
-实际缓存命中时会跳过 gate 和 decoder。JPEG/PNG/WebP 直接路径还会跳过整条生成流水线。
+实际缓存命中时会跳过 gate 和 decoder。JPEG/PNG/WebP 跳过 Rust 像素解码，但仍注册为受控
+`oxy-media` resource；应用不再启用 unrestricted asset protocol。
+
+当前应用发布链与图中的旧“先写 Cache 再更新 projection”不同：decoder 产出的 encoded bytes 或
+native staged file 先进入 resource registry，UI 得到 process-namespaced immutable URL；有界 worker
+随后持久化。encoded UI/cache 共享 `Arc`；native staged file 先原子移动到 publisher 持有、位于 v2
+cache tree 之外的进程临时目录，cache clear 不会删除这个 UI 文件，cache worker 再使用文件 copy 提交，
+均不重复 source decode。完成通知只在 projection revision 仍匹配时把 Pending 改为
+Persisted，并触发 completion-time prune；若写入期间已有 prune 在运行，pending latch 会要求该 worker
+再跑一轮而不是丢失触发。SQLite 序列化前剥离 resource descriptor；重启恢复 managed path 时先通过
+v2 manifest、尺寸、长度和 JPEG 完整性校验，再注册当前进程 resource 和 lease，不能用裸 `is_file`
+绕过 cache repair。projection identity 包含媒体层 canonical path、平台文件身份和高精度 mtime 的
+`SourceRevision`，不只依赖毫秒 mtime/size。
+
+进程内 pending publication 也参与同一个 capability matcher，因此不同 semantic level 可以在 manifest
+写完前订阅兼容产物；`ArtifactCache::coordinate_work` 还让兼容请求订阅 decoder-running source lane，
+RAW development 不会因 Preview/Full 并发而重复执行。Interim 可显示但不是 Preview/Full 终态；queue
+保留 active request、subscriber、priority 和 cancellation token，继续一个禁止 Interim 的升级，直到
+Satisfied artifact 到达、失败或最后一个 subscriber 取消。RAW full lane、HEIF decode gate、Sony
+embedded 快速探测和 tile session 保持各自原有资源隔离。
 
 ## 4. 前端等级升级
 
@@ -82,7 +101,10 @@ sequenceDiagram
 只有识别为 Sony SHIF 且确实含 sidebar JPEG 的 HEIF 才让 `preview` 与 `thumbnail` 共享
 160×120 产物；普通 HEIF 的 `preview` 会请求语义化 4096 目标。`start_heif_full` 由 Rust 统一决定
 返回完整 artifact projection 或 tile session：关闭显示锐化且缓存可用时直接返回 artifact；开启
-显示锐化时使用 tile display path，规范缓存仍保持未锐化。前端不再按 user agent 复制这份策略。
+显示锐化时使用 tile display path，规范缓存仍保持未锐化。HEIF 冷 tile session 把本次已经取得的
+规范 RGBA（Windows FFmpeg 则拼接已取得的 JPEG tiles）编码进 Full cache，不再重新打开源 HEIF
+执行第二次 decode/transcode。前端不再按 user agent 复制这份策略；resource 和 tile URL 共用同一个
+Windows WebView2 `http://oxy-media.localhost` 规范化 helper。
 
 ## 5. 第一层调度：Rust `PreviewQueue`
 
@@ -118,7 +140,9 @@ viewport intent 被释放；已有 consumer 的任务按其余 scope 降级，�
 
 开启搜索、格式、评级或颜色过滤时，另一个无过滤的廉价分页查询会继续枚举当前目录。未出现在
 可见结果中的图片由 `BackgroundPreviewPreloader` 串行提交，每次只放入一个 `preload`
-请求。这样过滤不再终止缓存预热，同时不会一次把整个目录塞进 Rust queue。
+请求。这样过滤不再终止缓存预热，同时不会一次把整个目录塞进 Rust queue。Rust 返回 resource 后的
+WebView raster fetch/decode（原图、generated thumbnail 与 filmstrip preview）也统一进入单个 priority queue，
+不会由多个 `new Image()` 预载绕过并发控制。
 
 ```mermaid
 flowchart LR
@@ -304,10 +328,16 @@ Tauri `CacheManager` 为每个 preview 请求提供当前目录快照。默认�
 `app_cache_dir()/previews`；自定义父目录会追加应用专属的 `OxyViewer Cache/previews`。位置和
 1–500 GB 容量上限写入 app data 配置，切换位置不迁移旧 artifact。
 
-preview 返回时会刷新命中文件的最近使用时间，并在后台触发 blocking 清理；同一时刻最多运行
-一个清理任务。清理按修改时间从旧到新删除，避免把目录统计和清理延迟算进首图返回。刚返回给
-WebView 的文件会在这轮清理中保留，容量小于单个 artifact 时允许暂时超限，而不是删除正在显示
-的结果。“清空缓存”同样只处理专属目录第一层的普通文件，不做任意路径的递归删除。
+legacy flat cache 命中仍可刷新文件时间；v2 artifact 文件是不可变内容，不能 touch，否则会使
+resource 记录的 file revision 失效。v2 recency/lease 位于 manifest 和 lease marker。同步 cache hit
+返回后可后台清理；异步 publication 必须在真正提交完成后清理，同一时刻最多一个维护任务。当前
+WebView resource 的磁盘 lease 会跨 cache instance 保护文件；clear 使它不再成为新 lookup 命中，但
+延迟删除活跃文件。
+
+前端 projection 可被缩略图和大图共享。`mediaResourceLease.ts` 按 resource ID 记录本地使用者，
+仅最后一位退出时释放后端租约；释放延迟一个 microtask，以免 StrictMode/effect 替换在同一轮
+中先释放再重新持有。组件仍负责定时续租和过期后的重新请求；IPC teardown 失败由后端 TTL
+兜底，迟到且无使用者的 artifact 也走同一释放入口。
 
 容量扫描是并发目录的近似快照，不是事务：原子写入可能在枚举临时文件后、读取属性前完成
 重命名。目录打开、枚举和属性读取遇到 `NotFound` 时按已消失处理；权限及其他 IO 错误仍返回。

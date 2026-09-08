@@ -130,6 +130,8 @@ pub(crate) async fn list_assets(
         if !scanning {
             progress.cache_ms = started.elapsed().as_millis() as u64;
         }
+        progress.snapshot_serialize_ms = read.snapshot_serialize_ms;
+        progress.snapshot_persist_ms = read.snapshot_persist_ms;
         progress.source = read.source.into();
         progress.stage = "sorting".into();
         let _ = app.emit("directory-browse-progress", &progress);

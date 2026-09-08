@@ -1,10 +1,10 @@
-import { convertFileSrc } from "@tauri-apps/api/core";
 import { create } from "zustand";
 import type { ImageProjection, PreviewResult, RenderLevel } from "../types";
 import {
   clearBrowserImageResources,
   discardBrowserImageResource,
 } from "./browserImageCache";
+import { mediaProtocolUrl } from "./mediaProtocolUrl";
 
 export interface ImageProjectionMirror extends Omit<ImageProjection, "result"> {
   result?: PreviewResult;
@@ -20,6 +20,12 @@ interface ImageProjectionState {
 export const imageProjectionKey = (path: string, level: RenderLevel) => `${path}\0${level}`;
 
 /** Read-only frontend mirror of image artifacts accepted by Rust. */
+function projectionResultUrl(result: Omit<PreviewResult, "url">): string {
+  if (result.resource) return mediaProtocolUrl(result.resource.url);
+  const nativeWindow = window as Window & { __TAURI_INTERNALS__?: unknown };
+  return nativeWindow.__TAURI_INTERNALS__ ? "" : result.path;
+}
+
 export const useImageProjectionStore = create<ImageProjectionState>((set) => ({
   records: {},
   accept: (projection) => set((state) => {
@@ -27,7 +33,10 @@ export const useImageProjectionStore = create<ImageProjectionState>((set) => ({
     const current = state.records[key];
     if (current && current.projectionRevision >= projection.projectionRevision) return state;
     const result = projection.result
-      ? { ...projection.result, url: convertFileSrc(projection.result.path) }
+      ? {
+          ...projection.result,
+          url: projectionResultUrl(projection.result),
+        }
       : current?.sourceRevision === projection.sourceRevision
         ? current.result
         : undefined;
@@ -59,7 +68,7 @@ export function acceptImageProjection(projection: ImageProjection) {
     // identities so the WebView cannot repaint a retained stale decode.
     discardBrowserImageResource(current.result?.url);
     discardBrowserImageResource(
-      projection.result ? convertFileSrc(projection.result.path) : undefined,
+      projection.result ? projectionResultUrl(projection.result) : undefined,
     );
   }
   useImageProjectionStore.getState().accept(projection);

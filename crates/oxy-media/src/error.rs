@@ -18,6 +18,16 @@ pub enum MediaError {
     Color(String),
     #[error("decode session was cancelled")]
     Cancelled,
+    #[error("cache was cleared while the artifact was being produced")]
+    StaleCacheGeneration,
+    #[error("source changed while the artifact was being produced")]
+    StaleSourceRevision,
+    #[error("invalid media cache manifest: {0}")]
+    CacheManifest(String),
+    #[error("invalid media cache artifact: {0}")]
+    CacheArtifact(String),
+    #[error("media resource budget is exhausted")]
+    ResourceBudgetExhausted,
     #[error("all backend attempts failed ({attempts}): {source}")]
     BackendAttempts {
         attempts: String,

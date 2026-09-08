@@ -17,14 +17,42 @@ use tauri::{Emitter, Manager, http};
 pub fn run() {
     let heif = Arc::new(oxy_media::HeifDecodeService::default());
     let protocol_heif = heif.clone();
+    let media_resources = oxy_media::shared_resource_registry();
     tauri::Builder::default()
-        .register_uri_scheme_protocol("oxy-media", move |_context, request| {
+        .register_uri_scheme_protocol("oxy-media", move |context, request| {
             let parts = request
                 .uri()
                 .path()
                 .trim_start_matches('/')
                 .split('/')
                 .collect::<Vec<_>>();
+            if parts.len() == 2 && parts[0] == "resource" {
+                let registry = &context.app_handle().state::<AppState>().media_resources;
+                let resource = registry.resolve(parts[1]);
+                return match resource {
+                    Some(resource) => {
+                        let body = registry.materialize(&resource);
+                        match body {
+                            Ok(body) => http::Response::builder()
+                                .status(http::StatusCode::OK)
+                                .header(http::header::CONTENT_TYPE, resource.media_type)
+                                .header(http::header::ACCESS_CONTROL_ALLOW_ORIGIN, "*")
+                                .body(body)
+                                .expect("valid resource protocol response"),
+                            Err(_) => http::Response::builder()
+                                .status(http::StatusCode::NOT_FOUND)
+                                .header(http::header::ACCESS_CONTROL_ALLOW_ORIGIN, "*")
+                                .body(Vec::new())
+                                .expect("valid missing resource response"),
+                        }
+                    }
+                    None => http::Response::builder()
+                        .status(http::StatusCode::NOT_FOUND)
+                        .header(http::header::ACCESS_CONTROL_ALLOW_ORIGIN, "*")
+                        .body(Vec::new())
+                        .expect("valid missing resource response"),
+                };
+            }
             let tile = if parts.len() == 5 && parts[0] == "tile" {
                 let generation = parts[2].parse().ok();
                 let x = parts[3].parse().ok();
@@ -96,8 +124,21 @@ pub fn run() {
             }
         })
         .setup(move |app| {
-            let data_dir = app.path().app_data_dir()?;
-            let preview_dir = app.path().app_cache_dir()?.join("previews");
+            let perf_harness = std::env::var_os("OXY_PERF_SCENARIO").is_some();
+            let data_dir = if perf_harness {
+                std::env::var_os("OXY_PERF_DATA_DIR")
+                    .map(std::path::PathBuf::from)
+                    .unwrap_or(app.path().app_data_dir()?)
+            } else {
+                app.path().app_data_dir()?
+            };
+            let preview_dir = if perf_harness {
+                std::env::var_os("OXY_PERF_CACHE_DIR")
+                    .map(std::path::PathBuf::from)
+                    .unwrap_or(app.path().app_cache_dir()?.join("previews"))
+            } else {
+                app.path().app_cache_dir()?.join("previews")
+            };
             let cache = Arc::new(CacheManager::load(
                 preview_dir,
                 data_dir.join("cache-settings.json"),
@@ -114,8 +155,11 @@ pub fn run() {
                 metadata.clone(),
                 library.clone(),
             );
-            let preview_queue =
-                jobs::preview::PreviewQueue::new(app.handle().clone(), library.clone());
+            let preview_queue = jobs::preview::PreviewQueue::new(
+                app.handle().clone(),
+                library.clone(),
+                cache.clone(),
+            );
             let library_index_queue = jobs::LibraryIndexQueue::new(library.clone());
             app.manage(AppState {
                 files,
@@ -123,6 +167,7 @@ pub fn run() {
                 library,
                 cache,
                 heif,
+                media_resources,
                 metadata,
                 metadata_queue,
                 preview_queue,
@@ -148,6 +193,8 @@ pub fn run() {
             request_metadata,
             get_preview,
             cancel_preview_request,
+            renew_media_resource,
+            release_media_resource,
             reconcile_preview_schedule,
             upsert_preview_schedule,
             release_preview_schedule,

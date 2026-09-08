@@ -51,21 +51,37 @@ pub(crate) async fn get_preview(
     })
     .await
     .map_err(|error| error.to_string())??;
-    let protected_path = projection
+    let result = projection
         .result
         .as_ref()
-        .map(|result| result.path.clone())
         .ok_or_else(|| "ready image projection has no artifact".to_owned())?;
-    cache.mark_used(&protected_path);
-    if cache.try_start_prune() {
-        tauri::async_runtime::spawn_blocking(move || {
-            if let Err(error) = cache.prune_after_write(&protected_path) {
-                eprintln!("preview cache pruning failed: {error}");
-            }
-            cache.finish_prune();
-        });
+    if result.persistence == Some(oxy_domain::MediaPersistence::Persisted) {
+        let protected_path = result.path.clone();
+        cache.mark_used(&protected_path);
+        if cache.try_start_prune() {
+            tauri::async_runtime::spawn_blocking(move || {
+                loop {
+                    if let Err(error) = cache.prune_after_write(&protected_path) {
+                        eprintln!("preview cache pruning failed: {error}");
+                    }
+                    if !cache.finish_prune() {
+                        break;
+                    }
+                }
+            });
+        }
     }
     Ok(projection)
+}
+
+#[tauri::command]
+pub(crate) fn renew_media_resource(resource_id: String, state: State<'_, AppState>) -> bool {
+    state.media_resources.renew(&resource_id)
+}
+
+#[tauri::command]
+pub(crate) fn release_media_resource(resource_id: String, state: State<'_, AppState>) {
+    state.media_resources.release(&resource_id);
 }
 
 #[tauri::command]
@@ -260,10 +276,14 @@ pub(crate) async fn start_heif_full(
                     if let Some(artifact) = projection.result {
                         cache.mark_used(&artifact.path);
                         if cache.try_start_prune() {
-                            if let Err(error) = cache.prune_after_write(&artifact.path) {
-                                eprintln!("preview cache pruning failed: {error}");
+                            loop {
+                                if let Err(error) = cache.prune_after_write(&artifact.path) {
+                                    eprintln!("preview cache pruning failed: {error}");
+                                }
+                                if !cache.finish_prune() {
+                                    break;
+                                }
                             }
-                            cache.finish_prune();
                         }
                     }
                 }

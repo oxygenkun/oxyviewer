@@ -5,21 +5,53 @@ use rusqlite::{Connection, OptionalExtension, params};
 use std::{
     collections::HashMap,
     path::{Component, Path, PathBuf},
-    sync::Arc,
+    sync::{
+        Arc,
+        mpsc::{self, SyncSender},
+    },
+    thread::{self, JoinHandle},
 };
 
 type DirectoryKey = (PathBuf, PathBuf);
 
-#[derive(Default)]
+const SNAPSHOT_PERSIST_QUEUE_CAPACITY: usize = 64;
+
 pub(super) struct DirectorySnapshots {
     slots: Mutex<HashMap<DirectoryKey, Arc<Slot>>>,
     pub background_scan: Mutex<()>,
+    persistence: SnapshotPersistence,
+}
+
+struct SnapshotPersistence {
+    sender: SyncSender<PersistenceMessage>,
+    worker: Mutex<Option<JoinHandle<()>>>,
+}
+
+enum PersistenceMessage {
+    Persist(Arc<Slot>),
+    Shutdown,
 }
 
 #[derive(Default)]
 struct Slot {
     state: Mutex<SnapshotState>,
     scan: Mutex<()>,
+    persistence: Mutex<PendingPersistence>,
+    persistence_fence: Mutex<()>,
+}
+
+#[derive(Default)]
+struct PendingPersistence {
+    queued: bool,
+    latest: Option<PersistenceItem>,
+}
+
+struct PersistenceItem {
+    root: PathBuf,
+    directory: PathBuf,
+    epoch: u64,
+    revision: u64,
+    assets: Arc<Vec<AssetSummary>>,
 }
 
 #[derive(Default)]
@@ -32,6 +64,7 @@ struct SnapshotState {
     error: Option<String>,
     revision: u64,
     previous: Option<(u64, Arc<Vec<AssetSummary>>)>,
+    persistence_error: Option<String>,
 }
 
 pub struct DirectoryRead {
@@ -41,6 +74,119 @@ pub struct DirectoryRead {
     pub epoch: u64,
     pub error: Option<String>,
     pub revision: u64,
+    pub snapshot_serialize_ms: u64,
+    pub snapshot_persist_ms: u64,
+}
+
+struct SnapshotPublish {
+    published: bool,
+    enqueue_ms: u64,
+}
+
+impl DirectorySnapshots {
+    pub(super) fn new(connection: Arc<Mutex<Connection>>) -> Self {
+        let (sender, receiver) = mpsc::sync_channel(SNAPSHOT_PERSIST_QUEUE_CAPACITY);
+        let worker = thread::Builder::new()
+            .name("directory-snapshot-persistence".into())
+            .spawn(move || {
+                while let Ok(message) = receiver.recv() {
+                    match message {
+                        PersistenceMessage::Persist(slot) => {
+                            persist_pending_snapshots(&connection, &slot);
+                        }
+                        PersistenceMessage::Shutdown => break,
+                    }
+                }
+            })
+            .expect("directory snapshot persistence worker must start");
+        Self {
+            slots: Mutex::new(HashMap::new()),
+            background_scan: Mutex::new(()),
+            persistence: SnapshotPersistence {
+                sender,
+                worker: Mutex::new(Some(worker)),
+            },
+        }
+    }
+
+    fn enqueue(&self, slot: Arc<Slot>, item: PersistenceItem) -> Result<(), String> {
+        let mut pending = slot.persistence.lock();
+        pending.latest = Some(item);
+        if pending.queued {
+            return Ok(());
+        }
+        pending.queued = true;
+        drop(pending);
+        self.persistence
+            .sender
+            .send(PersistenceMessage::Persist(slot))
+            .map_err(|error| error.to_string())
+    }
+}
+
+impl Drop for DirectorySnapshots {
+    fn drop(&mut self) {
+        let _ = self.persistence.sender.send(PersistenceMessage::Shutdown);
+        if let Some(worker) = self.persistence.worker.lock().take() {
+            let _ = worker.join();
+        }
+    }
+}
+
+fn persist_pending_snapshots(connection: &Mutex<Connection>, slot: &Slot) {
+    loop {
+        let item = {
+            let mut pending = slot.persistence.lock();
+            let Some(item) = pending.latest.take() else {
+                pending.queued = false;
+                return;
+            };
+            item
+        };
+        let json = match serde_json::to_string(item.assets.as_ref()) {
+            Ok(json) => json,
+            Err(error) => {
+                record_persistence_error(slot, &item, error.to_string());
+                continue;
+            }
+        };
+        let _fence = slot.persistence_fence.lock();
+        {
+            let state = slot.state.lock();
+            if state.epoch != item.epoch
+                || state.revision != item.revision
+                || state
+                    .assets
+                    .as_ref()
+                    .is_none_or(|assets| !Arc::ptr_eq(assets, &item.assets))
+            {
+                continue;
+            }
+        }
+        let result = connection.lock().execute(
+            "INSERT INTO directory_snapshots(root_path,directory_path,assets_json) VALUES (?1,?2,?3)
+             ON CONFLICT(root_path,directory_path) DO UPDATE SET assets_json=excluded.assets_json",
+            params![
+                item.root.to_string_lossy(),
+                item.directory.to_string_lossy(),
+                json
+            ],
+        );
+        let mut state = slot.state.lock();
+        if state.epoch == item.epoch && state.revision == item.revision {
+            match result {
+                Ok(_) => state.persistence_error = None,
+                Err(error) => state.persistence_error = Some(error.to_string()),
+            }
+        }
+    }
+}
+
+fn record_persistence_error(slot: &Slot, item: &PersistenceItem, error: String) {
+    let mut state = slot.state.lock();
+    if state.epoch == item.epoch && state.revision == item.revision {
+        state.persistence_error = Some(error);
+    }
 }
 
 pub(super) fn ensure_schema(connection: &Connection) -> Result<(), rusqlite::Error> {
@@ -109,6 +255,8 @@ impl Library {
                         epoch: state.epoch,
                         error: state.error.clone(),
                         revision,
+                        snapshot_serialize_ms: 0,
+                        snapshot_persist_ms: 0,
                     })
                     .ok_or(LibraryError::StaleDirectorySnapshot);
             }
@@ -117,7 +265,8 @@ impl Library {
                     "SELECT assets_json FROM directory_snapshots WHERE root_path=?1 AND directory_path=?2",
                     params![root.to_string_lossy(), directory.to_string_lossy()], |row| row.get(0),
                 ).optional()?;
-                let has_snapshot_record = json.is_some();
+                let has_snapshot_record =
+                    json.is_some() || self.has_ancestor_snapshot_tombstone(root, directory)?;
                 state.assets = json
                     .and_then(|json| serde_json::from_str(&json).ok())
                     .map(Arc::new);
@@ -150,6 +299,8 @@ impl Library {
                     epoch: state.epoch,
                     error: state.error.clone(),
                     revision: state.revision,
+                    snapshot_serialize_ms: 0,
+                    snapshot_persist_ms: 0,
                 });
             }
         }
@@ -165,12 +316,15 @@ impl Library {
                     epoch: state.epoch,
                     error: state.error.clone(),
                     revision: state.revision,
+                    snapshot_serialize_ms: 0,
+                    snapshot_persist_ms: 0,
                 });
             }
             state.epoch
         };
         let assets = self.scan_browse_directory(root, directory, report)?;
-        if !self.publish_directory(root, directory, &slot, epoch, assets.clone())? {
+        let publish = self.publish_directory(root, directory, &slot, epoch, assets.clone())?;
+        if !publish.published {
             return Err(LibraryError::StaleDirectorySnapshot);
         }
         let state = slot.state.lock();
@@ -188,6 +342,8 @@ impl Library {
             epoch,
             error: None,
             revision: state.revision,
+            snapshot_serialize_ms: 0,
+            snapshot_persist_ms: publish.enqueue_ms,
         })
     }
 
@@ -220,28 +376,50 @@ impl Library {
         &self,
         root: &Path,
         directory: &Path,
-        slot: &Slot,
+        slot: &Arc<Slot>,
         epoch: u64,
         assets: Arc<Vec<AssetSummary>>,
-    ) -> Result<bool, LibraryError> {
-        let json = serde_json::to_string(assets.as_ref())?;
-        let mut state = slot.state.lock();
-        if state.epoch != epoch {
-            return Ok(false);
+    ) -> Result<SnapshotPublish, LibraryError> {
+        let fence = slot.persistence_fence.lock();
+        let revision = {
+            let mut state = slot.state.lock();
+            if state.epoch != epoch {
+                return Ok(SnapshotPublish {
+                    published: false,
+                    enqueue_ms: 0,
+                });
+            }
+            state.previous = state.assets.take().map(|assets| (state.revision, assets));
+            state.revision += 1;
+            state.assets = Some(assets.clone());
+            state.loaded = true;
+            state.validated = true;
+            state.validating = false;
+            state.error = None;
+            state.persistence_error = None;
+            state.revision
+        };
+        drop(fence);
+        let enqueue_started = std::time::Instant::now();
+        if let Err(error) = self.directory_snapshots.enqueue(
+            slot.clone(),
+            PersistenceItem {
+                root: root.to_owned(),
+                directory: directory.to_owned(),
+                epoch,
+                revision,
+                assets,
+            },
+        ) {
+            let mut state = slot.state.lock();
+            if state.epoch == epoch && state.revision == revision {
+                state.persistence_error = Some(error);
+            }
         }
-        self.connection.lock().execute(
-            "INSERT INTO directory_snapshots(root_path,directory_path,assets_json) VALUES (?1,?2,?3)
-             ON CONFLICT(root_path,directory_path) DO UPDATE SET assets_json=excluded.assets_json",
-            params![root.to_string_lossy(), directory.to_string_lossy(), json],
-        )?;
-        state.previous = state.assets.take().map(|assets| (state.revision, assets));
-        state.revision += 1;
-        state.assets = Some(assets);
-        state.loaded = true;
-        state.validated = true;
-        state.validating = false;
-        state.error = None;
-        Ok(true)
+        Ok(SnapshotPublish {
+            published: true,
+            enqueue_ms: enqueue_started.elapsed().as_millis() as u64,
+        })
     }
 
     /// A single background directory scan at a time. Failed scans retain the
@@ -264,7 +442,8 @@ impl Library {
                 self.foreground.wait_for_background();
                 report(progress);
             })
-            .and_then(|assets| self.publish_directory(root, directory, &slot, epoch, assets));
+            .and_then(|assets| self.publish_directory(root, directory, &slot, epoch, assets))
+            .map(|publish| publish.published);
         let mut state = slot.state.lock();
         if state.epoch != epoch {
             return Ok(false);
@@ -300,10 +479,18 @@ impl Library {
 
     pub(super) fn invalidate_snapshot_root(&self, root: &Path) -> Result<(), LibraryError> {
         let slots = self.directory_snapshots.slots.lock();
-        let mut states = slots
+        let matching = slots
             .iter()
             .filter(|((stored, _), _)| stored == root)
-            .map(|(_, slot)| slot.state.lock())
+            .map(|(_, slot)| slot)
+            .collect::<Vec<_>>();
+        let _persistence_fences = matching
+            .iter()
+            .map(|slot| slot.persistence_fence.lock())
+            .collect::<Vec<_>>();
+        let mut states = matching
+            .iter()
+            .map(|slot| slot.state.lock())
             .collect::<Vec<_>>();
         for state in &mut states {
             state.epoch += 1;
@@ -322,14 +509,45 @@ impl Library {
         Ok(())
     }
 
+    fn has_ancestor_snapshot_tombstone(
+        &self,
+        root: &Path,
+        directory: &Path,
+    ) -> Result<bool, LibraryError> {
+        let connection = self.read_connection();
+        let tombstones = connection
+            .prepare(
+                "SELECT directory_path FROM directory_snapshots
+                 WHERE root_path=?1 AND assets_json=''",
+            )?
+            .query_map([root.to_string_lossy()], |row| {
+                row.get::<_, String>(0).map(PathBuf::from)
+            })?
+            .collect::<Result<Vec<_>, _>>()?;
+        Ok(tombstones
+            .iter()
+            .any(|tombstone| directory.starts_with(tombstone)))
+    }
+
     /// Explicit refresh and file operations invalidate both memory and disk,
     /// including descendant snapshots when a folder was moved or deleted.
     pub fn invalidate_directory_snapshots(&self, directory: &Path) -> Result<(), LibraryError> {
+        let directory = directory
+            .canonicalize()
+            .unwrap_or_else(|_| directory.to_owned());
         let slots = self.directory_snapshots.slots.lock();
-        let mut states = slots
+        let matching = slots
             .iter()
-            .filter(|((_, path), _)| path.starts_with(directory))
-            .map(|(_, slot)| slot.state.lock())
+            .filter(|((_, path), _)| path.starts_with(&directory))
+            .map(|(_, slot)| slot)
+            .collect::<Vec<_>>();
+        let _persistence_fences = matching
+            .iter()
+            .map(|slot| slot.persistence_fence.lock())
+            .collect::<Vec<_>>();
+        let mut states = matching
+            .iter()
+            .map(|slot| slot.state.lock())
             .collect::<Vec<_>>();
         for state in &mut states {
             state.epoch += 1;
@@ -352,9 +570,19 @@ impl Library {
             })?
             .collect::<Result<std::collections::HashSet<_>, _>>()?;
         paths.extend(slots.keys().cloned());
+        let registered_roots = connection
+            .prepare("SELECT path FROM library_roots")?
+            .query_map([], |row| row.get::<_, String>(0).map(PathBuf::from))?
+            .collect::<Result<Vec<_>, _>>()?;
+        paths.extend(
+            registered_roots
+                .into_iter()
+                .filter(|root| directory.starts_with(root))
+                .map(|root| (root, directory.clone())),
+        );
         let transaction = connection.transaction()?;
         for (root, path) in paths {
-            if path.starts_with(directory) {
+            if path.starts_with(&directory) {
                 // A tombstone prevents a stale completed root index from
                 // reseeding this explicitly invalidated directory on restart.
                 transaction.execute("INSERT INTO directory_snapshots(root_path,directory_path,assets_json) VALUES (?1,?2,'')
@@ -379,6 +607,179 @@ mod tests {
         thread,
     };
     use tempfile::tempdir;
+
+    #[test]
+    fn memory_snapshot_reads_do_not_wait_for_background_sqlite_persistence() {
+        let volume = tempdir().unwrap();
+        let root = volume.path().canonicalize().unwrap();
+        fs::write(root.join("one.jpg"), "photo").unwrap();
+        let library = Library::in_memory().unwrap();
+        let slot = library.directory_slot(&root, &root).unwrap();
+        let assets = Arc::new(oxy_fs::scan_index_assets(&root).unwrap());
+        let connection = library.connection.lock();
+        library
+            .publish_directory(&root, &root, &slot, 0, assets)
+            .unwrap();
+        let mut persistence_is_waiting = false;
+        for _ in 0..100 {
+            if slot.persistence_fence.try_lock().is_none() {
+                persistence_is_waiting = true;
+                break;
+            }
+            thread::sleep(std::time::Duration::from_millis(5));
+        }
+        assert!(persistence_is_waiting);
+        let (read_tx, read_rx) = mpsc::channel();
+        thread::scope(|scope| {
+            scope.spawn(|| {
+                let read = library.browse_directory(&root, &root, |_| {}).unwrap();
+                read_tx.send(read.source).unwrap();
+            });
+            assert_eq!(
+                read_rx
+                    .recv_timeout(std::time::Duration::from_secs(1))
+                    .unwrap(),
+                "memory"
+            );
+            drop(connection);
+        });
+    }
+
+    #[test]
+    fn background_persistence_failure_does_not_revoke_the_memory_snapshot() {
+        let volume = tempdir().unwrap();
+        let root = volume.path().canonicalize().unwrap();
+        fs::write(root.join("one.jpg"), "photo").unwrap();
+        let library = Library::in_memory().unwrap();
+        library
+            .connection
+            .lock()
+            .execute("DROP TABLE directory_snapshots", [])
+            .unwrap();
+        let slot = library.directory_slot(&root, &root).unwrap();
+        let assets = Arc::new(oxy_fs::scan_index_assets(&root).unwrap());
+        let publish = library
+            .publish_directory(&root, &root, &slot, 0, assets.clone())
+            .unwrap();
+        assert!(publish.published);
+
+        for _ in 0..100 {
+            if slot.state.lock().persistence_error.is_some() {
+                break;
+            }
+            thread::sleep(std::time::Duration::from_millis(5));
+        }
+        assert!(slot.state.lock().persistence_error.is_some());
+        let read = library.browse_directory(&root, &root, |_| {}).unwrap();
+        assert!(Arc::ptr_eq(&read.assets, &assets));
+        assert_eq!(read.source, "memory");
+        assert!(read.error.is_none());
+    }
+
+    #[test]
+    fn stale_queued_snapshot_cannot_revive_an_invalidated_record() {
+        let volume = tempdir().unwrap();
+        let root = volume.path().canonicalize().unwrap();
+        fs::write(root.join("one.jpg"), "photo").unwrap();
+        let library = Library::in_memory().unwrap();
+        library
+            .connection
+            .lock()
+            .execute(
+                "INSERT INTO directory_snapshots(root_path,directory_path,assets_json) VALUES (?1,?2,'')",
+                params![root.to_string_lossy(), root.to_string_lossy()],
+            )
+            .unwrap();
+        let slot = library.directory_slot(&root, &root).unwrap();
+        let assets = Arc::new(oxy_fs::scan_index_assets(&root).unwrap());
+        {
+            let mut state = slot.state.lock();
+            state.assets = Some(assets.clone());
+            state.epoch = 2;
+            state.revision = 2;
+        }
+        {
+            let mut pending = slot.persistence.lock();
+            pending.queued = true;
+            pending.latest = Some(PersistenceItem {
+                root: root.clone(),
+                directory: root.clone(),
+                epoch: 1,
+                revision: 1,
+                assets,
+            });
+        }
+
+        persist_pending_snapshots(&library.connection, &slot);
+
+        let json: String = library
+            .connection
+            .lock()
+            .query_row(
+                "SELECT assets_json FROM directory_snapshots WHERE root_path=?1 AND directory_path=?2",
+                params![root.to_string_lossy(), root.to_string_lossy()],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert!(json.is_empty());
+    }
+
+    #[test]
+    fn newer_queued_snapshot_coalesces_and_is_restart_durable() {
+        let cache = tempdir().unwrap();
+        let volume = tempdir().unwrap();
+        let root = volume.path().join("photos");
+        fs::create_dir(&root).unwrap();
+        let root = root.canonicalize().unwrap();
+        let database = cache.path().join("library.sqlite");
+        fs::write(root.join("one.jpg"), "one").unwrap();
+        let first_assets = Arc::new(oxy_fs::scan_index_assets(&root).unwrap());
+        fs::write(root.join("two.jpg"), "two").unwrap();
+        let latest_assets = Arc::new(oxy_fs::scan_index_assets(&root).unwrap());
+        let library = Library::open(&database).unwrap();
+        let slot = library.directory_slot(&root, &root).unwrap();
+        let mut state = slot.state.lock();
+        state.assets = Some(latest_assets.clone());
+        state.loaded = true;
+        state.validated = true;
+        state.revision = 2;
+        library
+            .directory_snapshots
+            .enqueue(
+                slot.clone(),
+                PersistenceItem {
+                    root: root.clone(),
+                    directory: root.clone(),
+                    epoch: 0,
+                    revision: 1,
+                    assets: first_assets,
+                },
+            )
+            .unwrap();
+        library
+            .directory_snapshots
+            .enqueue(
+                slot.clone(),
+                PersistenceItem {
+                    root: root.clone(),
+                    directory: root.clone(),
+                    epoch: 0,
+                    revision: 2,
+                    assets: latest_assets,
+                },
+            )
+            .unwrap();
+        drop(state);
+        drop(library);
+
+        fs::rename(&root, volume.path().join("offline")).unwrap();
+        let cached = Library::open(&database)
+            .unwrap()
+            .browse_directory(&root, &root, |_| panic!("must restore the queued snapshot"))
+            .unwrap();
+        assert_eq!(cached.assets.len(), 2);
+        assert_eq!(cached.source, "snapshot");
+    }
 
     #[test]
     fn completed_directory_survives_restart_without_a_root_index_or_volume() {
@@ -540,6 +941,45 @@ mod tests {
             .unwrap();
         assert!(read.assets.is_empty());
         assert_eq!(read.source, "filesystem");
+    }
+
+    #[test]
+    fn unbrowsed_destination_tombstone_blocks_index_seed_for_its_descendants() {
+        let cache = tempdir().unwrap();
+        let volume = tempdir().unwrap();
+        let root = volume.path().canonicalize().unwrap();
+        let destination = root.join("destination");
+        let nested = destination.join("nested");
+        fs::create_dir_all(&nested).unwrap();
+        fs::write(nested.join("stale.jpg"), "old").unwrap();
+        let database = cache.path().join("library.sqlite");
+        let library = Library::open(&database).unwrap();
+        library.add_root(&root).unwrap();
+        library.index_root(&root).unwrap();
+
+        fs::remove_file(nested.join("stale.jpg")).unwrap();
+        fs::write(nested.join("current.jpg"), "new").unwrap();
+        library
+            .invalidate_directory_snapshots(&destination)
+            .unwrap();
+        drop(library);
+
+        let library = Library::open(&database).unwrap();
+        let tombstone: String = library
+            .connection
+            .lock()
+            .query_row(
+                "SELECT assets_json FROM directory_snapshots
+                 WHERE root_path=?1 AND directory_path=?2",
+                params![root.to_string_lossy(), destination.to_string_lossy()],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert!(tombstone.is_empty());
+        let read = library.browse_directory(&root, &nested, |_| {}).unwrap();
+        assert_eq!(read.source, "filesystem");
+        assert_eq!(read.assets.len(), 1);
+        assert_eq!(read.assets[0].name, "current.jpg");
     }
 
     #[test]
