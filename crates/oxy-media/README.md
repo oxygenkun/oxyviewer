@@ -141,7 +141,24 @@ native detail、表示、方向、色彩、锐化和 policy revision 决定，�
 它从本次已解码、未锐化的规范像素（Windows FFmpeg 路径为已取得 JPEG tiles 的拼接结果）生成 Full
 cache，不再次解码源 HEIF；显示锐化只作用于发布瓦片。
 
-publisher 的有界队列和 pending-byte budget 控制后台工作；resource registry 另有 entry/memory budget。
+publisher 的有界队列和 pending-byte budget 控制后台工作。`ResourceRegistryLimits` 显式区分
+512 项 entry、encoded 常驻内存和协议 materialization。encoded 上限在 shared registry 初始化时
+计算一次，为 `max(1 GiB, system RAM / 8)`；探测失败回退 1 GiB，不预分配。macOS/Linux 使用现有
+workspace `libc` 的 sysctl/sysconf，Windows 使用现有 `windows` 的 GlobalMemoryStatusEx。
+file/staged/managed payload 不计入 encoded bytes，staged 数量/磁盘字节另行记录，暂不单独背压。
+协议始终保持独立的 4-response / 128 MiB reservation，不随系统内存增加。测试显式注入限制，
+包括真实 32 MiB × 4 分块触发 128 MiB 边界的压力测试。
+
+新发布和重复交付的 descriptor 有 5 秒宽限，前端首次 renew 后获得 30 秒活动 lease，每 10 秒续租。
+Thumbnail 和 HEIF artifact renderer 仅持有 displayed + pending，替代图 onLoad 后释放旧图；
+本地引用计数保护跨组件共享和 StrictMode 重挂载。release 把资源置于 LRU 淘汰首位，下一次
+publication/renew 清理已 release/过期且无 read lease 的 entry；协议读取和 staged → managed
+切换仍通过 RAII 保护。后台节流可导致资源过期，返回后 renew-false 会重新获取 descriptor；
+重建 ID 使用现有 projection sequence 发布新 revision，旧 URL 不会悄然变更内容。
+
+容量错误分别报告 entry、encoded memory、materialized count/bytes 的 current/limit/requested。
+registry 还记录当前及峰值 entries/encoded bytes、UI/read lease、released/expired 和 staged 用量。
+HEIF Full 的容量错误不进入 8192px fallback，保留已显示的过渡图。
 协议 materialization reservation 只覆盖 Rust 生成 `Response<Vec<u8>>` body 前的复制，不覆盖 Tauri
 接管 body 后到 WebView 消费完成的生命周期。
 

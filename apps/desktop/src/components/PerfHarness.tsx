@@ -1,3 +1,4 @@
+import { runResourceStress } from "../lib/resourceStress";
 import { useEffect, useRef } from "react";
 import { writePerfReport } from "../lib/api";
 import {
@@ -59,6 +60,10 @@ export function PerfHarness({
   assetsLoading,
   onOpenPath,
 }: PerfHarnessProps) {
+  const assetsRef = useRef(assets);
+  assetsRef.current = assets;
+  const stressRef = useRef(false);
+  const stressAbort = useRef<AbortController | undefined>(undefined);
   const openedRef = useRef(false);
   const firstPageRef = useRef(false);
   const selectedRef = useRef(false);
@@ -102,6 +107,7 @@ export function PerfHarness({
     if (
       selectedRef.current
       || doneRef.current
+      || Boolean(scenario.resourceStress)
       || !scenario.selectName
       || scenario.scrollToEnd
       || !session
@@ -117,9 +123,30 @@ export function PerfHarness({
   }, [assets, assetsLoading, scenario, session]);
 
   useEffect(() => {
-    const finalize = (reason: "complete" | "timeout") => {
+    const controller = new AbortController();
+    stressAbort.current = controller;
+    return () => controller.abort();
+  }, []);
+
+  useEffect(() => {
+    if (!scenario.resourceStress || !session || assetsLoading || stressRef.current) return;
+    const controller = stressAbort.current!;
+    // StrictMode may clean up the initial effect before any work starts.
+    queueMicrotask(() => {
+      if (controller.signal.aborted) return;
+      stressRef.current = true;
+      void runResourceStress(scenario.resourceStress!, () => assetsRef.current, controller.signal)
+        .catch((error) => {
+          if (!controller.signal.aborted) perfMark("resource:stress-failed", { message: String(error) });
+        });
+    });
+  }, [scenario, session?.id, assetsLoading]);
+
+  useEffect(() => {
+    const finalize = (reason: "complete" | "timeout" | "failed") => {
       if (doneRef.current) return;
       doneRef.current = true;
+      stressAbort.current?.abort();
       perfMark("harness:done", { reason });
       void writePerfReport(scenario.reportPath, {
         scenario: scenario.name,
@@ -129,6 +156,10 @@ export function PerfHarness({
       });
     };
     const check = () => {
+      if (perfSnapshot().some((mark) => mark.name === "resource:stress-failed")) {
+        finalize("failed");
+        return;
+      }
       if (scenario.awaitMarks.every((token) => markSatisfied(token, scenario))) finalize("complete");
     };
     const unsubscribe = onPerfMark(check);

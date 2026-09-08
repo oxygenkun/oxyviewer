@@ -59,8 +59,8 @@
 
 ## 重现和验证
 
-以下命令使用本次测量工作区中的 `grid-scroll` 探针；探针依赖尚未提交的资源压力测试代码，
-与本次媒体修复分开提交。仅检出媒体修复提交时，runner 尚不支持 `--grid-scroll`。
+以下命令使用随资源预算与生命周期修复一起提交的 `grid-scroll` 探针。
+仅检出先前的媒体延迟修复提交 `7553218` 时，runner 尚不支持 `--grid-scroll`。
 
 ```bash
 pnpm tauri build --no-bundle

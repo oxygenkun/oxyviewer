@@ -153,7 +153,7 @@ fn execute(
             Err(error) if !heif_full_error_allows_fallback(&error) => Err(error),
             Err(error) => {
                 eprintln!(
-                    "full-detail HEIF decode failed for {}: {error}",
+                    "full-detail HEIF artifact attempt failed for {}: {error}",
                     path.display()
                 );
                 heif::preview(
@@ -179,9 +179,15 @@ fn execute(
 }
 
 fn heif_full_error_allows_fallback(error: &MediaError) -> bool {
+    if let MediaError::BackendAttempts { source, .. } = error {
+        return heif_full_error_allows_fallback(source);
+    }
     !matches!(
         error,
-        MediaError::Cancelled | MediaError::StaleCacheGeneration | MediaError::StaleSourceRevision
+        MediaError::Cancelled
+            | MediaError::StaleCacheGeneration
+            | MediaError::StaleSourceRevision
+            | MediaError::ResourceBudgetExhausted { .. }
     )
 }
 
@@ -198,6 +204,14 @@ mod tests {
             &MediaError::StaleSourceRevision
         ));
         assert!(!heif_full_error_allows_fallback(&MediaError::Cancelled));
+        assert!(!heif_full_error_allows_fallback(
+            &MediaError::ResourceBudgetExhausted {
+                budget: "entry",
+                current: 512,
+                limit: 512,
+                requested: 1,
+            }
+        ));
         assert!(heif_full_error_allows_fallback(
             &MediaError::NativeDecoderUnavailable
         ));

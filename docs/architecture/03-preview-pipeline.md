@@ -184,6 +184,26 @@ gate 只允许一个参与统一 gate 的 decode 活跃。高优先级可以插�
 RAW full development 是例外。它可能耗时数十秒，使用独立 `RAW_FULL_DECODE_LOCK`，不进入
 统一 gate，否则一张 full RAW 会阻塞所有缩略图。
 
+### 资源注册表预算与前端租约（2026-09-09）
+
+entry 上限为 512，encoded 常驻内存上限为 `max(1 GiB, system RAM / 8)`，在初始化时一次性探测，
+失败回退 1 GiB。使用 workspace 已有 libc/windows API；文件型产物只计 entry 和 staged 磁盘统计，
+不计 encoded bytes。协议复制单独限制 4 个并发 / 128 MiB，且仅覆盖 Rust materialization 阶段，
+不包含 Tauri 接管之后的 body 或 WebView 解码内存。
+
+descriptor 首次发布及再次交付使用 5 秒宽限，前端 renew 认领后为 30 秒，每 10 秒续租。
+组件只认领当前 displayed 和等待 load 的 pending，替代图显示后释放旧资源；Thumbnail、Loupe
+及 HEIF artifact renderer 的共享 ID 由前端引用计数协调。释放/过期资源在后续 publication/renew
+时回收，read lease 仍保护文件及在途读取。后台 timer 节流后可 refetch 恢复，不承诺零闪烁。
+
+恢复一个已淘汰资源会产生新 ID，必须通过 Library 的既有 projection sequence 增加 revision，
+不能让前端因旧 revision 拒收新 descriptor。恢复与普通 transition 共用 projection 锁和 validAt
+围栏（文件验证在锁外，提交时复查 revision）；React Query 返回 null 表示成功完成，图片事实仍由
+projection store 提供。HEIF artifact 的 Full 请求使用 UUID 订阅，同组件 AbortSignal 接入既有
+cancel_preview_request，切图会取消等待，迟到 artifact/session 分别释放或取消；已运行 native 调用仍
+不能抢占。取消先于请求进入队列的短窗口由最多 1024 项、120 秒过期的 admission tombstone 覆盖。
+HEIF 完整文件 onLoad 后卸载下层 preview 组件；原有 tile 底图与传输策略保留。
+
 ## 7. Dispatcher：唯一格式分派入口
 
 Tauri `get_preview` 的逻辑是：
@@ -212,12 +232,13 @@ flowchart TD
     policy -->|JPEG/PNG/WebP| original["original"]
     rawPreview --> rawFallback{LibRaw 失败?}
     rawFallback -->|是| systemPreview
-    heifFull --> heifFallback{full 失败?}
+    heifFull --> heifFallback{允许回退的 backend 失败?}
     heifFallback -->|是| heif8192["8192 HEIF preview"]
 ```
 
 格式 fallback 放在 `oxy-media` 而不是 command 中，因此单元测试和非 Tauri 调用也能得到
-同样策略。
+同样策略。取消、source/cache generation 围栏及任何 ResourceBudgetExhausted 都禁止 HEIF Full
+回退；容量错误记录具体 budget 和 current/limit/requested，不伪装成 decoder 失败。
 
 ## 8. RAW 路径
 

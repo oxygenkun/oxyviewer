@@ -332,7 +332,8 @@ mod tests {
         std::fs::create_dir(&source_dir).unwrap();
         let artifact = source_dir.join("artifact.jpg");
         std::fs::write(&artifact, b"immutable resource bytes").unwrap();
-        let registry = oxy_media::ResourceRegistry::new(1, 1024);
+        let registry =
+            oxy_media::ResourceRegistry::new(oxy_media::ResourceRegistryLimits::new(1, 1024));
         let resource = registry
             .register_file(
                 &artifact,

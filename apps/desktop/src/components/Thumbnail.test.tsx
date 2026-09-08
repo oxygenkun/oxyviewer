@@ -15,7 +15,7 @@ import { Thumbnail } from "./Thumbnail";
 const apiMocks = vi.hoisted(() => ({
   tauri: false,
   generatedPreview: vi.fn(),
-  renewMediaResource: vi.fn(() => Promise.resolve(true)),
+  renewMediaResource: vi.fn((_id: string) => Promise.resolve(true)),
   releaseMediaResource: vi.fn(() => Promise.resolve()),
 }));
 
@@ -154,6 +154,68 @@ describe("filmstrip thumbnail display retention", () => {
     await render("visible");
     expect(apiMocks.releaseMediaResource).toHaveBeenCalledWith("resource-1");
     expect(apiMocks.renewMediaResource).toHaveBeenCalledWith("resource-2");
+  });
+
+  it("leases only displayed and pending, then releases preview after full loads", async () => {
+    const raw = { ...asset, kind: "raw" as const, path: "/photos/a.arw" };
+    const projectStage = (level: "thumbnail" | "preview" | "full", revision = 1) => {
+      acceptImageProjection({
+        path: raw.path, sourceRevision: "source", projectionRevision: revision,
+        validAt: 1, status: "ready", level,
+        result: { path: `/cache/${level}.jpg`, width: 100, height: 100,
+          kind: "embedded", renderLevel: level,
+          resource: { resourceId: level, url: `oxy-media://localhost/resource/${level}`, mediaType: "image/jpeg" },
+        },
+      });
+    };
+    projectStage("thumbnail");
+    const mount = () => root.render(<StrictMode><QueryClientProvider client={client}>
+      <Thumbnail asset={raw} large />
+    </QueryClientProvider></StrictMode>);
+    await act(async () => mount());
+    await act(async () => container.querySelector(".thumbnail__pending-image")!.dispatchEvent(new Event("load")));
+    await act(async () => projectStage("preview"));
+    expect(apiMocks.renewMediaResource).toHaveBeenCalledWith("thumbnail");
+    expect(apiMocks.renewMediaResource).toHaveBeenCalledWith("preview");
+    expect(apiMocks.releaseMediaResource).not.toHaveBeenCalledWith("thumbnail");
+    await act(async () => container.querySelector(".thumbnail__pending-image")!.dispatchEvent(new Event("load")));
+    expect(apiMocks.releaseMediaResource).toHaveBeenCalledWith("thumbnail");
+    await act(async () => projectStage("full"));
+    expect(apiMocks.releaseMediaResource).not.toHaveBeenCalledWith("preview");
+    await act(async () => container.querySelector(".thumbnail__pending-image")!.dispatchEvent(new Event("load")));
+    expect(apiMocks.releaseMediaResource).toHaveBeenCalledWith("preview");
+    apiMocks.renewMediaResource.mockClear();
+    await act(async () => projectStage("thumbnail", 2));
+    expect(apiMocks.renewMediaResource).not.toHaveBeenCalledWith("thumbnail");
+    expect(apiMocks.renewMediaResource).not.toHaveBeenCalledWith("preview");
+    expect(container.querySelectorAll("img")).toHaveLength(1);
+  });
+
+  it("preserves the displayed resource ID across projection replacement until load", async () => {
+    project(2, "old");
+    await render("visible");
+    await act(async () => container.querySelector("img")!.dispatchEvent(new Event("load")));
+    await act(async () => project(3, "new"));
+    expect(apiMocks.releaseMediaResource).not.toHaveBeenCalledWith("old");
+    expect(apiMocks.renewMediaResource).toHaveBeenCalledWith("new");
+    await act(async () => container.querySelector(".thumbnail__pending-image")!.dispatchEvent(new Event("load")));
+    expect(apiMocks.releaseMediaResource).toHaveBeenCalledWith("old");
+  });
+
+  it("refetches an expired descriptor once and renews active images every ten seconds", async () => {
+    vi.useFakeTimers();
+    try {
+      project(2, "stale");
+      apiMocks.renewMediaResource.mockImplementation((id) => Promise.resolve(id !== "stale"));
+      apiMocks.generatedPreview.mockImplementation(async () => { project(3, "fresh"); });
+      await render("visible");
+      expect(apiMocks.generatedPreview).toHaveBeenCalledTimes(1);
+      expect(client.getQueryCache().getAll().some((query) => query.state.status === "error")).toBe(false);
+      await act(async () => vi.advanceTimersByTimeAsync(10_000));
+      expect(apiMocks.renewMediaResource).toHaveBeenCalledWith("fresh");
+      expect(apiMocks.generatedPreview).toHaveBeenCalledTimes(1);
+      expect(container.querySelector("img")?.getAttribute("src")).toContain("fresh");
+    } finally { vi.useRealTimers(); apiMocks.renewMediaResource.mockResolvedValue(true); }
   });
 
   it("aborts a pending Interim upgrade when its TanStack subscriber unmounts", async () => {

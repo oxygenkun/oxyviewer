@@ -73,6 +73,36 @@ describe("generated preview cancellation", () => {
     });
   });
 
+  it("releases a resource whose IPC result arrives after cancellation", async () => {
+    vi.stubGlobal("window", { __TAURI_INTERNALS__: {} });
+    let resolve!: (value: unknown) => void;
+    mocks.invoke.mockImplementation((command: string) => command === "get_preview"
+      ? new Promise((done) => { resolve = done; }) : Promise.resolve(true));
+    const controller = new AbortController();
+    const request = generatedPreview(asset, "thumbnail", controller.signal);
+    controller.abort();
+    await expect(request).rejects.toMatchObject({ name: "AbortError" });
+    resolve({ result: { resource: { resourceId: "late" } } });
+    await new Promise((done) => setTimeout(done, 0));
+    expect(mocks.invoke).toHaveBeenCalledWith("release_media_resource", { resourceId: "late" });
+  });
+
+  it("cancels a pending HEIF artifact request and releases its late result", async () => {
+    vi.stubGlobal("window", { __TAURI_INTERNALS__: {} });
+    let resolve!: (value: unknown) => void;
+    mocks.invoke.mockImplementation((command: string) => command === "start_heif_full"
+      ? new Promise((done) => { resolve = done; }) : Promise.resolve(true));
+    const controller = new AbortController();
+    const request = startHeifFull(asset.path, 5, false, controller.signal);
+    const requestId = mocks.invoke.mock.calls.find(([command]) => command === "start_heif_full")![1].requestId;
+    controller.abort();
+    expect(mocks.invoke).toHaveBeenCalledWith("cancel_preview_request", { path: asset.path, level: "full", requestId });
+    resolve({ delivery: "artifact", projection: { result: { resource: { resourceId: "late-full" } } } });
+    await expect(request).rejects.toMatchObject({ name: "AbortError" });
+    await new Promise((done) => setTimeout(done, 0));
+    expect(mocks.invoke).toHaveBeenCalledWith("release_media_resource", { resourceId: "late-full" });
+  });
+
   it("uses a registered media resource before its managed path exists", async () => {
     vi.stubGlobal("window", { __TAURI_INTERNALS__: {} });
     mocks.invoke.mockResolvedValue({
@@ -331,6 +361,7 @@ describe("HEIF full delivery", () => {
       );
     }
     expect(mocks.invoke).toHaveBeenCalledWith("start_heif_full", {
+      requestId: expect.any(String),
       path: asset.path,
       generation: 7,
       displaySharpening: false,

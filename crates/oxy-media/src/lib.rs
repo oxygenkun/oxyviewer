@@ -33,7 +33,8 @@ pub use policy::preview_policy_revision;
 pub use publication::{
     ArtifactPublisher, PersistenceCompletion, PersistenceFailure, PersistenceStatus,
     ProducedArtifact, ProducedPayload, PublishedArtifact, ResourceDescriptor, ResourceHandle,
-    ResourcePayload, ResourceReadLease, ResourceRegistry, shared_resource_registry,
+    ResourcePayload, ResourceReadLease, ResourceRegistry, ResourceRegistryLimits,
+    ResourceRegistryStats, resource_memory_budget, shared_resource_registry,
 };
 
 /// Resolves the Sony HIF test fixture, which is archived outside git (see

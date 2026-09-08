@@ -41,6 +41,7 @@ function parseArgs(argv) {
     folder: undefined,
     selectName: undefined,
     scrollEnd: false,
+    gridScroll: false,
     coldCache: false,
     awaitMarks: [],
   };
@@ -54,11 +55,13 @@ function parseArgs(argv) {
     else if (arg === "--folder") args.folder = argv[++index];
     else if (arg === "--select-name") args.selectName = argv[++index];
     else if (arg === "--scroll-end") args.scrollEnd = true;
+    else if (arg === "--grid-scroll") args.gridScroll = true;
     else if (arg === "--cold-cache") args.coldCache = true;
     else if (arg === "--await-mark") args.awaitMarks.push(argv[++index]);
     else if (arg === "--help" || arg === "-h") {
       console.log("Usage: node scripts/perf-e2e.mjs [--scenario name]... [--runs N] [--update-baseline] [--verbose] [--app path]");
       console.log("       node scripts/perf-e2e.mjs --folder path --select-name file [--scroll-end] [--cold-cache] [--await-mark token]");
+      console.log("       node scripts/perf-e2e.mjs --folder path --grid-scroll [--cold-cache] [--runs N]");
       process.exit(0);
     } else {
       console.error(`Unknown argument: ${arg}`);
@@ -159,13 +162,16 @@ function prepareFileFixture(name, fixture) {
   const directory = path.join(GENERATED_DIR, name);
   const destination = path.join(directory, path.basename(source));
   const markerPath = path.join(directory, ".marker.json");
-  const marker = JSON.stringify({ source, mtimeMs: fs.statSync(source).mtimeMs });
+  const marker = JSON.stringify({ source, mtimeMs: fs.statSync(source).mtimeMs, count: fixture.count ?? 1 });
   if (fs.existsSync(markerPath) && fs.readFileSync(markerPath, "utf8") === marker) {
     return directory;
   }
   fs.rmSync(directory, { recursive: true, force: true });
   fs.mkdirSync(directory, { recursive: true });
   linkOrCopy(source, destination);
+  for (let index = 2; index <= (fixture.count ?? 1); index += 1) {
+    linkOrCopy(source, path.join(directory, `COPY_${String(index).padStart(6, "0")}${path.extname(source)}`));
+  }
   fs.writeFileSync(markerPath, marker);
   return directory;
 }
@@ -259,6 +265,7 @@ function runScenarioOnce(
         const finish = () => {
           kill();
           try {
+            fs.writeFileSync(`${scenarioPayload.reportPath}.stderr.log`, stderr);
             const report = JSON.parse(fs.readFileSync(scenarioPayload.reportPath, "utf8"));
             resolve({ ok: true, report, stderr });
           } catch (error) {
@@ -362,6 +369,11 @@ function computeMetrics(report, selectName) {
     );
     if (loaded) metrics.viewportJumpPreviewMs = loaded.t - viewportJump;
   }
+  const scrollReady = report.marks.filter((mark) => mark.name === "grid-scroll:ready");
+  if (scrollReady.length) {
+    metrics.gridScrollFirstMs = Math.max(...scrollReady.map((mark) => mark.detail.firstReadyMs));
+    metrics.gridScrollAllMs = Math.max(...scrollReady.map((mark) => mark.detail.allReadyMs));
+  }
   // Backend-reported durations (recorded only, no absolute budgets).
   for (const mark of report.marks) {
     if (mark.name === "preview:result" && mark.detail?.diagnostics?.totalMs !== undefined) {
@@ -394,6 +406,9 @@ function p95(values) {
 
 async function main() {
   const args = parseArgs(process.argv.slice(2));
+  if (args.gridScroll && (!args.folder || args.scrollEnd || args.selectName)) {
+    throw new Error("--grid-scroll requires --folder and cannot be combined with --scroll-end or --select-name");
+  }
   const config = JSON.parse(fs.readFileSync(SCENARIOS_PATH, "utf8"));
   if (args.folder) {
     if (args.scrollEnd && !args.selectName) {
@@ -402,13 +417,16 @@ async function main() {
     config.scenarios["manual-folder"] = {
       fixture: { type: "directory", path: args.folder },
       selectName: args.selectName,
-      enterLoupe: !args.scrollEnd,
+      enterLoupe: !args.scrollEnd && !args.gridScroll,
       scrollToEnd: args.scrollEnd,
+      resourceStress: args.gridScroll ? "grid-scroll" : undefined,
       awaitMarks: args.awaitMarks.length > 0
         ? args.awaitMarks
-        : args.selectName
-          ? ["image:loaded"]
-          : ["harness:first-page-painted"],
+        : args.gridScroll
+          ? ["resource:stress-complete"]
+          : args.selectName
+            ? ["image:loaded"]
+            : ["harness:first-page-painted"],
       coldCache: args.coldCache,
       runs: 1,
       timeoutMs: 60_000,
@@ -460,7 +478,7 @@ async function main() {
     };
     fs.rmSync(path.join(REPORTS_DIR, ".runtime", name), { recursive: true, force: true });
     const selectName = scenario.selectName
-      ?? (scenario.fixture.type === "file" ? path.basename(scenario.fixture.path) : undefined);
+      ?? (!scenario.resourceStress && scenario.fixture.type === "file" ? path.basename(scenario.fixture.path) : undefined);
     console.log(`\n== ${name} == runs=${runs} coldCache=${Boolean(scenario.coldCache)} folder=${folder}`);
 
     const payload = (reportName, awaitMarks = scenario.awaitMarks) => ({
@@ -469,6 +487,7 @@ async function main() {
       selectName,
       enterLoupe: scenario.enterLoupe,
       scrollToEnd: scenario.scrollToEnd,
+      resourceStress: scenario.resourceStress,
       awaitMarks: awaitMarks ?? ["harness:first-page-painted"],
       timeoutMs: scenario.timeoutMs,
       reportPath: path.join(REPORTS_DIR, reportName),
@@ -521,6 +540,11 @@ async function main() {
         console.error(`  run ${run + 1}: FAILED to produce report: ${result.error}`);
         if (result.stderr) console.error(`  stderr tail: ${result.stderr.slice(-2000)}`);
         failures.push(`${name} run ${run + 1}: ${result.error}`);
+        continue;
+      }
+      if (scenario.resourceStress && /media resource .*budget is exhausted/.test(result.stderr)) {
+        failures.push(`${name} run ${run + 1}: resource budget exhausted`);
+        console.error(result.stderr.slice(-4000));
         continue;
       }
       if (scenario.expectedHeifBackend) {

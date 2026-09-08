@@ -19,6 +19,15 @@ pub(crate) fn get_perf_scenario() -> Option<PerfScenario> {
     serde_json::from_str(&raw).ok()
 }
 
+/// Explicit diagnostics, available to debug builds and isolated perf runs.
+#[tauri::command]
+pub(crate) fn get_media_resource_stats() -> Result<oxy_domain::ResourceRegistryStats, String> {
+    if !cfg!(debug_assertions) && get_perf_scenario().is_none() {
+        return Err("resource diagnostics require an explicit performance scenario".into());
+    }
+    Ok(oxy_media::shared_resource_registry().stats())
+}
+
 /// Returns a cheap point-in-time view of all native queues. The command is
 /// unavailable in release builds and never starts background diagnostics.
 #[tauri::command]

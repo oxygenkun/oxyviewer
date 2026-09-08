@@ -14,7 +14,7 @@ import {
   touchBrowserImage,
 } from "../lib/browserImageCache";
 import { perfMark } from "../lib/perfProbe";
-import { retainMediaResource } from "../lib/mediaResourceLease";
+import { retainMediaResource, releaseUnretainedMediaResource } from "../lib/mediaResourceLease";
 import { imageProjectionKey, useImageProjectionStore } from "../lib/imageProjection";
 import {
   assetRenderQueryKey,
@@ -47,6 +47,7 @@ interface ThumbnailProps {
 interface DisplayedImage {
   assetId: string;
   source: string;
+  resourceId?: string;
 }
 
 function hashSeed(value: string) {
@@ -121,6 +122,9 @@ export function Thumbnail({
         requestPriority,
         queueOrder,
       );
+      // The projection store owns image data; null records successful query
+      // completion without React Query treating undefined as a failed request.
+      return null;
     },
     enabled: enabled && isTauri() && Boolean(previewLevel),
     staleTime: Infinity,
@@ -138,6 +142,9 @@ export function Thumbnail({
         "loupe",
         queueOrder,
       );
+      // The projection store owns image data; null records successful query
+      // completion without React Query treating undefined as a failed request.
+      return null;
     },
     enabled: enabled
       && isTauri()
@@ -152,23 +159,20 @@ export function Thumbnail({
   const thumbnailSource = thumbnailProjection?.result;
   const previewSource = previewProjection?.result;
   const fullSource = fullProjection?.result;
-  const resourceIds = [
-    thumbnailSource?.resource?.resourceId,
-    previewSource?.resource?.resourceId,
-    fullSource?.resource?.resourceId,
-  ].filter((id): id is string => Boolean(id));
-  const resourceIdentity = [...new Set(resourceIds)].sort().join("\u0000");
   const preparedSource = firstReadyBrowserImage([
     !fullImageFailed ? fullSource?.url : undefined,
     directSource,
     previewSource?.url,
     thumbnailSource?.url,
   ]);
+  const resourceForSource = (url: string | undefined) => [thumbnailSource, previewSource, fullSource]
+    .find((result) => result?.url === url)?.resource?.resourceId;
+  const preparedResourceId = resourceForSource(preparedSource);
   const preparedSize = preparedSource ? getBrowserImageSize(preparedSource) : undefined;
   const visibleImage = displayedImage?.assetId === asset.id
     ? displayedImage
     : preparedSource
-      ? { assetId: asset.id, source: preparedSource }
+      ? { assetId: asset.id, source: preparedSource, resourceId: preparedResourceId }
       : undefined;
   const generatedSource = nextProgressiveStage(Boolean(visibleImage), [
     thumbnailSource,
@@ -184,6 +188,11 @@ export function Thumbnail({
     ? "original"
     : generatedSource?.renderLevel ?? previewStep.level;
   const pendingSource = source !== visibleImage?.source ? source : undefined;
+  const resourceIds = [visibleImage?.resourceId, !failed && pendingSource ? resourceForSource(pendingSource) : undefined]
+    .filter((id): id is string => Boolean(id));
+  const resourceIdentity = [...new Set(resourceIds)].sort().join("\u0000");
+  const projectionResourceIdentity = [thumbnailSource, previewSource, fullSource]
+    .map((result) => result?.resource?.resourceId).filter(Boolean).join("\u0000");
   const seed = hashSeed(asset.name);
   const style = {
     "--thumb-hue": `${seed}`,
@@ -213,27 +222,42 @@ export function Thumbnail({
     });
   };
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     const ids = resourceIdentity ? resourceIdentity.split("\u0000") : [];
     if (ids.length === 0) return;
     const releases = ids.map(retainMediaResource);
     let disposed = false;
+    let recovering = false;
     const renew = async () => {
+      if (recovering) return;
       const live = await Promise.all(ids.map((id) => renewMediaResource(id).catch(() => false)));
       if (disposed || live.every(Boolean)) return;
       // A bounded registry may evict an unmounted/expired descriptor while its
       // managed file remains valid. Re-enter Rust so it can register a fresh
       // current-process resource instead of retrying the immutable stale URL.
-      await Promise.all([refetchPreview(), refetchFull()]);
+      // Keep stale displayed pixels until the replacement loads, and recover
+      // only once per descriptor set instead of retrying its immutable URL.
+      recovering = true;
+      await Promise.all([
+        refetchPreview(),
+        ...(large && distinctFullLevel ? [refetchFull()] : []),
+      ]);
     };
     void renew();
-    const timer = window.setInterval(() => void renew(), 60_000);
+    const timer = window.setInterval(() => void renew(), 10_000);
     return () => {
       disposed = true;
       window.clearInterval(timer);
       releases.forEach((release) => release());
     };
-  }, [refetchFull, refetchPreview, resourceIdentity]);
+  }, [distinctFullLevel, large, refetchFull, refetchPreview, resourceIdentity]);
+
+  useEffect(() => {
+    const retained = new Set(resourceIdentity.split("\u0000"));
+    for (const id of projectionResourceIdentity.split("\u0000")) {
+      if (id && !retained.has(id)) releaseUnretainedMediaResource(id);
+    }
+  }, [projectionResourceIdentity, resourceIdentity]);
 
   useEffect(() => setFailed(false), [source]);
   useEffect(() => {
@@ -279,12 +303,12 @@ export function Thumbnail({
     // which does not reliably fire another load event to reveal it again.
     setDisplayedImage((current) => current?.assetId === asset.id
       ? current
-      : { assetId: asset.id, source: preparedSource });
-  }, [asset.id, preparedSource]);
+      : { assetId: asset.id, source: preparedSource, resourceId: preparedResourceId });
+  }, [asset.id, preparedResourceId, preparedSource]);
 
   useEffect(() => {
     setFullImageFailed(false);
-  }, [asset.id]);
+  }, [asset.id, fullSource?.resource?.resourceId]);
 
   useLayoutEffect(() => {
     if (!preparedSize || visibleImage?.source !== preparedSource) return;
@@ -384,7 +408,7 @@ export function Thumbnail({
     if (ownsFullDetailStage && large && result && result !== thumbnailSource) {
       setLoaded({ assetId: asset.id, mode: result === fullSource ? "full" : "preview" });
     }
-    if (source) setDisplayedImage({ assetId: asset.id, source });
+    if (source) setDisplayedImage({ assetId: asset.id, source, resourceId: result?.resource?.resourceId });
     onImageLoad?.(size);
   };
 

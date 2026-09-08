@@ -9,6 +9,7 @@ use crate::{
 use std::{
     collections::{HashMap, VecDeque},
     fs,
+    io::Read,
     path::{Path, PathBuf},
     sync::{
         Arc, Mutex, OnceLock,
@@ -19,7 +20,10 @@ use std::{
     time::{Duration, Instant},
 };
 
-const UI_RESOURCE_LEASE: Duration = Duration::from_secs(120);
+mod limits;
+#[cfg(test)]
+mod limits_tests;
+pub use limits::{ResourceRegistryLimits, resource_memory_budget};
 
 static RESOURCE_PROCESS_NAMESPACE: OnceLock<String> = OnceLock::new();
 static RESOURCE_ID: AtomicU64 = AtomicU64::new(0);
@@ -111,12 +115,9 @@ pub struct ResourceRegistry {
 
 struct RegistryInner {
     state: Mutex<RegistryState>,
-    max_entries: usize,
-    max_memory_bytes: usize,
+    limits: ResourceRegistryLimits,
     materialized_responses: AtomicUsize,
     materialized_bytes: AtomicUsize,
-    max_materialized_responses: usize,
-    max_materialized_bytes: usize,
 }
 
 #[derive(Default)]
@@ -126,6 +127,88 @@ struct RegistryState {
     leases: HashMap<u64, String>,
     next_lease: u64,
     memory_bytes: usize,
+    peak_memory_bytes: usize,
+    peak_entries: usize,
+}
+
+pub use oxy_domain::ResourceRegistryStats;
+
+fn registry_stats(state: &RegistryState) -> ResourceRegistryStats {
+    let now = Instant::now();
+    let mut stats = ResourceRegistryStats {
+        entries: state.entries.len(),
+        encoded_bytes: state.memory_bytes,
+        peak_encoded_bytes: state.peak_memory_bytes,
+        peak_entries: state.peak_entries,
+        ..ResourceRegistryStats::default()
+    };
+    for (id, entry) in &state.entries {
+        if entry.ui_lease_until > now {
+            stats.ui_leased += 1;
+        } else {
+            stats.released_or_expired += 1;
+        }
+        if state.leases.values().any(|leased| leased == id) {
+            stats.read_leased += 1;
+        }
+        if entry.staged_owner.is_some() {
+            stats.staged_files += 1;
+            stats.staged_bytes = stats.staged_bytes.saturating_add(
+                entry
+                    .file_revision
+                    .as_ref()
+                    .map_or(0, |revision| revision.size_bytes),
+            );
+        }
+    }
+    stats
+}
+
+fn budget_error(
+    budget: &'static str,
+    current: usize,
+    limit: usize,
+    requested: usize,
+) -> MediaError {
+    MediaError::ResourceBudgetExhausted {
+        budget,
+        current,
+        limit,
+        requested,
+    }
+}
+
+fn registry_budget_error(
+    state: &RegistryState,
+    registry: &RegistryInner,
+    bytes: usize,
+    entries: usize,
+) -> MediaError {
+    let error = if state
+        .entries
+        .len()
+        .checked_add(entries)
+        .is_none_or(|count| count > registry.limits.max_entries)
+    {
+        budget_error(
+            "entry",
+            state.entries.len(),
+            registry.limits.max_entries,
+            entries,
+        )
+    } else {
+        budget_error(
+            "encoded memory",
+            state.memory_bytes,
+            registry.limits.max_encoded_bytes,
+            bytes,
+        )
+    };
+    eprintln!(
+        "artifact publication rejected: {error}; registry={:?}",
+        registry_stats(state)
+    );
+    error
 }
 
 struct RegistryEntry {
@@ -146,7 +229,7 @@ static SHARED_PUBLISHERS: OnceLock<Mutex<HashMap<PathBuf, Arc<ArtifactPublisher>
 
 pub fn shared_resource_registry() -> ResourceRegistry {
     SHARED_REGISTRY
-        .get_or_init(|| ResourceRegistry::new(64, 128 * 1024 * 1024))
+        .get_or_init(|| ResourceRegistry::new(ResourceRegistryLimits::production()))
         .clone()
 }
 
@@ -177,16 +260,13 @@ pub(crate) fn shared_publisher(cache_dir: &Path) -> Result<Arc<ArtifactPublisher
 }
 
 impl ResourceRegistry {
-    pub fn new(max_entries: usize, max_memory_bytes: usize) -> Self {
+    pub fn new(limits: ResourceRegistryLimits) -> Self {
         Self {
             inner: Arc::new(RegistryInner {
                 state: Mutex::new(RegistryState::default()),
-                max_entries: max_entries.max(1),
-                max_memory_bytes,
+                limits,
                 materialized_responses: AtomicUsize::new(0),
                 materialized_bytes: AtomicUsize::new(0),
-                max_materialized_responses: 4,
-                max_materialized_bytes: max_memory_bytes.max(1),
             }),
         }
     }
@@ -286,13 +366,31 @@ impl ResourceRegistry {
     pub fn materialize(&self, resource: &ResourceReadLease) -> Result<Vec<u8>, MediaError> {
         let byte_size = match &resource.payload {
             ResourcePayload::Encoded(bytes) => bytes.len(),
-            ResourcePayload::File(path) => usize::try_from(fs::metadata(path)?.len())
-                .map_err(|_| MediaError::ResourceBudgetExhausted)?,
+            ResourcePayload::File(path) => {
+                usize::try_from(fs::metadata(path)?.len()).map_err(|_| {
+                    budget_error(
+                        "materialized bytes",
+                        self.inner.materialized_bytes.load(Ordering::Acquire),
+                        self.inner.limits.max_materialized_bytes,
+                        usize::MAX,
+                    )
+                })?
+            }
         };
         let _reservation = MaterializedReservation::acquire(&self.inner, byte_size)?;
         let bytes = match &resource.payload {
             ResourcePayload::Encoded(bytes) => bytes.to_vec(),
-            ResourcePayload::File(path) => fs::read(path)?,
+            ResourcePayload::File(path) => {
+                // Never grow a response beyond its reservation if an original
+                // file changes between metadata observation and reading.
+                let mut file = fs::File::open(path)?;
+                let mut bytes = vec![0; byte_size];
+                file.read_exact(&mut bytes)?;
+                if file.read(&mut [0])? != 0 {
+                    return Err(MediaError::StaleSourceRevision);
+                }
+                bytes
+            }
         };
         if let Some(expected) = &resource.file_revision {
             let actual = SourceRevision::observe(&expected.canonical_path)?;
@@ -343,6 +441,23 @@ impl ResourceRegistry {
         Ok(true)
     }
 
+    /// Republishing a live descriptor covers its new IPC handoff, without
+    /// claiming a long UI lease or shortening an existing active lease.
+    pub fn refresh_publication_grace(&self, resource_id: &str) -> bool {
+        let mut state = self
+            .inner
+            .state
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let Some(entry) = state.entries.get_mut(resource_id) else {
+            return false;
+        };
+        entry.ui_lease_until = entry
+            .ui_lease_until
+            .max(Instant::now() + self.inner.limits.publish_grace);
+        true
+    }
+
     pub fn renew(&self, resource_id: &str) -> bool {
         let mut state = self
             .inner
@@ -352,7 +467,7 @@ impl ResourceRegistry {
         let Some(entry) = state.entries.get_mut(resource_id) else {
             return false;
         };
-        entry.ui_lease_until = Instant::now() + UI_RESOURCE_LEASE;
+        entry.ui_lease_until = Instant::now() + self.inner.limits.ui_lease;
         if let Some(lease) = &entry.artifact_lease
             && lease.renew().is_err()
         {
@@ -361,6 +476,7 @@ impl ResourceRegistry {
         }
         state.lru.retain(|candidate| candidate != resource_id);
         state.lru.push_back(resource_id.to_owned());
+        remove_expired(&mut state);
         true
     }
 
@@ -376,6 +492,27 @@ impl ResourceRegistry {
             entry.ui_lease_until = Instant::now();
             state.lru.retain(|candidate| candidate != resource_id);
             state.lru.push_front(resource_id.to_owned());
+        }
+    }
+
+    pub fn limits(&self) -> ResourceRegistryLimits {
+        self.inner.limits
+    }
+
+    pub fn stats(&self) -> ResourceRegistryStats {
+        let state = self
+            .inner
+            .state
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        ResourceRegistryStats {
+            max_entries: self.inner.limits.max_entries,
+            max_encoded_bytes: self.inner.limits.max_encoded_bytes,
+            max_materialized_responses: self.inner.limits.max_materialized_responses,
+            max_materialized_bytes: self.inner.limits.max_materialized_bytes,
+            materialized_responses: self.inner.materialized_responses.load(Ordering::Acquire),
+            materialized_bytes: self.inner.materialized_bytes.load(Ordering::Acquire),
+            ..registry_stats(&state)
         }
     }
 
@@ -407,9 +544,6 @@ impl ResourceRegistry {
             ResourcePayload::Encoded(bytes) => bytes.len(),
             ResourcePayload::File(_) => 0,
         };
-        if memory_bytes > self.inner.max_memory_bytes {
-            return Err(MediaError::ResourceBudgetExhausted);
-        }
         let id = format!(
             "resource-{}-{}",
             resource_process_namespace(),
@@ -421,7 +555,7 @@ impl ResourceRegistry {
             media_type: media_type.clone(),
             payload,
             memory_bytes,
-            ui_lease_until: Instant::now() + UI_RESOURCE_LEASE,
+            ui_lease_until: Instant::now() + self.inner.limits.publish_grace,
             file_revision,
             artifact_lease,
             staged_owner,
@@ -435,6 +569,8 @@ impl ResourceRegistry {
             evict_for(&mut state, &self.inner, memory_bytes, 1)?;
             state.memory_bytes = state.memory_bytes.saturating_add(memory_bytes);
             state.entries.insert(id.clone(), entry);
+            state.peak_memory_bytes = state.peak_memory_bytes.max(state.memory_bytes);
+            state.peak_entries = state.peak_entries.max(state.entries.len());
             state.lru.push_back(id.clone());
             self.inner.acquire_locked(&mut state, &id)
         };
@@ -458,27 +594,42 @@ struct MaterializedReservation {
 
 impl MaterializedReservation {
     fn acquire(registry: &Arc<RegistryInner>, byte_size: usize) -> Result<Self, MediaError> {
-        if byte_size > registry.max_materialized_bytes {
-            return Err(MediaError::ResourceBudgetExhausted);
+        if byte_size > registry.limits.max_materialized_bytes {
+            return Err(budget_error(
+                "materialized bytes",
+                registry.materialized_bytes.load(Ordering::Acquire),
+                registry.limits.max_materialized_bytes,
+                byte_size,
+            ));
         }
         let prior_count = registry
             .materialized_responses
             .fetch_add(1, Ordering::AcqRel);
-        if prior_count >= registry.max_materialized_responses {
+        if prior_count >= registry.limits.max_materialized_responses {
             registry
                 .materialized_responses
                 .fetch_sub(1, Ordering::AcqRel);
-            return Err(MediaError::ResourceBudgetExhausted);
+            return Err(budget_error(
+                "materialized count",
+                prior_count,
+                registry.limits.max_materialized_responses,
+                1,
+            ));
         }
         if !reserve_pending_bytes(
             &registry.materialized_bytes,
-            registry.max_materialized_bytes,
+            registry.limits.max_materialized_bytes,
             byte_size,
         ) {
             registry
                 .materialized_responses
                 .fetch_sub(1, Ordering::AcqRel);
-            return Err(MediaError::ResourceBudgetExhausted);
+            return Err(budget_error(
+                "materialized bytes",
+                registry.materialized_bytes.load(Ordering::Acquire),
+                registry.limits.max_materialized_bytes,
+                byte_size,
+            ));
         }
         Ok(Self {
             registry: Arc::clone(registry),
@@ -562,17 +713,51 @@ impl RegistryInner {
     }
 }
 
+fn remove_expired(state: &mut RegistryState) {
+    // Drop obsolete file owners and encoded buffers on the next publication,
+    // even when capacity remains. Active UI and protocol readers are protected.
+    let now = Instant::now();
+    let expired: Vec<_> = state
+        .lru
+        .iter()
+        .filter(|id| {
+            state
+                .entries
+                .get(*id)
+                .is_some_and(|entry| entry.ui_lease_until <= now)
+                && !state.leases.values().any(|leased| leased == *id)
+        })
+        .cloned()
+        .collect();
+    for id in expired {
+        remove_entry(state, &id);
+    }
+}
+
 fn evict_for(
     state: &mut RegistryState,
     limits: &RegistryInner,
     additional_bytes: usize,
     additional_entries: usize,
 ) -> Result<(), MediaError> {
-    while state.entries.len().saturating_add(additional_entries) > limits.max_entries
-        || state.memory_bytes.saturating_add(additional_bytes) > limits.max_memory_bytes
+    remove_expired(state);
+    while state
+        .entries
+        .len()
+        .checked_add(additional_entries)
+        .is_none_or(|count| count > limits.limits.max_entries)
+        || state
+            .memory_bytes
+            .checked_add(additional_bytes)
+            .is_none_or(|bytes| bytes > limits.limits.max_encoded_bytes)
     {
         let Some(candidate) = state.lru.pop_front() else {
-            return Err(MediaError::ResourceBudgetExhausted);
+            return Err(registry_budget_error(
+                state,
+                limits,
+                additional_bytes,
+                additional_entries,
+            ));
         };
         let has_read_lease = state.leases.values().any(|leased| leased == &candidate);
         let has_ui_lease = state
@@ -588,7 +773,12 @@ fn evict_for(
                         .get(id)
                         .is_some_and(|entry| entry.ui_lease_until > Instant::now())
             }) {
-                return Err(MediaError::ResourceBudgetExhausted);
+                return Err(registry_budget_error(
+                    state,
+                    limits,
+                    additional_bytes,
+                    additional_entries,
+                ));
             }
             continue;
         }
@@ -1082,6 +1272,12 @@ impl ArtifactPublisher {
             return Ok(None);
         };
         let publication = &mut publications[index];
+        if !self
+            .registry
+            .refresh_publication_grace(&publication.resource.resource_id)
+        {
+            return Ok(None);
+        }
         let completion = if publication.persistence == PersistenceStatus::Scheduled {
             let (sender, receiver) = mpsc::channel();
             publication.subscribers.push(sender);
@@ -1288,8 +1484,8 @@ mod tests {
 
     #[test]
     fn resource_ids_are_unique_across_registry_instances_and_process_namespaced() {
-        let first_registry = ResourceRegistry::new(1, 16);
-        let second_registry = ResourceRegistry::new(1, 16);
+        let first_registry = ResourceRegistry::new(ResourceRegistryLimits::new(1, 16));
+        let second_registry = ResourceRegistry::new(ResourceRegistryLimits::new(1, 16));
         let register = |registry: &ResourceRegistry| {
             registry
                 .register_encoded(
@@ -1314,7 +1510,7 @@ mod tests {
     fn original_jpeg_is_registered_without_copying_or_exposing_unregistered_paths() {
         let directory = tempfile::tempdir().unwrap();
         let source = source(directory.path());
-        let registry = ResourceRegistry::new(2, 1024);
+        let registry = ResourceRegistry::new(ResourceRegistryLimits::new(2, 1024));
         let handle = registry
             .register_file(
                 &source.canonical_path,
@@ -1337,7 +1533,7 @@ mod tests {
     fn file_resource_never_serves_replacement_bytes_under_the_same_id() {
         let directory = tempfile::tempdir().unwrap();
         let source = source(directory.path());
-        let registry = ResourceRegistry::new(2, 1024);
+        let registry = ResourceRegistry::new(ResourceRegistryLimits::new(2, 1024));
         let handle = registry
             .register_file(
                 &source.canonical_path,
@@ -1392,7 +1588,7 @@ mod tests {
             unreachable!()
         };
         let path = path.clone();
-        let registry = ResourceRegistry::new(2, 1024 * 1024);
+        let registry = ResourceRegistry::new(ResourceRegistryLimits::new(2, 1024 * 1024));
         let handle = registry
             .register_file_with_lease(
                 &path,
@@ -1416,7 +1612,10 @@ mod tests {
         let directory = tempfile::tempdir().unwrap();
         let path = directory.path().join("large.jpg");
         fs::write(&path, [0_u8; 9]).unwrap();
-        let registry = ResourceRegistry::new(2, 8);
+        let registry = ResourceRegistry::new(ResourceRegistryLimits {
+            max_materialized_bytes: 8,
+            ..ResourceRegistryLimits::new(2, 8)
+        });
         let handle = registry
             .register_file(
                 &path,
@@ -1431,13 +1630,13 @@ mod tests {
         let read = registry.resolve(&handle.descriptor.resource_id).unwrap();
         assert!(matches!(
             registry.materialize(&read),
-            Err(MediaError::ResourceBudgetExhausted)
+            Err(MediaError::ResourceBudgetExhausted { .. })
         ));
     }
 
     #[test]
     fn registry_enforces_memory_budget_without_evicting_leased_resource() {
-        let registry = ResourceRegistry::new(1, 4);
+        let registry = ResourceRegistry::new(ResourceRegistryLimits::new(1, 4));
         let first = registry
             .register_encoded(
                 Arc::from([1_u8, 2, 3, 4]),
@@ -1459,7 +1658,7 @@ mod tests {
                 },
                 ArtifactRepresentation::Embedded,
             ),
-            Err(MediaError::ResourceBudgetExhausted)
+            Err(MediaError::ResourceBudgetExhausted { .. })
         ));
         registry.release(&first.descriptor.resource_id);
         drop(first);
@@ -1584,7 +1783,7 @@ mod tests {
         let directory = tempfile::tempdir().unwrap();
         let source = source(directory.path());
         let publisher = ArtifactPublisher::new(
-            ResourceRegistry::new(4, 1024 * 1024),
+            ResourceRegistry::new(ResourceRegistryLimits::new(4, 1024 * 1024)),
             Arc::new(MissingTransitionCache),
             1,
             1024 * 1024,
@@ -1631,7 +1830,7 @@ mod tests {
         let staged = backend_staging.join("native-output.jpg");
         fs::write(&staged, jpeg().as_ref()).unwrap();
         let publisher = ArtifactPublisher::new_with_staging_parent(
-            ResourceRegistry::new(4, 1024 * 1024),
+            ResourceRegistry::new(ResourceRegistryLimits::new(4, 1024 * 1024)),
             cache.clone(),
             1,
             1024 * 1024,
@@ -1653,7 +1852,7 @@ mod tests {
     #[test]
     fn registry_failure_drops_the_adopted_staged_owner() {
         let directory = tempfile::tempdir().unwrap();
-        let registry = ResourceRegistry::new(1, 1024 * 1024);
+        let registry = ResourceRegistry::new(ResourceRegistryLimits::new(1, 1024 * 1024));
         let _occupied = registry
             .register_encoded(
                 Arc::from([1_u8]),
@@ -1703,7 +1902,10 @@ mod tests {
             },
             true,
         );
-        assert!(matches!(result, Err(MediaError::ResourceBudgetExhausted)));
+        assert!(matches!(
+            result,
+            Err(MediaError::ResourceBudgetExhausted { .. })
+        ));
         drop(owner);
         assert!(!adopted_path.exists());
     }
@@ -1717,7 +1919,7 @@ mod tests {
         fs::create_dir(&staging).unwrap();
         let staged = staging.join("native-output.jpg");
         fs::write(&staged, jpeg().as_ref()).unwrap();
-        let registry = ResourceRegistry::new(4, 1024 * 1024);
+        let registry = ResourceRegistry::new(ResourceRegistryLimits::new(4, 1024 * 1024));
         let publisher = ArtifactPublisher::new(registry.clone(), cache, 1, 1024 * 1024, 1);
         let published = publisher
             .publish(
@@ -1772,7 +1974,7 @@ mod tests {
             generation: Arc::new(AtomicU64::new(7)),
         });
         let publisher = ArtifactPublisher::new(
-            ResourceRegistry::new(4, 1024 * 1024),
+            ResourceRegistry::new(ResourceRegistryLimits::new(4, 1024 * 1024)),
             cache,
             1,
             1024 * 1024,
@@ -1831,7 +2033,7 @@ mod tests {
             generation: Arc::new(AtomicU64::new(7)),
         });
         let publisher = ArtifactPublisher::new(
-            ResourceRegistry::new(4, 1024 * 1024),
+            ResourceRegistry::new(ResourceRegistryLimits::new(4, 1024 * 1024)),
             cache,
             1,
             1024 * 1024,
@@ -1897,7 +2099,7 @@ mod tests {
             generation: Arc::new(AtomicU64::new(7)),
         });
         let publisher = ArtifactPublisher::new(
-            ResourceRegistry::new(4, 1024 * 1024),
+            ResourceRegistry::new(ResourceRegistryLimits::new(4, 1024 * 1024)),
             cache.clone(),
             1,
             1024 * 1024,
@@ -1959,7 +2161,7 @@ mod tests {
             generation: Arc::new(AtomicU64::new(7)),
         });
         let publisher = ArtifactPublisher::new(
-            ResourceRegistry::new(4, 1024 * 1024),
+            ResourceRegistry::new(ResourceRegistryLimits::new(4, 1024 * 1024)),
             cache,
             1,
             1024 * 1024,
@@ -2012,7 +2214,7 @@ mod tests {
             generation: Arc::new(AtomicU64::new(7)),
         });
         let publisher = ArtifactPublisher::new(
-            ResourceRegistry::new(4, 1024 * 1024),
+            ResourceRegistry::new(ResourceRegistryLimits::new(4, 1024 * 1024)),
             cache,
             1,
             1024 * 1024,

@@ -26,8 +26,15 @@ pub enum MediaError {
     CacheManifest(String),
     #[error("invalid media cache artifact: {0}")]
     CacheArtifact(String),
-    #[error("media resource budget is exhausted")]
-    ResourceBudgetExhausted,
+    #[error(
+        "media resource {budget} budget is exhausted: current={current}, limit={limit}, requested={requested}"
+    )]
+    ResourceBudgetExhausted {
+        budget: &'static str,
+        current: usize,
+        limit: usize,
+        requested: usize,
+    },
     #[error("all backend attempts failed ({attempts}): {source}")]
     BackendAttempts {
         attempts: String,

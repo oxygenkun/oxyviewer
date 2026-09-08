@@ -1,6 +1,6 @@
 # 媒体缓存与产物发布重构计划
 
-状态：媒体缓存实现与 macOS 本机验收已完成。用户已取消 100k 冷启动 300 ms 的严格完成门禁，保留其参考指标；Windows/Linux 文件锁、rename/sharing 与 packaged WebView 矩阵尚未运行，用户选择暂不提供环境，因此完整跨平台验收未完成。本文保留最初设计及按时间追加的实施记录；以本状态和最新记录为准。
+状态：媒体缓存实现与 macOS 本机验收已完成。用户已取消 100k 冷启动 300 ms 的严格完成门禁，保留其参考指标；Windows/Linux 文件锁、rename/sharing 与 packaged WebView 矩阵尚未运行，用户选择暂不提供环境，因此完整跨平台验收未完成。实际浏览发现 resource registry 的统一 64 项/128 MiB 限制会让 HEIF Full 的文件型产物因 entry 耗尽而无法发布；文末追加的资源预算与生命周期修复已实施，并通过 macOS 本机压力验收。本文保留最初设计及按时间追加的实施记录；以本状态和最新记录为准。
 
 ## 1. 业务目标与已确认决策
 
@@ -655,3 +655,214 @@ build、Tauri packaged build，并使用隔离数据目录验证 resource URL/CS
   51/39 ms；warm HIF all-tiles median544 ms。临时日志：`/tmp/oxy-quality-rust.log`、
   `/tmp/oxy-quality-build.log`、`/tmp/oxy-quality-e2e.log`。
 - 本轮没有进行大规模模块拆分、改变缓存策略或扩大性能优化范围；跨平台验收状态保持不变。
+
+## 资源预算与生命周期修复计划（已实施，2026-09-09）
+
+### 问题与已确认结论
+
+实际浏览 Sony HIF 时出现：
+
+```text
+full-detail HEIF decode failed: media resource budget is exhausted
+failed to publish HEIF full projection: media resource budget is exhausted
+```
+
+这里的 resource 是 `oxy-media://localhost/resource/<id>` 对应的后端注册记录，包含不可变资源 ID、
+尺寸、MIME/表示、文件版本、原文件/managed artifact/staged file 路径或共享 encoded bytes，以及 UI、
+协议读取和缓存 artifact lease。它不是解码线程或 GPU 纹理；文件型资源通常不长期打开文件句柄，且在
+registry 中记为 0 encoded bytes，但仍占一个 entry，并可能保护 staged 文件或 managed artifact。
+
+当前所有资源统一受 64 项/128 MiB 限制。每张图片的 thumbnail、preview、full 都可能各占一项；
+`Thumbnail` 当前还会同时续租三个 projection，而不是只保留正在显示和准备替换的资源。新资源注册时
+自动获得 120 秒 UI lease，前端每 60 秒续租；当 64 项都处于 UI/read lease 时，LRU 无法淘汰第 65 项。
+HEIF Full 使用 staged/managed JPEG，encoded 内存占用为 0，因此本次首个失败确定属于 entry 容量，
+不是 128 MiB encoded 内存耗尽。dispatcher 又把发布容量错误当成可回退的 HEIF 解码错误，重复尝试
+8192px projection，产生第二条同因错误和不必要工作。
+
+资源预算必须继续有界，以防漏 release、encoded bytes、staged 文件、artifact 保护和 custom protocol
+URL 无限增长；但 entry 数量、encoded 常驻内存和协议临时响应不能继续共用同一个过低预算。
+
+### 目标行为
+
+1. 正在显示的图片及正在完成浏览器加载的替代图不被淘汰。
+2. full 真正显示后立即释放已被替代的 thumbnail/preview；稳定状态每个组件通常只持有一个资源，渐进
+   切换期间最多持有 displayed + pending 两个资源。
+3. 请求完成但未被组件认领的资源只获得短暂发布宽限期；组件切换或卸载继续显式立即 release。
+4. 漏 release 或 WebView 异常不能永久占用 registry；活动图片通过短 lease 心跳可无限期查看。
+5. entry、encoded memory、staged disk 和协议响应使用独立预算及诊断。
+6. 容量错误不能伪装成 decoder/backend 失败，也不能触发不能解决容量问题的 HEIF fallback。
+
+### 预算模型
+
+把 `ResourceRegistry::new(max_entries, max_memory_bytes)` 重构为可注入的明确配置，示意：
+
+```rust
+struct ResourceRegistryLimits {
+    max_entries: usize,
+    max_encoded_bytes: usize,
+    max_materialized_responses: usize,
+    max_materialized_bytes: usize,
+    publish_grace: Duration,
+    ui_lease: Duration,
+}
+```
+
+生产环境采用：
+
+| 预算 | 已确认值 |
+| --- | --- |
+| registry entry | 512 项，作为泄漏保险；活动资源仍不可强制淘汰 |
+| encoded resource 常驻内存 | `max(1 GiB, system_total_memory / 8)` |
+| 系统内存探测失败 | 回退 1 GiB |
+| 低于 8 GiB 的设备 | 按用户决定优先保证 1 GiB，允许超过物理内存的 1/8 |
+| protocol materialization 并发 | 保持 4 个响应 |
+| protocol materialization bytes | 与 registry 解耦并保持 128 MiB |
+| 未认领资源发布宽限期 | 5 秒 |
+| 已认领活动 UI lease | 30 秒 |
+| 前端活动资源续租间隔 | 10 秒 |
+
+动态值是允许占用的上限，不在启动时预分配。只让 encoded resource registry 使用动态内存预算；Tauri
+`Response<Vec<u8>>` 的临时 materialization 继续使用独立的 4-response/128 MiB 限制，不能随机器内存
+扩大到数 GiB。系统总内存只在初始化时探测一次，使用 checked arithmetic，并把 `u64` 到 `usize` 的
+转换限制在当前平台可表示范围。实际实现若新增跨平台系统信息依赖，须同步 workspace 依赖和相关文档。
+
+staged/managed/original 文件不计入 encoded bytes。entry 先统一提高到 512，并继续度量 staged 临时文件
+的数量与磁盘字节；若压力测试证明需要单独背压，再增加 staged count/byte budget，而不能把文件大小错误
+计入 encoded 常驻内存。
+
+测试不通过 `cfg(test)` 暗中改变生产公式。单元和压力测试显式注入 limits；内存压力测试使用
+128 MiB `max_encoded_bytes`，既保证边界可实际触发，也确保测试与生产运行同一套 reservation 代码。
+
+### 实施步骤
+
+#### 1. 先建立失败回归与可观测性
+
+- 复现 64 个仍受保护的文件型资源导致第 65 个 staged HEIF publication 失败。
+- 复现一个 loupe 同时持有 thumbnail、preview、full，以及 full 显示后低等级资源仍未释放。
+- 记录 registry 当前 entries、encoded bytes、UI-leased、read-leased、released/expired 数量和本次请求量。
+- 将统一 `ResourceBudgetExhausted` 诊断细分为 entry、encoded memory、materialized count/bytes；错误至少
+  包含当前值、上限和请求值，便于确定是哪种预算耗尽。
+
+#### 2. 收窄前端资源所有权
+
+- `Thumbnail` 不再根据全部 thumbnail/preview/full projection 构造 lease 集合，只保留当前
+  `displayedImage` 对应资源与尚未完成 load 的 `pendingSource` 对应资源。
+- 新图完成浏览器 load 并提升为 displayed 后，立即 release 被替代的低等级资源，不等待组件卸载。
+- 请求迟到、组件已 disposed、结果从未成为候选或被 revision/generation fence 拒绝时，调用
+  `releaseUnretainedMediaResource`。
+- 保留 `mediaResourceLease.ts` 的前端引用计数：Thumbnail 与 Loupe 共享同一 resource ID 时，只有最后
+  一个 owner 离开才向 Rust release；继续覆盖 StrictMode 的同一 microtask 释放/重取。
+- 组件卸载、切图和 projection replacement 继续立即 release，不把 30 秒 lease 当作正常回收路径。
+
+#### 3. 拆分发布宽限期和活动 lease
+
+- registry entry 初始进入 5 秒 `PublishedGrace`，只负责覆盖 Rust 返回、IPC 和 React 接管窗口。
+- 前端首次成功 renew 后进入 30 秒 `ActiveUiLease`，每 10 秒续租；只要仍显示即可无限期查看。
+- release 立即把 entry 放到 LRU 首位并允许淘汰；过期资源同样允许淘汰。
+- 窗口后台导致 JS timer 被节流时，资源可以过期；回到前台后沿用现有 renew-false → refetch 恢复路径。
+  managed cache 和源文件不因此丢失，不把恢复描述为零闪烁保证。
+
+#### 4. 接入动态 encoded 内存预算
+
+- 增加可独立测试的 `resource_memory_budget(total_memory)` 纯函数，规则固定为
+  `max(1 GiB, total_memory / 8)`；探测失败返回 1 GiB。
+- 生产 shared registry 初始化时一次性计算 limits；构造函数和测试替身继续支持显式注入。
+- encoded `Arc<[u8]>` 按实际长度 reservation；file/staged payload 保持 0 encoded bytes。
+- 协议 response 的 count/byte reservation 从 registry encoded 上限解耦，保持 4/128 MiB。
+- entry 上限调整为 512；不通过扩大内存预算掩盖 entry 生命周期问题，也不强制淘汰 active UI/read lease。
+
+#### 5. 修正 HEIF 错误与回退
+
+- `heif_full_error_allows_fallback` 将 `ResourceBudgetExhausted` 与取消、cache generation/source revision
+  fence 一样排除在 fallback 之外；容量不足时保留当前渐进 preview，不重复执行 8192px 解码/发布。
+- 将 `full-detail HEIF decode failed` 改成能区分 decode 与 artifact publication 的日志；若错误来自
+  publication，明确报告对应 entry/memory budget。
+- `failed to publish HEIF full projection` 不再紧跟一次同因无效 fallback；前端保持已有低等级图片而非
+  清空画面。
+
+### 测试与验收
+
+Rust 单元/压力测试至少覆盖：
+
+1. 以 32 MiB 分块注册四个 encoded resource，达到注入的 128 MiB 上限；额外 1 byte 被拒绝。
+2. release 并淘汰一个 32 MiB resource 后可再次注册，计数和字节 reservation 无泄漏。
+3. staged/file resource 不增加 encoded bytes，但受独立 entry 上限约束。
+4. 系统内存输入 4/8/16/32/64 GiB 时，预算分别为 1/1/2/4/8 GiB；探测失败为 1 GiB。
+5. materialization 始终独立限制为 4 个并发、128 MiB，不继承生产动态预算。
+6. 5 秒未认领资源可淘汰；30 秒活动 lease 受 renew 保护；release 立即允许淘汰；read lease 在协议读取
+   结束前仍阻止删除或 staged → managed transition。
+7. entry 满时先淘汰 released/expired LRU，绝不淘汰活动 UI/read lease。
+8. `ResourceBudgetExhausted` 不允许 HEIF Full fallback，其余合法 backend 错误保持原回退顺序。
+
+前端测试至少覆盖：
+
+1. 渐进加载期间同时续租 displayed + pending。
+2. pending load 成功后释放旧 thumbnail/preview，只保留提升后的资源。
+3. full 已可见时不再因 projection 中仍存在低等级结果而续租它们。
+4. Thumbnail/Loupe 共享 resource ID、StrictMode 重挂载、迟到结果、切图和 IPC teardown 失败。
+5. renew 因后台超时返回 false 时重新取得当前进程 descriptor，且旧 stale URL 不被反复重试。
+
+端到端压力场景至少覆盖连续滚动 500 张以上照片、高密度网格与最大 overscan、快速切换多张 HIF
+loupe、thumbnail → preview → full 升级、cache clear/prune 与活动读取竞争。验证 registry 数量回落到
+实际 displayed/pending 工作集附近，encoded 峰值不越过预算，且不再出现 HEIF Full 因 entry 耗尽失败。
+
+实施后运行：
+
+```bash
+pnpm check
+pnpm test
+pnpm build
+cargo fmt --all --check
+cargo clippy --workspace --all-targets -- -D warnings
+cargo test --workspace
+```
+
+涉及实现预计集中在：
+
+- `crates/oxy-media/src/publication.rs`
+- `crates/oxy-media/src/error.rs`
+- `crates/oxy-media/src/pipeline/dispatcher.rs`
+- `apps/desktop/src/components/Thumbnail.tsx`
+- `apps/desktop/src/components/HeifTileCanvas.tsx`
+- `apps/desktop/src/lib/mediaResourceLease.ts`
+- 对应 Rust/Vitest 测试及实施完成后的正式架构、media README、性能记录
+
+### 交付顺序
+
+1. 失败回归测试和预算分类诊断。
+2. 前端只持有 displayed + pending，并及时释放迟到/被替代结果。
+3. 5 秒发布宽限、30 秒活动 lease 和 10 秒续租。
+4. limits 配置化、512 entry 与生产 `max(1 GiB, RAM / 8)` encoded 预算。
+5. HEIF publication 容量错误不 fallback，并修正日志语义。
+6. 128 MiB 注入压力测试、500+ 图片滚动/HIF loupe 压测和完整跨边界检查。
+
+以下实施记录对应本节计划；问题描述保留修复前状态。
+
+
+### 实施与本机验收记录（2026-09-09）
+
+- registry 改为可注入 `ResourceRegistryLimits`，生产 512 项、encoded
+  `max(1 GiB, RAM / 8)`；启动时探测一次系统内存，失败回退 1 GiB。file/staged 仍记 0 encoded bytes，
+  协议 materialization 保持独立 4 个/128 MiB。诊断包含当前/峰值 entries、encoded bytes、UI/read lease、
+  released/expired、staged count/bytes 和临时响应 reservation。
+- 发布宽限 5 秒，UI lease 30 秒，前端每 10 秒续租。仅保留 displayed + pending，浏览器 load 后释放旧图，
+  保留共享引用计数和 StrictMode 保护；迟到及 revision fence 拒绝的资源也释放。
+- 过期句柄恢复时更新现有 projection revision，避免新 URL 被旧 revision fence 永久拒绝；同一有效句柄再次
+  交给前端时刷新发布宽限，保留已持有的活动 lease。资源恢复的文件检查移出全局 projection 写锁。
+- HIF Full 真正显示后卸载其底层低清 Thumbnail。切图取消尚未返回的 Full 请求，并以有界、短时记录覆盖
+  cancel 先于队列 admission 的竞态，避免快速切图积压旧 Full 解码。过期 artifact 改由 tiles 恢复时，
+  旧图保留到新画布完成后释放，这条逻辑不依赖 debug/perf 探针。
+- 容量错误报告具体 budget/current/limit/requested，不再触发 HEIF 解码 fallback。
+- 128 MiB 注入测试覆盖四个 32 MiB resource 达上限、额外 1 byte 拒绝、release 后恢复；另有 64 个活动
+  file 阻止第 65 项的旧问题回归、512 项配置成功、600 个文件工作集、grace/renew/read lease、staged
+  transition、动态内存预算和独立协议 reservation 测试。
+- `pnpm check`、157 个前端测试、生产 build、`cargo fmt --all --check`、workspace Clippy（`-D warnings`）
+  和 workspace tests 均通过。Rust 合计 516 passed / 15 ignored，包含真实 HIF/RAW 原生测试；ignored 是已有
+  外部夹具或环境相关测试。原生测试在允许 macOS ImageIO 的环境运行。
+- 高密度网格和列表各实际加载 600 张照片，entry 峰值分别 70/28，最终 40/19，与 DOM 显示数相同。
+  80 张不同路径 HIF 快速切换后回访 8 张，三轮全部 Full 实际 load，entry 峰值 31/32/32、最终均 24；
+  同时覆盖 cache clear/prune 与活动协议
+  读取。没有预算耗尽，资源回落到实际工作集附近。JPEG/RAW/HIF 六个冷暖预览场景各三轮也通过
+  800 ms 冷 / 150 ms 暖门禁。详见 `docs/PERFORMANCE.md` 的本次测量记录。
+
+验收范围仍是 macOS 本机；Windows/Linux 原生文件锁和 packaged WebView 矩阵未运行，既有跨平台限制不变。

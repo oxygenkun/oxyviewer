@@ -75,9 +75,17 @@ Runner 由 mark 对计算出命名指标，`scenarios.json` 的 `budgets` 引用
 | `fullMs` | `image:loaded`（stage=full）− `harness:select`（仅记录，不计入 800 ms 预算） |
 | `heifFirstTileMs` / `heifAllTilesMs` | 对应 mark − `harness:select` |
 | `viewportJumpPreviewMs` | 目标网格缩略图上屏 − `harness:viewport-jump` |
+| `gridScrollFirstMs` / `gridScrollAllMs` | 连续滚动停止后首张 / 全部可见图片 ready；取每轮最慢停止位置 |
 | `backendDecodeMs` 等 | 取自 `preview:result` / `heif:backend-*` 的 diagnostics，仅记录 |
 
 ## 场景与图片矩阵
+
+任意真实目录可使用 `node scripts/perf-e2e.mjs --folder '<path>' --grid-scroll --cold-cache --runs 3`。
+`grid-scroll` 每段连续滚动 32 次、间隔 16 ms，依次停在 45%、100%、20%，再检查整个实际可见
+视口的 displayed images。每 25 ms 采样，15 秒内未补齐则失败；只记录耗时，不默认给任意 NAS
+套用本地 SSD 预算。`--grid-scroll` 不与 `--scroll-end` / `--select-name` 混用。
+这补充了原资源预算压力测试每次滚动等待 350 ms、主要检查内存上限的场景。
+案例与前后对照见 [NAS HIF grid 延迟](tasks/nas-hif-grid-latency.md)。
 
 场景定义在 `tests/perf/scenarios.json`，起步矩阵：
 
@@ -169,3 +177,24 @@ node scripts/perf-e2e.mjs --update-baseline
   探针为准。
 - 10 万文件目录在 2026-09-02 的首次 release 计时约为 2.3 s，尚未达到
   300 ms 预算；优化后应在相同场景重跑并更新 `docs/PERFORMANCE.md`。
+
+
+## Resource registry 压力验收
+
+```bash
+pnpm tauri build --no-bundle
+node scripts/perf-e2e.mjs --scenario resource-stress-grid --scenario resource-stress-list --scenario resource-stress-hif --runs 1
+```
+
+grid/list 各生成 600 个独立路径的 JPEG，使用生产的高密度竖图网格/列表和固定 overscan，逐视口滚动，
+要求至少 500 个不同文件实际触发 image onLoad。HIF 使用真实 fixture 的 80 个独立路径，先每 120 ms
+切换选择，再要求末尾 8 张各自 Full 实际显示。测试不更改照片内容；生成的路径位于 ignored perf fixture
+目录，hardlink 只用于复用输入字节。
+
+脚本使用隔离 data/cache，并在最多 4 个真实 resource URL 读取期间执行 clear 和 prune。它检查 registry
+peak entries/encoded bytes 不越过配置，等待发布宽限和一次 10 秒心跳后检查数量回落到 displayed/pending
+工作集附近。`resource:stats` / `resource:stress-complete` 包含真实计数与上限；错误写入
+`resource:stress-failed` 并使场景失败。每轮 stderr 保存在报告旁的 `.json.stderr.log`，容量耗尽也使压力场景
+失败。`get_media_resource_stats` 仅在 debug 或显式 `OXY_PERF_SCENARIO` 下可用，不启动后台采样器。
+
+这些是 macOS packaged WebView 压力场景；Windows/Linux 原生环境须分别运行，不能用本机报告替代。

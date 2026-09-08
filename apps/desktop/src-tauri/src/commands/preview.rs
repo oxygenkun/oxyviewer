@@ -210,6 +210,7 @@ pub(crate) fn get_heif_capabilities(state: State<'_, AppState>) -> Vec<HeifCapab
 
 #[tauri::command]
 pub(crate) async fn start_heif_full(
+    request_id: String,
     path: PathBuf,
     generation: u64,
     display_sharpening: bool,
@@ -232,7 +233,7 @@ pub(crate) async fn start_heif_full(
         let cache = state.cache.clone();
         let projection = tauri::async_runtime::spawn_blocking(move || {
             let projection =
-                resolve_heif_full_projection(&app, &preview_queue, asset, preview_dir, generation)?;
+                resolve_heif_full_projection(&app, &preview_queue, asset, preview_dir, request_id)?;
             let artifact = projection
                 .result
                 .as_ref()
@@ -270,7 +271,7 @@ pub(crate) async fn start_heif_full(
             },
         );
         if result.is_ok() {
-            match resolve_heif_full_projection(&app, &preview_queue, asset, preview_dir, generation)
+            match resolve_heif_full_projection(&app, &preview_queue, asset, preview_dir, request_id)
             {
                 Ok(projection) => {
                     if let Some(artifact) = projection.result {
@@ -348,12 +349,12 @@ fn resolve_heif_full_projection(
     preview_queue: &crate::jobs::preview::PreviewQueue,
     asset: AssetSummary,
     preview_dir: PathBuf,
-    generation: u64,
+    request_id: String,
 ) -> Result<ImageProjection, String> {
     let (loading, receiver) = preview_queue.request(
         app,
         PreviewRequest {
-            request_id: format!("heif-full-{generation}"),
+            request_id,
             path: asset.path,
             preview_dir,
             kind: asset.kind,

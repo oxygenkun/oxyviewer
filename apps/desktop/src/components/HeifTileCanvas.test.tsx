@@ -7,7 +7,7 @@ import { HeifTileCanvas } from "./HeifTileCanvas";
 
 const mocks = vi.hoisted(() => ({
   start: vi.fn(), cancel: vi.fn(), renew: vi.fn(), release: vi.fn(),
-  listen: vi.fn(), mark: vi.fn(),
+  listen: vi.fn(), mark: vi.fn(), perfActive: vi.fn(() => true),
 }));
 vi.mock("../lib/api", () => ({
   isTauri: () => true,
@@ -18,7 +18,7 @@ vi.mock("../lib/api", () => ({
   heifTileUrl: (url: string) => url,
 }));
 vi.mock("@tauri-apps/api/event", () => ({ listen: mocks.listen }));
-vi.mock("../lib/perfProbe", () => ({ perfMark: mocks.mark, isPerfActive: () => true }));
+vi.mock("../lib/perfProbe", () => ({ perfMark: mocks.mark, isPerfActive: mocks.perfActive }));
 
 const asset: AssetSummary = {
   id: "hif", path: "/photos/a.hif", name: "a.hif", extension: "hif",
@@ -33,11 +33,13 @@ const artifact = {
 };
 let root: Root;
 let container: HTMLDivElement;
+const artifactDisplayed = vi.fn();
 const imageSize = vi.fn();
 const status = vi.fn();
 
 beforeEach(() => {
   vi.clearAllMocks();
+  mocks.perfActive.mockReturnValue(true);
   mocks.renew.mockResolvedValue(true);
   mocks.release.mockResolvedValue(undefined);
   vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
@@ -64,6 +66,7 @@ afterEach(async () => {
 async function render(selected = asset) {
   await act(async () => root.render(
     <StrictMode><HeifTileCanvas asset={selected} displaySharpening
+      onArtifactDisplayed={artifactDisplayed}
       onImageSize={imageSize} onStatus={status} /></StrictMode>,
   ));
 }
@@ -106,7 +109,10 @@ describe("HEIF full presentation lifecycle", () => {
     expect(mocks.listen).toHaveBeenCalledTimes(2);
     expect(mocks.start).toHaveBeenCalledTimes(1);
     expect(imageSize).toHaveBeenCalledWith({ width: 6000, height: 4000 });
+    const signal = mocks.start.mock.calls[0][3] as AbortSignal;
+    expect(signal.aborted).toBe(false);
     await act(async () => root.render(null));
+    expect(signal.aborted).toBe(true);
     expect(mocks.cancel).toHaveBeenCalledWith("session");
   });
 
@@ -114,11 +120,71 @@ describe("HEIF full presentation lifecycle", () => {
     mocks.start.mockResolvedValue(artifact);
     await render();
     expect(mocks.renew).toHaveBeenCalledWith("full");
+    expect(artifactDisplayed).not.toHaveBeenCalled();
     expect(mocks.mark).not.toHaveBeenCalledWith("image:loaded", expect.anything());
     await act(async () => container.querySelector("img")!.dispatchEvent(new Event("load")));
     expect(mocks.mark).toHaveBeenCalledWith("image:loaded", expect.objectContaining({ stage: "full" }));
+    expect(artifactDisplayed).toHaveBeenCalledTimes(1);
     await act(async () => root.render(null));
     expect(mocks.release).toHaveBeenCalledWith("full");
+  });
+
+  it("recovers expired descriptors and holds the displayed artifact until its replacement loads", async () => {
+    vi.useFakeTimers();
+    try {
+      mocks.start.mockResolvedValue(artifact);
+      await render();
+      await act(async () => container.querySelector("img")!.dispatchEvent(new Event("load")));
+      const fresh = { ...artifact, result: { ...artifact.result, url: "oxy-media://localhost/resource/fresh",
+        resource: { ...artifact.result.resource, resourceId: "fresh", url: "oxy-media://localhost/resource/fresh" } } };
+      mocks.start.mockResolvedValue(fresh);
+      mocks.renew.mockImplementation((id: string) => Promise.resolve(id !== "full"));
+      await act(async () => vi.advanceTimersByTimeAsync(10_000));
+      expect(container.querySelectorAll("img")).toHaveLength(2);
+      expect(mocks.release).not.toHaveBeenCalledWith("full");
+      await act(async () => container.querySelector<HTMLImageElement>("img[src$='/fresh']")!.dispatchEvent(new Event("load")));
+      expect(container.querySelectorAll("img")).toHaveLength(1);
+      expect(mocks.release).toHaveBeenCalledWith("full");
+      mocks.start.mockClear();
+      await act(async () => vi.advanceTimersByTimeAsync(10_000));
+      expect(mocks.start).not.toHaveBeenCalled();
+    } finally { vi.useRealTimers(); }
+  });
+
+  it("keeps the canvas available when an expired artifact recovers through tiles", async () => {
+    vi.useFakeTimers();
+    try {
+      vi.stubGlobal("requestAnimationFrame", vi.fn(() => 1));
+      mocks.perfActive.mockReturnValue(false);
+      mocks.start.mockResolvedValue(artifact);
+      await render();
+      await act(async () => container.querySelector("img")!.dispatchEvent(new Event("load")));
+      expect(container.querySelector("canvas")).not.toBeNull();
+      mocks.start.mockResolvedValue({ delivery: "tiles", session: {
+        id: "replacement", width: 512, height: 512, tileSize: 512,
+        expectedTiles: 1, status: "decoding",
+      } });
+      mocks.renew.mockResolvedValue(false);
+      await act(async () => vi.advanceTimersByTimeAsync(10_000));
+      expect(container.querySelector("img")).not.toBeNull();
+      const drawImage = vi.fn();
+      vi.spyOn(HTMLCanvasElement.prototype, "getContext").mockReturnValue({ drawImage } as unknown as CanvasRenderingContext2D);
+      vi.stubGlobal("fetch", vi.fn().mockResolvedValue({ ok: true, blob: async () => new Blob(["jpeg"]) }));
+      vi.stubGlobal("createImageBitmap", vi.fn().mockResolvedValue({ close: vi.fn() }));
+      const generation = mocks.start.mock.lastCall![1];
+      const tileListener = mocks.listen.mock.calls.filter(([name]) => name === "heif-tile-ready").at(-1)![1];
+      const statusListener = mocks.listen.mock.calls.filter(([name]) => name === "heif-decode-status").at(-1)![1];
+      await act(async () => tileListener({ payload: {
+        sessionId: "replacement", generation, url: "tile", payload: "jpeg",
+        x: 0, y: 0, width: 512, height: 512,
+      } }));
+      await act(async () => statusListener({ payload: { sessionId: "replacement", generation, status: "complete" } }));
+      const paint = vi.mocked(requestAnimationFrame).mock.lastCall![0];
+      await act(async () => paint(0));
+      expect(drawImage).toHaveBeenCalledTimes(1);
+      expect(container.querySelector("img")).toBeNull();
+      expect(mocks.release).toHaveBeenCalledWith("full");
+    } finally { vi.useRealTimers(); }
   });
 
   it("releases an artifact returned after unmount", async () => {

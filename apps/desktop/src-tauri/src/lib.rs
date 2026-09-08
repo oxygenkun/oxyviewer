@@ -39,11 +39,14 @@ pub fn run() {
                                 .header(http::header::ACCESS_CONTROL_ALLOW_ORIGIN, "*")
                                 .body(body)
                                 .expect("valid resource protocol response"),
-                            Err(_) => http::Response::builder()
-                                .status(http::StatusCode::NOT_FOUND)
-                                .header(http::header::ACCESS_CONTROL_ALLOW_ORIGIN, "*")
-                                .body(Vec::new())
-                                .expect("valid missing resource response"),
+                            Err(error) => {
+                                eprintln!("media protocol materialization failed: {error}");
+                                http::Response::builder()
+                                    .status(http::StatusCode::NOT_FOUND)
+                                    .header(http::header::ACCESS_CONTROL_ALLOW_ORIGIN, "*")
+                                    .body(Vec::new())
+                                    .expect("valid missing resource response")
+                            }
                         }
                     }
                     None => http::Response::builder()
@@ -226,6 +229,7 @@ pub fn run() {
             start_heif_full,
             cancel_heif_decode,
             get_perf_scenario,
+            get_media_resource_stats,
             get_debug_queue_snapshot,
             open_debug_queue_window,
             close_debug_queue_window,

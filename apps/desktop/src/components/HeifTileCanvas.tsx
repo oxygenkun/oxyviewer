@@ -1,5 +1,5 @@
 import { listen } from "@tauri-apps/api/event";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import {
   cancelHeifDecode,
   heifTileUrl,
@@ -25,6 +25,7 @@ let nextGeneration = 0;
 interface HeifTileCanvasProps {
   asset: AssetSummary;
   displaySharpening: boolean;
+  onArtifactDisplayed?: () => void;
   onImageSize: (size: { width: number; height: number }) => void;
   onStatus: (status: HeifDecodeStatus, diagnostics?: HeifDiagnostics) => void;
 }
@@ -32,6 +33,7 @@ interface HeifTileCanvasProps {
 export function HeifTileCanvas({
   asset,
   displaySharpening,
+  onArtifactDisplayed,
   onImageSize,
   onStatus,
 }: HeifTileCanvasProps) {
@@ -41,22 +43,37 @@ export function HeifTileCanvas({
     identity: string;
     result: PreviewResult;
   }>();
-  const visibleCachedImage = cachedImage?.identity === cacheIdentity
-    ? cachedImage.result
-    : undefined;
-
-  const resourceId = visibleCachedImage?.resource?.resourceId;
-  useEffect(() => {
-    if (!resourceId) return;
-    const release = retainMediaResource(resourceId);
-    const renew = () => void renewMediaResource(resourceId).catch(() => {});
-    renew();
-    const timer = window.setInterval(renew, 60_000);
-    return () => {
-      window.clearInterval(timer);
-      release();
+  const [displayedCachedImage, setDisplayedCachedImage] = useState<typeof cachedImage>();
+  const visibleCachedImage = displayedCachedImage?.identity === cacheIdentity
+    ? displayedCachedImage.result : undefined;
+  const candidateCachedImage = cachedImage?.identity === cacheIdentity ? cachedImage.result : undefined;
+  const pendingCachedImage = candidateCachedImage?.url !== visibleCachedImage?.url
+    ? candidateCachedImage : undefined;
+  const [recovery, setRecovery] = useState(0);
+  const resourceIdentity = [...new Set([visibleCachedImage, pendingCachedImage]
+    .map((result) => result?.resource?.resourceId).filter(Boolean))].sort().join("\u0000");
+  useLayoutEffect(() => {
+    const ids = resourceIdentity ? resourceIdentity.split("\u0000") : [];
+    if (!ids.length) return;
+    const releases = ids.map(retainMediaResource);
+    let disposed = false;
+    let recovering = false;
+    const renew = () => {
+      if (recovering) return;
+      void Promise.all(ids.map((id) => renewMediaResource(id).catch(() => false))).then((live) => {
+        if (live.every(Boolean) || disposed || recovering) return;
+        recovering = true;
+        setRecovery((value) => value + 1);
+      });
     };
-  }, [resourceId]);
+    renew();
+    const timer = window.setInterval(renew, 10_000);
+    return () => {
+      disposed = true;
+      window.clearInterval(timer);
+      releases.forEach((release) => release());
+    };
+  }, [resourceIdentity]);
 
   useEffect(() => {
     if (!isTauri()) return;
@@ -106,8 +123,7 @@ export function HeifTileCanvas({
 
     const maybeComplete = () => {
       if (
-        !track
-        || disposed
+        disposed
         || !backendComplete
         || !progress?.snapshot().allSettled
         || completionPaintFrame !== undefined
@@ -121,6 +137,8 @@ export function HeifTileCanvas({
         if (progress?.snapshot().failed) {
           debug?.fail(new Error("one or more HEIF tiles failed to draw"), completed);
         } else {
+          setDisplayedCachedImage(undefined);
+          setCachedImage(undefined);
           debug?.complete(completed);
         }
       });
@@ -173,8 +191,8 @@ export function HeifTileCanvas({
           frontendDrawWorkMs += drawnAt - drawStarted;
           slowestTileMs = Math.max(slowestTileMs, drawnAt - tileStarted);
         }
-        const settled = track ? progress?.settle(tile, true) : undefined;
-        if (settled?.firstDrawn && firstPaintFrame === undefined) {
+        const settled = progress?.settle(tile, true);
+        if (track && settled?.firstDrawn && firstPaintFrame === undefined) {
           firstPaintFrame = requestAnimationFrame(() => {
             firstPaintFrame = undefined;
             if (disposed) return;
@@ -186,7 +204,7 @@ export function HeifTileCanvas({
           debug?.mark("all-tiles-drawn", detail?.());
         }
       } catch (error) {
-        if (!disposed && track) {
+        if (!disposed) {
           const settled = progress?.settle(tile, false);
           perfMark("heif:tile-error", { assetName: asset.name, x: tile.x, y: tile.y });
           debug?.mark("tile-error", {
@@ -213,7 +231,7 @@ export function HeifTileCanvas({
     };
 
     const handleTile = (tile: HeifTileReady) => {
-      const received = track ? progress?.receive(tile) : undefined;
+      const received = progress?.receive(tile);
       if (received && !received.accepted) return;
       if (received?.first) {
         if (__OXY_DEBUG__) debug?.mark("first-tile-ready", {
@@ -239,12 +257,10 @@ export function HeifTileCanvas({
         });
       }
       if (event.status === "complete") {
-        if (track) {
-          backendComplete = true;
-          backendDiagnostics = event.diagnostics;
-          progress?.finishReceiving();
-          maybeComplete();
-        }
+        backendComplete = true;
+        backendDiagnostics = event.diagnostics;
+        progress?.finishReceiving();
+        maybeComplete();
       } else if (event.status === "failed") {
         if (__OXY_DEBUG__) debug?.fail(event.message ?? "HEIF backend decode failed", detail?.());
       } else if (event.status === "cancelled") {
@@ -282,6 +298,7 @@ export function HeifTileCanvas({
         asset.path,
         generation,
         displaySharpening,
+        tileRequests.signal,
       );
       if (presentation.delivery === "artifact") {
         const result = presentation.result;
@@ -306,12 +323,10 @@ export function HeifTileCanvas({
         return;
       }
       sessionId = session.id;
-      progress = track
-        ? new HeifTileProgressTracker(
-            session.expectedTiles
-              ?? expectedHeifTiles(session.width, session.height, session.tileSize),
-          )
-        : undefined;
+      progress = new HeifTileProgressTracker(
+        session.expectedTiles
+          ?? expectedHeifTiles(session.width, session.height, session.tileSize),
+      );
       const canvas = canvasRef.current;
       if (canvas) {
         canvas.width = session.width;
@@ -364,6 +379,7 @@ export function HeifTileCanvas({
       if (__OXY_DEBUG__) debug?.cancel(detail?.());
     };
   }, [
+    recovery,
     asset.id,
     asset.modifiedAtMs,
     asset.path,
@@ -373,21 +389,35 @@ export function HeifTileCanvas({
     onStatus,
   ]);
 
-  return visibleCachedImage ? (
-    <img
+  return <>
+    <canvas key="tiles" className="loupe__heif-canvas" ref={canvasRef} />
+    {visibleCachedImage ? <img
+      key={visibleCachedImage.url}
       className="loupe__heif-canvas"
       src={visibleCachedImage.url}
       alt=""
       draggable={false}
-      onLoad={() => perfMark("image:loaded", {
-        assetName: asset.name,
-        stage: "full",
-        renderLevel: "full",
-        width: visibleCachedImage.width,
-        height: visibleCachedImage.height,
-      })}
-    />
-  ) : (
-    <canvas className="loupe__heif-canvas" ref={canvasRef} />
-  );
+    /> : null}
+    {pendingCachedImage ? <img
+      key={pendingCachedImage.url}
+      className="loupe__heif-canvas"
+      style={{ visibility: "hidden" }}
+      src={pendingCachedImage.url}
+      alt=""
+      draggable={false}
+      onError={() => { setCachedImage(undefined); onStatus("failed"); }}
+      onLoad={() => {
+        setDisplayedCachedImage({ identity: cacheIdentity, result: pendingCachedImage });
+        onArtifactDisplayed?.();
+        perfMark("image:loaded", {
+          assetName: asset.name,
+          large: true,
+          stage: "full",
+          renderLevel: "full",
+          width: pendingCachedImage.width,
+          height: pendingCachedImage.height,
+        });
+      }}
+    /> : null}
+  </>;
 }

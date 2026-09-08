@@ -36,6 +36,7 @@ required-features = ["bench-tools"]
 fs2.workspace = true
 image.workspace = true
 lcms2.workspace = true
+libc.workspace = true
 libheif-rs.workspace = true
 oxy-domain = { path = "../oxy-domain" }
 oxy-runtime = { path = "../oxy-runtime" }
@@ -50,6 +51,7 @@ windows = { workspace = true, features = [
   "Win32_Foundation",
   "Win32_Graphics_Imaging",
   "Win32_System_Com",
+  "Win32_System_SystemInformation",
 ] }
 
 [build-dependencies]

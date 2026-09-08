@@ -741,6 +741,27 @@ pub struct JobProgress {
     pub message: Option<String>,
 }
 
+/// A snapshot of registry ownership; file bytes are never encoded memory.
+#[derive(Debug, Default, Clone, Copy, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ResourceRegistryStats {
+    pub max_entries: usize,
+    pub max_encoded_bytes: usize,
+    pub max_materialized_responses: usize,
+    pub max_materialized_bytes: usize,
+    pub entries: usize,
+    pub encoded_bytes: usize,
+    pub peak_encoded_bytes: usize,
+    pub peak_entries: usize,
+    pub ui_leased: usize,
+    pub read_leased: usize,
+    pub released_or_expired: usize,
+    pub staged_files: usize,
+    pub staged_bytes: u64,
+    pub materialized_responses: usize,
+    pub materialized_bytes: usize,
+}
+
 /// One automated performance scenario injected into the packaged app through
 /// the `OXY_PERF_SCENARIO` environment variable. Consumed by the frontend
 /// performance harness; see `docs/PERF_E2E.md`.
@@ -755,6 +776,8 @@ pub struct PerfScenario {
     pub enter_loupe: Option<bool>,
     #[serde(default)]
     pub scroll_to_end: bool,
+    #[serde(default)]
+    pub resource_stress: Option<String>,
     #[serde(default)]
     pub await_marks: Vec<String>,
     #[serde(default)]

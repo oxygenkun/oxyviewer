@@ -575,7 +575,7 @@ fn classify_error(error: &MediaError) -> AttemptOutcome {
         | MediaError::Color(_)
         | MediaError::CacheManifest(_)
         | MediaError::CacheArtifact(_)
-        | MediaError::ResourceBudgetExhausted
+        | MediaError::ResourceBudgetExhausted { .. }
         | MediaError::PreviewGenerationFailed { .. } => AttemptOutcome::DecodeFailed,
     }
 }

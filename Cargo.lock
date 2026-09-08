@@ -2457,6 +2457,7 @@ dependencies = [
  "fs2",
  "image",
  "lcms2",
+ "libc",
  "libheif-rs",
  "oxy-domain",
  "oxy-runtime",

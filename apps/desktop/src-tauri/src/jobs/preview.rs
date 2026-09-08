@@ -11,13 +11,14 @@ use oxy_runtime::{
     QueuePlacement, SchedulePosition, ScopedIntentScheduler,
 };
 use std::{
-    collections::{HashMap, HashSet},
+    collections::{HashMap, HashSet, VecDeque},
     path::PathBuf,
     sync::{
         Arc, Condvar, Mutex, RwLock,
         atomic::{AtomicU64, Ordering},
         mpsc::{self, Receiver, Sender},
     },
+    time::{Duration, Instant},
 };
 use tauri::{AppHandle, Emitter};
 
@@ -100,9 +101,44 @@ struct WorkState {
     active: HashMap<RequestKey, Arc<Mutex<WorkRequest>>>,
     schedule: ScopedIntentScheduler<PreviewScheduleKey, String>,
     active_directory: Option<PathBuf>,
+    cancelled_before_admission: VecDeque<(String, Instant)>,
 }
 
 impl WorkState {
+    fn remember_early_cancellation(&mut self, request_id: &str) {
+        self.expire_early_cancellations();
+        // Commands may still be observing source metadata when cancellation
+        // arrives. Bound these short tombstones; request IDs are unique UUIDs.
+        if self.cancelled_before_admission.len() == 1024 {
+            self.cancelled_before_admission.pop_front();
+        }
+        self.cancelled_before_admission
+            .push_back((request_id.to_owned(), Instant::now()));
+    }
+
+    fn expire_early_cancellations(&mut self) {
+        while self
+            .cancelled_before_admission
+            .front()
+            .is_some_and(|(_, at)| at.elapsed() >= Duration::from_secs(120))
+        {
+            self.cancelled_before_admission.pop_front();
+        }
+    }
+
+    fn take_early_cancellation(&mut self, request_id: &str) -> bool {
+        self.expire_early_cancellations();
+        let Some(index) = self
+            .cancelled_before_admission
+            .iter()
+            .position(|(id, _)| id == request_id)
+        else {
+            return false;
+        };
+        self.cancelled_before_admission.remove(index);
+        true
+    }
+
     fn apply_schedule_changes(
         &mut self,
         changes: Vec<EffectiveScheduleChange<PreviewScheduleKey>>,
@@ -145,6 +181,70 @@ impl PreviewQueue {
         queue
     }
 
+    fn restore_cached_projection(
+        &self,
+        cached: ImageProjection,
+        preview_dir: &std::path::Path,
+    ) -> Result<ImageProjection, String> {
+        let key = (cached.path.clone(), cached.level);
+        // Source and artifact validation can involve filesystem I/O. Keep it
+        // outside the global projection lock, then fence its publication.
+        let cached = self
+            .projections
+            .read()
+            .expect("image projection lock poisoned")
+            .get(&key)
+            .filter(|current| current.projection_revision >= cached.projection_revision)
+            .cloned()
+            .unwrap_or(cached);
+        let old_resource = cached
+            .result
+            .as_ref()
+            .and_then(|result| result.resource.clone());
+        let mut restored = restore_projection_resource(cached, preview_dir)?;
+        let new_resource = restored
+            .result
+            .as_ref()
+            .and_then(|result| result.resource.clone());
+        let mut projections = self
+            .projections
+            .write()
+            .expect("image projection lock poisoned");
+        if let Some(current) = projections.get(&key)
+            && current.projection_revision > restored.projection_revision
+        {
+            if let Some(resource) = new_resource
+                && current
+                    .result
+                    .as_ref()
+                    .and_then(|result| result.resource.as_ref())
+                    != Some(&resource)
+            {
+                oxy_media::shared_resource_registry().release(&resource.resource_id);
+            }
+            return Ok(current.clone());
+        }
+        if new_resource != old_resource {
+            // Descriptor replacement is an observable projection change. Use
+            // the existing authoritative sequence, preserving validAt fences.
+            restored = self
+                .library
+                .accept_image_projection(restored)
+                .map_err(|error| error.to_string())?;
+            if let Some(resource) = new_resource
+                && restored
+                    .result
+                    .as_ref()
+                    .and_then(|result| result.resource.as_ref())
+                    != Some(&resource)
+            {
+                oxy_media::shared_resource_registry().release(&resource.resource_id);
+            }
+        }
+        projections.insert(key, restored.clone());
+        Ok(restored)
+    }
+
     pub fn request(
         &self,
         app: &AppHandle,
@@ -173,11 +273,7 @@ impl PreviewQueue {
             .filter(|projection| projection.source_revision == source_revision)
             .cloned();
         if let Some(cached) = memory_projection {
-            let cached = restore_projection_resource(cached, &preview_dir)?;
-            self.projections
-                .write()
-                .expect("image projection lock poisoned")
-                .insert(state_key.clone(), cached.clone());
+            let cached = self.restore_cached_projection(cached, &preview_dir)?;
             if projection_is_terminal(&cached)
                 && cached.result.as_ref().is_some_and(preview_result_is_live)
             {
@@ -191,11 +287,7 @@ impl PreviewQueue {
             .image_projection(&path, level, &source_revision)
             .map_err(|error| error.to_string())?
         {
-            let cached = restore_projection_resource(cached, &preview_dir)?;
-            self.projections
-                .write()
-                .expect("image projection lock poisoned")
-                .insert(state_key.clone(), cached.clone());
+            let cached = self.restore_cached_projection(cached, &preview_dir)?;
             if projection_is_terminal(&cached)
                 && cached.result.as_ref().is_some_and(preview_result_is_live)
             {
@@ -217,6 +309,9 @@ impl PreviewQueue {
             level,
         };
         let mut work = self.work.0.lock().expect("preview queue lock poisoned");
+        if work.take_early_cancellation(&request_id) {
+            return Err("preview request was cancelled before admission".into());
+        }
         if work
             .active_directory
             .as_deref()
@@ -378,6 +473,9 @@ impl PreviewQueue {
                 .lock()
                 .expect("active preview request lock poisoned");
             changed |= request.remove_waiter(request_id);
+        }
+        if !changed {
+            work.remember_early_cancellation(request_id);
         }
         changed
     }
@@ -999,7 +1097,7 @@ fn restore_projection_resource(
         return Ok(projection);
     };
     if result.resource.as_ref().is_some_and(|resource| {
-        oxy_media::shared_resource_registry().contains(&resource.resource_id)
+        oxy_media::shared_resource_registry().refresh_publication_grace(&resource.resource_id)
     }) {
         return Ok(projection);
     }
@@ -1140,6 +1238,25 @@ fn priority_from_position(position: SchedulePosition) -> PreviewPriority {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn cancellation_before_admission_is_consumed_and_bounded() {
+        let mut state = WorkState::default();
+        state.remember_early_cancellation("early");
+        assert!(state.take_early_cancellation("early"));
+        assert!(!state.take_early_cancellation("early"));
+        for index in 0..2048 {
+            state.remember_early_cancellation(&format!("request-{index}"));
+        }
+        assert_eq!(state.cancelled_before_admission.len(), 1024);
+        assert!(!state.take_early_cancellation("request-0"));
+        assert!(state.take_early_cancellation("request-2047"));
+        state.cancelled_before_admission.clear();
+        state
+            .cancelled_before_admission
+            .push_back(("expired".into(), Instant::now() - Duration::from_secs(121)));
+        assert!(!state.take_early_cancellation("expired"));
+    }
 
     #[test]
     fn interim_projection_is_displayable_but_not_terminal() {
@@ -1337,10 +1454,62 @@ mod tests {
             }),
             error: None,
         };
-        let restored = restore_projection_resource(projection, directory.path()).unwrap();
-        let resource = restored.result.unwrap().resource.unwrap();
+        let library = Arc::new(Library::in_memory().unwrap());
+        let accepted = library.accept_image_projection(projection).unwrap();
+        let queue = PreviewQueue {
+            work: Arc::new((Mutex::new(WorkState::default()), Condvar::new())),
+            projections: Arc::new(RwLock::new(HashMap::new())),
+            library,
+            cache: Arc::new(
+                CacheManager::load(
+                    directory.path().join("previews"),
+                    directory.path().join("settings.json"),
+                )
+                .unwrap(),
+            ),
+            request_generation: Arc::new(AtomicU64::new(0)),
+        };
+        let restored = queue
+            .restore_cached_projection(accepted.clone(), directory.path())
+            .unwrap();
+        assert!(restored.projection_revision > accepted.projection_revision);
+        let resource = restored.result.as_ref().unwrap().resource.as_ref().unwrap();
         assert_ne!(resource.resource_id, "resource-from-old-process");
-        assert!(oxy_media::shared_resource_registry().contains(&resource.resource_id));
+        let registry = oxy_media::shared_resource_registry();
+        assert!(registry.contains(&resource.resource_id));
+        registry.release(&resource.resource_id);
+        // A subsequent publication sweeps the released entry, as happens when
+        // a virtual row leaves and other images enter the viewport.
+        let original = &restored.result.as_ref().unwrap().path;
+        let _other = registry
+            .register_file(
+                original,
+                "image/jpeg",
+                oxy_media::DisplayDimensions {
+                    width: 8,
+                    height: 4,
+                },
+                oxy_media::ArtifactRepresentation::Original,
+            )
+            .unwrap();
+        assert!(!registry.contains(&resource.resource_id));
+        let replacement = queue
+            .restore_cached_projection(restored.clone(), directory.path())
+            .unwrap();
+        assert!(replacement.projection_revision > restored.projection_revision);
+        assert_ne!(
+            replacement.result.as_ref().unwrap().resource,
+            restored.result.as_ref().unwrap().resource
+        );
+        // Replaying an older disk snapshot must preserve this newer descriptor.
+        let replay = queue
+            .restore_cached_projection(accepted, directory.path())
+            .unwrap();
+        assert_eq!(replay.projection_revision, replacement.projection_revision);
+        assert_eq!(
+            replay.result.unwrap().resource,
+            replacement.result.unwrap().resource
+        );
     }
 
     #[test]

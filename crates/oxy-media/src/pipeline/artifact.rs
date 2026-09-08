@@ -1289,7 +1289,9 @@ mod tests {
         let source = directory.path().join("source-backpressure.jpg");
         DynamicImage::new_rgb8(16, 8).save(&source).unwrap();
         let publisher = Arc::new(crate::publication::ArtifactPublisher::new(
-            crate::publication::ResourceRegistry::new(4, 1024 * 1024),
+            crate::publication::ResourceRegistry::new(
+                crate::publication::ResourceRegistryLimits::new(4, 1024 * 1024),
+            ),
             Arc::new(DiskMediaCache::new(directory.path(), 8).unwrap()),
             1,
             0,

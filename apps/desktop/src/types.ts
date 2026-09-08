@@ -394,6 +394,7 @@ export interface PerfScenario {
   selectName?: string;
   enterLoupe?: boolean;
   scrollToEnd?: boolean;
+  resourceStress?: "grid" | "list" | "loupe" | "grid-scroll";
   awaitMarks: string[];
   timeoutMs?: number;
   reportPath: string;
@@ -404,4 +405,23 @@ export interface PerfMark {
   /** Milliseconds relative to page load, from performance.now(). */
   t: number;
   detail?: Record<string, unknown>;
+}
+
+/** Native registry counters; filesystem payload sizes are separate from memory. */
+export interface ResourceRegistryStats {
+  maxEntries: number;
+  maxEncodedBytes: number;
+  maxMaterializedResponses: number;
+  maxMaterializedBytes: number;
+  entries: number;
+  encodedBytes: number;
+  peakEntries: number;
+  peakEncodedBytes: number;
+  uiLeased: number;
+  readLeased: number;
+  releasedOrExpired: number;
+  stagedFiles: number;
+  stagedBytes: number;
+  materializedResponses: number;
+  materializedBytes: number;
 }

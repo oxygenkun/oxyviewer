@@ -1,3 +1,4 @@
+import { releaseUnretainedMediaResource } from "./mediaResourceLease";
 import { create } from "zustand";
 import type { ImageProjection, PreviewResult, RenderLevel } from "../types";
 import {
@@ -63,7 +64,15 @@ export function acceptImageProjection(projection: ImageProjection) {
   const current = useImageProjectionStore.getState().records[
     imageProjectionKey(projection.path, projection.level)
   ];
+  if (current && current.projectionRevision >= projection.projectionRevision) {
+    const id = projection.result?.resource?.resourceId;
+    if (id && id !== current.result?.resource?.resourceId) releaseUnretainedMediaResource(id);
+    return id !== undefined && id === current.result?.resource?.resourceId;
+  }
   if (current && current.projectionRevision < projection.projectionRevision) {
+    const id = current.result?.resource?.resourceId;
+    if (id && (projection.result || current.sourceRevision !== projection.sourceRevision)
+      && id !== projection.result?.resource?.resourceId) releaseUnretainedMediaResource(id);
     // A projection update may overwrite the same cache path. Drop both URL
     // identities so the WebView cannot repaint a retained stale decode.
     discardBrowserImageResource(current.result?.url);
@@ -72,6 +81,7 @@ export function acceptImageProjection(projection: ImageProjection) {
     );
   }
   useImageProjectionStore.getState().accept(projection);
+  return true;
 }
 
 export function invalidateImageDirectory(directory: string) {

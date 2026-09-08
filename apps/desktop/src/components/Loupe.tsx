@@ -128,6 +128,9 @@ export function Loupe({
   const [naturalSize, setNaturalSize] = useState<{ assetId: string; size: Size } | undefined>(undefined);
   const [heifFullSize, setHeifFullSize] = useState<{ assetId: string; size: Size } | undefined>(undefined);
   const [rawPreviewStatus, setRawPreviewStatus] = useState<RawPreviewStatus>({ state: "loadingPreview" });
+  const [displayedHeifArtifact, setDisplayedHeifArtifact] = useState<string>();
+  const heifPresentationIdentity = `${active.id}:${active.modifiedAtMs}:${displaySharpening}`;
+  const handleHeifArtifactDisplayed = useCallback(() => setDisplayedHeifArtifact(heifPresentationIdentity), [heifPresentationIdentity]);
   const [heifStatus, setHeifStatus] = useState<HeifDecodeStatus | "probing">("probing");
   const [filmstripSchedule] = useState(() => new PreviewScheduleScope("loupe-filmstrip"));
   const filmstripItemSize = filmstripItemWidth(filmstripHeight, thumbnailOrientation);
@@ -536,7 +539,7 @@ export function Loupe({
               height: fittedImageSize.height ? fittedImageSize.height * zoom : undefined,
             }}
           >
-            <Thumbnail
+            {displayedHeifArtifact !== heifPresentationIdentity ? <Thumbnail
               key={`thumbnail:${active.id}`}
               asset={active}
               large
@@ -544,13 +547,14 @@ export function Loupe({
               onRawPreviewStatus={active.kind === "heif"
                 ? handleHeifPreviewStatus
                 : setRawPreviewStatus}
-            />
+            /> : null}
             {heifUsesFullPresentation ? (
               <HeifTileCanvas
                 key={`heif:${active.id}`}
                 asset={active}
                 displaySharpening={displaySharpening}
                 onImageSize={handleHeifImageSize}
+                onArtifactDisplayed={handleHeifArtifactDisplayed}
                 onStatus={setHeifStatus}
               />
             ) : null}

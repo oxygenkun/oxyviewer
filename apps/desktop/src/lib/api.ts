@@ -1,3 +1,4 @@
+import { retainMediaResource, releaseUnretainedMediaResource } from "./mediaResourceLease";
 import { invoke } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { open } from "@tauri-apps/plugin-dialog";
@@ -774,6 +775,11 @@ export async function generatedPreview(
     level,
     priority,
     queueOrder,
+  }).then((projection) => {
+    if (signal?.aborted && projection.result?.resource) {
+      releaseUnretainedMediaResource(projection.result.resource.resourceId);
+    }
+    return projection;
   });
   let rejectAbort: ((reason: unknown) => void) | undefined;
   const aborted = new Promise<never>((_resolve, reject) => {
@@ -787,7 +793,10 @@ export async function generatedPreview(
   try {
     const projection = await (signal ? Promise.race([backendRequest, aborted]) : backendRequest);
     if (signal?.aborted) throw signal.reason ?? new DOMException("Aborted", "AbortError");
-    acceptImageProjection(projection);
+    if (!acceptImageProjection(projection)) {
+      debug?.cancel();
+      return undefined;
+    }
     const result = projection.result;
     if (!result) throw new Error("Ready image projection has no artifact");
     perfMark("preview:result", {
@@ -896,11 +905,18 @@ export async function preloadAssetThumbnail(
   }
   const result = await generatedPreview(asset, "thumbnail", signal, "preload");
   if (result) {
-    await browserPreloadQueue.enqueue(
-      priorityWeight("preload"),
-      signal,
-      () => preloadBrowserImage(result.url, signal),
-    );
+    const id = result.resource?.resourceId;
+    const release = id ? retainMediaResource(id) : undefined;
+    try {
+      await browserPreloadQueue.enqueue(
+        priorityWeight("preload"),
+        signal,
+        async () => {
+          if (id && !await renewMediaResource(id)) return;
+          await preloadBrowserImage(result.url, signal);
+        },
+      );
+    } finally { release?.(); }
   }
 }
 
@@ -908,27 +924,45 @@ export async function startHeifFull(
   path: string,
   generation: number,
   displaySharpening: boolean,
+  signal?: AbortSignal,
 ): Promise<
   | { delivery: "artifact"; projection: ImageProjection; result: PreviewResult }
   | Extract<HeifFullPresentation, { delivery: "tiles" }>
 > {
+  signal?.throwIfAborted();
   perfMark("heif:decode-requested", { path });
-  const presentation = await invoke<HeifFullPresentation>("start_heif_full", {
-    path,
-    generation,
-    displaySharpening,
-  });
-  if (presentation.delivery === "artifact") {
-    const result = presentation.projection.result;
-    if (!result) throw new Error("ready HEIF full projection has no artifact");
-    if (!result.resource) throw new Error("Ready HEIF artifact has no registered resource");
-    return {
-      ...presentation,
-      result: { ...result, url: mediaProtocolUrl(result.resource.url) },
-    };
+  const requestId = crypto.randomUUID();
+  const cancel = () => {
+    void invoke("cancel_preview_request", { path, level: "full", requestId }).catch(() => {});
+  };
+  signal?.addEventListener("abort", cancel, { once: true });
+  try {
+    const presentation = await invoke<HeifFullPresentation>("start_heif_full", {
+      requestId, path, generation, displaySharpening,
+    });
+    if (signal?.aborted) {
+      if (presentation.delivery === "artifact") {
+        const id = presentation.projection.result?.resource?.resourceId;
+        if (id) releaseUnretainedMediaResource(id);
+      } else {
+        await cancelHeifDecode(presentation.session.id);
+      }
+      signal.throwIfAborted();
+    }
+    if (presentation.delivery === "artifact") {
+      const result = presentation.projection.result;
+      if (!result) throw new Error("ready HEIF full projection has no artifact");
+      if (!result.resource) throw new Error("Ready HEIF artifact has no registered resource");
+      return {
+        ...presentation,
+        result: { ...result, url: mediaProtocolUrl(result.resource.url) },
+      };
+    }
+    perfMark("heif:decode-session", { path, sessionId: presentation.session.id });
+    return presentation;
+  } finally {
+    signal?.removeEventListener("abort", cancel);
   }
-  perfMark("heif:decode-session", { path, sessionId: presentation.session.id });
-  return presentation;
 }
 
 export async function cancelHeifDecode(sessionId: string): Promise<boolean> {
@@ -957,4 +991,10 @@ export async function writePerfReport(path: string, report: unknown): Promise<vo
     return;
   }
   await invoke("write_perf_report", { path, contents: JSON.stringify(report, null, 2) });
+}
+
+/** Explicit native resource diagnostics for debug/performance harnesses. */
+export async function getMediaResourceStats(): Promise<import("../types").ResourceRegistryStats | undefined> {
+  if (!isTauri()) return undefined;
+  return invoke("get_media_resource_stats");
 }

@@ -641,3 +641,53 @@ verify the result. Windows/Linux native behavior remains unqualified because the
 owner did not provide runners. Rust protocol budgets cover materialization only,
 not buffers retained by Tauri/WebView after handoff; no total-process peak-memory
 or cross-platform scrolling-latency claim is made by these samples.
+
+
+## Resource registry lifecycle qualification — 2026-09-09
+
+The resource-budget follow-up uses 512 production registry entries and encoded
+memory `max(1 GiB, RAM / 8)`; this 16 GiB macOS machine reported 2 GiB. Protocol
+materialization stays independently capped at four responses / 128 MiB. These
+limits do not bound total process/WebView memory. The injected 128 MiB test fills
+four 32 MiB resources, rejects another byte, releases/evicts one and successfully
+reuses its reservation. File/staged entries consume zero encoded bytes, with
+staged disk usage reported separately. No active UI/read lease is forcibly evicted.
+
+Native pressure runs use the production UI, portrait grid density and overscan,
+600 distinct JPEG paths in each grid/list fixture, and 80 distinct hardlinked HIF
+paths with rapid selection followed by eight required Full image load events.
+They perform concurrent protocol reads during cache clear and prune, then wait
+11 seconds to cover publication-grace expiry and a UI heartbeat. Reports are in
+`tests/perf/.reports/resource-stress-*.run*.json`; stderr is captured alongside.
+
+| Scenario | Actually painted | Peak entries | Settled entries / displayed | Peak encoded bytes |
+| --- | --- | --- | --- | --- |
+| Dense grid | 600 distinct JPEGs | 70 | 40 / 40 | 0 |
+| List | 600 distinct JPEGs | 28 | 19 / 19 | 0 |
+| HIF loupe (three runs) | Eight required Full loads per run after 80 selections | 31 / 32 / 32 | 24 / 20 in all runs | 16,660 / 16,660 / 8,330 |
+
+All pressure runs passed with no budget exhaustion. HIF runs finished in
+44.4 / 47.6 / 47.7 seconds, including the 11-second settle wait. Settled encoded,
+staged and materialization counters were zero in all three runs. The JPEG fixtures
+are synthetic and HIF paths share one source image's contents; this exercises
+resource identities and lifecycle pressure, not a diverse-format decode corpus
+or a scrolling frame-time distribution. Windows/Linux native validation remains
+outstanding under the previously agreed environment limitation.
+
+
+The final release build also passed three runs of each existing preview gate.
+Median / observed P95 (maximum of three samples), in milliseconds:
+
+| Route | First preview |
+| --- | --- |
+| JPEG cold | 46 / 58 |
+| JPEG warm | 53 / 57 |
+| RAW cold | 54 / 64 |
+| RAW warm | 41 / 46 |
+| HIF cold | 53 / 57 |
+| HIF warm tiles | 40 / 43 |
+
+Warm RAW required persisted-artifact provenance; warm HIF required
+`cachedArtifact` and all tiles painted (538 / 540 ms). All six cold 800 ms / warm
+150 ms first-preview gates passed. These are local samples, with no historical
+baseline regression claim. The test runner closed each owned native instance.
