@@ -70,9 +70,8 @@ sequenceDiagram
 ### 3.2 预览策略
 
 - 前端 `renderPlan` 为每个平台把三个语义等级映射到 renderer；
-- 后端 `pipeline::planner::plan` 根据 `SourceFacts`、请求和后端能力生成包含解码器与尺寸的
-  `DecodePlan`；
-- `oxy_media::preview` 执行计划中的格式分支和 fallback；
+- 后端 `pipeline::dispatcher` 根据 `AssetKind + RenderLevel` 选择格式 executor 与语义尺寸；
+- 格式 executor 按运行时能力执行有序 backend fallback；
 - 为 decoder 定义 cache version；
 - 确定 `thumbnail`、`preview`、`full` 各自的产物，必要时显式复用另一等级；
 - 决定 full 是单一文件还是类似 HEIF 的 tile/session；

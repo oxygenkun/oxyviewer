@@ -6,7 +6,6 @@ import {
   clearPreviewCache,
   getCacheSettings,
   getHeifCapabilities,
-  getHeifDiagnostics,
   updateCacheSettings,
 } from "../lib/api";
 import { clearImageProjections } from "../lib/imageProjection";
@@ -38,13 +37,11 @@ export function SettingsPanel({ t }: SettingsPanelProps) {
   const {
     displaySharpening,
     gridMetadataVisible,
-    hardwareAcceleration,
     locale,
     loupeMetadataVisible,
     uiFontScale,
     setDisplaySharpening,
     setGridMetadataVisible,
-    setHardwareAcceleration,
     setLocale,
     setLoupeMetadataVisible,
     setUiFontScale,
@@ -54,10 +51,6 @@ export function SettingsPanel({ t }: SettingsPanelProps) {
     queryKey: ["heif-capabilities"],
     queryFn: getHeifCapabilities,
     staleTime: Infinity,
-  });
-  const diagnostics = useQuery({
-    queryKey: ["heif-diagnostics"],
-    queryFn: getHeifDiagnostics,
   });
   const cacheSettings = useQuery({
     queryKey: ["cache-settings"],
@@ -261,22 +254,6 @@ export function SettingsPanel({ t }: SettingsPanelProps) {
         </div>
 
         <div className="settings-panel__section">
-          <span className="settings-panel__label">{t("hardwareAcceleration")}</span>
-          <div className="settings-panel__options">
-            {[
-              { enabled: true, label: t("automatic") },
-              { enabled: false, label: t("disabled") },
-            ].map(({ enabled, label }) => (
-              <button
-                key={String(enabled)}
-                className={`settings-panel__option ${hardwareAcceleration === enabled ? "is-active" : ""}`}
-                onClick={() => setHardwareAcceleration(enabled)}
-              >
-                <span>{label}</span>
-                {hardwareAcceleration === enabled ? <Check size={12} /> : null}
-              </button>
-            ))}
-          </div>
           <div className="settings-panel__diagnostics">
             <small>{t("heifDiagnostics")}</small>
             {capabilities.data?.map((capability) => (
@@ -284,14 +261,6 @@ export function SettingsPanel({ t }: SettingsPanelProps) {
                 {capability.backend}: {capability.available ? capability.acceleration : t("unavailable")}
               </span>
             ))}
-            {diagnostics.data ? (
-              <span>
-                {diagnostics.data.backend} · queue {diagnostics.data.queueWaitMs} ms
-                {` · decode ${diagnostics.data.decodeMs} ms · publish ${diagnostics.data.tilePublishMs} ms`}
-                {` · total ${diagnostics.data.totalMs} ms`}
-                {diagnostics.data.fallbackReason ? ` · ${diagnostics.data.fallbackReason}` : ""}
-              </span>
-            ) : null}
           </div>
         </div>
 

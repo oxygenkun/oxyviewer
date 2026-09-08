@@ -7,61 +7,30 @@
 use crate::ImageDimensions;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum RepresentationSource {
-    CameraPreview,
-    RawDevelopment,
-    HeifPrimary,
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum OrientationState {
-    EncodedMetadata,
-    AppliedToPixels,
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum ColorState {
     EmbeddedProfileOrUnknown,
     SrgbWithIcc,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum DynamicRange {
-    Sdr,
+pub(crate) enum ArtifactContract {
+    CameraPreview,
+    RawDevelopedSrgb,
+    HeifPrimarySrgb,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) struct ArtifactContract {
-    pub(crate) representation: RepresentationSource,
-    pub(crate) orientation: OrientationState,
-    pub(crate) color: ColorState,
-    pub(crate) dynamic_range: DynamicRange,
-    pub(crate) policy_version: u8,
+impl ArtifactContract {
+    pub(crate) const fn color(self) -> ColorState {
+        match self {
+            Self::CameraPreview => ColorState::EmbeddedProfileOrUnknown,
+            Self::RawDevelopedSrgb | Self::HeifPrimarySrgb => ColorState::SrgbWithIcc,
+        }
+    }
 }
 
-pub(crate) const CAMERA_JPEG: ArtifactContract = ArtifactContract {
-    representation: RepresentationSource::CameraPreview,
-    orientation: OrientationState::EncodedMetadata,
-    color: ColorState::EmbeddedProfileOrUnknown,
-    dynamic_range: DynamicRange::Sdr,
-    policy_version: 1,
-};
-
-pub(crate) const RAW_DEVELOPED_JPEG: ArtifactContract = ArtifactContract {
-    representation: RepresentationSource::RawDevelopment,
-    orientation: OrientationState::AppliedToPixels,
-    color: ColorState::SrgbWithIcc,
-    dynamic_range: DynamicRange::Sdr,
-    policy_version: 1,
-};
-
-pub(crate) const HEIF_DECODED_JPEG: ArtifactContract = ArtifactContract {
-    representation: RepresentationSource::HeifPrimary,
-    orientation: OrientationState::AppliedToPixels,
-    color: ColorState::SrgbWithIcc,
-    dynamic_range: DynamicRange::Sdr,
-    policy_version: 1,
-};
+pub(crate) const CAMERA_JPEG: ArtifactContract = ArtifactContract::CameraPreview;
+pub(crate) const RAW_DEVELOPED_JPEG: ArtifactContract = ArtifactContract::RawDevelopedSrgb;
+pub(crate) const HEIF_DECODED_JPEG: ArtifactContract = ArtifactContract::HeifPrimarySrgb;
 
 /// A camera JPEG may stand in for pixel inspection only under the explicit
 /// camera-rendered policy and only when it covers the RAW display dimensions.
@@ -120,12 +89,9 @@ mod tests {
     }
 
     #[test]
-    fn decoded_heif_contract_is_explicitly_oriented_sdr_srgb() {
-        assert_eq!(
-            HEIF_DECODED_JPEG.orientation,
-            OrientationState::AppliedToPixels
-        );
-        assert_eq!(HEIF_DECODED_JPEG.color, ColorState::SrgbWithIcc);
-        assert_eq!(HEIF_DECODED_JPEG.dynamic_range, DynamicRange::Sdr);
+    fn developed_artifacts_require_srgb_icc() {
+        assert_eq!(HEIF_DECODED_JPEG.color(), ColorState::SrgbWithIcc);
+        assert_eq!(RAW_DEVELOPED_JPEG.color(), ColorState::SrgbWithIcc);
+        assert_eq!(CAMERA_JPEG.color(), ColorState::EmbeddedProfileOrUnknown);
     }
 }

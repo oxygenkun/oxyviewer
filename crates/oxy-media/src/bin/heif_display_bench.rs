@@ -4,7 +4,8 @@
 //! `cargo run --release -p oxy-media --bin heif_display_bench -- tests/fixtures/DSC00449.HIF 5 all`
 
 use oxy_domain::{AssetKind, PreviewPriority, RenderLevel};
-use oxy_media::{HeifDecodeService, preview};
+use oxy_media::{HeifDecodeService, HeifTileData, preview};
+use oxy_runtime::CancellationToken;
 use std::{
     env,
     error::Error,
@@ -52,6 +53,7 @@ fn benchmark_preview(path: &Path, level: RenderLevel, runs: usize) -> Result<(),
             level,
             PreviewPriority::Visible,
             AssetKind::Heif,
+            &CancellationToken::default(),
         )?;
         samples.push(started.elapsed());
         if let Some(diagnostics) = preview.diagnostics {
@@ -81,24 +83,22 @@ fn benchmark_tiles(path: &Path, runs: usize) -> Result<(), Box<dyn Error>> {
     let cache = tempfile::tempdir()?;
     for generation in 0..runs {
         let service = HeifDecodeService::default();
-        let session = service.begin(path, generation as u64, true, true)?;
+        let session = service.begin(path, cache.path(), generation as u64, true)?;
         let started = Instant::now();
         let mut first = None;
         let mut payload_bytes = 0_usize;
         let diagnostics = service.decode(
             &session,
-            path.to_owned(),
             cache.path(),
-            true,
             |event| {
                 first.get_or_insert_with(|| started.elapsed());
                 if let Some(tile) =
                     service.tile(&event.session_id, event.generation, event.x, event.y)
                 {
-                    payload_bytes += tile
-                        .encoded_jpeg
-                        .as_ref()
-                        .map_or(tile.rgba.len(), |jpeg| jpeg.len());
+                    payload_bytes += match tile.payload {
+                        HeifTileData::Rgba { bytes, .. } => bytes.len(),
+                        HeifTileData::Jpeg(jpeg) => jpeg.len(),
+                    };
                 }
             },
             |_| {},

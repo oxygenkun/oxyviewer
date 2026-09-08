@@ -31,8 +31,8 @@ HEVC 解码器或操作系统预览服务。即使原文件可解码，也不应
 
 交互图不随格式改变：网格/列表只进入 `thumbnail`；放大镜固定执行 `preview → full`。
 前端 `renderPlan(kind, surface, platform)` 把等级映射到 renderer 类；后端
-`pipeline::planner::plan(SourceFacts, Request, BackendCapabilities)` 生成 `DecodePlan`，再由
-`oxy_media::preview` 执行对应解码器和尺寸。多个等级可以指向同一产物。
+`pipeline::dispatcher` 直接按 `AssetKind + RenderLevel` 分派，再由格式 executor 选择后端与
+fallback。多个等级可以指向同一产物。
 例如 Sony HIF 的 `preview` 是 `thumbnail` 的显式别名，而不是一个 160 px 特判。
 
 ## 3. 端到端调用链
@@ -79,10 +79,10 @@ sequenceDiagram
 这避免“高清请求已返回 URL，但文件尚未解码进浏览器”时让画面闪空。RAW full 失败也会继续
 保留渐进预览，而不是让放大镜不可用。
 
-HEIF 的 `preview` renderer 复用 `thumbnail` 的 160×120 JPEG。macOS 的 `full` 通过 ImageIO
-直接生成完整 JPEG；Windows/Linux 的 `full` 由独立 tile session 渐进绘制，并在首次 session
-结束后写入完整 JPEG供下次 loupe 加载。Windows/Linux full 工作不进入串行 preview queue，
-因此不会阻塞屏内缩略图。
+只有识别为 Sony SHIF 且确实含 sidebar JPEG 的 HEIF 才让 `preview` 与 `thumbnail` 共享
+160×120 产物；普通 HEIF 的 `preview` 会请求语义化 4096 目标。`start_heif_full` 由 Rust 统一决定
+返回完整 artifact projection 或 tile session：关闭显示锐化且缓存可用时直接返回 artifact；开启
+显示锐化时使用 tile display path，规范缓存仍保持未锐化。前端不再按 user agent 复制这份策略。
 
 ## 5. 第一层调度：Rust `PreviewQueue`
 
@@ -179,7 +179,7 @@ IPC 不接收像素尺寸：
 
 ```mermaid
 flowchart TD
-    request["AssetKind + Request + BackendCapabilities"] --> policy["pipeline::planner::plan → DecodePlan"]
+    request["AssetKind + RenderLevel"] --> policy["pipeline::dispatcher"]
     policy -->|RAW Full| rawFull["raw_full"]
     policy -->|RAW Thumbnail/Preview| rawPreview["raw_preview_with_priority + policy size"]
     policy -->|HEIF Full| heifFull["heif::artifact::full / source JPEG"]
@@ -251,8 +251,8 @@ macOS ImageIO 竖拍尺寸映射和前端区域映射；CI 在三个桌面平台
 不是 HEIF 格式层。Sony 专用内嵌 JPEG 提取与方向兼容逻辑位于
 `formats/heif/quirks/sony.rs`。
 
-HEIF thumbnail/preview 请求到达执行器后才进行最多 2 MiB 的有界探测，目录发现、首屏枚举和
-planner 都不读取媒体内容。planner 只声明可以优先尝试快速表示，并分别保留 512 thumbnail 和
+HEIF thumbnail/preview 请求到达执行器后才进行最多 2 MiB 的有界探测，目录发现和首屏枚举
+都不读取媒体内容。dispatcher 分别保留 512 thumbnail 和
 4096 preview 的解码回退尺寸；执行器命中 embedded cache 或实际识别并验证出 Sony SHIF JPEG
 时，直接把两个语义等级映射到同一个 160×120 产物。JPEG 注入正确 EXIF orientation 后原样写入
 独立的 embedded cache namespace，不进入 HEVC gate，也不进行像素重编码。冷路径在一次探测中
@@ -261,9 +261,9 @@ planner 都不读取媒体内容。planner 只声明可以优先尝试快速表�
 没有已识别快速表示的 HEIF 分别使用 512 thumbnail 和 4096 preview，并可使用 macOS ImageIO、
 FFmpeg 或 libheif 等后端。前端不再把所有 HEIF preview 静态别名成 thumbnail；Sony 两个语义请求
 仍会由 Rust 返回同一路径。HEIF full 是另一条渐进路径，用于放大检查。
-后端直接从源 HEIF 生成全尺寸 JPEG 缓存。再次进入相同 HIF 时，loupe 直接显示该 JPG，
-跳过源解码。macOS 冷缓存路径直接生成完整 JPEG，不启动 tile session；Windows/Linux
-冷缓存路径仍启动 session 渐进发布 tile，并在完成后写入这份热缓存。
+后端直接从源 HEIF 生成未锐化全尺寸 JPEG 缓存。`start_heif_full` 由 Rust 根据缓存、平台和
+显示锐化决定 artifact 或 tiles；开启锐化时即使缓存命中也从规范 JPEG 构造显示瓦片，缓存本身
+不带锐化。
 macOS 的完整 JPEG 使用 ImageIO 编码；解码 permit 在 primary image 解码完成
 后立即释放，JPEG 编码与缓存同步不继续阻塞下一项解码。下一章专门解释 session。
 
@@ -271,13 +271,15 @@ macOS 的完整 JPEG 使用 ImageIO 编码；解码 permit 在 primary image 解
 
 缓存键哈希至少包含：
 
-- 源路径；
+- canonical 源路径；
+- 平台稳定文件身份（Unix dev/inode 或 Windows volume/file index）；
 - 文件大小；
-- 修改时间；
-- backend/cache version；
-- 由 `(platform, kind, RenderLevel)` 策略解析出的实际尺寸。
+- 高精度修改时间；
+- 统一 policy revision；
+- 目标尺寸。
 
-源文件修改或解码算法版本升级都会形成新键。旧文件可能暂时留在 cache 目录，但不会被误用。
+上述字段使用 SHA-256 生成稳定键。源文件替换、修改或解码策略升级都会形成新键。旧文件可能暂时
+留在 cache 目录，但不会被误用。
 
 RAW/HEIF 的 JPEG 和部分 byte-cache 写入先在目标目录创建临时文件，编码完成后原子持久化到
 目标路径。这样崩溃或取消不会留下看似有效但内容截断的最终文件。统一预览写 8-bit JPEG。
@@ -319,15 +321,15 @@ WebView 的文件会在这轮清理中保留，容量小于单个 artifact 时�
 2. **前端忽略结果**：command 已开始，React Query 不再使用返回值；
 3. **后端协作取消**：解码器定期检查 flag 并提前退出。
 
-统一 preview 当前完整支持第 1 项；第 2 项会通过独立 command 释放对应 request consumer：若工作
-仍在 Rust pending 队列中且已无其他 consumer，它会被直接摘出；若原生解码已经开始，则后端仍会
-完成并温热缓存。第 3 项尚未普遍实现。Tauri `invoke` 本身不能携带浏览器 `AbortSignal` 去中断
-Rust 原生解码。文档或 UI 不应把“停止等待结果”描述成“停止了 CPU 解码”。HEIF full session
-有自己的取消 flag，语义更强，见下一章。
+统一 preview 通过独立 command 释放对应 request consumer：pending 工作在没有 consumer 时直接
+摘出；active 工作在最后一个 consumer 离开时取消共享 token。decode gate 与同源锁等待、后端
+attempt 边界、tile 发布以及缓存提交前都会检查 token。已经进入不可中断 native codec 调用时仍需
+等待调用返回，但迟到结果不会触发 fallback 或提交缓存。HEIF full session 另有 session token，
+见下一章。
 
 ## 12. 诊断与性能
 
-`PreviewResult` 包含 URL、类型、宽高，并可带 `renderLevel` 与 diagnostics。性能判断需要区分：
+`PreviewResult` 包含路径、类型、宽高、必填 `renderLevel`，并可带 diagnostics。性能判断需要区分：
 
 - cold decode；
 - warm cache hit；

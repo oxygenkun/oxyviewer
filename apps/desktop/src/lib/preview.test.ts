@@ -22,13 +22,15 @@ describe("semantic render graph", () => {
 
     expect(preview.method).toEqual({ type: "generatedImage", requestLevel: "preview" });
     expect(renderMethodKey(preview.method)).not.toBe(renderMethodKey(thumbnail.method));
-    expect(full.method).toEqual({ type: "heifTiles" });
+    expect(full.method).toEqual({ type: "heifFull" });
   });
 
-  it("keeps the platform-specific HEIF full method", () => {
-    const [preview, full] = renderPlan("heif", "loupe", "macos");
-    expect(preview.method).toEqual({ type: "generatedImage", requestLevel: "preview" });
-    expect(full.method).toEqual({ type: "generatedImage", requestLevel: "full" });
+  it("delegates HEIF full delivery to Rust on every platform", () => {
+    for (const platform of ["windows", "macos", "linux"] as const) {
+      const [preview, full] = renderPlan("heif", "loupe", platform);
+      expect(preview.method).toEqual({ type: "generatedImage", requestLevel: "preview" });
+      expect(full.method).toEqual({ type: "heifFull" });
+    }
   });
 
   it("maps RAW and TIFF levels without exposing concrete pixel sizes", () => {

@@ -23,7 +23,7 @@ vi.mock("./previewDebug", () => ({
   beginPreviewDebug: mocks.beginPreviewDebug,
 }));
 
-import { deletePaths, generatedPreview } from "./api";
+import { deletePaths, generatedPreview, startHeifFull } from "./api";
 
 const asset: AssetSummary = {
   id: "raw-1",
@@ -93,6 +93,70 @@ describe("file deletion", () => {
 
     expect(mocks.invoke).toHaveBeenCalledWith("execute_file_operation", {
       operation: { type, paths: [asset.path] },
+    });
+  });
+});
+
+describe("HEIF full delivery", () => {
+  afterEach(() => {
+    mocks.invoke.mockReset();
+    vi.unstubAllGlobals();
+  });
+
+  it("converts a Rust-selected artifact projection into a display URL", async () => {
+    vi.stubGlobal("window", { __TAURI_INTERNALS__: {} });
+    mocks.invoke.mockResolvedValue({
+      delivery: "artifact",
+      projection: {
+        path: asset.path,
+        sourceRevision: "source-1",
+        projectionRevision: 1,
+        validAt: 1,
+        status: "ready",
+        level: "full",
+        result: {
+          path: "/cache/full.jpg",
+          width: 7008,
+          height: 4672,
+          kind: "decoded",
+          renderLevel: "full",
+        },
+      },
+    });
+
+    const presentation = await startHeifFull(asset.path, 7, false);
+
+    expect(presentation.delivery).toBe("artifact");
+    if (presentation.delivery === "artifact") {
+      expect(presentation.result.url).toBe("asset:///cache/full.jpg");
+    }
+    expect(mocks.invoke).toHaveBeenCalledWith("start_heif_full", {
+      path: asset.path,
+      generation: 7,
+      displaySharpening: false,
+    });
+  });
+
+  it("passes through a Rust-selected tile session", async () => {
+    vi.stubGlobal("window", { __TAURI_INTERNALS__: {} });
+    mocks.invoke.mockResolvedValue({
+      delivery: "tiles",
+      session: {
+        id: "heif-1",
+        generation: 8,
+        width: 7008,
+        height: 4672,
+        tileSize: 512,
+        expectedTiles: 140,
+        backend: "appleImageIo",
+        acceleration: "unknown",
+        status: "decoding",
+      },
+    });
+
+    await expect(startHeifFull(asset.path, 8, true)).resolves.toMatchObject({
+      delivery: "tiles",
+      session: { id: "heif-1" },
     });
   });
 });

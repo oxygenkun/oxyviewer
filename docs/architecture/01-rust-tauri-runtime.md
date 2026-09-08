@@ -172,13 +172,14 @@ async command
 - 详情/预览：`get_asset_details`、`request_metadata`、`get_preview` 与 scope 调度命令；
 - 设置/写操作：缓存设置、`execute_file_operation`、`patch_metadata`、内嵌同步与 ExifTool 配置；
 - 资料库：根目录添加、移除、排序和列出；
-- 作业/HEIF：`cancel_job`、HEIF capability/cache/session/diagnostics 命令；
+- 作业/HEIF：`cancel_job`、HEIF capability、`start_heif_full` 与 session 取消命令；
 - 性能 harness：场景读取与 runner-owned 报告写入。
 
 ### 7.2 Event：Rust 主动推送状态
 
-HEIF 后台解码不会让 command 等到所有瓦片完成。`start_heif_decode` 很快返回会话，后台
-任务通过 `app.emit` 发布 `heif-tile-ready` 和 `heif-decode-status`。前端用 `listen` 订阅。
+HEIF 后台解码不会让 command 等到所有瓦片完成。`start_heif_full` 要么返回已完成 artifact
+projection，要么很快返回 session；后者通过 `app.emit` 发布 `heif-tile-ready` 和
+`heif-decode-status`。前端用 `listen` 订阅。
 
 Event 仍走序列化边界，所以只发送 session、坐标、尺寸、URL、状态和耗时，不发送像素。
 

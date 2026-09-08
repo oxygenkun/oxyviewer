@@ -426,9 +426,8 @@ pub struct PreviewResult {
     /// Semantic level this result fulfills. Pixel dimensions deliberately do
     /// not define the level: a format/platform policy may use one artifact for
     /// multiple levels (for example Sony HIF's 160 px JPEG for thumbnail and
-    /// preview on Windows).
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub render_level: Option<RenderLevel>,
+    /// preview).
+    pub render_level: RenderLevel,
     /// Optional decode diagnostics. Populated by decoders that measure
     /// backend/timing; absent for cache hits and direct passthrough.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -460,8 +459,8 @@ pub struct CacheSettingsUpdate {
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub enum HeifBackendKind {
+    CachedArtifact,
     WindowsWic,
-    WindowsMediaFoundation,
     AppleImageIo,
     LinuxVaapi,
     FfmpegSoftware,
@@ -479,9 +478,7 @@ pub enum AccelerationKind {
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub enum HeifDecodeStatus {
-    Probing,
     Decoding,
-    CompatibilityFallback,
     Complete,
     Failed,
     Cancelled,
@@ -494,15 +491,6 @@ pub struct HeifCapabilities {
     pub acceleration: AccelerationKind,
     pub available: bool,
     pub detail: Option<String>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-#[serde(rename_all = "camelCase")]
-pub struct HeifDecodeRequest {
-    pub path: PathBuf,
-    pub generation: u64,
-    pub hardware_acceleration: bool,
-    pub tile_size: u32,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -520,6 +508,13 @@ pub struct HeifDecodeSession {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(tag = "delivery", rename_all = "camelCase")]
+pub enum HeifFullPresentation {
+    Artifact { projection: Box<ImageProjection> },
+    Tiles { session: HeifDecodeSession },
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct HeifTileReady {
     pub session_id: SessionId,
@@ -528,9 +523,15 @@ pub struct HeifTileReady {
     pub y: u32,
     pub width: u32,
     pub height: u32,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub encoding: Option<String>,
+    pub payload: HeifTilePayload,
     pub url: String,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub enum HeifTilePayload {
+    Rgba,
+    Jpeg,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]

@@ -1,6 +1,6 @@
 # 07：oxy-media 重构规则与目标
 
-状态：分阶段实施。本文描述目标架构，不代表所有模块和行为已经实现。
+状态：本轮收敛已完成；后半部分保留阶段性历史记录。
 当前流水线见 [03](03-preview-pipeline.md)，会话见 [04](04-heif-tile-session.md)。
 
 ## 1. 目标与问题
@@ -39,7 +39,7 @@ lib.rs                      稳定公开入口与重导出
 service.rs                  请求编排
 formats.rs + formats/       RAW/HEIF 格式知识、items、局部 quirks 与有界检查
 backends.rs + backends/     LibRaw/libheif/FFmpeg/ImageIO/WIC 适配与能力
-pipeline.rs + pipeline/     planner、executor、session
+pipeline.rs + pipeline/     语义 dispatcher、格式 executor、HEIF session
 decode_control.rs           媒体解码 gate、独立 lane 锁与同源锁表
 presentation.rs + presentation/  方向、色彩、缩放
 cache.rs + cache/           key、store、encode
@@ -48,19 +48,19 @@ cache.rs + cache/           key、store、encode
 目录按实际迁移逐步建立。FFI 源文件和 build.rs 路径需一起迁移。
 
 ```text
-Request + AssetKind + BackendCapabilities
+AssetKind + RenderLevel + CancellationToken
                   ↓
-              DecodePlan
+             dispatcher
                   ↓
        缓存查询 / executor / session
                   ↓
        有界源检查 → 后端 → 显示规范化 → 缓存或协议交付
 ```
 
-- Request 描述等级、目标尺寸、优先级、呈现意图和取消信号，而非指定解码库。
+- Request 描述等级、优先级、呈现意图和取消信号，而非指定解码库或像素尺寸。
 - 能力描述特定输入支持、缩放/full/tile、输出色彩与方向状态、取消和加速证据。
-- planner 使用请求、格式族与能力生成可测试的计划，不执行 IO/解码。
-- 影响单个格式内部表示选择的有界检查由对应 executor 按需执行，不把结果反向送入 planner。
+- dispatcher 只按格式族与语义等级选择 executor；格式内部运行时能力与 fallback 由 executor 管理。
+- 影响单个格式内部表示选择的有界检查由对应 executor 按需执行，不进入目录发现。
 - preview 和 full session 使用相同选择机制，但允许不同计划和资源 lane。
 - fallback 顺序用兼容性与性能证据决定，不假设原生后端永远最好。
 - 缓存替代要比较表示、质量和处理策略；影响产物的行为变更需更新 cache version。
@@ -77,11 +77,25 @@ Request + AssetKind + BackendCapabilities
 - [x] 将 libheif 适配器和 Sony 专用提取器命名对齐职责，整理后端与 FFI。
 - 验收：API、产物、缓存键、fallback 顺序、锁范围不变；原有测试通过。
 
-### B：请求与计划
+### B：请求与计划（历史实现，后由 E 阶段简化）
 
 - [x] 引入内部 DecodePlan，以 AssetKind、语义请求与能力表达路由。
 - [x] planner 用模拟能力测试平台 × 格式 × 等级矩阵，不依赖宿主原生解码器。
 - 验收：能力缺失与现有策略都有明确结果；源内容探测不进入 planner 或目录首屏。
+
+### E：最终收敛
+
+- [x] 删除只转译静态矩阵的 planner，dispatcher 直接匹配 `AssetKind + RenderLevel`；HEIF 内部仍保留
+  可注入 probe 的 backend plan 与 attempt diagnostics。
+- [x] `PreviewResult.renderLevel` 改为必填；尺寸读取按已知 `AssetKind` 确定性分派。
+- [x] `start_heif_full` 成为 HEIF full 的单一 Rust 决策入口；规范 JPEG 永不锐化，锐化只走显示瓦片。
+- [x] 删除硬件开关、推测性状态、重复 cache/session/diagnostics IPC；tile payload 改为显式枚举，
+  URL 与 event DTO 只在 Tauri 边界构造。
+- [x] cache key 使用 SHA-256、canonical path、平台文件身份、大小、高精度 mtime 与统一 policy；损坏
+  artifact 自动删除重建，临时文件位于不被 prune/clear 扫描的 `.tmp` 子目录。
+- [x] preview request 拥有共享取消 token；decode gate、同源/RAW full 锁等待、backend attempt、发布与
+  cache commit 均在适当边界检查取消。弱引用同源锁表可回收，不再使用永久增长的锁表。
+- [x] benchmark binaries 需要显式 `bench-tools` feature，默认 workspace 检查不编译运维工具。
 
 ### C：统一后端选择（已完成本阶段清单）
 

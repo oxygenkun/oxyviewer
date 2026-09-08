@@ -6,19 +6,20 @@ Accepted
 
 ## Decision
 
-Full-resolution HEIF display uses a session service owned by `oxy-media`.
-Tauri commands return serialized session metadata only. Pixel data is exposed
-as tightly packed RGBA8 tiles through the `oxy-media://` protocol and announced
-with `heif-tile-ready` events.
+Full-resolution HEIF display is selected by the Rust-owned `start_heif_full`
+boundary. It returns either a completed artifact projection or session metadata.
+For sessions, pixel data is exposed as explicit RGBA or JPEG tile payloads
+through `oxy-media://` and announced with `heif-tile-ready` events.
 
-The backend order is platform-native hardware decode, platform-native software
-decode, then the portable libheif/libde265 compatibility backend. A backend is
-never reported as available until its runtime capability probe succeeds.
+Backend order is platform-specific and capability-probed, with FFmpeg and the
+portable libheif/libde265 backend as fallbacks. Native APIs are not reported as
+hardware accelerated unless that fact can be verified.
 
 Only one selected-image full-resolution HEIF session is active. Starting a new
 session cancels the previous generation and clears its in-memory tiles. The
-4096 px preview remains visible beneath the Canvas while full-resolution tiles
-arrive.
+semantic preview remains visible beneath the Canvas while full-resolution tiles
+arrive. The canonical full JPEG is always unsharpened; optional display
+sharpening uses the tile path and never changes cache identity or pixels.
 
 ## Current Implementation
 
@@ -29,10 +30,9 @@ installed native decoder accepts the selected file. FFmpeg dynamically reads
 tile offsets from `ffprobe`, decodes and composes the primary grid, and falls
 back to libheif on failure. WIC and ImageIO acceleration are reported as
 unknown because their public APIs do not expose reliable GPU-use diagnostics.
-Windows Media Foundation/D3D11, explicit macOS VideoToolbox/Metal tile decode,
-and Linux VAAPI adapters remain pending. Native hardware adapters must pass
-correctness and cold-load P95 tests on real GPU runners before being reported
-as hardware accelerated.
+The former user-facing hardware toggle and speculative backend states were
+removed; future hardware adapters must pass correctness and cold-load P95 tests
+on real GPU runners before being reported as hardware accelerated.
 
 ## Consequences
 

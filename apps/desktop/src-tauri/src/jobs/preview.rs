@@ -5,8 +5,8 @@ use oxy_domain::{
 };
 use oxy_library::Library;
 use oxy_runtime::{
-    CoalescingPriorityQueue, EffectiveScheduleChange, OmittedIntentPolicy, QueuePlacement,
-    SchedulePosition, ScopedIntentScheduler,
+    CancellationToken, CoalescingPriorityQueue, EffectiveScheduleChange, OmittedIntentPolicy,
+    QueuePlacement, SchedulePosition, ScopedIntentScheduler,
 };
 use std::{
     collections::{HashMap, HashSet},
@@ -44,6 +44,7 @@ struct WorkRequest {
     level: RenderLevel,
     valid_at: u64,
     waiters: Vec<Waiter>,
+    cancellation: CancellationToken,
 }
 
 struct Waiter {
@@ -144,7 +145,8 @@ impl PreviewQueue {
             queue_order,
         } = request;
         let requested_position = schedule_position(priority, queue_order);
-        let source_revision = source_revision(modified_at_ms, size_bytes, &preview_dir);
+        let source_revision =
+            source_revision(modified_at_ms, size_bytes, &preview_dir, kind, level);
         let state_key = (path.clone(), level);
         if let Some(cached) = self
             .projections
@@ -290,6 +292,7 @@ impl PreviewQueue {
                 id: request_id,
                 sender,
             }],
+            cancellation: CancellationToken::default(),
         };
         work.pending.push_or_merge(
             key.clone(),
@@ -306,31 +309,6 @@ impl PreviewQueue {
         drop(work);
         self.work.1.notify_one();
         Ok((loading, receiver))
-    }
-
-    pub fn reprioritize_pending(
-        &self,
-        identity: PreviewIdentity,
-        request_id: &str,
-        priority: PreviewPriority,
-        queue_order: usize,
-    ) -> bool {
-        let key = PreviewScheduleKey {
-            path: identity.path,
-            level: identity.level,
-        };
-        let position = schedule_position(priority, queue_order);
-        let mut work = self.work.0.lock().expect("preview queue lock poisoned");
-        let Some(changes) = work.schedule.reconcile(
-            request_id.to_owned(),
-            0,
-            [(key, position)],
-            OmittedIntentPolicy::Release,
-        ) else {
-            return false;
-        };
-        work.apply_schedule_changes(changes);
-        true
     }
 
     pub fn cancel_request(&self, identity: PreviewIdentity, request_id: &str) -> bool {
@@ -382,6 +360,9 @@ impl PreviewQueue {
             let previous_len = request.waiters.len();
             request.waiters.retain(|waiter| waiter.id != request_id);
             changed |= request.waiters.len() != previous_len;
+            if request.waiters.is_empty() {
+                request.cancellation.cancel();
+            }
         }
         changed
     }
@@ -628,7 +609,7 @@ impl PreviewQueue {
                     };
                     let _foreground =
                         (position.tier <= 1).then(|| queue.library.foreground.enter());
-                    let (path, preview_dir, kind, source_revision, level, valid_at) = {
+                    let (path, preview_dir, kind, source_revision, level, valid_at, cancellation) = {
                         let request = request
                             .lock()
                             .expect("active preview request lock poisoned");
@@ -639,6 +620,7 @@ impl PreviewQueue {
                             request.source_revision.clone(),
                             request.level,
                             request.valid_at,
+                            request.cancellation.clone(),
                         )
                     };
                     let result = oxy_media::preview(
@@ -647,6 +629,7 @@ impl PreviewQueue {
                         level,
                         priority_from_position(position),
                         kind,
+                        &cancellation,
                     )
                     .map_err(|error| error.to_string());
                     let projection = match &result {
@@ -739,11 +722,17 @@ fn debug_item(
     }
 }
 
-fn source_revision(modified_at_ms: u64, size_bytes: u64, preview_dir: &std::path::Path) -> String {
+fn source_revision(
+    modified_at_ms: u64,
+    size_bytes: u64,
+    preview_dir: &std::path::Path,
+    kind: AssetKind,
+    level: RenderLevel,
+) -> String {
     format!(
         "{modified_at_ms}:{size_bytes}:{}:{}",
         preview_dir.to_string_lossy(),
-        oxy_media::PREVIEW_POLICY_VERSION
+        oxy_media::preview_policy_revision(kind, level)
     )
 }
 
@@ -797,8 +786,17 @@ mod tests {
 
     #[test]
     fn source_revision_includes_media_policy_version() {
-        let revision = source_revision(12, 34, std::path::Path::new("cache"));
-        assert!(revision.ends_with(oxy_media::PREVIEW_POLICY_VERSION));
+        let revision = source_revision(
+            12,
+            34,
+            std::path::Path::new("cache"),
+            AssetKind::Heif,
+            RenderLevel::Full,
+        );
+        assert!(revision.ends_with(oxy_media::preview_policy_revision(
+            AssetKind::Heif,
+            RenderLevel::Full,
+        )));
     }
 
     #[test]

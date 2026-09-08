@@ -9,12 +9,37 @@ version.workspace = true
 [lints]
 workspace = true
 
+[features]
+bench-tools = []
+
+[[bin]]
+name = "heif_decode_bench"
+path = "src/bin/heif_decode_bench.rs"
+required-features = ["bench-tools"]
+
+[[bin]]
+name = "heif_display_bench"
+path = "src/bin/heif_display_bench.rs"
+required-features = ["bench-tools"]
+
+[[bin]]
+name = "heif_gpu_probe"
+path = "src/bin/heif_gpu_probe.rs"
+required-features = ["bench-tools"]
+
+[[bin]]
+name = "raw_display_bench"
+path = "src/bin/raw_display_bench.rs"
+required-features = ["bench-tools"]
+
 [dependencies]
 image.workspace = true
 lcms2.workspace = true
 libheif-rs.workspace = true
 oxy-domain = { path = "../oxy-domain" }
+oxy-runtime = { path = "../oxy-runtime" }
 serde_json.workspace = true
+sha2.workspace = true
 tempfile.workspace = true
 thiserror.workspace = true
 

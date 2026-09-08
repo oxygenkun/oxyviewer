@@ -41,10 +41,10 @@
 | 文件夹会话 | `crates/oxy-fs/src/lib.rs` | `apps/desktop/src/lib/api.ts` |
 | Command 实现/注册 | `apps/desktop/src-tauri/src/commands/*.rs` / `apps/desktop/src-tauri/src/lib.rs` | `invoke(...)` wrappers in `api.ts` |
 | 分页请求 | `FsCatalog::list_assets` | `useInfiniteQuery` in `App.tsx` |
-| 渲染等级 | `pipeline::planner::plan` / `DecodePlan` / `oxy_media::preview` | `renderPlan` |
+| 渲染等级 | `pipeline::dispatcher` / `oxy_media::preview` | `renderPlan` |
 | 预览优先级 | `PreviewQueue` / `DecodeGate` | selection/visibility priority hints |
 | 调试队列观测 | `get_debug_queue_snapshot` | debug-only, read-only scheduler snapshots; see [`DEBUG_QUEUE_OBSERVABILITY.md`](../DEBUG_QUEUE_OBSERVABILITY.md) |
-| HEIF 完整图 | `HeifDecodeService` / `oxy_media::heif_full` | macOS `Thumbnail` full stage；Windows/Linux `HeifTileCanvas` |
+| HEIF 完整图 | `start_heif_full` / `HeifDecodeService` | `HeifTileCanvas` 消费 Rust 决定的 artifact 或 tiles |
 | 资源 projection 状态 | `MetadataQueue` / `PreviewQueue` / SQLite | Zustand 只读镜像 |
 | 原生元数据解析 | `oxy-metadata-parser` + `oxy-metadata` | `AssetDetails` / projection types |
 | UI 请求生命周期 | 不适用 | React Query |

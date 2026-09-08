@@ -6,7 +6,7 @@ export type RenderSurface = "thumbnail" | "loupe";
 export type RenderMethod =
   | { type: "originalImage" }
   | { type: "generatedImage"; requestLevel: RenderLevel }
-  | { type: "heifTiles" };
+  | { type: "heifFull" };
 
 type ConfiguredRenderMethod = RenderMethod | { type: "reuse"; level: RenderLevel };
 type RenderProfile = Record<RenderLevel, ConfiguredRenderMethod>;
@@ -53,14 +53,7 @@ const heifTileProfile: RenderProfile = {
   // fit-to-window preview; a recognized Sony quick JPEG may still resolve both
   // requests to the same artifact path without a format-wide frontend alias.
   preview: { type: "generatedImage", requestLevel: "preview" },
-  full: { type: "heifTiles" },
-};
-
-const heifJpegProfile: RenderProfile = {
-  ...heifTileProfile,
-  // ImageIO can transcode the source HEIF directly to a full-resolution JPEG
-  // without transferring a full RGBA buffer through Rust or the WebView.
-  full: { type: "generatedImage", requestLevel: "full" },
+  full: { type: "heifFull" },
 };
 
 // Keep platform as an explicit policy dimension even where the qualified
@@ -68,7 +61,7 @@ const heifJpegProfile: RenderProfile = {
 // native path has its own fixture-backed performance and fidelity evidence.
 const heifProfiles: Record<RenderPlatform, RenderProfile> = {
   windows: heifTileProfile,
-  macos: heifJpegProfile,
+  macos: heifTileProfile,
   linux: heifTileProfile,
 };
 

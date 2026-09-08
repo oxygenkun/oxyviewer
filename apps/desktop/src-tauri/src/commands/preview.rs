@@ -3,9 +3,10 @@ use crate::{
     state::AppState,
 };
 use oxy_domain::{
-    AssetKind, CacheSettings, CacheSettingsUpdate, HeifCapabilities, HeifDecodeSession,
-    HeifDecodeStatus, HeifDiagnostics, PreviewOmittedPolicy, PreviewPriority, PreviewResult,
-    PreviewScheduleIntent, RenderLevel, SchedulePlacement,
+    AssetKind, AssetSummary, CacheSettings, CacheSettingsUpdate, HeifCapabilities,
+    HeifDecodeSession, HeifDecodeStatus, HeifDiagnostics, HeifFullPresentation, HeifStatusEvent,
+    HeifTileReady, ImageProjection, PreviewOmittedPolicy, PreviewPriority, PreviewScheduleIntent,
+    RenderLevel, SchedulePlacement,
 };
 use std::path::PathBuf;
 use tauri::{Emitter, State};
@@ -65,34 +66,6 @@ pub(crate) async fn get_preview(
         });
     }
     Ok(projection)
-}
-
-#[tauri::command]
-pub(crate) async fn reprioritize_preview(
-    path: PathBuf,
-    level: RenderLevel,
-    request_id: String,
-    priority: PreviewPriority,
-    queue_order: Option<usize>,
-    state: State<'_, AppState>,
-) -> Result<bool, String> {
-    let files = state.files.clone();
-    let preview_queue = state.preview_queue.clone();
-    tauri::async_runtime::spawn_blocking(move || {
-        let asset = files.get_asset(&path).map_err(|error| error.to_string())?;
-        let identity = PreviewIdentity {
-            path: asset.path,
-            level,
-        };
-        Ok(preview_queue.reprioritize_pending(
-            identity,
-            &request_id,
-            priority,
-            queue_order.unwrap_or_default(),
-        ))
-    })
-    .await
-    .map_err(|error| error.to_string())?
 }
 
 #[tauri::command]
@@ -220,81 +193,58 @@ pub(crate) fn get_heif_capabilities(state: State<'_, AppState>) -> Vec<HeifCapab
 }
 
 #[tauri::command]
-pub(crate) fn get_heif_diagnostics(state: State<'_, AppState>) -> Option<HeifDiagnostics> {
-    state.heif.diagnostics()
-}
-
-#[tauri::command]
-pub(crate) async fn get_cached_heif_full(
-    path: PathBuf,
-    state: State<'_, AppState>,
-) -> Result<Option<PreviewResult>, String> {
-    let asset = state
-        .files
-        .get_asset(&path)
-        .map_err(|error| error.to_string())?;
-    if asset.kind != AssetKind::Heif {
-        return Err("full-resolution HEIF cache lookup requires a HEIF asset".into());
-    }
-    let preview_dir = state.cache.preview_dir();
-    let cache = state.cache.clone();
-    let result = tauri::async_runtime::spawn_blocking(move || {
-        oxy_media::cached_heif_full(&path, &preview_dir).map_err(|error| error.to_string())
-    })
-    .await
-    .map_err(|error| error.to_string())??;
-    if let Some(result) = &result {
-        cache.mark_used(&result.path);
-    }
-    Ok(result)
-}
-
-#[tauri::command]
-pub(crate) async fn start_heif_decode(
+pub(crate) async fn start_heif_full(
     path: PathBuf,
     generation: u64,
-    hardware_acceleration: bool,
     display_sharpening: bool,
     app: tauri::AppHandle,
     state: State<'_, AppState>,
-) -> Result<HeifDecodeSession, String> {
+) -> Result<HeifFullPresentation, String> {
     let asset = state
         .files
         .get_asset(&path)
         .map_err(|error| error.to_string())?;
     if asset.kind != AssetKind::Heif {
-        return Err("full-resolution HEIF sessions require a HEIF asset".into());
+        return Err("full-resolution HEIF presentation requires a HEIF asset".into());
     }
     let service = state.heif.clone();
+    let preview_dir = state.cache.preview_dir();
+    let use_artifact = oxy_media::full_uses_artifact(&path, &preview_dir, display_sharpening)
+        .map_err(|error| error.to_string())?;
+    if use_artifact {
+        let preview_queue = state.preview_queue.clone();
+        let cache = state.cache.clone();
+        let projection = tauri::async_runtime::spawn_blocking(move || {
+            let projection =
+                resolve_heif_full_projection(&app, &preview_queue, asset, preview_dir, generation)?;
+            let artifact = projection
+                .result
+                .as_ref()
+                .ok_or_else(|| "ready HEIF full projection has no artifact".to_owned())?;
+            cache.mark_used(&artifact.path);
+            Ok::<_, String>(projection)
+        })
+        .await
+        .map_err(|error| error.to_string())??;
+        return Ok(HeifFullPresentation::Artifact {
+            projection: Box::new(projection),
+        });
+    }
     let session = service
-        .begin(&path, generation, hardware_acceleration, display_sharpening)
+        .begin(&path, &preview_dir, generation, display_sharpening)
         .map_err(|error| error.to_string())?;
     let worker_session = session.clone();
-    let preview_dir = state.cache.preview_dir();
     let cache = state.cache.clone();
-    let fallback_status = (session.status == HeifDecodeStatus::CompatibilityFallback).then(|| {
-        oxy_media::HeifDecodeService::status_event(
-            &session,
-            HeifDecodeStatus::CompatibilityFallback,
-            None,
-            Some("native hardware decoder unavailable; using compatibility mode".into()),
-        )
-    });
-    if let Some(status) = fallback_status {
-        let _ = app.emit("heif-decode-status", status);
-    }
+    let preview_queue = state.preview_queue.clone();
     tauri::async_runtime::spawn_blocking(move || {
-        let cache_source_path = path.clone();
         let result = service.decode(
             &worker_session,
-            path,
             &preview_dir,
-            hardware_acceleration,
             |tile| {
-                let _ = app.emit("heif-tile-ready", tile);
+                let _ = app.emit("heif-tile-ready", heif_tile_event(tile));
             },
             |diagnostics| {
-                let event = oxy_media::HeifDecodeService::status_event(
+                let event = heif_status_event(
                     &worker_session,
                     HeifDecodeStatus::Complete,
                     Some(diagnostics.clone()),
@@ -303,29 +253,32 @@ pub(crate) async fn start_heif_decode(
                 let _ = app.emit("heif-decode-status", event);
             },
         );
-        if result.is_ok()
-            && let Ok(Some(cached)) = oxy_media::cached_heif_full(&cache_source_path, &preview_dir)
-        {
-            cache.mark_used(&cached.path);
-            if cache.try_start_prune() {
-                if let Err(error) = cache.prune_after_write(&cached.path) {
-                    eprintln!("preview cache pruning failed: {error}");
+        if result.is_ok() {
+            match resolve_heif_full_projection(&app, &preview_queue, asset, preview_dir, generation)
+            {
+                Ok(projection) => {
+                    if let Some(artifact) = projection.result {
+                        cache.mark_used(&artifact.path);
+                        if cache.try_start_prune() {
+                            if let Err(error) = cache.prune_after_write(&artifact.path) {
+                                eprintln!("preview cache pruning failed: {error}");
+                            }
+                            cache.finish_prune();
+                        }
+                    }
                 }
-                cache.finish_prune();
+                Err(error) => eprintln!("failed to publish HEIF full projection: {error}"),
             }
-            let _ = app.emit("heif-cache-ready", worker_session.clone());
         }
         let event = match result {
             Ok(_) => None,
-            Err(oxy_media::MediaError::Cancelled) => {
-                Some(oxy_media::HeifDecodeService::status_event(
-                    &worker_session,
-                    HeifDecodeStatus::Cancelled,
-                    None,
-                    None,
-                ))
-            }
-            Err(error) => Some(oxy_media::HeifDecodeService::status_event(
+            Err(oxy_media::MediaError::Cancelled) => Some(heif_status_event(
+                &worker_session,
+                HeifDecodeStatus::Cancelled,
+                None,
+                None,
+            )),
+            Err(error) => Some(heif_status_event(
                 &worker_session,
                 HeifDecodeStatus::Failed,
                 None,
@@ -336,7 +289,68 @@ pub(crate) async fn start_heif_decode(
             let _ = app.emit("heif-decode-status", event);
         }
     });
-    Ok(session)
+    Ok(HeifFullPresentation::Tiles { session })
+}
+
+fn heif_tile_event(tile: oxy_media::HeifTilePublication) -> HeifTileReady {
+    HeifTileReady {
+        session_id: tile.session_id.clone(),
+        generation: tile.generation,
+        x: tile.x,
+        y: tile.y,
+        width: tile.width,
+        height: tile.height,
+        payload: tile.payload,
+        url: format!(
+            "oxy-media://localhost/tile/{}/{}/{}/{}",
+            tile.session_id, tile.generation, tile.x, tile.y
+        ),
+    }
+}
+
+fn heif_status_event(
+    session: &HeifDecodeSession,
+    status: HeifDecodeStatus,
+    diagnostics: Option<HeifDiagnostics>,
+    message: Option<String>,
+) -> HeifStatusEvent {
+    HeifStatusEvent {
+        session_id: session.id.clone(),
+        generation: session.generation,
+        status,
+        diagnostics,
+        message,
+    }
+}
+
+fn resolve_heif_full_projection(
+    app: &tauri::AppHandle,
+    preview_queue: &crate::jobs::preview::PreviewQueue,
+    asset: AssetSummary,
+    preview_dir: PathBuf,
+    generation: u64,
+) -> Result<ImageProjection, String> {
+    let (loading, receiver) = preview_queue.request(
+        app,
+        PreviewRequest {
+            request_id: format!("heif-full-{generation}"),
+            path: asset.path,
+            preview_dir,
+            kind: asset.kind,
+            size_bytes: asset.size_bytes,
+            modified_at_ms: asset.modified_at_ms,
+            level: RenderLevel::Full,
+            priority: PreviewPriority::Loupe,
+            queue_order: 0,
+        },
+    )?;
+    let _ = app.emit(
+        crate::jobs::preview::IMAGE_PROJECTION_UPDATED_EVENT,
+        loading,
+    );
+    receiver
+        .recv()
+        .map_err(|error| format!("preview queue stopped: {error}"))?
 }
 
 #[tauri::command]

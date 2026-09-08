@@ -8,13 +8,48 @@ use std::fs;
 use std::{io::Write, path::Path, time::Instant};
 use tempfile::NamedTempFile;
 
+pub(crate) fn cache_tempfile(
+    destination: &Path,
+    suffix: &str,
+) -> Result<NamedTempFile, MediaError> {
+    let parent = destination.parent().unwrap_or_else(|| Path::new("."));
+    if !parent.is_dir() {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::NotFound,
+            "cache destination parent does not exist",
+        )
+        .into());
+    }
+    let temporary_dir = parent.join(".tmp");
+    std::fs::create_dir_all(&temporary_dir)?;
+    Ok(tempfile::Builder::new()
+        .suffix(suffix)
+        .tempfile_in(temporary_dir)?)
+}
+
 pub(crate) fn write_jpeg_atomically(
     image: &DynamicImage,
     destination: &Path,
     quality: u8,
     contract: ArtifactContract,
 ) -> Result<(), MediaError> {
-    write_jpeg_atomically_with_icc(image, destination, quality, presentation_icc(contract)?)
+    write_jpeg_atomically_cancelled(image, destination, quality, contract, || false)
+}
+
+pub(crate) fn write_jpeg_atomically_cancelled(
+    image: &DynamicImage,
+    destination: &Path,
+    quality: u8,
+    contract: ArtifactContract,
+    cancelled: impl Fn() -> bool,
+) -> Result<(), MediaError> {
+    write_jpeg_atomically_with_icc(
+        image,
+        destination,
+        quality,
+        presentation_icc(contract)?,
+        cancelled,
+    )
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -29,11 +64,10 @@ pub(crate) fn write_jpeg_atomically_timed(
     destination: &Path,
     quality: u8,
     contract: ArtifactContract,
+    cancelled: impl Fn() -> bool,
 ) -> Result<CacheWriteTiming, MediaError> {
-    let temporary = tempfile::Builder::new()
-        .suffix(".jpg")
-        .tempfile_in(destination.parent().unwrap_or_else(|| Path::new(".")))?;
-    if contract.color != ColorState::SrgbWithIcc {
+    let temporary = cache_tempfile(destination, ".jpg")?;
+    if contract.color() != ColorState::SrgbWithIcc {
         return Err(MediaError::Color(
             "decoded JPEG cache requires the sRGB-with-ICC contract".into(),
         ));
@@ -60,6 +94,9 @@ pub(crate) fn write_jpeg_atomically_timed(
     let sync_started = Instant::now();
     temporary.as_file().sync_all()?;
     let sync_ms = duration_ms(sync_started);
+    if cancelled() {
+        return Err(MediaError::Cancelled);
+    }
     let commit_started = Instant::now();
     persist_noclobber(temporary, destination)?;
     Ok(CacheWriteTiming {
@@ -97,7 +134,7 @@ fn embed_icc_profile(path: &Path, profile: &[u8]) -> Result<(), MediaError> {
 }
 
 fn presentation_icc(contract: ArtifactContract) -> Result<Option<Vec<u8>>, MediaError> {
-    match contract.color {
+    match contract.color() {
         ColorState::SrgbWithIcc => lcms2::Profile::new_srgb()
             .icc()
             .map(Some)
@@ -114,9 +151,9 @@ fn write_jpeg_atomically_with_icc(
     destination: &Path,
     quality: u8,
     icc: Option<Vec<u8>>,
+    cancelled: impl Fn() -> bool,
 ) -> Result<(), MediaError> {
-    let mut temporary =
-        NamedTempFile::new_in(destination.parent().unwrap_or_else(|| Path::new(".")))?;
+    let mut temporary = cache_tempfile(destination, ".jpg")?;
     let mut encoder = JpegEncoder::new_with_quality(&mut temporary, quality);
     if let Some(profile) = icc {
         encoder
@@ -124,14 +161,29 @@ fn write_jpeg_atomically_with_icc(
             .map_err(|error| MediaError::Color(error.to_string()))?;
     }
     encoder.encode_image(image)?;
-    persist_atomically(temporary, destination)
+    temporary.as_file().sync_all()?;
+    if cancelled() {
+        return Err(MediaError::Cancelled);
+    }
+    persist_noclobber(temporary, destination)
 }
 
 pub(crate) fn write_bytes_atomically(data: &[u8], destination: &Path) -> Result<(), MediaError> {
-    let mut temporary =
-        NamedTempFile::new_in(destination.parent().unwrap_or_else(|| Path::new(".")))?;
+    write_bytes_atomically_cancelled(data, destination, || false)
+}
+
+pub(crate) fn write_bytes_atomically_cancelled(
+    data: &[u8],
+    destination: &Path,
+    cancelled: impl Fn() -> bool,
+) -> Result<(), MediaError> {
+    let mut temporary = cache_tempfile(destination, ".tmp")?;
     temporary.write_all(data)?;
-    persist_atomically(temporary, destination)
+    temporary.as_file().sync_all()?;
+    if cancelled() {
+        return Err(MediaError::Cancelled);
+    }
+    persist_noclobber(temporary, destination)
 }
 
 pub(crate) fn persist_atomically(
@@ -161,6 +213,14 @@ mod tests {
     use image::{ImageDecoder, ImageReader};
     use std::fs;
 
+    fn direct_file_count(path: &Path) -> usize {
+        fs::read_dir(path)
+            .unwrap()
+            .filter_map(Result::ok)
+            .filter(|entry| entry.file_type().is_ok_and(|kind| kind.is_file()))
+            .count()
+    }
+
     #[test]
     fn byte_writes_preserve_existing_artifact_and_remove_temporary_files() {
         let directory = tempfile::tempdir().unwrap();
@@ -169,7 +229,7 @@ mod tests {
         write_bytes_atomically(b"second", &destination).unwrap();
 
         assert_eq!(fs::read(&destination).unwrap(), b"first");
-        assert_eq!(fs::read_dir(directory.path()).unwrap().count(), 1);
+        assert_eq!(direct_file_count(directory.path()), 1);
     }
 
     #[test]
@@ -184,7 +244,8 @@ mod tests {
             Err(MediaError::Io(_))
         ));
         assert_eq!(fs::read(destination.join("keep")).unwrap(), b"keep");
-        assert_eq!(fs::read_dir(directory.path()).unwrap().count(), 1);
+        assert!(destination.is_dir());
+        assert_eq!(direct_file_count(directory.path()), 0);
     }
 
     #[test]
@@ -193,6 +254,24 @@ mod tests {
         let parent = directory.path().join("missing");
         assert!(write_bytes_atomically(b"image", &parent.join("preview.jpg")).is_err());
         assert!(!parent.exists());
+    }
+
+    #[test]
+    fn cancellation_after_encode_skips_cache_commit() {
+        let directory = tempfile::tempdir().unwrap();
+        let destination = directory.path().join("cancelled.jpg");
+        let error = write_jpeg_atomically_timed(
+            &DynamicImage::new_rgb8(32, 16),
+            &destination,
+            90,
+            crate::presentation::RAW_DEVELOPED_JPEG,
+            || true,
+        )
+        .unwrap_err();
+
+        assert!(matches!(error, MediaError::Cancelled));
+        assert!(!destination.exists());
+        assert_eq!(direct_file_count(directory.path()), 0);
     }
 
     #[test]
@@ -207,6 +286,7 @@ mod tests {
                     &destination,
                     90,
                     crate::presentation::RAW_DEVELOPED_JPEG,
+                    || false,
                 )
                 .unwrap();
             } else {
@@ -232,6 +312,7 @@ mod tests {
                     &destination,
                     90,
                     crate::presentation::RAW_DEVELOPED_JPEG,
+                    || false,
                 )
                 .unwrap();
             } else {
@@ -245,7 +326,7 @@ mod tests {
             }
             assert_eq!(fs::read(&destination).unwrap(), original);
         }
-        assert_eq!(fs::read_dir(directory.path()).unwrap().count(), 2);
+        assert_eq!(direct_file_count(directory.path()), 2);
     }
 
     #[test]
@@ -258,6 +339,7 @@ mod tests {
             &destination,
             90,
             Some(profile.clone()),
+            || false,
         )
         .unwrap();
         let mut decoder = ImageReader::open(&destination)

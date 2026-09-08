@@ -2,26 +2,28 @@
 use crate::backends::apple_image_io;
 use crate::{
     MediaError,
-    cache::{persist_atomically, preview_cache_key},
-    media_source::{has_complete_jpeg_markers, preview_result},
+    cache::{cache_tempfile, persist_atomically, preview_cache_key},
+    media_source::{cached_preview_result, has_complete_jpeg_markers, preview_result},
+    policy::SYSTEM_PREVIEW,
 };
-use oxy_domain::{PreviewKind, PreviewResult};
+use oxy_domain::{PreviewKind, PreviewResult, RenderLevel};
 use std::path::Path;
 
-const SYSTEM_CACHE_VERSION: &str = "apple-image-io-preview-v3-jpeg";
-
-pub fn preview(path: &Path, cache_dir: &Path, max_size: u32) -> Result<PreviewResult, MediaError> {
+pub fn preview(
+    path: &Path,
+    cache_dir: &Path,
+    max_size: u32,
+    level: RenderLevel,
+) -> Result<PreviewResult, MediaError> {
     std::fs::create_dir_all(cache_dir)?;
     let destination = cache_dir.join(format!(
         "{}.jpg",
-        preview_cache_key(path, SYSTEM_CACHE_VERSION, max_size)?
+        preview_cache_key(path, SYSTEM_PREVIEW, max_size)?
     ));
-    if destination.is_file() {
-        return preview_result(destination, PreviewKind::System);
+    if let Some(result) = cached_preview_result(destination.clone(), PreviewKind::System, level)? {
+        return Ok(result);
     }
-    let temporary = tempfile::Builder::new()
-        .suffix(".jpg")
-        .tempfile_in(cache_dir)?;
+    let temporary = cache_tempfile(&destination, ".jpg")?;
     generate(path, temporary.path(), max_size)?;
     if !has_complete_jpeg_markers(temporary.path())? {
         return Err(MediaError::PreviewGenerationFailed {
@@ -30,7 +32,7 @@ pub fn preview(path: &Path, cache_dir: &Path, max_size: u32) -> Result<PreviewRe
         });
     }
     persist_atomically(temporary, &destination)?;
-    preview_result(destination, PreviewKind::System)
+    preview_result(destination, PreviewKind::System, level)
 }
 
 #[cfg(target_os = "macos")]

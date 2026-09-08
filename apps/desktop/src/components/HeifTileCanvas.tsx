@@ -2,10 +2,9 @@ import { listen } from "@tauri-apps/api/event";
 import { useEffect, useRef, useState } from "react";
 import {
   cancelHeifDecode,
-  getCachedHeifFull,
   heifTileUrl,
   isTauri,
-  startHeifDecode,
+  startHeifFull,
 } from "../lib/api";
 import { expectedHeifTiles, HeifTileProgressTracker } from "../lib/heifTileProgress";
 import { perfMark, isPerfActive } from "../lib/perfProbe";
@@ -25,7 +24,6 @@ let nextGeneration = 0;
 interface HeifTileCanvasProps {
   asset: AssetSummary;
   displaySharpening: boolean;
-  hardwareAcceleration: boolean;
   onImageSize: (size: { width: number; height: number }) => void;
   onStatus: (status: HeifDecodeStatus, diagnostics?: HeifDiagnostics) => void;
 }
@@ -33,12 +31,11 @@ interface HeifTileCanvasProps {
 export function HeifTileCanvas({
   asset,
   displaySharpening,
-  hardwareAcceleration,
   onImageSize,
   onStatus,
 }: HeifTileCanvasProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
-  const cacheIdentity = `${asset.id}:${asset.modifiedAtMs}:${hardwareAcceleration}:${displaySharpening}`;
+  const cacheIdentity = `${asset.id}:${asset.modifiedAtMs}:${displaySharpening}`;
   const [cachedImage, setCachedImage] = useState<{
     identity: string;
     result: PreviewResult;
@@ -80,25 +77,6 @@ export function HeifTileCanvas({
     let activeTileFetches = 0;
     const maxConcurrentTileFetches = 4;
 
-    const loadCachedImage = async () => {
-      try {
-        const result = await getCachedHeifFull(asset.path);
-        if (disposed || !result) return false;
-        setCachedImage({ identity: cacheIdentity, result });
-        perfMark("heif:full-cache-hit", {
-          assetName: asset.name,
-          width: result.width,
-          height: result.height,
-        });
-        onImageSize({ width: result.width, height: result.height });
-        onStatus("complete");
-        return true;
-      } catch (error) {
-        if (__OXY_DEBUG__) debug?.mark("cache-lookup-failed", { error });
-        return false;
-      }
-    };
-
     const detail = track
       ? () => ({
           ...(progress?.snapshot() ?? {}),
@@ -137,7 +115,7 @@ export function HeifTileCanvas({
       try {
         const response = await fetch(heifTileUrl(tile.url));
         if (!response.ok) throw new Error(`tile fetch returned ${response.status}`);
-        const encoded = response.headers.get("content-type") === "image/jpeg";
+        const encoded = tile.payload === "jpeg";
         const payload = encoded
           ? await response.blob()
           : new Uint8ClampedArray(await response.arrayBuffer());
@@ -268,21 +246,27 @@ export function HeifTileCanvas({
         }
         if (payload.sessionId === sessionId) handleStatus(payload);
       }));
-      unlisten.push(await listen<HeifDecodeSession>("heif-cache-ready", ({ payload }) => {
-        if (
-          disposed
-          || payload.generation !== generation
-          || payload.id !== sessionId
-        ) return;
-        perfMark("heif:cache-written", { assetName: asset.name });
-      }));
       if (__OXY_DEBUG__) debug?.mark("listeners-ready");
-      const session = await startHeifDecode(
+      const presentation = await startHeifFull(
         asset.path,
         generation,
-        hardwareAcceleration,
         displaySharpening,
       );
+      if (presentation.delivery === "artifact") {
+        const result = presentation.result;
+        if (disposed) return;
+        setCachedImage({ identity: cacheIdentity, result });
+        perfMark("heif:full-cache-hit", {
+          assetName: asset.name,
+          width: result.width,
+          height: result.height,
+        });
+        onImageSize({ width: result.width, height: result.height });
+        onStatus("complete");
+        if (__OXY_DEBUG__) debug?.complete({ artifact: true });
+        return;
+      }
+      const session = presentation.session;
       if (disposed) {
         await cancelHeifDecode(session.id);
         return;
@@ -327,14 +311,7 @@ export function HeifTileCanvas({
     // durable mount reaches the backend.
     startFrame = requestAnimationFrame(() => {
       startFrame = undefined;
-      void loadCachedImage()
-        .then((cacheHit) => {
-          if (cacheHit || disposed) {
-            if (cacheHit && __OXY_DEBUG__) debug?.complete({ cacheHit: true });
-            return;
-          }
-          return start();
-        })
+      void start()
         .catch((error) => {
           onStatus("failed");
           if (__OXY_DEBUG__) debug?.fail(error, detail?.());
@@ -356,7 +333,6 @@ export function HeifTileCanvas({
     asset.path,
     cacheIdentity,
     displaySharpening,
-    hardwareAcceleration,
     onImageSize,
     onStatus,
   ]);

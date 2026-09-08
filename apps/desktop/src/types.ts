@@ -239,7 +239,7 @@ export interface PreviewResult {
   width: number;
   height: number;
   kind: PreviewKind;
-  renderLevel?: RenderLevel;
+  renderLevel: RenderLevel;
   diagnostics?: PreviewDiagnostics;
 }
 
@@ -303,17 +303,15 @@ export interface LibraryIndexUpdate {
 }
 
 export type HeifBackendKind =
+  | "cachedArtifact"
   | "windowsWic"
-  | "windowsMediaFoundation"
   | "appleImageIo"
   | "linuxVaapi"
   | "ffmpegSoftware"
   | "libheifSoftware";
 export type AccelerationKind = "hardware" | "software" | "unknown";
 export type HeifDecodeStatus =
-  | "probing"
   | "decoding"
-  | "compatibilityFallback"
   | "complete"
   | "failed"
   | "cancelled";
@@ -337,6 +335,10 @@ export interface HeifDecodeSession {
   status: HeifDecodeStatus;
 }
 
+export type HeifFullPresentation =
+  | { delivery: "artifact"; projection: ImageProjection }
+  | { delivery: "tiles"; session: HeifDecodeSession };
+
 export interface HeifTileReady {
   sessionId: string;
   generation: number;
@@ -344,7 +346,7 @@ export interface HeifTileReady {
   y: number;
   width: number;
   height: number;
-  encoding?: "jpeg";
+  payload: "rgba" | "jpeg";
   url: string;
 }
 

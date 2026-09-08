@@ -94,7 +94,7 @@ thread; the result is simply ignored.
 
 ### Single dispatcher
 
-`oxy_media::preview(path, cache_dir, level, priority, kind)` is the
+`oxy_media::preview(path, cache_dir, level, priority, kind, cancellation)` is the
 only entry point the Tauri layer calls for decodable formats. The per-format
 `match` block, priority mapping, and fallback chains now live in one place.
 Adding a new format means extending the semantic renderer profiles, not

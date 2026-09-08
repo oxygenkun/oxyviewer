@@ -1,6 +1,7 @@
 # oxy-media `lib.rs` simplification
 
-Status: Completed
+Status: Completed; public API details below were superseded by the final convergence recorded in
+`docs/architecture/07-media-refactoring.md`.
 
 ## Goal
 
@@ -36,10 +37,9 @@ force RAW, HEIF, and system previews behind an artificial common decoder trait.
 Inventory result:
 
 - Tauri uses `preview` (passing domain `PreviewPriority` directly), `dimensions`,
-  cache maintenance, `PREVIEW_POLICY_VERSION`, `HeifDecodeService`,
-  `cached_heif_full`, and `MediaError`.
-- `cached_heif_full` is an active Tauri lookup for the full HEIF artifact;
-  it is not a disabled compatibility API and remains public.
+  cache maintenance, `preview_policy_revision`, `HeifDecodeService`, and `MediaError`.
+- `start_heif_full` is now the single Tauri full-delivery boundary; the earlier standalone cache
+  lookup command was removed.
 - HEIF preview production now has one internal `heif::artifact::preview`
   function. `heif_display_bench` uses the public semantic dispatcher instead
   of preserving a separate exact-size facade.

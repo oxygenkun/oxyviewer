@@ -9,18 +9,16 @@ mod formats;
 mod heif_service;
 mod media_source;
 mod pipeline;
+mod policy;
 mod presentation;
 
 pub use cache::{CacheUsage, clear_preview_cache, preview_cache_usage, prune_preview_cache};
 pub use error::MediaError;
-pub use heif_service::{DEFAULT_TILE_SIZE, HeifDecodeService, HeifTile};
+pub use heif_service::{HeifDecodeService, HeifTile, HeifTileData, HeifTilePublication};
 pub use media_source::{ImageDimensions, dimensions};
 pub use pipeline::dispatcher::preview;
-pub use pipeline::heif::artifact::cached_heif_full;
-
-/// Included in persisted image projection identities so behavior-changing
-/// media policy cannot reuse a ready projection that points at an older cache.
-pub const PREVIEW_POLICY_VERSION: &str = "media-raw-native-v2";
+pub use pipeline::heif::artifact::{cached_heif_full, full_uses_artifact};
+pub use policy::preview_policy_revision;
 
 /// Resolves the Sony HIF test fixture, which is archived outside git (see
 /// `tests/fixtures/README.md`). `OXY_HIF_FIXTURE` overrides the default

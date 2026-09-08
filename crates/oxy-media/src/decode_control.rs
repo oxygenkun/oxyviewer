@@ -2,8 +2,12 @@
 //! This is not the runtime request queue and does not preempt active decoders.
 
 use std::{
-    collections::HashMap,
-    sync::{Arc, Condvar, LazyLock, Mutex},
+    collections::{HashMap, VecDeque},
+    sync::{
+        Arc, Condvar, LazyLock, Mutex, MutexGuard, Weak,
+        atomic::{AtomicUsize, Ordering},
+    },
+    time::{Duration, Instant},
 };
 
 // Full-resolution RAW development (potentially tens of seconds) stays on its
@@ -17,8 +21,9 @@ static HEIF_SESSION_CACHE_WRITE_LOCK: Mutex<()> = Mutex::new(());
 
 // Per-file locks coalesce duplicate cache work after the global decode gate has
 // selected the next source. Shared by every format.
-static DECODE_LOCKS: LazyLock<Mutex<HashMap<String, Arc<Mutex<()>>>>> =
+static DECODE_LOCKS: LazyLock<Mutex<HashMap<String, Weak<Mutex<()>>>>> =
     LazyLock::new(|| Mutex::new(HashMap::new()));
+static DECODE_LOCK_ACQUISITIONS: AtomicUsize = AtomicUsize::new(0);
 
 /// Priority for the unified decode gate. Higher priorities jump ahead of
 /// lower-priority waiters but never preempt a running decode.
@@ -48,61 +53,92 @@ struct DecodeGate {
     ready: Condvar,
 }
 
-#[derive(Default)]
 struct DecodeGateState {
     active: bool,
-    foreground_waiters: usize,
-    visible_waiters: usize,
+    next_ticket: u64,
+    waiters: VecDeque<DecodeWaiter>,
 }
 
-struct DecodePermit<'a> {
+impl DecodeGateState {
+    const fn new() -> Self {
+        Self {
+            active: false,
+            next_ticket: 0,
+            waiters: VecDeque::new(),
+        }
+    }
+}
+
+struct DecodeWaiter {
+    ticket: u64,
+    priority: DecodePriority,
+    queued_at: Instant,
+}
+
+pub(crate) struct DecodePermit<'a> {
     gate: &'a DecodeGate,
 }
 
 impl DecodeGate {
     const fn new() -> Self {
         Self {
-            state: Mutex::new(DecodeGateState {
-                active: false,
-                foreground_waiters: 0,
-                visible_waiters: 0,
-            }),
+            state: Mutex::new(DecodeGateState::new()),
             ready: Condvar::new(),
         }
     }
 
-    fn acquire(&self, priority: DecodePriority) -> DecodePermit<'_> {
+    fn acquire(
+        &self,
+        priority: DecodePriority,
+        cancelled: &impl Fn() -> bool,
+    ) -> Result<DecodePermit<'_>, crate::MediaError> {
         let mut state = self
             .state
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
-        if priority == DecodePriority::Foreground {
-            state.foreground_waiters += 1;
-        } else if priority == DecodePriority::Visible {
-            state.visible_waiters += 1;
-        }
-        while state.active
-            || match priority {
-                DecodePriority::Foreground => false,
-                DecodePriority::Visible => state.foreground_waiters > 0,
-                DecodePriority::Background => {
-                    state.foreground_waiters > 0 || state.visible_waiters > 0
-                }
+        let ticket = state.next_ticket;
+        state.next_ticket = state.next_ticket.wrapping_add(1);
+        state.waiters.push_back(DecodeWaiter {
+            ticket,
+            priority,
+            queued_at: Instant::now(),
+        });
+        loop {
+            if cancelled() {
+                state.waiters.retain(|waiter| waiter.ticket != ticket);
+                self.ready.notify_all();
+                return Err(crate::MediaError::Cancelled);
             }
-        {
-            state = self
+            let selected = selected_ticket(&state.waiters);
+            if !state.active && selected == Some(ticket) {
+                state.waiters.retain(|waiter| waiter.ticket != ticket);
+                state.active = true;
+                return Ok(DecodePermit { gate: self });
+            }
+            let (next, _) = self
                 .ready
-                .wait(state)
+                .wait_timeout(state, Duration::from_millis(25))
                 .unwrap_or_else(std::sync::PoisonError::into_inner);
+            state = next;
         }
-        if priority == DecodePriority::Foreground {
-            state.foreground_waiters -= 1;
-        } else if priority == DecodePriority::Visible {
-            state.visible_waiters -= 1;
-        }
-        state.active = true;
-        DecodePermit { gate: self }
     }
+}
+
+fn effective_priority(waiter: &DecodeWaiter) -> u8 {
+    let base = match waiter.priority {
+        DecodePriority::Background => 0,
+        DecodePriority::Visible => 1,
+        DecodePriority::Foreground => 2,
+    };
+    let aging = waiter.queued_at.elapsed().as_secs().min(2) as u8;
+    (base + aging).min(2)
+}
+
+fn selected_ticket(waiters: &VecDeque<DecodeWaiter>) -> Option<u64> {
+    waiters
+        .iter()
+        .max_by_key(|waiter| (effective_priority(waiter), u64::MAX - waiter.ticket))
+        .map(|waiter| waiter.ticket)
 }
 
 impl Drop for DecodePermit<'_> {
@@ -120,8 +156,11 @@ impl Drop for DecodePermit<'_> {
 /// Acquire the unified decode gate. Higher-priority waiters are served before
 /// lower-priority ones; a running decode is never preempted (caller opted into
 /// the "order pending only" scheduling policy).
-pub(crate) fn acquire_decode(priority: DecodePriority) -> impl Drop {
-    DECODE_GATE.acquire(priority)
+pub(crate) fn acquire_decode<F: Fn() -> bool>(
+    priority: DecodePriority,
+    cancelled: &F,
+) -> Result<DecodePermit<'static>, crate::MediaError> {
+    DECODE_GATE.acquire(priority, cancelled)
 }
 
 pub(crate) fn try_acquire_heif_session_cache_write() -> Option<impl Drop> {
@@ -132,34 +171,53 @@ pub(crate) fn try_acquire_heif_session_cache_write() -> Option<impl Drop> {
     }
 }
 
-/// Look up or create a per-file `Mutex`, clone the `Arc`, then lock it.
-/// Returns `(Arc<Mutex<()>>, MutexGuard)` — caller must keep the `Arc` alive
-/// alongside the guard (it is dropped last due to reverse-order drop).
-pub(crate) fn acquire_file_lock(
-    cache_key: &str,
-) -> (Arc<Mutex<()>>, std::sync::MutexGuard<'static, ()>) {
-    let arc: Arc<Mutex<()>> = DECODE_LOCKS
-        .lock()
-        .unwrap()
-        .entry(cache_key.to_owned())
-        .or_insert_with(|| Arc::new(Mutex::new(())))
-        .clone();
-    // Access the Mutex via raw pointer to decouple the guard's lifetime from
-    // the local `arc` binding. This lets us return both the Arc and the guard.
-    // Safety: the Mutex lives inside the static DECODE_LOCKS HashMap behind an
-    // Arc that is never removed; the returned Arc keeps it alive.
-    let mutex: &'static Mutex<()> = unsafe { &*Arc::as_ptr(&arc) };
-    let guard = mutex
+/// Returns the shared lock for one source. The registry stores only weak
+/// references, so browsing new files cannot retain one mutex per source for
+/// the lifetime of the process. Callers own the `Arc` while locking it.
+pub(crate) fn file_lock(cache_key: &str) -> Arc<Mutex<()>> {
+    let mut locks = DECODE_LOCKS
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner);
-    (arc, guard)
+    if DECODE_LOCK_ACQUISITIONS.fetch_add(1, Ordering::Relaxed) % 64 == 0 {
+        reclaim_file_locks(&mut locks);
+    }
+    if let Some(lock) = locks.get(cache_key).and_then(Weak::upgrade) {
+        return lock;
+    }
+    let lock = Arc::new(Mutex::new(()));
+    locks.insert(cache_key.to_owned(), Arc::downgrade(&lock));
+    lock
+}
+
+fn reclaim_file_locks(locks: &mut HashMap<String, Weak<Mutex<()>>>) {
+    locks.retain(|_, lock| lock.strong_count() > 0);
+}
+
+pub(crate) fn acquire_file_lock<'a>(
+    lock: &'a Mutex<()>,
+    cancelled: &impl Fn() -> bool,
+) -> Result<MutexGuard<'a, ()>, crate::MediaError> {
+    loop {
+        if cancelled() {
+            return Err(crate::MediaError::Cancelled);
+        }
+        match lock.try_lock() {
+            Ok(guard) => return Ok(guard),
+            Err(std::sync::TryLockError::Poisoned(poisoned)) => {
+                return Ok(poisoned.into_inner());
+            }
+            Err(std::sync::TryLockError::WouldBlock) => {
+                std::thread::sleep(Duration::from_millis(25));
+            }
+        }
+    }
 }
 
 /// Keep expensive RAW development independent of progressive source decoding.
-pub(crate) fn acquire_raw_full_decode() -> impl Drop {
-    RAW_FULL_DECODE_LOCK
-        .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner)
+pub(crate) fn acquire_raw_full_decode(
+    cancelled: &impl Fn() -> bool,
+) -> Result<MutexGuard<'static, ()>, crate::MediaError> {
+    acquire_file_lock(&RAW_FULL_DECODE_LOCK, cancelled)
 }
 
 #[cfg(test)]
@@ -194,15 +252,43 @@ mod tests {
     }
 
     #[test]
+    fn equal_priority_waiters_are_fifo() {
+        let now = Instant::now();
+        let waiters = VecDeque::from([
+            DecodeWaiter {
+                ticket: 10,
+                priority: DecodePriority::Visible,
+                queued_at: now,
+            },
+            DecodeWaiter {
+                ticket: 11,
+                priority: DecodePriority::Visible,
+                queued_at: now,
+            },
+        ]);
+        assert_eq!(selected_ticket(&waiters), Some(10));
+    }
+
+    #[test]
+    fn aging_prevents_background_starvation() {
+        let waiter = DecodeWaiter {
+            ticket: 0,
+            priority: DecodePriority::Background,
+            queued_at: Instant::now() - Duration::from_secs(2),
+        };
+        assert_eq!(effective_priority(&waiter), 2);
+    }
+
+    #[test]
     fn decode_permit_releases_gate_during_unwind() {
         let gate = DecodeGate::new();
         let result = std::panic::catch_unwind(|| {
-            let _permit = gate.acquire(DecodePriority::Foreground);
+            let _permit = gate.acquire(DecodePriority::Foreground, &|| false).unwrap();
             panic!("simulate a failed decode");
         });
         assert!(result.is_err());
         assert!(!gate.state.lock().unwrap().active);
-        let permit = gate.acquire(DecodePriority::Background);
+        let permit = gate.acquire(DecodePriority::Background, &|| false).unwrap();
         assert!(gate.state.lock().unwrap().active);
         drop(permit);
         assert!(!gate.state.lock().unwrap().active);
@@ -210,19 +296,22 @@ mod tests {
 
     #[test]
     fn file_lock_reuses_identity_and_does_not_block_different_sources() {
-        let (first, first_guard) = acquire_file_lock("test-file-lock-identity-a");
+        let first = file_lock("test-file-lock-identity-a");
+        let first_guard = first.lock().unwrap();
         assert!(matches!(
             first.try_lock(),
             Err(std::sync::TryLockError::WouldBlock)
         ));
         // Acquiring another source while the first is held must not retain
         // the registry mutex or accidentally serialize all source work.
-        let (other, other_guard) = acquire_file_lock("test-file-lock-identity-b");
+        let other = file_lock("test-file-lock-identity-b");
+        let other_guard = other.lock().unwrap();
         assert!(!Arc::ptr_eq(&first, &other));
         drop(other_guard);
         drop(first_guard);
 
-        let (again, again_guard) = acquire_file_lock("test-file-lock-identity-a");
+        let again = file_lock("test-file-lock-identity-a");
+        let again_guard = again.lock().unwrap();
         assert!(Arc::ptr_eq(&first, &again));
         assert!(matches!(
             first.try_lock(),
@@ -235,12 +324,17 @@ mod tests {
     #[test]
     fn file_lock_recovers_after_a_source_decode_panics() {
         let result = std::panic::catch_unwind(|| {
-            let (_source, _guard) = acquire_file_lock("test-file-lock-poison");
+            let source = file_lock("test-file-lock-poison");
+            let _guard = source.lock().unwrap();
             panic!("simulate a failed source decode");
         });
         assert!(result.is_err());
-        let (source, guard) = acquire_file_lock("test-file-lock-poison");
-        assert!(source.is_poisoned());
+        let source = file_lock("test-file-lock-poison");
+        let guard = source
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        // The weak registry may reclaim the poisoned mutex when the panicking
+        // owner drops its final Arc; either way, subsequent work can proceed.
         assert!(matches!(
             source.try_lock(),
             Err(std::sync::TryLockError::WouldBlock)
@@ -249,17 +343,46 @@ mod tests {
     }
 
     #[test]
+    fn waiting_for_source_lock_observes_cancellation() {
+        let source = file_lock("test-file-lock-cancellation");
+        let _guard = source.lock().unwrap();
+        let cancelled = std::sync::atomic::AtomicBool::new(false);
+        let started = Instant::now();
+        let result = acquire_file_lock(&source, &|| {
+            if started.elapsed() >= Duration::from_millis(40) {
+                cancelled.store(true, Ordering::Release);
+            }
+            cancelled.load(Ordering::Acquire)
+        });
+
+        assert!(matches!(result, Err(crate::MediaError::Cancelled)));
+        assert!(started.elapsed() < Duration::from_secs(1));
+    }
+
+    #[test]
+    fn file_lock_registry_reclaims_unowned_entries() {
+        let key = "test-file-lock-reclamation";
+        {
+            let _source = file_lock(key);
+            assert!(DECODE_LOCKS.lock().unwrap().contains_key(key));
+        }
+        let mut locks = DECODE_LOCKS.lock().unwrap();
+        reclaim_file_locks(&mut locks);
+        assert!(!locks.contains_key(key));
+    }
+
+    #[test]
     fn decode_gate_prefers_foreground_then_visible_then_background() {
         // The gate is now format-agnostic; the priority contract (loupe first,
         // visible second, overscan last) is preserved unchanged.
         let gate = Arc::new(DecodeGate::new());
-        let active = gate.acquire(DecodePriority::Background);
+        let active = gate.acquire(DecodePriority::Background, &|| false).unwrap();
         let (acquired_tx, acquired_rx) = mpsc::channel();
         let spawn_waiter = |priority| {
             let gate = gate.clone();
             let acquired_tx = acquired_tx.clone();
             thread::spawn(move || {
-                let _permit = gate.acquire(priority);
+                let _permit = gate.acquire(priority, &|| false).unwrap();
                 acquired_tx.send(priority).unwrap();
             })
         };
@@ -273,7 +396,17 @@ mod tests {
                 .state
                 .lock()
                 .unwrap_or_else(std::sync::PoisonError::into_inner);
-            if state.foreground_waiters == 1 && state.visible_waiters == 1 {
+            let foreground = state
+                .waiters
+                .iter()
+                .filter(|waiter| waiter.priority == DecodePriority::Foreground)
+                .count();
+            let visible = state
+                .waiters
+                .iter()
+                .filter(|waiter| waiter.priority == DecodePriority::Visible)
+                .count();
+            if foreground == 1 && visible == 1 {
                 // Queued higher priorities cannot preempt the active permit.
                 assert!(state.active);
                 assert!(matches!(
@@ -311,13 +444,13 @@ mod tests {
         // *after* a nearby one must still be served first. This is the core
         // "scroll into view jumps the queue" guarantee for every format.
         let gate = Arc::new(DecodeGate::new());
-        let active = gate.acquire(DecodePriority::Foreground);
+        let active = gate.acquire(DecodePriority::Foreground, &|| false).unwrap();
         let (acquired_tx, acquired_rx) = mpsc::channel();
         let spawn_waiter = |priority| {
             let gate = gate.clone();
             let acquired_tx = acquired_tx.clone();
             thread::spawn(move || {
-                let _permit = gate.acquire(priority);
+                let _permit = gate.acquire(priority, &|| false).unwrap();
                 acquired_tx.send(priority).unwrap();
             })
         };
@@ -331,7 +464,13 @@ mod tests {
                 .state
                 .lock()
                 .unwrap_or_else(std::sync::PoisonError::into_inner);
-            if state.visible_waiters == 1 {
+            if state
+                .waiters
+                .iter()
+                .filter(|waiter| waiter.priority == DecodePriority::Visible)
+                .count()
+                == 1
+            {
                 break;
             }
             drop(state);

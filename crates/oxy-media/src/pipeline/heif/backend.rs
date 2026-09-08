@@ -12,11 +12,12 @@ use std::path::Path;
 pub(crate) enum HeifOperation {
     Preview,
     FullArtifact,
-    Session { hardware_acceleration: bool },
+    Session,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum HeifBackend {
+    CachedArtifact,
     Platform(HeifBackendKind),
     Ffmpeg,
     FfmpegRgbaFallback,
@@ -26,6 +27,7 @@ pub(crate) enum HeifBackend {
 impl HeifBackend {
     pub(crate) const fn kind(self) -> HeifBackendKind {
         match self {
+            Self::CachedArtifact => HeifBackendKind::CachedArtifact,
             Self::Platform(kind) => kind,
             Self::Ffmpeg | Self::FfmpegRgbaFallback => HeifBackendKind::FfmpegSoftware,
             Self::Libheif => HeifBackendKind::LibheifSoftware,
@@ -34,6 +36,7 @@ impl HeifBackend {
 
     pub(crate) const fn acceleration(self) -> AccelerationKind {
         match self {
+            Self::CachedArtifact => AccelerationKind::Software,
             Self::Platform(_) => AccelerationKind::Unknown,
             Self::Ffmpeg | Self::FfmpegRgbaFallback | Self::Libheif => AccelerationKind::Software,
         }
@@ -41,6 +44,7 @@ impl HeifBackend {
 
     const fn label(self) -> &'static str {
         match self {
+            Self::CachedArtifact => "cached full JPEG",
             Self::Platform(HeifBackendKind::WindowsWic) => "Windows WIC",
             Self::Platform(HeifBackendKind::AppleImageIo) => "Apple ImageIO",
             Self::Platform(_) => "platform HEIF backend",
@@ -99,6 +103,13 @@ impl HeifBackendPlan {
             .first()
             .copied()
             .unwrap_or(HeifBackend::Libheif)
+    }
+
+    pub(crate) fn cached_artifact() -> Self {
+        Self {
+            candidates: vec![HeifBackend::CachedArtifact],
+            diagnostics: Vec::new(),
+        }
     }
 }
 
@@ -294,33 +305,21 @@ fn select_backends(
             push_probe(&mut plan, probes.ffmpeg);
             return plan;
         }
-        (
-            Platform::Windows,
-            HeifOperation::Session {
-                hardware_acceleration,
-            },
-        ) => {
+        (Platform::Windows, HeifOperation::Session) => {
             let ffmpeg_supported = matches!(probes.ffmpeg.state, ProbeState::Supported);
             push_probe(&mut plan, probes.ffmpeg);
             if ffmpeg_supported {
                 plan.candidates.push(HeifBackend::FfmpegRgbaFallback);
             }
-            if !ffmpeg_supported && hardware_acceleration {
+            if !ffmpeg_supported {
                 push_probe(&mut plan, probes.platform);
             }
         }
-        (
-            Platform::Macos,
-            HeifOperation::Session {
-                hardware_acceleration,
-            },
-        ) => {
-            if hardware_acceleration {
-                push_probe(&mut plan, probes.platform);
-            }
+        (Platform::Macos, HeifOperation::Session) => {
+            push_probe(&mut plan, probes.platform);
             push_probe(&mut plan, probes.ffmpeg);
         }
-        (Platform::Linux, HeifOperation::Session { .. }) => push_probe(&mut plan, probes.ffmpeg),
+        (Platform::Linux, HeifOperation::Session) => push_probe(&mut plan, probes.ffmpeg),
     }
     plan.candidates.push(HeifBackend::Libheif);
     plan
@@ -361,13 +360,7 @@ fn production_probes(path: &Path, operation: HeifOperation) -> BackendProbes {
             platform: actual_platform_probe(path),
             ffmpeg: unused_ffmpeg(),
         },
-        (
-            Platform::Macos,
-            HeifOperation::FullArtifact
-            | HeifOperation::Session {
-                hardware_acceleration: true,
-            },
-        ) => {
+        (Platform::Macos, HeifOperation::FullArtifact | HeifOperation::Session) => {
             let platform = actual_platform_probe(path);
             let ffmpeg = if matches!(platform.state, ProbeState::Supported) {
                 // Preserve the old fast path: do not inspect the fallback
@@ -384,23 +377,17 @@ fn production_probes(path: &Path, operation: HeifOperation) -> BackendProbes {
         },
         (Platform::Windows, HeifOperation::Preview)
         | (Platform::Windows | Platform::Linux, HeifOperation::FullArtifact)
-        | (Platform::Macos | Platform::Linux, HeifOperation::Session { .. }) => BackendProbes {
+        | (Platform::Linux, HeifOperation::Session) => BackendProbes {
             platform: unused_platform(),
             ffmpeg: actual_ffmpeg_probe(path),
         },
-        (
-            Platform::Windows,
-            HeifOperation::Session {
-                hardware_acceleration,
-            },
-        ) => {
+        (Platform::Windows, HeifOperation::Session) => {
             let ffmpeg = actual_ffmpeg_probe(path);
-            let platform =
-                if hardware_acceleration && !matches!(ffmpeg.state, ProbeState::Supported) {
-                    actual_platform_probe(path)
-                } else {
-                    unused_platform()
-                };
+            let platform = if !matches!(ffmpeg.state, ProbeState::Supported) {
+                actual_platform_probe(path)
+            } else {
+                unused_platform()
+            };
             BackendProbes { platform, ffmpeg }
         }
     }
@@ -629,9 +616,7 @@ mod tests {
         );
         let mac_session = select_backends(
             Platform::Macos,
-            HeifOperation::Session {
-                hardware_acceleration: true,
-            },
+            HeifOperation::Session,
             probes(supported(), supported()),
         );
         assert_eq!(
@@ -644,9 +629,7 @@ mod tests {
         );
         let windows_session = select_backends(
             Platform::Windows,
-            HeifOperation::Session {
-                hardware_acceleration: true,
-            },
+            HeifOperation::Session,
             probes(supported(), supported()),
         );
         assert_eq!(
@@ -659,9 +642,7 @@ mod tests {
         );
         let linux_session = select_backends(
             Platform::Linux,
-            HeifOperation::Session {
-                hardware_acceleration: true,
-            },
+            HeifOperation::Session,
             probes(supported(), supported()),
         );
         assert_eq!(
@@ -686,9 +667,7 @@ mod tests {
     fn unavailable_and_unsupported_backends_are_diagnosed() {
         let plan = select_backends(
             Platform::Macos,
-            HeifOperation::Session {
-                hardware_acceleration: true,
-            },
+            HeifOperation::Session,
             probes(
                 ProbeState::Unavailable("framework missing".into()),
                 ProbeState::Unsupported("codec profile".into()),
@@ -710,9 +689,7 @@ mod tests {
     fn unused_later_backend_is_not_reported_as_a_fallback() {
         let plan = select_backends(
             Platform::Macos,
-            HeifOperation::Session {
-                hardware_acceleration: true,
-            },
+            HeifOperation::Session,
             probes(
                 ProbeState::Supported,
                 ProbeState::Unsupported("not a grid".into()),
@@ -742,7 +719,9 @@ mod tests {
             |backend| match backend {
                 HeifBackend::Ffmpeg => Err(MediaError::Io(io::Error::other("read failed"))),
                 HeifBackend::Libheif => Ok(42),
-                HeifBackend::Platform(_) | HeifBackend::FfmpegRgbaFallback => unreachable!(),
+                HeifBackend::CachedArtifact
+                | HeifBackend::Platform(_)
+                | HeifBackend::FfmpegRgbaFallback => unreachable!(),
             },
         )
         .unwrap();
@@ -771,7 +750,9 @@ mod tests {
                     path: PathBuf::from("broken.hif"),
                     message: "invalid item".into(),
                 }),
-                HeifBackend::Platform(_) | HeifBackend::FfmpegRgbaFallback => unreachable!(),
+                HeifBackend::CachedArtifact
+                | HeifBackend::Platform(_)
+                | HeifBackend::FfmpegRgbaFallback => unreachable!(),
             },
         )
         .err()

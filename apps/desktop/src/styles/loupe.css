@@ -114,8 +114,7 @@
   .loupe__raw-status--loadingPreview,
   .loupe__raw-status--developingFull,
   .loupe__raw-status--probing,
-  .loupe__raw-status--decoding,
-  .loupe__raw-status--compatibilityFallback
+  .loupe__raw-status--decoding
 ) i {
   animation: raw-status-pulse 1.1s ease-in-out infinite;
 }

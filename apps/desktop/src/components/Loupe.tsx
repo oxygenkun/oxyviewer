@@ -94,7 +94,6 @@ export function Loupe({
   const select = useWorkspaceStore((state) => state.select);
   const navigatorVisible = useWorkspaceStore((state) => state.navigatorVisible);
   const navigatorPosition = useWorkspaceStore((state) => state.navigatorPosition);
-  const hardwareAcceleration = useWorkspaceStore((state) => state.hardwareAcceleration);
   const displaySharpening = useWorkspaceStore((state) => state.displaySharpening);
   const focusAreasVisible = useWorkspaceStore((state) => state.focusAreasVisible);
   const loupeMetadataVisible = useWorkspaceStore((state) => state.loupeMetadataVisible);
@@ -129,7 +128,7 @@ export function Loupe({
   const [naturalSize, setNaturalSize] = useState<{ assetId: string; size: Size } | undefined>(undefined);
   const [heifFullSize, setHeifFullSize] = useState<{ assetId: string; size: Size } | undefined>(undefined);
   const [rawPreviewStatus, setRawPreviewStatus] = useState<RawPreviewStatus>({ state: "loadingPreview" });
-  const [heifStatus, setHeifStatus] = useState<HeifDecodeStatus>("probing");
+  const [heifStatus, setHeifStatus] = useState<HeifDecodeStatus | "probing">("probing");
   const [filmstripSchedule] = useState(() => new PreviewScheduleScope("loupe-filmstrip"));
   const filmstripItemSize = filmstripItemWidth(filmstripHeight, thumbnailOrientation);
   const filmstripVirtualizer = useVirtualizer({
@@ -155,9 +154,9 @@ export function Loupe({
     queryKey: ["asset-details", active.id],
     queryFn: () => getAssetDetails(active),
   });
-  const heifUsesTiles = active.kind === "heif"
+  const heifUsesFullPresentation = active.kind === "heif"
     && renderPlan(active.kind, "loupe").some(
-      (step) => step.level === "full" && step.method.type === "heifTiles",
+      (step) => step.level === "full" && step.method.type === "heifFull",
     );
 
   const metadataSize = details.data?.width && details.data.height
@@ -516,9 +515,7 @@ export function Loupe({
             <i />
             {heifStatus === "complete"
               ? t("fullQualityReady")
-              : heifStatus === "compatibilityFallback"
-                ? t("fullQualityCompatibility")
-                : heifStatus === "failed"
+              : heifStatus === "failed"
                   ? t("fullQualityFailed")
                   : t("fullQualityLoading")}
           </div>
@@ -548,12 +545,11 @@ export function Loupe({
                 ? handleHeifPreviewStatus
                 : setRawPreviewStatus}
             />
-            {heifUsesTiles ? (
+            {heifUsesFullPresentation ? (
               <HeifTileCanvas
                 key={`heif:${active.id}`}
                 asset={active}
                 displaySharpening={displaySharpening}
-                hardwareAcceleration={hardwareAcceleration}
                 onImageSize={handleHeifImageSize}
                 onStatus={setHeifStatus}
               />

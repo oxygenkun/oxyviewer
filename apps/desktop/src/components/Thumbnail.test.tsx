@@ -32,7 +32,13 @@ function project(revision: number) {
   acceptImageProjection({
     path: asset.path, sourceRevision: "source-1", projectionRevision: revision,
     validAt: 1, status: "ready", level: "thumbnail",
-    result: { path: url, width: 160, height: 120, kind: "embedded" },
+    result: {
+      path: url,
+      width: 160,
+      height: 120,
+      kind: "embedded",
+      renderLevel: "thumbnail",
+    },
   });
 }
 

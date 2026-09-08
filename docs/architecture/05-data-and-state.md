@@ -31,7 +31,7 @@ flowchart TD
 - grid/list/loupe 视图与网格偏好；
 - selected IDs 和 active ID；
 - 左侧栏、Inspector、Settings、Navigator 的开关；
-- locale 和硬件加速偏好；
+- locale 和显示锐化偏好；
 - 搜索、类型过滤、排序和方向。
 
 这些值由用户交互立即修改，主要决定“界面想显示什么”。它们不代表磁盘事实，也不保存预览

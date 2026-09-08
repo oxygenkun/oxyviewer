@@ -8,16 +8,15 @@ use crate::{
     media_source::preview_result,
     pipeline::{
         artifact::larger_cached_decoded_preview,
-        heif::artifact::{
-            HEIF_CACHE_VERSION, cache_full, full as heif_full, preview as heif_artifact_preview,
-        },
+        heif::artifact::{cache_full, full as heif_full, preview as heif_artifact_preview},
         raw::{self, RawBackend as PlannedRawBackend, covers_source as covers_raw_source},
         system::preview as system_preview,
     },
     presentation::{HEIF_DECODED_JPEG, RAW_DEVELOPED_JPEG},
 };
 use image::{DynamicImage, ImageDecoder, ImageFormat, ImageReader, Rgb, RgbImage};
-use oxy_domain::{PreviewKind, PreviewPriority, PreviewResult, RenderLevel};
+use oxy_domain::{AssetKind, PreviewKind, PreviewPriority, PreviewResult, RenderLevel};
+use oxy_runtime::CancellationToken;
 use std::{
     fs,
     io::Cursor,
@@ -37,6 +36,7 @@ fn benchmark_heif_preview(
         DecodePriority::Background,
         max_size <= 160,
         true,
+        &CancellationToken::default(),
     )
 }
 
@@ -45,7 +45,13 @@ fn raw_preview(
     cache_dir: &Path,
     max_size: u32,
 ) -> Result<oxy_domain::PreviewResult, MediaError> {
-    raw::preview_with_priority(path, cache_dir, max_size, DecodePriority::Background)
+    raw::preview_with_priority(
+        path,
+        cache_dir,
+        max_size,
+        DecodePriority::Background,
+        &CancellationToken::default(),
+    )
 }
 
 fn workspace_path(path: impl AsRef<Path>) -> PathBuf {
@@ -93,6 +99,7 @@ fn sony_hif_thumbnail_and_preview_levels_share_the_160_artifact() {
         RenderLevel::Thumbnail,
         PreviewPriority::Visible,
         oxy_domain::AssetKind::Heif,
+        &CancellationToken::default(),
     )
     .unwrap();
     let loupe_base = preview(
@@ -101,6 +108,7 @@ fn sony_hif_thumbnail_and_preview_levels_share_the_160_artifact() {
         RenderLevel::Preview,
         PreviewPriority::Loupe,
         oxy_domain::AssetKind::Heif,
+        &CancellationToken::default(),
     )
     .unwrap();
 
@@ -108,9 +116,9 @@ fn sony_hif_thumbnail_and_preview_levels_share_the_160_artifact() {
     assert_eq!(thumbnail.kind, PreviewKind::Embedded);
     assert_eq!(loupe_base.kind, PreviewKind::Embedded);
     assert_eq!(loupe_base.path, thumbnail.path);
-    assert_eq!(thumbnail.render_level, Some(RenderLevel::Thumbnail));
-    assert_eq!(loupe_base.render_level, Some(RenderLevel::Preview));
-    assert_eq!(fs::read_dir(cache.path()).unwrap().count(), 1);
+    assert_eq!(thumbnail.render_level, RenderLevel::Thumbnail);
+    assert_eq!(loupe_base.render_level, RenderLevel::Preview);
+    assert_eq!(preview_cache_usage(cache.path()).unwrap().file_count, 1);
 }
 
 #[test]
@@ -133,6 +141,7 @@ fn heif_without_identified_fast_representation_uses_semantic_preview_size() {
         RenderLevel::Thumbnail,
         PreviewPriority::Visible,
         oxy_domain::AssetKind::Heif,
+        &CancellationToken::default(),
     )
     .unwrap();
     let fit = preview(
@@ -141,6 +150,7 @@ fn heif_without_identified_fast_representation_uses_semantic_preview_size() {
         RenderLevel::Preview,
         PreviewPriority::Loupe,
         oxy_domain::AssetKind::Heif,
+        &CancellationToken::default(),
     )
     .unwrap();
 
@@ -156,7 +166,7 @@ fn larger_cached_preview_satisfies_smaller_request() {
     let directory = tempfile::tempdir().unwrap();
     let path = directory.path().join("image.heic");
     fs::write(&path, b"heif").unwrap();
-    let key = preview_cache_key(&path, HEIF_CACHE_VERSION, 4_096).unwrap();
+    let key = preview_cache_key(&path, crate::policy::HEIF_PREVIEW, 4_096).unwrap();
     let cached = directory.path().join(format!("{key}.decoded.jpg"));
     write_jpeg_atomically(
         &DynamicImage::new_rgb8(32, 16),
@@ -166,9 +176,15 @@ fn larger_cached_preview_satisfies_smaller_request() {
     )
     .unwrap();
 
-    let result = larger_cached_decoded_preview(&path, directory.path(), HEIF_CACHE_VERSION, 512)
-        .unwrap()
-        .unwrap();
+    let result = larger_cached_decoded_preview(
+        &path,
+        directory.path(),
+        crate::policy::HEIF_PREVIEW,
+        512,
+        RenderLevel::Thumbnail,
+    )
+    .unwrap()
+    .unwrap();
 
     assert_eq!(result.path, cached);
     assert_eq!((result.width, result.height), (32, 16));
@@ -193,9 +209,15 @@ fn larger_cached_preview_serves_any_backend_tag() {
     )
     .unwrap();
 
-    let result = larger_cached_decoded_preview(&path, directory.path(), raw_tag, 512)
-        .unwrap()
-        .unwrap();
+    let result = larger_cached_decoded_preview(
+        &path,
+        directory.path(),
+        raw_tag,
+        512,
+        RenderLevel::Thumbnail,
+    )
+    .unwrap()
+    .unwrap();
 
     assert_eq!(result.path, cached);
 }
@@ -243,7 +265,7 @@ fn reads_regular_image_dimensions_without_libraw() {
         .unwrap();
 
     assert_eq!(
-        dimensions(&path).unwrap(),
+        dimensions(&path, AssetKind::Png).unwrap(),
         ImageDimensions {
             width: 7,
             height: 5
@@ -335,7 +357,15 @@ fn writes_raw_backend_comparison_artifacts() {
                     write_jpeg_atomically(&image, &destination, 90, RAW_DEVELOPED_JPEG).unwrap();
                 }
             }
-            let result = preview_result(destination.clone(), PreviewKind::Developed).unwrap();
+            let level = if max_size.is_none() {
+                RenderLevel::Full
+            } else if max_size == Some(512) {
+                RenderLevel::Thumbnail
+            } else {
+                RenderLevel::Preview
+            };
+            let result =
+                preview_result(destination.clone(), PreviewKind::Developed, level).unwrap();
             writeln!(
                 manifest,
                 "{backend_name}\t{label}\t{}\t{}\t{}\t{}",
@@ -359,7 +389,7 @@ fn extracts_preview_from_raw_fixture() {
 
     let raw_size = raw::dimensions(&raw_path).unwrap();
     let preview = raw_preview(&raw_path, directory.path(), 512).unwrap();
-    let preview_size = dimensions(&preview.path).unwrap();
+    let preview_size = dimensions(&preview.path, AssetKind::Jpeg).unwrap();
 
     assert!(raw_size.width > 0 && raw_size.height > 0);
     assert!(preview_size.width <= 512 && preview_size.height <= 512);
@@ -421,7 +451,7 @@ fn resolves_full_detail_raw_fixture() {
     let directory = tempfile::tempdir().unwrap();
     let raw_size = raw::dimensions(&raw_path).unwrap();
     let started = Instant::now();
-    let full = raw::full(&raw_path, directory.path()).unwrap();
+    let full = raw::full(&raw_path, directory.path(), &CancellationToken::default()).unwrap();
 
     eprintln!("{}: full RAW={:?}", raw_path.display(), started.elapsed());
     assert!(
@@ -436,7 +466,10 @@ fn resolves_full_detail_raw_fixture() {
                 ))
     );
     assert!(full.path.is_file());
-    assert_eq!(raw::full(&raw_path, directory.path()).unwrap(), full);
+    assert_eq!(
+        raw::full(&raw_path, directory.path(), &CancellationToken::default()).unwrap(),
+        full
+    );
 }
 
 #[test]
@@ -449,7 +482,7 @@ fn decodes_full_resolution_heif_fixture() {
     let directory = tempfile::tempdir().unwrap();
     let original_size = libheif::dimensions(&heif_path).unwrap();
     let started = Instant::now();
-    let full = heif_full(&heif_path, directory.path()).unwrap();
+    let full = heif_full(&heif_path, directory.path(), &CancellationToken::default()).unwrap();
 
     eprintln!("{}: full HEIF={:?}", heif_path.display(), started.elapsed());
     assert_eq!(full.kind, PreviewKind::Decoded);
@@ -458,7 +491,10 @@ fn decodes_full_resolution_heif_fixture() {
         (original_size.width, original_size.height)
     );
     assert!(full.path.is_file());
-    assert_eq!(heif_full(&heif_path, directory.path()).unwrap(), full);
+    assert_eq!(
+        heif_full(&heif_path, directory.path(), &CancellationToken::default(),).unwrap(),
+        full
+    );
 
     let mut decoder = ImageReader::open(&full.path)
         .unwrap()
@@ -480,6 +516,7 @@ fn generates_large_image_io_fallback_for_heif_fixture() {
         &heif_path,
         directory.path(),
         original.width.max(original.height).min(8_192),
+        RenderLevel::Full,
     )
     .unwrap();
 
@@ -523,7 +560,12 @@ fn fixture_preview_performance_budgets() {
             {
                 raw_preview(&fixture, cache.path(), size)
             } else {
-                system_preview(&fixture, cache.path(), size)
+                let level = if size <= 512 {
+                    RenderLevel::Thumbnail
+                } else {
+                    RenderLevel::Preview
+                };
+                system_preview(&fixture, cache.path(), size, level)
             }
         };
 
@@ -572,7 +614,7 @@ fn heif_decode_performance_budget() {
     // Cold full decode + PNG cache write.
     let cache_full = tempfile::tempdir().unwrap();
     let started = Instant::now();
-    let full = heif_full(&heif_path, cache_full.path()).unwrap();
+    let full = heif_full(&heif_path, cache_full.path(), &CancellationToken::default()).unwrap();
     let full_elapsed = started.elapsed();
     eprintln!("HEIF full decode: {full_elapsed:?}");
     assert!(
@@ -583,7 +625,9 @@ fn heif_decode_performance_budget() {
     // Warm full-detail cache hit.
     let started = Instant::now();
     assert_eq!(
-        heif_full(&heif_path, cache_full.path()).unwrap().path,
+        heif_full(&heif_path, cache_full.path(), &CancellationToken::default(),)
+            .unwrap()
+            .path,
         full.path
     );
     let warm_full = started.elapsed();

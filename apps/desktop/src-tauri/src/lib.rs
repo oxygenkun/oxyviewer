@@ -40,9 +40,11 @@ pub fn run() {
             };
             match tile {
                 Some(tile) => {
-                    let (content_type, body) = match tile.encoded_jpeg {
-                        Some(jpeg) => ("image/jpeg", jpeg.to_vec()),
-                        None => ("application/octet-stream", tile.rgba.to_vec()),
+                    let (content_type, stride, body) = match tile.payload {
+                        oxy_media::HeifTileData::Jpeg(jpeg) => ("image/jpeg", 0, jpeg.to_vec()),
+                        oxy_media::HeifTileData::Rgba { stride, bytes } => {
+                            ("application/octet-stream", stride, bytes.to_vec())
+                        }
                     };
                     http::Response::builder()
                         .status(http::StatusCode::OK)
@@ -50,7 +52,7 @@ pub fn run() {
                         .header(http::header::ACCESS_CONTROL_ALLOW_ORIGIN, "*")
                         .header("x-oxy-width", tile.width)
                         .header("x-oxy-height", tile.height)
-                        .header("x-oxy-stride", tile.stride)
+                        .header("x-oxy-stride", stride)
                         .body(body)
                         .expect("valid tile protocol response")
                 }
@@ -145,7 +147,6 @@ pub fn run() {
             get_asset_details,
             request_metadata,
             get_preview,
-            reprioritize_preview,
             cancel_preview_request,
             reconcile_preview_schedule,
             upsert_preview_schedule,
@@ -175,9 +176,7 @@ pub fn run() {
             retry_tag_xmp_sync,
             cancel_job,
             get_heif_capabilities,
-            get_heif_diagnostics,
-            get_cached_heif_full,
-            start_heif_decode,
+            start_heif_full,
             cancel_heif_decode,
             get_perf_scenario,
             get_debug_queue_snapshot,

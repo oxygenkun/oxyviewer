@@ -15,8 +15,7 @@ import type {
   DirectoryTreeSnapshot,
   FolderSession,
   HeifCapabilities,
-  HeifDecodeSession,
-  HeifDiagnostics,
+  HeifFullPresentation,
   ImageProjection,
   LibraryIndexUpdate,
   ExiftoolStatus,
@@ -884,31 +883,30 @@ export async function preloadAssetThumbnail(
   if (result) await preloadBrowserImage(result.url, signal);
 }
 
-export async function startHeifDecode(
+export async function startHeifFull(
   path: string,
   generation: number,
-  hardwareAcceleration: boolean,
   displaySharpening: boolean,
-): Promise<HeifDecodeSession> {
+): Promise<
+  | { delivery: "artifact"; projection: ImageProjection; result: PreviewResult }
+  | Extract<HeifFullPresentation, { delivery: "tiles" }>
+> {
   perfMark("heif:decode-requested", { path });
-  const session = await invoke<HeifDecodeSession>("start_heif_decode", {
+  const presentation = await invoke<HeifFullPresentation>("start_heif_full", {
     path,
     generation,
-    hardwareAcceleration,
     displaySharpening,
   });
-  perfMark("heif:decode-session", { path, sessionId: session.id });
-  return session;
-}
-
-export async function getCachedHeifFull(
-  path: string,
-): Promise<PreviewResult | undefined> {
-  if (!isTauri()) return undefined;
-  const result = await invoke<Omit<PreviewResult, "url"> | null>("get_cached_heif_full", {
-    path,
-  });
-  return result ? { ...result, url: convertFileSrc(result.path) } : undefined;
+  if (presentation.delivery === "artifact") {
+    const result = presentation.projection.result;
+    if (!result) throw new Error("ready HEIF full projection has no artifact");
+    return {
+      ...presentation,
+      result: { ...result, url: convertFileSrc(result.path) },
+    };
+  }
+  perfMark("heif:decode-session", { path, sessionId: presentation.session.id });
+  return presentation;
 }
 
 export async function cancelHeifDecode(sessionId: string): Promise<boolean> {
@@ -918,11 +916,6 @@ export async function cancelHeifDecode(sessionId: string): Promise<boolean> {
 export async function getHeifCapabilities(): Promise<HeifCapabilities[]> {
   if (!isTauri()) return [];
   return invoke<HeifCapabilities[]>("get_heif_capabilities");
-}
-
-export async function getHeifDiagnostics(): Promise<HeifDiagnostics | undefined> {
-  if (!isTauri()) return undefined;
-  return invoke<HeifDiagnostics | undefined>("get_heif_diagnostics");
 }
 
 export function heifTileUrl(url: string): string {

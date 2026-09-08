@@ -1,10 +1,6 @@
 use crate::MediaError;
-use std::{
-    collections::hash_map::DefaultHasher,
-    fs,
-    hash::{Hash, Hasher},
-    path::Path,
-};
+use sha2::{Digest, Sha256};
+use std::{fs, path::Path};
 
 pub(crate) fn preview_cache_key(
     path: &Path,
@@ -16,13 +12,64 @@ pub(crate) fn preview_cache_key(
     // converge on one cache entry for the same source image.
     let canonical_path = path.canonicalize()?;
     let metadata = fs::metadata(&canonical_path)?;
-    let mut hasher = DefaultHasher::new();
-    canonical_path.hash(&mut hasher);
-    metadata.len().hash(&mut hasher);
-    metadata.modified().ok().hash(&mut hasher);
-    backend.hash(&mut hasher);
-    max_size.hash(&mut hasher);
-    Ok(format!("{:016x}", hasher.finish()))
+    let mut hasher = Sha256::new();
+    hasher.update(b"oxy-media-cache-key-v1\0");
+    update_path(&mut hasher, &canonical_path);
+    update_file_identity(&mut hasher, &metadata);
+    hasher.update(metadata.len().to_le_bytes());
+    update_modified_time(&mut hasher, &metadata);
+    hasher.update(backend.as_bytes());
+    hasher.update([0]);
+    hasher.update(max_size.to_le_bytes());
+    Ok(format!("{:x}", hasher.finalize()))
+}
+
+#[cfg(unix)]
+fn update_path(hasher: &mut Sha256, path: &Path) {
+    use std::os::unix::ffi::OsStrExt;
+    hasher.update(path.as_os_str().as_bytes());
+    hasher.update([0]);
+}
+
+#[cfg(windows)]
+fn update_path(hasher: &mut Sha256, path: &Path) {
+    use std::os::windows::ffi::OsStrExt;
+    for code_unit in path.as_os_str().encode_wide() {
+        hasher.update(code_unit.to_le_bytes());
+    }
+    hasher.update([0, 0]);
+}
+
+#[cfg(unix)]
+fn update_file_identity(hasher: &mut Sha256, metadata: &fs::Metadata) {
+    use std::os::unix::fs::MetadataExt;
+    hasher.update(metadata.dev().to_le_bytes());
+    hasher.update(metadata.ino().to_le_bytes());
+}
+
+#[cfg(windows)]
+fn update_file_identity(hasher: &mut Sha256, metadata: &fs::Metadata) {
+    use std::os::windows::fs::MetadataExt;
+    hasher.update(
+        metadata
+            .volume_serial_number()
+            .unwrap_or_default()
+            .to_le_bytes(),
+    );
+    hasher.update(metadata.file_index().unwrap_or_default().to_le_bytes());
+}
+
+#[cfg(unix)]
+fn update_modified_time(hasher: &mut Sha256, metadata: &fs::Metadata) {
+    use std::os::unix::fs::MetadataExt;
+    hasher.update(metadata.mtime().to_le_bytes());
+    hasher.update(metadata.mtime_nsec().to_le_bytes());
+}
+
+#[cfg(windows)]
+fn update_modified_time(hasher: &mut Sha256, metadata: &fs::Metadata) {
+    use std::os::windows::fs::MetadataExt;
+    hasher.update(metadata.last_write_time().to_le_bytes());
 }
 
 #[cfg(test)]

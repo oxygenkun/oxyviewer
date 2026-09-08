@@ -348,7 +348,7 @@ impl MetadataQueue {
                         }
                     }
 
-                    let dimensions = oxy_media::dimensions(&asset.path).ok();
+                    let dimensions = oxy_media::dimensions(&asset.path, asset.kind).ok();
                     let display_dimensions = dimensions.map(|value| (value.width, value.height));
                     let document = queue
                         .metadata

@@ -33,7 +33,6 @@ interface WorkspaceState {
   locale: Locale;
   navigatorVisible: boolean;
   navigatorPosition: NavigatorPosition;
-  hardwareAcceleration: boolean;
   displaySharpening: boolean;
   focusAreasVisible: boolean;
   gridMetadataVisible: boolean;
@@ -59,7 +58,6 @@ interface WorkspaceState {
   setLocale: (locale: Locale) => void;
   setNavigatorVisible: (visible: boolean) => void;
   setNavigatorPosition: (position: NavigatorPosition) => void;
-  setHardwareAcceleration: (enabled: boolean) => void;
   setDisplaySharpening: (enabled: boolean) => void;
   setFocusAreasVisible: (visible: boolean) => void;
   setGridMetadataVisible: (visible: boolean) => void;
@@ -87,7 +85,6 @@ export const useWorkspaceStore = create<WorkspaceState>((set) => ({
   locale: "zh-CN",
   navigatorVisible: true,
   navigatorPosition: "bottom-right",
-  hardwareAcceleration: true,
   displaySharpening: true,
   focusAreasVisible: loadFocusAreasVisible(),
   gridMetadataVisible: loadMetadataVisibility("grid"),
@@ -118,7 +115,6 @@ export const useWorkspaceStore = create<WorkspaceState>((set) => ({
   setLocale: (locale) => set({ locale }),
   setNavigatorVisible: (navigatorVisible) => set({ navigatorVisible }),
   setNavigatorPosition: (navigatorPosition) => set({ navigatorPosition }),
-  setHardwareAcceleration: (hardwareAcceleration) => set({ hardwareAcceleration }),
   setDisplaySharpening: (displaySharpening) => set({ displaySharpening }),
   setFocusAreasVisible: (focusAreasVisible) => {
     saveFocusAreasVisible(focusAreasVisible);

@@ -5,7 +5,8 @@ mod key;
 mod store;
 
 pub(crate) use encode::{
-    persist_atomically, write_bytes_atomically, write_jpeg_atomically, write_jpeg_atomically_timed,
+    cache_tempfile, persist_atomically, write_bytes_atomically, write_bytes_atomically_cancelled,
+    write_jpeg_atomically, write_jpeg_atomically_cancelled, write_jpeg_atomically_timed,
 };
 pub(crate) use key::preview_cache_key;
 

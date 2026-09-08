@@ -5,6 +5,7 @@
 
 use oxy_domain::{AssetKind, PreviewPriority, RenderLevel};
 use oxy_media::{dimensions, preview};
+use oxy_runtime::CancellationToken;
 use std::{env, error::Error, path::PathBuf, time::Instant};
 
 fn main() -> Result<(), Box<dyn Error>> {
@@ -14,7 +15,7 @@ fn main() -> Result<(), Box<dyn Error>> {
     );
     let include_full = env::args().any(|argument| argument == "--full");
 
-    let source = dimensions(&path)?;
+    let source = dimensions(&path, AssetKind::Raw)?;
     println!(
         "file={} source={}x{}",
         path.display(),
@@ -31,6 +32,7 @@ fn main() -> Result<(), Box<dyn Error>> {
             level,
             PreviewPriority::Preload,
             AssetKind::Raw,
+            &CancellationToken::default(),
         )?;
         println!(
             "{size}px preview: {}x{} {:.1}KiB kind={:?} elapsed={:.2?}",
@@ -50,6 +52,7 @@ fn main() -> Result<(), Box<dyn Error>> {
             RenderLevel::Full,
             PreviewPriority::Loupe,
             AssetKind::Raw,
+            &CancellationToken::default(),
         )?;
         println!(
             "full detail: {}x{} {:.1}MiB kind={:?} elapsed={:.2?}",

@@ -11,7 +11,7 @@ use crate::{
 use image::{DynamicImage, RgbaImage};
 use oxy_domain::{
     HeifBackendKind, HeifCapabilities, HeifDecodeSession, HeifDecodeStatus, HeifDiagnostics,
-    HeifStatusEvent, HeifTileReady,
+    HeifTilePayload,
 };
 use std::{
     collections::HashMap,
@@ -31,21 +31,37 @@ pub const DEFAULT_TILE_SIZE: u32 = 512;
 pub struct HeifTile {
     pub width: u32,
     pub height: u32,
-    pub stride: u32,
-    pub rgba: Arc<[u8]>,
-    pub encoded_jpeg: Option<Arc<[u8]>>,
+    pub payload: HeifTileData,
+}
+
+#[derive(Debug, Clone)]
+pub enum HeifTileData {
+    Rgba { stride: u32, bytes: Arc<[u8]> },
+    Jpeg(Arc<[u8]>),
+}
+
+#[derive(Debug, Clone)]
+pub struct HeifTilePublication {
+    pub session_id: String,
+    pub generation: u64,
+    pub x: u32,
+    pub y: u32,
+    pub width: u32,
+    pub height: u32,
+    pub payload: HeifTilePayload,
 }
 
 #[derive(Default)]
 struct ServiceState {
     active: Option<ActiveSession>,
     tiles: HashMap<(String, u64, u32, u32), HeifTile>,
-    diagnostics: Option<HeifDiagnostics>,
 }
 
 struct ActiveSession {
     id: String,
     generation: u64,
+    path: PathBuf,
+    decode_path: PathBuf,
     display_sharpening: bool,
     cancelled: Arc<AtomicBool>,
     backend_plan: HeifBackendPlan,
@@ -75,16 +91,18 @@ impl HeifDecodeService {
     pub fn begin(
         &self,
         path: &Path,
+        cache_dir: &Path,
         generation: u64,
-        hardware_acceleration: bool,
         display_sharpening: bool,
     ) -> Result<HeifDecodeSession, MediaError> {
         let size = libheif::dimensions(path)?;
-        let backend_plan = backend_plan(
-            path,
-            HeifOperation::Session {
-                hardware_acceleration,
-            },
+        let cached = display_sharpening
+            .then(|| crate::cached_heif_full(path, cache_dir))
+            .transpose()?
+            .flatten();
+        let (decode_path, backend_plan) = cached.map_or_else(
+            || (path.to_owned(), backend_plan(path, HeifOperation::Session)),
+            |result| (result.path, HeifBackendPlan::cached_artifact()),
         );
         let selected_backend = backend_plan.first();
         let id = format!(
@@ -103,17 +121,16 @@ impl HeifDecodeService {
             active.cancelled.store(true, Ordering::Release);
         }
         state.tiles.clear();
-        state.diagnostics = None;
         state.active = Some(ActiveSession {
             id: id.clone(),
             generation,
+            path: path.to_owned(),
+            decode_path,
             display_sharpening,
             cancelled: Arc::new(AtomicBool::new(false)),
             backend_plan,
         });
         let backend = selected_backend.kind();
-        let fallback =
-            hardware_acceleration && !matches!(selected_backend, PlannedHeifBackend::Platform(_));
         #[cfg(target_os = "windows")]
         let expected_tiles = if backend == HeifBackendKind::FfmpegSoftware {
             crate::backends::ffmpeg_heif::tile_count(path).unwrap_or_else(|_| {
@@ -134,29 +151,23 @@ impl HeifDecodeService {
             expected_tiles,
             backend,
             acceleration: selected_backend.acceleration(),
-            status: if fallback {
-                HeifDecodeStatus::CompatibilityFallback
-            } else {
-                HeifDecodeStatus::Decoding
-            },
+            status: HeifDecodeStatus::Decoding,
         })
     }
 
     pub fn decode<F, G>(
         &self,
         session: &HeifDecodeSession,
-        path: PathBuf,
         cache_dir: &Path,
-        _hardware_acceleration: bool,
         mut publish: F,
         mut complete: G,
     ) -> Result<HeifDiagnostics, MediaError>
     where
-        F: FnMut(HeifTileReady),
+        F: FnMut(HeifTilePublication),
         G: FnMut(&HeifDiagnostics),
     {
         let started = Instant::now();
-        let (cancelled, display_sharpening, backend_plan) = {
+        let (path, decode_path, cancelled, display_sharpening, backend_plan) = {
             let state = self
                 .state
                 .lock()
@@ -168,12 +179,16 @@ impl HeifDecodeService {
                 return Err(MediaError::Cancelled);
             }
             (
+                active.path.clone(),
+                active.decode_path.clone(),
                 Arc::clone(&active.cancelled),
                 active.display_sharpening,
                 active.backend_plan.clone(),
             )
         };
-        let decode_permit = acquire_decode(DecodePriority::Foreground);
+        let decode_permit = acquire_decode(DecodePriority::Foreground, &|| {
+            cancelled.load(Ordering::Acquire)
+        })?;
         let queue_wait_ms = elapsed_ms(started);
         if cancelled.load(Ordering::Acquire) {
             return Err(MediaError::Cancelled);
@@ -182,7 +197,7 @@ impl HeifDecodeService {
         let decoded = execute_backend_plan(
             &backend_plan,
             || cancelled.load(Ordering::Acquire),
-            |backend| decode_session_backend(backend, session, &path, display_sharpening),
+            |backend| decode_session_backend(backend, session, &decode_path, display_sharpening),
         )
         .map_err(BackendExecutionError::into_media_error)?;
         let decode_ms = elapsed_ms(decode_started);
@@ -197,9 +212,7 @@ impl HeifDecodeService {
                     let stored = HeifTile {
                         width: tile.width,
                         height: tile.height,
-                        stride: tile.width * 4,
-                        rgba: Arc::from([]),
-                        encoded_jpeg: Some(Arc::from(tile.jpeg)),
+                        payload: HeifTileData::Jpeg(Arc::from(tile.jpeg)),
                     };
                     let event = tile_event(session, tile.x, tile.y, tile.width, tile.height, true);
                     if !self.publish_tile_if_current(
@@ -288,11 +301,11 @@ impl HeifDecodeService {
         session: &HeifDecodeSession,
         cancelled: &AtomicBool,
         tile: HeifTile,
-        event: HeifTileReady,
+        event: HeifTilePublication,
         publish: &mut F,
     ) -> bool
     where
-        F: FnMut(HeifTileReady),
+        F: FnMut(HeifTilePublication),
     {
         let _publication = self
             .publication
@@ -332,14 +345,13 @@ impl HeifDecodeService {
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
         {
-            let mut state = self
+            let state = self
                 .state
                 .lock()
                 .unwrap_or_else(std::sync::PoisonError::into_inner);
             if cancelled.load(Ordering::Acquire) || !active_matches(&state, session) {
                 return false;
             }
-            state.diagnostics = Some(diagnostics.clone());
         }
         complete(&diagnostics);
         true
@@ -368,29 +380,6 @@ impl HeifDecodeService {
             .get(&(session.to_owned(), generation, x, y))
             .cloned()
     }
-
-    pub fn diagnostics(&self) -> Option<HeifDiagnostics> {
-        self.state
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .diagnostics
-            .clone()
-    }
-
-    pub fn status_event(
-        session: &HeifDecodeSession,
-        status: HeifDecodeStatus,
-        diagnostics: Option<HeifDiagnostics>,
-        message: Option<String>,
-    ) -> HeifStatusEvent {
-        HeifStatusEvent {
-            session_id: session.id.clone(),
-            generation: session.generation,
-            status,
-            diagnostics,
-            message,
-        }
-    }
 }
 
 fn active_matches(state: &ServiceState, session: &HeifDecodeSession) -> bool {
@@ -407,19 +396,19 @@ fn tile_event(
     width: u32,
     height: u32,
     encoded: bool,
-) -> HeifTileReady {
-    HeifTileReady {
+) -> HeifTilePublication {
+    HeifTilePublication {
         session_id: session.id.clone(),
         generation: session.generation,
         x,
         y,
         width,
         height,
-        encoding: encoded.then(|| "jpeg".into()),
-        url: format!(
-            "oxy-media://localhost/tile/{}/{}/{}/{}",
-            session.id, session.generation, x, y
-        ),
+        payload: if encoded {
+            HeifTilePayload::Jpeg
+        } else {
+            HeifTilePayload::Rgba
+        },
     }
 }
 
@@ -430,6 +419,10 @@ fn decode_session_backend(
     display_sharpening: bool,
 ) -> Result<SessionDecode, MediaError> {
     match backend {
+        PlannedHeifBackend::CachedArtifact => Ok(SessionDecode::Image {
+            image: image::ImageReader::open(path)?.decode()?,
+            codec: "cached full JPEG",
+        }),
         #[cfg(target_os = "windows")]
         PlannedHeifBackend::Platform(_) => Ok(SessionDecode::Image {
             image: crate::backends::windows_wic::decode_full_rgba8(path)?,
@@ -575,9 +568,10 @@ fn crop_rgba(
     HeifTile {
         width,
         height,
-        stride: width * 4,
-        rgba: Arc::from(rgba),
-        encoded_jpeg: None,
+        payload: HeifTileData::Rgba {
+            stride: width * 4,
+            bytes: Arc::from(rgba),
+        },
     }
 }
 
@@ -614,6 +608,27 @@ mod tests {
     #[cfg(any(target_os = "macos", target_os = "windows"))]
     use oxy_domain::AccelerationKind;
 
+    fn rgba_payload(tile: &HeifTile) -> (u32, &[u8]) {
+        match &tile.payload {
+            HeifTileData::Rgba { stride, bytes } => (*stride, bytes),
+            HeifTileData::Jpeg(_) => panic!("expected RGBA tile"),
+        }
+    }
+
+    fn begin(
+        service: &HeifDecodeService,
+        path: &Path,
+        generation: u64,
+        display_sharpening: bool,
+    ) -> Result<HeifDecodeSession, MediaError> {
+        service.begin(
+            path,
+            Path::new("target/oxy-media-test-empty-cache"),
+            generation,
+            display_sharpening,
+        )
+    }
+
     #[test]
     fn tile_order_starts_near_center_and_covers_edges() {
         let coordinates = tile_coordinates(1_200, 800, 512);
@@ -641,15 +656,16 @@ mod tests {
     fn crop_produces_tightly_packed_edge_tile() {
         let image = DynamicImage::new_rgb8(600, 550).into_rgba8();
         let tile = crop_rgba(&image, 512, 512, 512, false);
-        assert_eq!((tile.width, tile.height, tile.stride), (88, 38, 352));
-        assert_eq!(tile.rgba.len(), 88 * 38 * 4);
+        let (stride, bytes) = rgba_payload(&tile);
+        assert_eq!((tile.width, tile.height, stride), (88, 38, 352));
+        assert_eq!(bytes.len(), 88 * 38 * 4);
     }
 
     #[test]
     fn display_sharpening_preserves_flat_pixels_and_alpha() {
         let image = RgbaImage::from_pixel(3, 3, image::Rgba([80, 120, 160, 77]));
         let tile = crop_rgba(&image, 0, 0, 3, true);
-        assert_eq!(tile.rgba.as_ref(), image.as_raw());
+        assert_eq!(rgba_payload(&tile).1, image.as_raw());
     }
 
     #[test]
@@ -657,9 +673,10 @@ mod tests {
         let mut image = RgbaImage::from_pixel(3, 3, image::Rgba([64, 64, 64, 255]));
         image.put_pixel(1, 1, image::Rgba([128, 128, 128, 255]));
         let tile = crop_rgba(&image, 0, 0, 3, true);
+        let bytes = rgba_payload(&tile).1;
         let center = (3 + 1) * 4;
-        assert!(tile.rgba[center] > 128);
-        assert_eq!(tile.rgba[center + 3], 255);
+        assert!(bytes[center] > 128);
+        assert_eq!(bytes[center + 3], 255);
     }
 
     #[test]
@@ -669,7 +686,7 @@ mod tests {
             return;
         };
         let service = HeifDecodeService::default();
-        let first = service.begin(&fixture, 1, false, false).unwrap();
+        let first = begin(&service, &fixture, 1, false).unwrap();
         let first_cancelled = {
             let state = service.state.lock().unwrap();
             Arc::clone(&state.active.as_ref().unwrap().cancelled)
@@ -682,13 +699,14 @@ mod tests {
             HeifTile {
                 width: 1,
                 height: 1,
-                stride: 4,
-                rgba: Arc::from([0, 0, 0, 255]),
-                encoded_jpeg: None,
+                payload: HeifTileData::Rgba {
+                    stride: 4,
+                    bytes: Arc::from([0, 0, 0, 255]),
+                },
             },
         ));
 
-        let second = service.begin(&fixture, 2, false, false).unwrap();
+        let second = begin(&service, &fixture, 2, false).unwrap();
         assert!(first_cancelled.load(Ordering::Acquire));
         assert!(service.tile(&first.id, first.generation, 0, 0).is_none());
         assert!(!service.insert_tile_if_current(
@@ -699,9 +717,10 @@ mod tests {
             HeifTile {
                 width: 1,
                 height: 1,
-                stride: 4,
-                rgba: Arc::from([0, 0, 0, 255]),
-                encoded_jpeg: None,
+                payload: HeifTileData::Rgba {
+                    stride: 4,
+                    bytes: Arc::from([0, 0, 0, 255]),
+                },
             },
         ));
         assert!(!service.cancel(&first.id));
@@ -715,10 +734,10 @@ mod tests {
             return;
         };
         let service = HeifDecodeService::default();
-        let first = service.begin(&fixture, 1, false, false).unwrap();
+        let first = begin(&service, &fixture, 1, false).unwrap();
 
         let missing = fixture.with_file_name("missing-phase-c-fixture.hif");
-        assert!(service.begin(&missing, 2, false, false).is_err());
+        assert!(begin(&service, &missing, 2, false).is_err());
         assert!(service.cancel(&first.id));
     }
 
@@ -729,7 +748,7 @@ mod tests {
             return;
         };
         let service = HeifDecodeService::default();
-        let session = service.begin(&fixture, 1, false, false).unwrap();
+        let session = begin(&service, &fixture, 1, false).unwrap();
         let cancelled = {
             let state = service.state.lock().unwrap();
             Arc::clone(&state.active.as_ref().unwrap().cancelled)
@@ -751,7 +770,6 @@ mod tests {
                 .complete_if_current(&session, &cancelled, diagnostics, &mut |_| completed = true,)
         );
         assert!(!completed);
-        assert!(service.diagnostics().is_none());
     }
 
     #[test]
@@ -776,18 +794,15 @@ mod tests {
             return;
         };
         let service = Arc::new(HeifDecodeService::default());
-        let first_session = service.begin(&fixture, 1, false, true).unwrap();
+        let first_session = begin(&service, &fixture, 1, true).unwrap();
         let first_cache = tempfile::tempdir().unwrap();
         let first_cache_path = first_cache.path().to_owned();
         let first_service = service.clone();
-        let first_fixture = fixture.clone();
         let (completed_tx, completed_rx) = std::sync::mpsc::channel();
         let first_worker = std::thread::spawn(move || {
             first_service.decode(
                 &first_session,
-                first_fixture,
                 &first_cache_path,
-                false,
                 |_| {},
                 |_| {
                     let _ = completed_tx.send(());
@@ -799,15 +814,13 @@ mod tests {
             .recv_timeout(std::time::Duration::from_secs(10))
             .expect("first selection should publish completion before cache encoding");
 
-        let second_session = service.begin(&fixture, 2, false, true).unwrap();
+        let second_session = begin(&service, &fixture, 2, true).unwrap();
         let second_cache = tempfile::tempdir().unwrap();
         let started = Instant::now();
         let mut first_tile_elapsed = None;
         let second_result = service.decode(
             &second_session,
-            fixture,
             second_cache.path(),
-            false,
             |_| {
                 if first_tile_elapsed.is_none() {
                     first_tile_elapsed = Some(started.elapsed());
@@ -827,7 +840,7 @@ mod tests {
     }
 
     #[test]
-    fn selects_and_decodes_ffmpeg_tile_grid_fixture() {
+    fn selects_and_decodes_full_tile_fixture() {
         if crate::backends::ffmpeg_heif::capability().is_err() {
             return;
         }
@@ -836,28 +849,20 @@ mod tests {
             return;
         };
         let service = HeifDecodeService::default();
-        let session = service.begin(&fixture, 1, false, false).unwrap();
-        assert_eq!(session.backend, HeifBackendKind::FfmpegSoftware);
+        let session = begin(&service, &fixture, 1, false).unwrap();
         let mut events = Vec::new();
         let cache = tempfile::tempdir().unwrap();
         let diagnostics = service
-            .decode(
-                &session,
-                fixture.clone(),
-                cache.path(),
-                false,
-                |event| events.push(event),
-                |_| {},
-            )
+            .decode(&session, cache.path(), |event| events.push(event), |_| {})
             .unwrap();
-        assert_eq!(diagnostics.backend, HeifBackendKind::FfmpegSoftware);
+        assert_eq!(diagnostics.backend, session.backend);
         assert_eq!(events.len(), session.expected_tiles as usize);
         let mut covered_pixels = 0_u64;
         for event in events {
             #[cfg(target_os = "windows")]
-            assert_eq!(event.encoding.as_deref(), Some("jpeg"));
+            assert_eq!(event.payload, HeifTilePayload::Jpeg);
             #[cfg(any(target_os = "macos", target_os = "linux"))]
-            assert_eq!(event.encoding, None);
+            assert_eq!(event.payload, HeifTilePayload::Rgba);
             assert!(event.x + event.width <= session.width);
             assert!(event.y + event.height <= session.height);
             let tile = service
@@ -865,15 +870,19 @@ mod tests {
                 .unwrap();
             #[cfg(target_os = "windows")]
             {
-                let decoded =
-                    image::load_from_memory(tile.encoded_jpeg.as_deref().unwrap()).unwrap();
+                let HeifTileData::Jpeg(jpeg) = tile.payload else {
+                    panic!("expected JPEG tile");
+                };
+                let decoded = image::load_from_memory(&jpeg).unwrap();
                 assert_eq!(decoded.width(), event.width);
                 assert_eq!(decoded.height(), event.height);
             }
             #[cfg(any(target_os = "macos", target_os = "linux"))]
             {
-                assert!(tile.encoded_jpeg.is_none());
-                assert_eq!(tile.rgba.len(), (event.width * event.height * 4) as usize);
+                assert_eq!(
+                    rgba_payload(&tile).1.len(),
+                    (event.width * event.height * 4) as usize
+                );
             }
             covered_pixels += u64::from(event.width) * u64::from(event.height);
         }
@@ -899,7 +908,7 @@ mod tests {
             return;
         };
         let service = HeifDecodeService::default();
-        let session = service.begin(&fixture, 1, true, true).unwrap();
+        let session = begin(&service, &fixture, 1, true).unwrap();
         assert_eq!(session.backend, HeifBackendKind::FfmpegSoftware);
         assert_eq!(session.acceleration, AccelerationKind::Software);
     }
@@ -915,20 +924,13 @@ mod tests {
             return;
         }
         let service = HeifDecodeService::default();
-        let session = service.begin(&fixture, 1, true, true).unwrap();
+        let session = begin(&service, &fixture, 1, true).unwrap();
         assert_eq!(session.backend, HeifBackendKind::AppleImageIo);
         assert_eq!(session.acceleration, AccelerationKind::Unknown);
         let mut tiles = 0;
         let cache = tempfile::tempdir().unwrap();
         let diagnostics = service
-            .decode(
-                &session,
-                fixture,
-                cache.path(),
-                true,
-                |_| tiles += 1,
-                |_| {},
-            )
+            .decode(&session, cache.path(), |_| tiles += 1, |_| {})
             .unwrap();
         assert_eq!(diagnostics.backend, HeifBackendKind::AppleImageIo);
         assert_eq!(tiles, session.expected_tiles);

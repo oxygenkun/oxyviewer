@@ -1,7 +1,7 @@
 //! Helpers shared by preview artifact pipelines.
 
-use crate::{MediaError, cache::preview_cache_key, media_source::preview_result};
-use oxy_domain::{PreviewKind, PreviewResult};
+use crate::{MediaError, cache::preview_cache_key, media_source::cached_preview_result};
+use oxy_domain::{PreviewKind, PreviewResult, RenderLevel};
 use std::{path::Path, time::Instant};
 
 /// Cache sizes shared by every format's progressive pipeline. A request for a
@@ -20,6 +20,7 @@ pub(crate) fn larger_cached_decoded_preview(
     cache_dir: &Path,
     cache_version: &str,
     max_size: u32,
+    level: RenderLevel,
 ) -> Result<Option<PreviewResult>, MediaError> {
     for candidate_size in PREVIEW_CACHE_SIZES
         .iter()
@@ -28,8 +29,8 @@ pub(crate) fn larger_cached_decoded_preview(
     {
         let key = preview_cache_key(path, cache_version, candidate_size)?;
         let candidate = cache_dir.join(format!("{key}.decoded.jpg"));
-        if candidate.is_file() {
-            return preview_result(candidate, PreviewKind::Decoded).map(Some);
+        if let Some(result) = cached_preview_result(candidate, PreviewKind::Decoded, level)? {
+            return Ok(Some(result));
         }
     }
     Ok(None)
