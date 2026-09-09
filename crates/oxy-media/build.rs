@@ -9,6 +9,7 @@ fn main() {
     let wrapper = manifest_dir.join("src/backends/libraw/wrapper.cpp");
 
     build_apple_media(&manifest_dir);
+    build_jpeg_stitch(&manifest_dir);
 
     println!("cargo:rerun-if-changed={}", wrapper.display());
     println!(
@@ -40,6 +41,57 @@ fn main() {
 
     add_cpp_sources(&mut build, &libraw_dir.join("src"));
     build.compile("oxy_libraw");
+}
+
+fn build_jpeg_stitch(manifest_dir: &Path) {
+    let archive = manifest_dir.join("../../3rdpart/libjpeg-turbo/libjpeg-turbo-3.1.3.tar.gz");
+    let wrapper = manifest_dir.join("src/heif_service/dct_cache/wrapper.c");
+    let out = PathBuf::from(env::var_os("OUT_DIR").unwrap());
+    println!("cargo:rerun-if-changed={}", archive.display());
+    println!("cargo:rerun-if-changed={}", wrapper.display());
+    println!("cargo:rerun-if-env-changed=NASM");
+    let source = out.join("libjpeg-turbo-3.1.3");
+    if !source.join("CMakeLists.txt").exists() {
+        tar::Archive::new(flate2::read::GzDecoder::new(
+            fs::File::open(archive).unwrap(),
+        ))
+        .unpack(&out)
+        .expect("unpack pinned libjpeg-turbo source");
+    }
+    let mut config = cmake::Config::new(&source);
+    config
+        .out_dir(out.join("jpeg-build"))
+        .profile("Release")
+        .define("ENABLE_SHARED", "OFF")
+        .define("ENABLE_STATIC", "ON")
+        .define("WITH_TURBOJPEG", "OFF")
+        .define("WITH_SIMD", "ON")
+        .define("REQUIRE_SIMD", "ON")
+        .define("CMAKE_POSITION_INDEPENDENT_CODE", "ON")
+        .build_target("jpeg-static");
+    if let Some(nasm) = env::var_os("NASM") {
+        config.define("CMAKE_ASM_NASM_COMPILER", nasm);
+    }
+    let built = config.build();
+    println!(
+        "cargo:rustc-link-search=native={}",
+        built.join("build/Release").display()
+    );
+    println!(
+        "cargo:rustc-link-search=native={}",
+        built.join("build").display()
+    );
+    let msvc = env::var("CARGO_CFG_TARGET_ENV").is_ok_and(|value| value == "msvc");
+    cc::Build::new()
+        .include(source.join("src"))
+        .include(built.join("build"))
+        .file(wrapper)
+        .opt_level(3)
+        .compile("oxy_jpeg_stitch");
+    println!(
+        "cargo:rustc-link-lib=static={}",
+        if msvc { "jpeg-static" } else { "jpeg" }
+    );
 }
 
 fn build_apple_media(manifest_dir: &Path) {

@@ -11,7 +11,14 @@ Native runtime components:
 | LibRaw 0.22.1 | RAW preview extraction and decoding | Vendored unmodified source, statically linked under the CDDL-1.0 option; release legal review pending |
 | OxyViewer metadata parser (SiftX fork at `fcf8e3d`) | Pure-Rust EXIF/XMP/IPTC/ICC/MakerNote reads | Modified image-only fork, statically linked under the MIT OR Apache-2.0 license; upstream notices retained |
 | libheif | HEIF/HEIC decoding | Dynamically linked, with codec licenses reviewed per platform |
+| libjpeg-turbo 3.1.3 | Background JPEG tile coefficient stitching | Unmodified pinned source archive, statically linked with SIMD; IJG/BSD-3-Clause/zlib notices retained in `3rdpart/libjpeg-turbo/LICENSE.md` and `README.ijg` |
 | ExifTool | Optional metadata compatibility/write worker | Separate process; Artistic/GPL terms reviewed before release |
 
 OxyViewer does not link Exiv2 because the product must retain the option of
 closed-source commercial distribution.
+
+This software is based in part on the work of the Independent JPEG Group.
+libjpeg-turbo copyright and license texts are retained in
+[`LICENSE.md`](3rdpart/libjpeg-turbo/LICENSE.md) and
+[`README.ijg`](3rdpart/libjpeg-turbo/README.ijg); include these notices when
+distributing binaries that contain the static JPEG backend.

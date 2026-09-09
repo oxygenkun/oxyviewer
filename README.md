@@ -28,6 +28,11 @@ does not yet meet its 300 ms performance budget.
 
 ## Development
 
+Native builds require CMake and a C/C++ compiler. x86/x64 builds also require
+NASM on `PATH` (or the `NASM` environment variable pointing to its executable)
+for the statically linked libjpeg-turbo SIMD backend. See
+[the pinned dependency notes](3rdpart/libjpeg-turbo/README.md).
+
 ```bash
 pnpm install --frozen-lockfile
 pnpm dev                 # browser-only demo

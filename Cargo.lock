@@ -2454,6 +2454,8 @@ name = "oxy-media"
 version = "0.1.0"
 dependencies = [
  "cc",
+ "cmake",
+ "flate2",
  "fs2",
  "image",
  "lcms2",
@@ -2465,6 +2467,7 @@ dependencies = [
  "serde",
  "serde_json",
  "sha2",
+ "tar",
  "tempfile",
  "thiserror 2.0.20",
  "windows 0.61.3",
