@@ -304,7 +304,7 @@ impl Library {
               projection_kind TEXT NOT NULL,
               source_revision TEXT NOT NULL,
               valid_at INTEGER NOT NULL,
-              projection_revision INTEGER NOT NULL,
+              state_revision INTEGER NOT NULL,
               status TEXT NOT NULL,
               rating INTEGER,
               color_label TEXT,
@@ -361,10 +361,23 @@ impl Library {
                 [],
             )?;
         }
-        let has_pick_label = connection
+        let projection_columns = connection
             .prepare("PRAGMA table_info(resource_projections)")?
             .query_map([], |row| row.get::<_, String>(1))?
-            .collect::<Result<Vec<_>, _>>()?
+            .collect::<Result<Vec<_>, _>>()?;
+        let has_state_revision = projection_columns
+            .iter()
+            .any(|column| column == "state_revision");
+        let has_legacy_projection_revision = projection_columns
+            .iter()
+            .any(|column| column == "projection_revision");
+        if !has_state_revision && has_legacy_projection_revision {
+            connection.execute(
+                "ALTER TABLE resource_projections RENAME COLUMN projection_revision TO state_revision",
+                [],
+            )?;
+        }
+        let has_pick_label = projection_columns
             .iter()
             .any(|column| column == "pick_label");
         if !has_pick_label {
@@ -465,7 +478,7 @@ impl Library {
               projection_kind TEXT NOT NULL,
               source_revision TEXT NOT NULL,
               valid_at INTEGER NOT NULL,
-              projection_revision INTEGER NOT NULL,
+              state_revision INTEGER NOT NULL,
               status TEXT NOT NULL,
               rating INTEGER,
               color_label TEXT,
@@ -670,17 +683,17 @@ impl Library {
             transaction.commit()?;
             return Ok(current);
         }
-        candidate.projection_revision = next_resource_revision(&transaction)?;
+        candidate.state_revision = next_resource_revision(&transaction)?;
         transaction.execute(
             "INSERT INTO resource_projections(
                path, parent_path, projection_kind, source_revision, valid_at,
-               projection_revision, status, rating, color_label, pick_label, result_json, error
+               state_revision, status, rating, color_label, pick_label, result_json, error
              ) VALUES (?1, ?2, 'metadata', ?3, ?4, ?5, ?6, ?7, ?8, ?9, NULL, ?10)
              ON CONFLICT(path, projection_kind) DO UPDATE SET
                parent_path=excluded.parent_path,
                source_revision=excluded.source_revision,
                valid_at=excluded.valid_at,
-               projection_revision=excluded.projection_revision,
+               state_revision=excluded.state_revision,
                status=excluded.status,
                rating=excluded.rating,
                color_label=excluded.color_label,
@@ -692,7 +705,7 @@ impl Library {
                 parent_string(&candidate.path),
                 candidate.source_revision,
                 candidate.valid_at as i64,
-                candidate.projection_revision as i64,
+                candidate.state_revision as i64,
                 status_name(candidate.status),
                 candidate.rating,
                 candidate.color_label,
@@ -730,7 +743,7 @@ impl Library {
             transaction.commit()?;
             return Ok(current);
         }
-        candidate.projection_revision = next_resource_revision(&transaction)?;
+        candidate.state_revision = next_resource_revision(&transaction)?;
         // Resource descriptors identify entries in the current process registry.
         // Persist only restart-safe artifact facts; a caller restoring a managed
         // file must register it again in its own process.
@@ -754,13 +767,13 @@ impl Library {
         transaction.execute(
             "INSERT INTO resource_projections(
                path, parent_path, projection_kind, source_revision, valid_at,
-               projection_revision, status, rating, color_label, pick_label, result_json, error
+               state_revision, status, rating, color_label, pick_label, result_json, error
              ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, NULL, NULL, NULL, ?8, ?9)
              ON CONFLICT(path, projection_kind) DO UPDATE SET
                parent_path=excluded.parent_path,
                source_revision=excluded.source_revision,
                valid_at=excluded.valid_at,
-               projection_revision=excluded.projection_revision,
+               state_revision=excluded.state_revision,
                status=excluded.status,
                rating=NULL,
                color_label=NULL,
@@ -773,7 +786,7 @@ impl Library {
                 image_projection_kind(candidate.level),
                 candidate.source_revision,
                 candidate.valid_at as i64,
-                candidate.projection_revision as i64,
+                candidate.state_revision as i64,
                 status_name(candidate.status),
                 result_json,
                 candidate.error,
@@ -791,7 +804,7 @@ impl Library {
             "UPDATE resource_projections SET
                source_revision = 'invalidated:' || CAST(?1 AS TEXT),
                valid_at = ?1,
-               projection_revision = ?1,
+               state_revision = ?1,
                status = 'error',
                rating = NULL,
                color_label = NULL,
@@ -813,7 +826,7 @@ impl Library {
             "UPDATE resource_projections SET
                source_revision = 'invalidated:' || CAST(?1 AS TEXT),
                valid_at = ?1,
-               projection_revision = ?1,
+               state_revision = ?1,
                status = 'error',
                result_json = NULL,
                error = 'invalidated'
@@ -1451,7 +1464,7 @@ fn read_metadata_projection(
 ) -> Result<Option<MetadataProjection>, LibraryError> {
     let row = connection
         .query_row(
-            "SELECT source_revision, projection_revision, valid_at, status,
+            "SELECT source_revision, state_revision, valid_at, status,
                     rating, color_label, pick_label, error
              FROM resource_projections
              WHERE path = ?1 AND projection_kind = 'metadata'",
@@ -1473,7 +1486,7 @@ fn read_metadata_projection(
     row.map(
         |(
             source_revision,
-            projection_revision,
+            state_revision,
             valid_at,
             status,
             rating,
@@ -1484,7 +1497,7 @@ fn read_metadata_projection(
             Ok(MetadataProjection {
                 path: path.to_path_buf(),
                 source_revision,
-                projection_revision: projection_revision.max(0) as u64,
+                state_revision: state_revision.max(0) as u64,
                 valid_at: valid_at.max(0) as u64,
                 status: parse_status(&status)?,
                 rating,
@@ -1504,7 +1517,7 @@ fn read_image_projection(
 ) -> Result<Option<ImageProjection>, LibraryError> {
     let row = connection
         .query_row(
-            "SELECT source_revision, projection_revision, valid_at, status,
+            "SELECT source_revision, state_revision, valid_at, status,
                     result_json, error
              FROM resource_projections
              WHERE path = ?1 AND projection_kind = ?2",
@@ -1522,11 +1535,11 @@ fn read_image_projection(
         )
         .optional()?;
     row.map(
-        |(source_revision, projection_revision, valid_at, status, result_json, error)| {
+        |(source_revision, state_revision, valid_at, status, result_json, error)| {
             Ok(ImageProjection {
                 path: path.to_path_buf(),
                 source_revision,
-                projection_revision: projection_revision.max(0) as u64,
+                state_revision: state_revision.max(0) as u64,
                 valid_at: valid_at.max(0) as u64,
                 status: parse_status(&status)?,
                 level,
@@ -1795,7 +1808,7 @@ mod tests {
     }
 
     #[test]
-    fn migrates_metadata_projection_cache_for_pick_labels() {
+    fn migrates_resource_projection_state_revision_and_pick_labels() {
         let directory = tempdir().unwrap();
         let database = directory.path().join("library.sqlite");
         {
@@ -1815,6 +1828,13 @@ mod tests {
                        result_json TEXT,
                        error TEXT,
                        PRIMARY KEY(path, projection_kind)
+                     );
+                     INSERT INTO resource_projections(
+                       path, parent_path, projection_kind, source_revision, valid_at,
+                       projection_revision, status, rating, color_label, result_json, error
+                     ) VALUES (
+                       'legacy.jpg', '', 'metadata', 'legacy-source', 7,
+                       11, 'ready', 4, 'Red', NULL, NULL
                      );",
                 )
                 .unwrap();
@@ -1831,6 +1851,14 @@ mod tests {
             .collect::<Result<Vec<_>, _>>()
             .unwrap();
         assert!(columns.iter().any(|column| column == "pick_label"));
+        assert!(columns.iter().any(|column| column == "state_revision"));
+        assert!(!columns.iter().any(|column| column == "projection_revision"));
+        let migrated = library
+            .metadata_projection(Path::new("legacy.jpg"), "legacy-source")
+            .unwrap()
+            .unwrap();
+        assert_eq!(migrated.state_revision, 11);
+        assert_eq!(migrated.rating, Some(4));
     }
 
     #[test]
@@ -2042,7 +2070,7 @@ mod tests {
             .accept_metadata_projection(MetadataProjection {
                 path: path.clone(),
                 source_revision: "100:200:xmp-a".into(),
-                projection_revision: 0,
+                state_revision: 0,
                 valid_at,
                 status: ResourceLoadStatus::Ready,
                 rating: Some(4),
@@ -2542,7 +2570,7 @@ mod tests {
                 .accept_metadata_projection(MetadataProjection {
                     path: path.clone(),
                     source_revision: source_revision.into(),
-                    projection_revision: 0,
+                    state_revision: 0,
                     valid_at,
                     status: ResourceLoadStatus::Ready,
                     rating: Some(4),
@@ -2551,7 +2579,7 @@ mod tests {
                     error: None,
                 })
                 .unwrap();
-            assert!(accepted.projection_revision > valid_at);
+            assert!(accepted.state_revision > valid_at);
         }
 
         let reopened = Library::open(&database).unwrap();
@@ -2586,7 +2614,7 @@ mod tests {
             .accept_metadata_projection(MetadataProjection {
                 path,
                 source_revision: "100:200:0:0:embedded-xmp-digest".into(),
-                projection_revision: 0,
+                state_revision: 0,
                 valid_at,
                 status: ResourceLoadStatus::Ready,
                 rating: Some(3),
@@ -2630,7 +2658,7 @@ mod tests {
             .accept_metadata_projection(MetadataProjection {
                 path: path.clone(),
                 source_revision: source_revision.into(),
-                projection_revision: 0,
+                state_revision: 0,
                 valid_at: newer,
                 status: ResourceLoadStatus::Ready,
                 rating: Some(5),
@@ -2643,7 +2671,7 @@ mod tests {
             .accept_metadata_projection(MetadataProjection {
                 path: path.clone(),
                 source_revision: source_revision.into(),
-                projection_revision: 0,
+                state_revision: 0,
                 valid_at: older,
                 status: ResourceLoadStatus::Ready,
                 rating: Some(1),
@@ -2677,7 +2705,7 @@ mod tests {
             .accept_image_projection(ImageProjection {
                 path: path.clone(),
                 source_revision: "image-source".into(),
-                projection_revision: 0,
+                state_revision: 0,
                 valid_at,
                 status: ResourceLoadStatus::Ready,
                 level: RenderLevel::Preview,
@@ -2696,7 +2724,7 @@ mod tests {
             })
             .unwrap();
 
-        assert!(accepted.projection_revision > valid_at);
+        assert!(accepted.state_revision > valid_at);
         let cached = library
             .image_projection(&path, RenderLevel::Preview, "image-source")
             .unwrap()
@@ -2715,7 +2743,7 @@ mod tests {
         let projection = ImageProjection {
             path: source.clone(),
             source_revision: "source-revision".into(),
-            projection_revision: 0,
+            state_revision: 0,
             valid_at,
             status: ResourceLoadStatus::Ready,
             level: RenderLevel::Preview,
@@ -2755,7 +2783,7 @@ mod tests {
             .accept_image_projection(ImageProjection {
                 path: source.clone(),
                 source_revision: "source-revision".into(),
-                projection_revision: 0,
+                state_revision: 0,
                 valid_at,
                 status: ResourceLoadStatus::Ready,
                 level: RenderLevel::Preview,
@@ -2797,7 +2825,7 @@ mod tests {
         let loading = MetadataProjection {
             path: path.clone(),
             source_revision: "source-before-refresh".into(),
-            projection_revision: 0,
+            state_revision: 0,
             valid_at,
             status: ResourceLoadStatus::Loading,
             rating: None,
@@ -2841,7 +2869,7 @@ mod tests {
         let make_projection = |valid_at, artifact: &Path| ImageProjection {
             path: path.clone(),
             source_revision: "same-image-source".into(),
-            projection_revision: 0,
+            state_revision: 0,
             valid_at,
             status: ResourceLoadStatus::Ready,
             level: RenderLevel::Thumbnail,

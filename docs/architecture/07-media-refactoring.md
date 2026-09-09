@@ -253,11 +253,11 @@ D 阶段实现记录：
   以及 metadata/applied orientation、embedded-or-unknown/sRGB-ICC color 和 SDR。RAW 近全尺寸 camera
   JPEG 仅在该表示契约成立且 display-space 两边覆盖 90% 时满足 full，尺寸本身不是质量排序。
 - decoded HEIF 与 developed RAW cache 现在写入 sRGB ICC；对应 RAW preview/full cache 分别升至 v7/v3。
-  media policy version 同时进入 Tauri 持久化 image projection revision，旧 ready projection 不会绕过
+  media policy version 同时进入 Tauri 持久化 image projection source revision，旧 ready projection 不会绕过
   新 cache key。没有增加 IPC 字段，Phase C attempt diagnostics 仍为内部契约。
 - 前端删除全 HEIF 的 preview→thumbnail 静态别名；generic HEIF 能真正请求 4096 preview，已识别 Sony
   仍由 Rust 让两个语义等级返回同一路径。planner、运行时 HEIF probe、artifact substitution、
-  projection version、前端 render graph 和 tracked Sony HIF 冷/热路径均有回归测试。
+  projection source identity、前端 render graph 和 tracked Sony HIF 冷/热路径均有回归测试。
 - 仓库目前仍只有一份可再分发的 Sony HIF camera fixture；unknown-vendor HEIF 使用该真实容器移除
   Sony compatible brand 后测试，RAW 方向/色彩仍依赖 ignored 的本地 fixture。macOS release 后测的
   Sony 160px 五次样本 median 7.90 ms（见 `PERFORMANCE.md`），但没有同构建 D 前成对样本，因此不能

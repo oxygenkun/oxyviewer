@@ -31,7 +31,7 @@ Every projection update carries:
 
 - a `sourceRevision` describing the source bytes and relevant sidecars;
 - a monotonically increasing `validAt` assigned when the read is requested;
-- a monotonically increasing `projectionRevision` assigned only when Rust accepts
+- a monotonically increasing `stateRevision` assigned only when Rust accepts
   the result;
 - the exact field or render-level coverage of the result;
 - a load state and optional error.
@@ -68,8 +68,8 @@ satisfy lower semantic levels only when the format policy explicitly declares th
 artifact suitable; pixel dimensions alone do not imply that relationship.
 
 Rust publishes accepted changes as projection events. Events contain the canonical
-path, source revision, projection revision, changed coverage, and the small display
-payload. Frontend mirrors accept only increasing projection revisions. Grid, loupe,
+path, source revision, state revision, changed coverage, and the small display
+payload. Frontend mirrors accept only increasing state revisions. Grid, loupe,
 inspector, filters, and status UI derive from that mirror and do not maintain
 independent authoritative copies.
 
@@ -104,7 +104,7 @@ must never treat an unqueried field as an authoritative empty value.
 
 The application process owns the live coordinator. Rebuildable projections that
 must survive restart are persisted in SQLite with their source revision and a
-transactionally assigned projection revision. Multiple application processes use
+transactionally assigned state revision. Multiple application processes use
 SQLite WAL transactions for acceptance ordering; process-local counters alone are
 not used to compare cross-process results.
 

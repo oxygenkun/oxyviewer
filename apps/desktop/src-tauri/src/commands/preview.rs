@@ -21,21 +21,16 @@ pub(crate) async fn get_preview(
     app: tauri::AppHandle,
     state: State<'_, AppState>,
 ) -> Result<oxy_domain::ImageProjection, String> {
-    let files = state.files.clone();
     let preview_queue = state.preview_queue.clone();
     let preview_dir = state.cache.preview_dir();
     let cache = state.cache.clone();
     let projection = tauri::async_runtime::spawn_blocking(move || {
-        let asset = files.get_asset(&path).map_err(|error| error.to_string())?;
         let (projection, receiver) = preview_queue.request(
             &app,
             PreviewRequest {
                 request_id,
-                path: asset.path.clone(),
+                path,
                 preview_dir,
-                kind: asset.kind,
-                size_bytes: asset.size_bytes,
-                modified_at_ms: asset.modified_at_ms,
                 level,
                 priority,
                 rank: rank.unwrap_or_default(),
@@ -90,17 +85,9 @@ pub(crate) async fn cancel_preview_request(
     request_id: String,
     state: State<'_, AppState>,
 ) -> Result<bool, String> {
-    let files = state.files.clone();
     let preview_queue = state.preview_queue.clone();
     tauri::async_runtime::spawn_blocking(move || {
-        let asset = files.get_asset(&path).map_err(|error| error.to_string())?;
-        Ok(preview_queue.cancel_request(
-            PreviewIdentity {
-                path: asset.path,
-                level,
-            },
-            &request_id,
-        ))
+        Ok(preview_queue.cancel_request(PreviewIdentity { path, level }, &request_id))
     })
     .await
     .map_err(|error| error.to_string())?
@@ -353,9 +340,6 @@ fn resolve_heif_full_projection(
             request_id,
             path: asset.path,
             preview_dir,
-            kind: asset.kind,
-            size_bytes: asset.size_bytes,
-            modified_at_ms: asset.modified_at_ms,
             level: RenderLevel::Full,
             priority: PreviewPriority::Loupe,
             rank: 0,

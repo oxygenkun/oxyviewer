@@ -108,7 +108,7 @@ describe("generated preview cancellation", () => {
     mocks.invoke.mockResolvedValue({
       path: asset.path,
       sourceRevision: "revision",
-      projectionRevision: 1,
+      stateRevision: 1,
       validAt: 1,
       status: "ready",
       level: "thumbnail",
@@ -139,7 +139,7 @@ describe("generated preview cancellation", () => {
     mocks.invoke.mockResolvedValue({
       path: asset.path,
       sourceRevision: "interim-revision",
-      projectionRevision: 1,
+      stateRevision: 1,
       validAt: 1,
       status: "ready",
       level: "preview",
@@ -178,7 +178,7 @@ describe("generated preview cancellation", () => {
         return Promise.resolve({
           path: asset.path,
           sourceRevision: "upgrade-failure-revision",
-          projectionRevision: 1,
+          stateRevision: 1,
           validAt: 1,
           status: "ready",
           level: "preview",
@@ -208,7 +208,7 @@ describe("generated preview cancellation", () => {
     acceptImageProjection({
       path: asset.path,
       sourceRevision: "upgrade-failure-revision",
-      projectionRevision: 2,
+      stateRevision: 2,
       validAt: 1,
       status: "error",
       level: "preview",
@@ -232,7 +232,7 @@ describe("generated preview cancellation", () => {
     mocks.invoke.mockResolvedValue({
       path: asset.path,
       sourceRevision: "thumbnail-interim-revision",
-      projectionRevision: 1,
+      stateRevision: 1,
       validAt: 1,
       status: "ready",
       level: "thumbnail",
@@ -333,7 +333,7 @@ describe("HEIF full delivery", () => {
       projection: {
         path: asset.path,
         sourceRevision: "source-1",
-        projectionRevision: 1,
+        stateRevision: 1,
         validAt: 1,
         status: "ready",
         level: "full",

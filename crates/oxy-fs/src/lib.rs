@@ -614,7 +614,7 @@ fn scan_assets_portable(
         if path
             .extension()
             .and_then(|ext| ext.to_str())
-            .and_then(kind_for_extension)
+            .and_then(AssetKind::from_extension)
             .is_some()
         {
             entries.push((entry, file_type.is_symlink()));
@@ -873,10 +873,7 @@ fn summary_for_path_with_sidecar(
     path: &Path,
     known_sidecar: Option<bool>,
 ) -> Result<Option<AssetSummary>, FsError> {
-    let Some(extension) = path.extension().and_then(|value| value.to_str()) else {
-        return Ok(None);
-    };
-    let Some(_) = kind_for_extension(extension) else {
+    let Some(_) = AssetKind::from_path(path) else {
         return Ok(None);
     };
     let Ok(metadata) = fs::metadata(path) else {
@@ -914,7 +911,7 @@ fn summary_from_attributes(
     let Some(extension) = path.extension().and_then(|value| value.to_str()) else {
         return Ok(None);
     };
-    let Some(kind) = kind_for_extension(extension) else {
+    let Some(kind) = AssetKind::from_extension(extension) else {
         return Ok(None);
     };
     let name = path
@@ -936,18 +933,6 @@ fn summary_from_attributes(
         color_label: None,
         pick_label: None,
     }))
-}
-
-fn kind_for_extension(extension: &str) -> Option<AssetKind> {
-    match extension.to_ascii_lowercase().as_str() {
-        "arw" | "cr2" | "cr3" | "nef" | "dng" | "raf" | "rw2" | "orf" => Some(AssetKind::Raw),
-        "jpg" | "jpeg" => Some(AssetKind::Jpeg),
-        "heif" | "heic" | "hif" => Some(AssetKind::Heif),
-        "png" => Some(AssetKind::Png),
-        "tif" | "tiff" => Some(AssetKind::Tiff),
-        "webp" => Some(AssetKind::Webp),
-        _ => None,
-    }
 }
 
 fn compare_assets(left: &AssetSummary, right: &AssetSummary, sort: AssetSort) -> Ordering {

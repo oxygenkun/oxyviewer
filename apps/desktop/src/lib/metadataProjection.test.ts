@@ -20,11 +20,11 @@ const asset: AssetSummary = {
   hasSidecar: false,
 };
 
-const projection = (projectionRevision: number, rating?: number): MetadataProjection => ({
+const projection = (stateRevision: number, rating?: number): MetadataProjection => ({
   path: asset.path,
   sourceRevision: "source-1",
-  projectionRevision,
-  validAt: projectionRevision,
+  stateRevision,
+  validAt: stateRevision,
   status: "ready",
   rating,
   colorLabel: rating ? "Red" : undefined,

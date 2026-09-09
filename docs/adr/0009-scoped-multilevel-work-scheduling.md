@@ -102,7 +102,7 @@ releasePreviewSchedule(scopeId, epoch, task)
 
 `getPreview` still creates or attaches to concrete resource work and returns the
 accepted projection. The scheduler determines its effective pending position from
-all current scope intents. Projection revision and source-revision rules from ADR
+all current scope intents. State-revision and source-revision rules from ADR
 0008 remain authoritative.
 
 ## Consequences

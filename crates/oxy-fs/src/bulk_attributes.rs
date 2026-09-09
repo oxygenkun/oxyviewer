@@ -3,9 +3,10 @@
 //! and attributes not supplied by the filesystem retain ordinary stat semantics.
 
 use super::{
-    AssetSummary, FsError, ScanProgress, kind_for_extension, sidecar_key, sidecar_path,
-    summary_from_attributes, summary_from_metadata,
+    AssetSummary, FsError, ScanProgress, sidecar_key, sidecar_path, summary_from_attributes,
+    summary_from_metadata,
 };
+use oxy_domain::AssetKind;
 use std::{
     collections::HashSet,
     ffi::OsStr,
@@ -106,7 +107,7 @@ pub(super) fn scan(
             if !is_sidecar
                 && extension
                     .and_then(OsStr::to_str)
-                    .and_then(kind_for_extension)
+                    .and_then(AssetKind::from_extension)
                     .is_none()
             {
                 continue;

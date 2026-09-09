@@ -49,14 +49,14 @@ pub struct MetadataFacade {
     exiftool: Arc<RwLock<Option<PathBuf>>>,
     summary_cache: Arc<RwLock<HashMap<PathBuf, CachedSummaryMetadata>>>,
     next_observation: Arc<AtomicU64>,
-    next_projection_revision: Arc<AtomicU64>,
+    next_state_revision: Arc<AtomicU64>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct CachedSummaryMetadata {
     fingerprint: SummaryMetadataFingerprint,
     valid_at: u64,
-    projection_revision: u64,
+    state_revision: u64,
     rating: Option<u8>,
     color_label: Option<String>,
     pick_label: Option<PickLabel>,
@@ -88,7 +88,7 @@ impl MetadataFacade {
             exiftool: Arc::new(RwLock::new(exiftool)),
             summary_cache: Arc::new(RwLock::new(HashMap::new())),
             next_observation: Arc::new(AtomicU64::new(1)),
-            next_projection_revision: Arc::new(AtomicU64::new(1)),
+            next_state_revision: Arc::new(AtomicU64::new(1)),
         }
     }
 
@@ -161,8 +161,8 @@ impl MetadataFacade {
         observation: &MetadataObservation,
         projection: &MetadataProjection,
     ) {
-        self.next_projection_revision.fetch_max(
-            projection.projection_revision.saturating_add(1),
+        self.next_state_revision.fetch_max(
+            projection.state_revision.saturating_add(1),
             Ordering::Relaxed,
         );
         self.summary_cache
@@ -173,7 +173,7 @@ impl MetadataFacade {
                 CachedSummaryMetadata {
                     fingerprint: observation.fingerprint,
                     valid_at: projection.valid_at,
-                    projection_revision: projection.projection_revision,
+                    state_revision: projection.state_revision,
                     rating: projection.rating,
                     color_label: projection.color_label.clone(),
                     pick_label: projection.pick_label,
@@ -254,15 +254,13 @@ impl MetadataFacade {
                 )
             })
             .unwrap_or_default();
-        let projection_revision = self
-            .next_projection_revision
-            .fetch_add(1, Ordering::Relaxed);
+        let state_revision = self.next_state_revision.fetch_add(1, Ordering::Relaxed);
         cache.insert(
             observation.asset.path.clone(),
             CachedSummaryMetadata {
                 fingerprint: observation.fingerprint,
                 valid_at: observation.valid_at,
-                projection_revision,
+                state_revision,
                 rating,
                 color_label,
                 pick_label,
@@ -376,15 +374,13 @@ impl MetadataFacade {
         {
             return projection_from_cache(asset, current);
         }
-        let projection_revision = self
-            .next_projection_revision
-            .fetch_add(1, Ordering::Relaxed);
+        let state_revision = self.next_state_revision.fetch_add(1, Ordering::Relaxed);
         cache.insert(
             asset.path.clone(),
             CachedSummaryMetadata {
                 fingerprint,
                 valid_at,
-                projection_revision,
+                state_revision,
                 rating,
                 color_label,
                 pick_label,
@@ -516,7 +512,7 @@ fn projection_from_cache(
     MetadataProjection {
         path: asset.path.clone(),
         source_revision: source_revision_from_fingerprint(cached.fingerprint),
-        projection_revision: cached.projection_revision,
+        state_revision: cached.state_revision,
         valid_at: cached.valid_at,
         status: cached.status,
         rating: cached.rating,
@@ -1467,10 +1463,7 @@ mod tests {
             Some(PickLabel::Rejected),
         );
 
-        assert_eq!(
-            late_background.projection_revision,
-            selected.projection_revision
-        );
+        assert_eq!(late_background.state_revision, selected.state_revision);
         assert_eq!(late_background.rating, Some(5));
         assert_eq!(late_background.pick_label, Some(PickLabel::Accepted));
         assert_eq!(late_background.color_label.as_deref(), Some("Red"));

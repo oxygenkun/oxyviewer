@@ -32,7 +32,7 @@ export const useImageProjectionStore = create<ImageProjectionState>((set) => ({
   accept: (projection) => set((state) => {
     const key = imageProjectionKey(projection.path, projection.level);
     const current = state.records[key];
-    if (current && current.projectionRevision >= projection.projectionRevision) return state;
+    if (current && current.stateRevision >= projection.stateRevision) return state;
     const result = projection.result
       ? {
           ...projection.result,
@@ -64,12 +64,12 @@ export function acceptImageProjection(projection: ImageProjection) {
   const current = useImageProjectionStore.getState().records[
     imageProjectionKey(projection.path, projection.level)
   ];
-  if (current && current.projectionRevision >= projection.projectionRevision) {
+  if (current && current.stateRevision >= projection.stateRevision) {
     const id = projection.result?.resource?.resourceId;
     if (id && id !== current.result?.resource?.resourceId) releaseUnretainedMediaResource(id);
     return id !== undefined && id === current.result?.resource?.resourceId;
   }
-  if (current && current.projectionRevision < projection.projectionRevision) {
+  if (current && current.stateRevision < projection.stateRevision) {
     const id = current.result?.resource?.resourceId;
     if (id && (projection.result || current.sourceRevision !== projection.sourceRevision)
       && id !== projection.result?.resource?.resourceId) releaseUnretainedMediaResource(id);

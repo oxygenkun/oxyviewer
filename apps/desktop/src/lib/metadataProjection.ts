@@ -13,14 +13,14 @@ export const useMetadataProjectionStore = create<MetadataProjectionState>((set) 
   records: {},
   accept: (projection) => set((state) => {
     const current = state.records[projection.path];
-    if (current && current.projectionRevision >= projection.projectionRevision) return state;
+    if (current && current.stateRevision >= projection.stateRevision) return state;
     return { records: { ...state.records, [projection.path]: projection } };
   }),
   acceptMany: (projections) => set((state) => {
     let records = state.records;
     for (const projection of projections) {
       const current = records[projection.path];
-      if (current && current.projectionRevision >= projection.projectionRevision) continue;
+      if (current && current.stateRevision >= projection.stateRevision) continue;
       if (records === state.records) records = { ...state.records };
       records[projection.path] = projection;
     }

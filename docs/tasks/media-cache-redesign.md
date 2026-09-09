@@ -855,7 +855,7 @@ cargo test --workspace
   released/expired、staged count/bytes 和临时响应 reservation。
 - 发布宽限 5 秒，UI lease 30 秒，前端每 10 秒续租。仅保留 displayed + pending，浏览器 load 后释放旧图，
   保留共享引用计数和 StrictMode 保护；迟到及 revision fence 拒绝的资源也释放。
-- 过期句柄恢复时更新现有 projection revision，避免新 URL 被旧 revision fence 永久拒绝；同一有效句柄再次
+- 过期句柄恢复时更新现有 state revision，避免新 URL 被旧 revision fence 永久拒绝；同一有效句柄再次
   交给前端时刷新发布宽限，保留已持有的活动 lease。资源恢复的文件检查移出全局 projection 写锁。
 - HIF Full 真正显示后卸载其底层低清 Thumbnail。切图取消尚未返回的 Full 请求，并以有界、短时记录覆盖
   cancel 先于队列 admission 的竞态，避免快速切图积压旧 Full 解码。过期 artifact 改由 tiles 恢复时，

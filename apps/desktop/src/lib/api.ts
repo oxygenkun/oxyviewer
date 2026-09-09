@@ -457,7 +457,7 @@ export async function requestMetadata(
     return demoAssets.filter((asset) => paths.includes(asset.path)).map((asset, index) => ({
       path: asset.path,
       sourceRevision: `${asset.modifiedAtMs}:${asset.sizeBytes}:${asset.hasSidecar ? 1 : 0}`,
-      projectionRevision: Date.now() + index,
+      stateRevision: Date.now() + index,
       validAt: Date.now() + index,
       status: "ready",
       rating: asset.rating,

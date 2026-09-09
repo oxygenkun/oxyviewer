@@ -1,5 +1,5 @@
 use serde::{Deserialize, Serialize};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 pub type AssetId = String;
 pub type JobId = String;
@@ -57,7 +57,7 @@ pub struct DirectorySearchMatch {
     pub ancestors: Vec<DirectorySummary>,
 }
 
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Hash)]
 #[serde(rename_all = "lowercase")]
 pub enum AssetKind {
     Raw,
@@ -66,6 +66,29 @@ pub enum AssetKind {
     Png,
     Tiff,
     Webp,
+}
+
+impl AssetKind {
+    /// Classifies a supported asset path by extension without accessing the
+    /// filesystem.
+    pub fn from_path(path: &Path) -> Option<Self> {
+        path.extension()
+            .and_then(std::ffi::OsStr::to_str)
+            .and_then(Self::from_extension)
+    }
+
+    /// Classifies a supported asset extension case-insensitively.
+    pub fn from_extension(extension: &str) -> Option<Self> {
+        match extension.to_ascii_lowercase().as_str() {
+            "arw" | "cr2" | "cr3" | "nef" | "dng" | "raf" | "rw2" | "orf" => Some(Self::Raw),
+            "jpg" | "jpeg" => Some(Self::Jpeg),
+            "heif" | "heic" | "hif" => Some(Self::Heif),
+            "png" => Some(Self::Png),
+            "tif" | "tiff" => Some(Self::Tiff),
+            "webp" => Some(Self::Webp),
+            _ => None,
+        }
+    }
 }
 
 /// A portable review flag stored in the digiKam XMP namespace. The numeric
@@ -238,7 +261,8 @@ pub struct AssetDetails {
 pub struct MetadataProjection {
     pub path: PathBuf,
     pub source_revision: String,
-    pub projection_revision: u64,
+    /// Monotonic sequence assigned whenever Rust accepts a new state snapshot.
+    pub state_revision: u64,
     pub valid_at: u64,
     pub status: ResourceLoadStatus,
     pub rating: Option<u8>,
@@ -370,7 +394,8 @@ pub struct PreviewOmittedPolicy {
 pub struct ImageProjection {
     pub path: PathBuf,
     pub source_revision: String,
-    pub projection_revision: u64,
+    /// Monotonic sequence assigned whenever Rust accepts a new state snapshot.
+    pub state_revision: u64,
     pub valid_at: u64,
     pub status: ResourceLoadStatus,
     pub level: RenderLevel,
@@ -788,6 +813,36 @@ pub struct PerfScenario {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn asset_kind_classifies_supported_paths_case_insensitively() {
+        assert_eq!(
+            AssetKind::from_path(Path::new("photo.ARW")),
+            Some(AssetKind::Raw)
+        );
+        assert_eq!(
+            AssetKind::from_path(Path::new("photo.JPEG")),
+            Some(AssetKind::Jpeg)
+        );
+        assert_eq!(
+            AssetKind::from_path(Path::new("photo.HIF")),
+            Some(AssetKind::Heif)
+        );
+        assert_eq!(
+            AssetKind::from_path(Path::new("photo.png")),
+            Some(AssetKind::Png)
+        );
+        assert_eq!(
+            AssetKind::from_path(Path::new("photo.TIFF")),
+            Some(AssetKind::Tiff)
+        );
+        assert_eq!(
+            AssetKind::from_path(Path::new("photo.webp")),
+            Some(AssetKind::Webp)
+        );
+        assert_eq!(AssetKind::from_path(Path::new("photo.txt")), None);
+        assert_eq!(AssetKind::from_path(Path::new("photo")), None);
+    }
 
     #[test]
     fn metadata_patch_distinguishes_missing_fields_from_explicit_nulls() {

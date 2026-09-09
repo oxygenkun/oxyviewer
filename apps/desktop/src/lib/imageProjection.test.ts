@@ -11,11 +11,11 @@ import {
 const releases = vi.hoisted(() => vi.fn());
 vi.mock("./mediaResourceLease", () => ({ releaseUnretainedMediaResource: releases }));
 
-const projection = (projectionRevision: number): ImageProjection => ({
+const projection = (stateRevision: number): ImageProjection => ({
   path: "C:\\photos\\one.HIF",
   sourceRevision: "source-1",
-  projectionRevision,
-  validAt: projectionRevision,
+  stateRevision,
+  validAt: stateRevision,
   status: "loading",
   level: "thumbnail",
 });
@@ -23,12 +23,12 @@ const projection = (projectionRevision: number): ImageProjection => ({
 describe("image projection mirror", () => {
   beforeEach(() => useImageProjectionStore.setState({ records: {} }));
 
-  it("accepts only increasing Rust projection revisions", () => {
+  it("accepts only increasing Rust state revisions", () => {
     acceptImageProjection(projection(2));
     acceptImageProjection(projection(1));
 
     const key = imageProjectionKey("C:\\photos\\one.HIF", "thumbnail");
-    expect(useImageProjectionStore.getState().records[key].projectionRevision).toBe(2);
+    expect(useImageProjectionStore.getState().records[key].stateRevision).toBe(2);
   });
 
   it("releases descriptors rejected by the revision fence, but accepts duplicate delivery", () => {

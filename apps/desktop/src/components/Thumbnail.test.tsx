@@ -39,7 +39,7 @@ let client: QueryClient;
 
 function project(revision: number, resourceId?: string) {
   acceptImageProjection({
-    path: asset.path, sourceRevision: "source-1", projectionRevision: revision,
+    path: asset.path, sourceRevision: "source-1", stateRevision: revision,
     validAt: 1, status: "ready", level: "thumbnail",
     result: {
       path: url,
@@ -160,7 +160,7 @@ describe("filmstrip thumbnail display retention", () => {
     const raw = { ...asset, kind: "raw" as const, path: "/photos/a.arw" };
     const projectStage = (level: "thumbnail" | "preview" | "full", revision = 1) => {
       acceptImageProjection({
-        path: raw.path, sourceRevision: "source", projectionRevision: revision,
+        path: raw.path, sourceRevision: "source", stateRevision: revision,
         validAt: 1, status: "ready", level,
         result: { path: `/cache/${level}.jpg`, width: 100, height: 100,
           kind: "embedded", renderLevel: level,
@@ -231,7 +231,7 @@ describe("filmstrip thumbnail display retention", () => {
         acceptImageProjection({
           path: requested.path,
           sourceRevision: "source-1",
-          projectionRevision: 2,
+          stateRevision: 2,
           validAt: 1,
           status: "ready",
           level: "thumbnail",

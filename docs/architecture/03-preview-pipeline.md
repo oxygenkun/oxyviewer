@@ -71,7 +71,7 @@ sequenceDiagram
 native staged file 先进入 resource registry，UI 得到 process-namespaced immutable URL；有界 worker
 随后持久化。encoded UI/cache 共享 `Arc`；native staged file 先原子移动到 publisher 持有、位于 v2
 cache tree 之外的进程临时目录，cache clear 不会删除这个 UI 文件，cache worker 再使用文件 copy 提交，
-均不重复 source decode。完成通知只在 projection revision 仍匹配时把 Pending 改为
+均不重复 source decode。完成通知只在 state revision 仍匹配时把 Pending 改为
 Persisted，并触发 completion-time prune；若写入期间已有 prune 在运行，pending latch 会要求该 worker
 再跑一轮而不是丢失触发。SQLite 序列化前剥离 resource descriptor；重启恢复 managed path 时先通过
 v2 manifest、尺寸、长度和 JPEG 完整性校验，再注册当前进程 resource 和 lease，不能用裸 `is_file`

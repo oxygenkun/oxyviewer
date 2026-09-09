@@ -57,7 +57,7 @@ priority 是可提升的调度提示，不是 artifact 身份。
 
 React Query 管理 loading/error/retry/abort lifecycle，但不决定 metadata/image artifact 哪个
 版本有效。`metadataProjection` 和 `imageProjection` Zustand store 只镜像 Rust 已接受的递增
-`projectionRevision`；grid、loupe、inspector 和过滤从这份镜像派生显示。刷新目录时同时使
+`stateRevision`；grid、loupe、inspector 和过滤从这份镜像派生显示。刷新目录时同时使
 Rust projection 与前端显示镜像失效。
 
 ## 4. Rust `AppState`：共享服务状态
@@ -124,7 +124,7 @@ erDiagram
         text projection_kind PK
         text source_revision
         integer valid_at
-        integer projection_revision
+        integer state_revision
         text status
         text result_json
     }

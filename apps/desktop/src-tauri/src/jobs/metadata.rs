@@ -98,8 +98,8 @@ impl MetadataQueue {
                 .map_err(|error| error.to_string())?
                 && cached.status == ResourceLoadStatus::Ready
             {
-                if optimistic.as_ref().map(|value| value.projection_revision)
-                    != Some(cached.projection_revision)
+                if optimistic.as_ref().map(|value| value.state_revision)
+                    != Some(cached.state_revision)
                 {
                     let _ = app.emit(METADATA_PROJECTION_UPDATED_EVENT, cached.clone());
                 }

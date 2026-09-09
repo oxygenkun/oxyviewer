@@ -161,7 +161,7 @@ export type MetadataRequestPriority = "background" | "filter" | "visible" | "sel
 export interface MetadataProjection {
   path: string;
   sourceRevision: string;
-  projectionRevision: number;
+  stateRevision: number;
   validAt: number;
   status: ResourceLoadStatus;
   rating?: number;
@@ -258,7 +258,7 @@ export interface PreviewResult {
 export interface ImageProjection {
   path: string;
   sourceRevision: string;
-  projectionRevision: number;
+  stateRevision: number;
   validAt: number;
   status: ResourceLoadStatus;
   level: RenderLevel;
