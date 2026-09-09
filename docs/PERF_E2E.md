@@ -7,7 +7,7 @@
 | --- | --- | --- |
 | 10 万文件目录首屏开始渲染 | ≤ 300 ms | `folder-open-100k` |
 | 冷缓存选中图片预览 | ≤ 800 ms | `cold-preview-arw` / `cold-preview-hif` |
-| 热缓存 loupe 预览 | ≤ 150 ms | `warm-loupe-jpeg` / `warm-loupe-arw` / `warm-loupe-hif-tiles` |
+| 热缓存 loupe 预览 | ≤ 150 ms | `warm-loupe-jpeg` / `warm-loupe-arw` / `warm-loupe-hif-artifact` |
 | loupe 全分辨率（HEIF JPEG / RAW full） | 记录 + 基线回归 | `loupe-full-hif` / `loupe-full-arw` |
 
 ## 为什么不用 tauri-driver / Playwright
@@ -97,7 +97,7 @@ Runner 由 mark 对计算出命名指标，`scenarios.json` 的 `budgets` 引用
 | `cold-preview-jpeg` | 合成 JPEG | 冷 | firstPreviewMs ≤ 800（走受控 original resource 路径） |
 | `warm-loupe-jpeg` | 同上 | 热（连续第二次，不清应用状态） | firstPreviewMs ≤ 150 |
 | `warm-loupe-arw` | 同上 | 热（连续第二次，不清缓存） | firstPreviewMs ≤ 150 |
-| `warm-loupe-hif-tiles` | 同上 | 热身生成未锐化完整 JPEG；锐化开启时从 `cachedArtifact` 走 tile route | firstPreviewMs ≤ 150；tile 指标记录 |
+| `warm-loupe-hif-artifact` | 同上 | 热身生成 Display full JPEG；重开后直接显示完整 artifact | firstPreviewMs ≤ 150；必须命中 full cache 并加载 full 图 |
 | `loupe-full-hif` | HIF | 清空缓存后进入 loupe | 完整 JPEG 上屏记录 + 基线回归 |
 | `loupe-full-arw` | ARW | 同上（awaitFull） | fullMs 仅记录（全幅显影是秒级，单列预算） |
 
@@ -119,8 +119,8 @@ Runner 由 mark 对计算出命名指标，`scenarios.json` 的 `budgets` 引用
 - **冷缓存**：`coldCache: true` 每次运行前删除该场景隔离的 data/cache，不能触及平台默认目录。
 - **热缓存**：隔离目录中的 warmup 进程退出后由测量进程重开，验证 SQLite DTO 恢复、当前进程
   resource 重新登记和磁盘 artifact 热命中，而不只是同进程内存命中。runner 必须先验证 warmup
-  自身 complete；失败或缺 mark 时拒绝全部“warm”样本。HEIF tile 场景还等待明确 settle 时间，检查
-  managed artifact 已出现，并拒绝 backend 不是 `cachedArtifact` 的测量样本。
+  自身 complete；失败或缺 mark 时拒绝全部“warm”样本。HEIF full 场景还等待明确 settle 时间，检查
+  managed artifact 已出现，并要求测量样本同时出现 `heif:full-cache-hit` 与 `image:loaded@full`。
 
 ## 判定规则
 

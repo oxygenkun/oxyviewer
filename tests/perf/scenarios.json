@@ -66,11 +66,11 @@
       "expectedPreviewBackend": "cached artifact",
       "timeoutMs": 60000
     },
-    "warm-loupe-hif-tiles": {
+    "warm-loupe-hif-artifact": {
       "fixture": { "type": "file", "path": "tests/fixtures/DSC00449.HIF" },
       "selectName": "DSC00449.HIF",
       "enterLoupe": true,
-      "awaitMarks": ["image:loaded", "heif:all-tiles-painted"],
+      "awaitMarks": ["heif:full-cache-hit", "image:loaded@full"],
       "budgets": { "firstPreviewMs": 150 },
       "runs": 3,
       "coldCache": false,
@@ -79,7 +79,6 @@
       "warmupAwaitMarks": ["image:loaded", "heif:all-tiles-painted"],
       "warmupSettleMs": 8000,
       "requireWarmArtifact": true,
-      "expectedHeifBackend": "cachedArtifact",
       "timeoutMs": 60000
     },
     "loupe-full-hif": {
