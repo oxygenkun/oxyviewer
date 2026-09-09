@@ -11,16 +11,16 @@ import { browserPreloadQueue, orderedPriorityWeight } from "./previewQueue";
  */
 export async function preloadAssetLoupePreview(
   asset: AssetSummary,
-  queueOrder = 0,
+  rank = 0,
   signal?: AbortSignal,
 ): Promise<void> {
   if (!isTauri()) return;
 
   const previewStep = renderPlan(asset.kind, "loupe")[0];
   const previewMethod = previewStep.method;
-  const priority = queueOrder === 0 ? "loupe" : "nearby";
+  const priority = rank === 0 ? "loupe" : "nearby";
   const preload = (source: string) => browserPreloadQueue.enqueue(
-    orderedPriorityWeight(priority, queueOrder),
+    orderedPriorityWeight(priority, rank),
     signal,
     () => preloadBrowserImage(source, signal),
   );
@@ -36,7 +36,7 @@ export async function preloadAssetLoupePreview(
     previewMethod.requestLevel,
     signal,
     priority,
-    queueOrder,
+    rank,
   );
   if (result) await preload(result.url);
 }

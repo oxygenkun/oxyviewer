@@ -43,7 +43,7 @@ interface AssetCardProps {
   asset: AssetSummary;
   resourcesEnabled: boolean;
   priority: "nearby" | "visible";
-  queueOrder: number;
+  rank: number;
   selected: boolean;
   onSelect: (event: React.MouseEvent) => void;
   onContextMenu: (event: React.MouseEvent) => void;
@@ -66,7 +66,7 @@ const AssetCard = memo(function AssetCard({
   asset,
   resourcesEnabled,
   priority,
-  queueOrder,
+  rank,
   selected,
   onSelect,
   onContextMenu,
@@ -84,7 +84,7 @@ const AssetCard = memo(function AssetCard({
         asset={asset}
         enabled={resourcesEnabled}
         priority={priority}
-        queueOrder={queueOrder}
+        rank={rank}
         onContextMenu={onContextMenu}
       />
       <span className="asset-card__name">{asset.name}</span>
@@ -376,13 +376,13 @@ function VirtualGrid({
                   ? "visible"
                   : "nearby";
                 const rowDistance = Math.abs((row.start + row.end) / 2 - viewportCenter);
-                const queueOrder = Math.round(rowDistance / rowHeight) * columns + columnIndex;
+                const rank = Math.round(rowDistance / rowHeight) * columns + columnIndex;
                 return asset ? (
                   <AssetCard
                     key={asset.id}
                     asset={asset}
                     priority={priority}
-                    queueOrder={queueOrder}
+                    rank={rank}
                     selected={selectedIds.includes(asset.id)}
                     onSelect={(event) => select(asset.id, event.metaKey || event.ctrlKey)}
                     onContextMenu={(event) => onAssetContextMenu(event, asset)}
@@ -534,7 +534,7 @@ function VirtualList({
                 asset={asset}
                 enabled={resourcesEnabled}
                 priority={isVisible(row.start, row.end, parentRef.current) ? "visible" : "nearby"}
-                queueOrder={Math.round(Math.abs((row.start + row.end) / 2 - viewportCenter) / rowHeight)}
+                rank={Math.round(Math.abs((row.start + row.end) / 2 - viewportCenter) / rowHeight)}
                 onContextMenu={(event) => onAssetContextMenu(event, asset)}
               />
               <strong>{asset.name}</strong>

@@ -353,7 +353,7 @@ pub struct PreviewScheduleIntent {
     pub path: PathBuf,
     pub level: RenderLevel,
     pub priority: PreviewPriority,
-    pub rank: usize,
+    pub rank: u32,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]

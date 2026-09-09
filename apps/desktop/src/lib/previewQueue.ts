@@ -27,9 +27,9 @@ export function priorityWeight(priority: PreviewPriority): number {
 }
 
 /** Preserves priority tiers while ordering equal-tier work around the selection. */
-export function orderedPriorityWeight(priority: PreviewPriority, queueOrder = 0): number {
-  const boundedOrder = Math.min(Math.max(0, queueOrder), 999_999);
-  return priorityWeight(priority) - boundedOrder;
+export function orderedPriorityWeight(priority: PreviewPriority, rank = 0): number {
+  const boundedRank = Math.min(Math.max(0, rank), 999_999);
+  return priorityWeight(priority) - boundedRank;
 }
 
 export class SerialTaskQueue {

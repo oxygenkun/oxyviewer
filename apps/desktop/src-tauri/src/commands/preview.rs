@@ -17,7 +17,7 @@ pub(crate) async fn get_preview(
     path: PathBuf,
     level: RenderLevel,
     priority: PreviewPriority,
-    queue_order: Option<usize>,
+    rank: Option<u32>,
     app: tauri::AppHandle,
     state: State<'_, AppState>,
 ) -> Result<oxy_domain::ImageProjection, String> {
@@ -38,7 +38,7 @@ pub(crate) async fn get_preview(
                 modified_at_ms: asset.modified_at_ms,
                 level,
                 priority,
-                queue_order: queue_order.unwrap_or_default(),
+                rank: rank.unwrap_or_default(),
             },
         )?;
         let _ = app.emit(
@@ -358,7 +358,7 @@ fn resolve_heif_full_projection(
             modified_at_ms: asset.modified_at_ms,
             level: RenderLevel::Full,
             priority: PreviewPriority::Loupe,
-            queue_order: 0,
+            rank: 0,
         },
     )?;
     let _ = app.emit(

@@ -38,7 +38,7 @@ interface ThumbnailProps {
   enabled?: boolean;
   large?: boolean;
   priority?: PreviewPriority;
-  queueOrder?: number;
+  rank?: number;
   onContextMenu?: React.MouseEventHandler<HTMLDivElement>;
   onImageLoad?: (size: { width: number; height: number }) => void;
   onRawPreviewStatus?: (status: RawPreviewStatus) => void;
@@ -67,7 +67,7 @@ export function Thumbnail({
   enabled = true,
   large = false,
   priority = "visible",
-  queueOrder = 0,
+  rank = 0,
   onContextMenu,
   onImageLoad,
   onRawPreviewStatus,
@@ -120,7 +120,7 @@ export function Thumbnail({
         previewLevel ?? previewStep.level,
         signal,
         requestPriority,
-        queueOrder,
+        rank,
       );
       // The projection store owns image data; null records successful query
       // completion without React Query treating undefined as a failed request.
@@ -140,7 +140,7 @@ export function Thumbnail({
         distinctFullLevel ?? "full",
         signal,
         "loupe",
-        queueOrder,
+        rank,
       );
       // The projection store owns image data; null records successful query
       // completion without React Query treating undefined as a failed request.

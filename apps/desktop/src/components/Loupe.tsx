@@ -753,7 +753,7 @@ export function Loupe({
                 asset={asset}
                 onClick={() => select(asset.id)}
                 onContextMenu={(event) => onAssetContextMenu(event, asset)}
-                queueOrder={viewportRankById.get(asset.id)
+                rank={viewportRankById.get(asset.id)
                   ?? visibleFilmstripIds.length + Math.abs(item.index - activeIndex)}
                 resourcesEnabled={!filmstripVirtualizer.isScrolling}
                 showMetadata={loupeMetadataVisible}
@@ -777,7 +777,7 @@ interface FilmstripItemProps {
   asset: AssetSummary;
   onClick: () => void;
   onContextMenu: (event: React.MouseEvent) => void;
-  queueOrder: number;
+  rank: number;
   resourcesEnabled: boolean;
   showMetadata: boolean;
   style: React.CSSProperties;
@@ -789,7 +789,7 @@ function FilmstripItem({
   asset,
   onClick,
   onContextMenu,
-  queueOrder,
+  rank,
   resourcesEnabled,
   showMetadata,
   style,
@@ -808,7 +808,7 @@ function FilmstripItem({
         asset={asset}
         enabled={active || resourcesEnabled}
         priority={active ? "loupe" : visible ? "visible" : "nearby"}
-        queueOrder={queueOrder}
+        rank={rank}
       />
       {showMetadata ? (
         <span className="filmstrip__metadata">

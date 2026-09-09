@@ -77,7 +77,7 @@ pub struct PreviewRequest {
     pub modified_at_ms: u64,
     pub level: RenderLevel,
     pub priority: PreviewPriority,
-    pub queue_order: usize,
+    pub rank: u32,
 }
 
 pub struct PreviewIdentity {
@@ -259,9 +259,9 @@ impl PreviewQueue {
             modified_at_ms,
             level,
             priority,
-            queue_order,
+            rank,
         } = request;
-        let requested_position = schedule_position(priority, queue_order);
+        let requested_position = schedule_position(priority, rank);
         let source_revision =
             source_revision(&path, modified_at_ms, size_bytes, &preview_dir, kind, level)?;
         let state_key = (path.clone(), level);
@@ -438,7 +438,7 @@ impl PreviewQueue {
         let remaining_position = work
             .schedule
             .effective_position(&schedule_key)
-            .unwrap_or_else(|| schedule_position(PreviewPriority::Preload, usize::MAX));
+            .unwrap_or_else(|| schedule_position(PreviewPriority::Preload, u32::MAX));
 
         let pending_keys = work
             .pending_keys
@@ -611,7 +611,7 @@ impl PreviewQueue {
                 let position = work
                     .schedule
                     .effective_position(&schedule_key)
-                    .unwrap_or_else(|| schedule_position(PreviewPriority::Preload, usize::MAX));
+                    .unwrap_or_else(|| schedule_position(PreviewPriority::Preload, u32::MAX));
                 debug_item(key, &request, position)
             })
             .collect();
@@ -1215,14 +1215,14 @@ fn omitted_policy(policy: PreviewOmittedPolicy) -> Result<OmittedIntentPolicy, S
     }
 }
 
-fn schedule_position(priority: PreviewPriority, queue_order: usize) -> SchedulePosition {
+fn schedule_position(priority: PreviewPriority, rank: u32) -> SchedulePosition {
     let tier = match priority {
         PreviewPriority::Loupe => 0,
         PreviewPriority::Visible => 1,
         PreviewPriority::Nearby => 2,
         PreviewPriority::Preload => 3,
     };
-    SchedulePosition::new(tier, u32::try_from(queue_order).unwrap_or(u32::MAX))
+    SchedulePosition::new(tier, rank)
 }
 
 fn priority_from_position(position: SchedulePosition) -> PreviewPriority {

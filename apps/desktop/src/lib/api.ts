@@ -751,7 +751,7 @@ export async function generatedPreview(
   level: RenderLevel,
   signal?: AbortSignal,
   priority: PreviewPriority = "visible",
-  queueOrder = 0,
+  rank = 0,
 ): Promise<PreviewResult | undefined> {
   if (!isTauri()) return undefined;
   // Do not register a debug WAIT entry for work React Query has already
@@ -774,7 +774,7 @@ export async function generatedPreview(
     path: asset.path,
     level,
     priority,
-    queueOrder,
+    rank,
   }).then((projection) => {
     if (signal?.aborted && projection.result?.resource) {
       releaseUnretainedMediaResource(projection.result.resource.resourceId);
