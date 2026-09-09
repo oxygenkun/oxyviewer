@@ -1,0 +1,27 @@
+[
+  {
+    "name": "0-0-cold",
+    "selectName": "DSC01443.HIF",
+    "firstPreviewMs": 89.70000000298023,
+    "firstTileMs": 1298.2999999970198,
+    "allTilesMs": 1342.2999999970198,
+    "cacheReadyAfterTilesMs": 1280,
+    "artifact": "<BENCH_ROOT>/dct-cache-e2e-1788973127931/0-0/cache/media-cache-v2/4a/4aacc4f53ed0bc16a94b6de85dc9d846f69a095b8c1b6f531bb864d7700d7810/69919b2d2719ca870bab628c6c95f5a07fe879ae337d4647c7337dd56d46a035.jpg",
+    "bytes": 6147592,
+    "readMs": 222.55719999969006,
+    "copyMs": 20.564999997615814,
+    "writeMs": 117.64640000462532,
+    "coefficientBytes": 230240256,
+    "encodeMs": 429.314,
+    "commitMs": 32.652,
+    "WorkingSet64": 48029696,
+    "PeakWorkingSet64": 277909504
+  },
+  {
+    "name": "0-0-warm",
+    "selectName": "DSC01443.HIF",
+    "firstPreviewMs": 90,
+    "fullHitMs": 20.899999998509884,
+    "fullLoadMs": 97.10000000149012
+  }
+]

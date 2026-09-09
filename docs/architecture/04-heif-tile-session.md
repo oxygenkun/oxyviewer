@@ -1,9 +1,10 @@
 # 04：HEIF 渐进瓦片与完整 JPEG 缓存
 
 loupe 先显示语义 preview。`start_heif_full` 是完整图交付的唯一入口，由 Rust 决定返回
-artifact projection 或 full-resolution tile session。关闭显示锐化时，已有完整 JPEG 缓存会直接
-交付；开启锐化时始终使用 `HeifDecodeService` + `HeifTileCanvas`，即使已有缓存也从该未锐化
-artifact 生成显示瓦片。tile metadata 走 event，RGBA/JPEG bytes 走 `oxy-media://`，不进入 JSON。
+artifact projection 或 full-resolution tile session。按显示锐化状态精确查询现有缓存：开启时要求
+`SharpeningState::Display`，关闭时要求 `None`；命中后直接展示完整 JPEG，不再次锐化。
+Display projection 仅返回当前显示请求，不写入通用 `(path, level)` 未锐化 projection。
+tile metadata 走 event，RGBA/JPEG bytes 走 `oxy-media://`，不进入 JSON。
 
 架构决策见 [ADR 0004](../adr/0004-heif-full-resolution-sessions.md)。
 
@@ -20,8 +21,8 @@ command JSON，又会发生 base64/数组序列化和多次复制。
 - tile metadata：通过 Tauri event 发送；
 - tile bytes：通过 `oxy-media://` 自定义协议按 URL 读取；
 - display：Canvas 按坐标覆盖到底图；
-- canonical cache：首次源解码后原子写入未锐化全分辨率 JPEG；显示锐化只影响内存瓦片，绝不
-  改写规范缓存。
+- full cache：完成通知后，在独立后台许可下合成实际显示 tiles，使用现有 Display/None variant
+  原子持久化；前台不为缓存先重建整图 RGBA，且不强制同时生成两个状态。
 
 ## 2. 组件关系
 
@@ -102,7 +103,7 @@ sequenceDiagram
 解码完成前，前端保留 Canvas，因此首次打开仍能渐进绘制。后端使用本次 session 已经得到的
 完整像素（Windows FFmpeg 网格路径则拼接已经生成的 JPEG tiles）写缓存，不会为了缓存再次解码
 HEIF。缓存键由稳定 SHA-256、canonical path、平台文件身份、大小、高精度 mtime 与统一 policy
-revision 组成；显示锐化不是规范 artifact identity 的一部分。
+revision 及 presentation 组成；现有 sharpening 字段区分 Display 和 None，查询严格匹配。
 瓦片发布后会立即释放前台 decode gate 并报告显示完成；JPEG 落盘使用独立的串行锁，不属于
 loupe 完成条件。写入前还有一个可取消的短暂稳定期，快速掠过的照片不会排队编码大图；即使某个
 已经开始的缓存写入无法中途停止，也不会阻塞新选中照片的解码。
@@ -193,8 +194,8 @@ tile 中心到整图中心的平方距离排序，因此最接近画面中心的
 service 的 HashMap，event 只携带可定位它的 metadata 和 URL。
 
 “标准”高倍查看锐化在从完整规范 RGBA 裁切显示瓦片时执行轻量亮度 unsharp mask。计算仍从
-完整图读取相邻像素，所以 512 px 瓦片边界不会产生格状接缝；规范 RGBA 本身保持未锐化并用于
-Full cache。它只改变内存中的显示瓦片，不修改原文件或缓存，用户可在设置中关闭该显示增强。
+完整图读取相邻像素，所以 512 px 瓦片边界不会产生格状接缝；规范 RGBA 本身保持未锐化，
+可作为未锐化派生源。最终显示瓦片可合成为 Display full cache，命中后不再锐化。用户关闭锐化时只查询 None。
 
 需要准确理解：当前中心优先优化的是**完整解码之后的发布顺序**。对于非 grid-aware backend，
 它并没有让 HEVC 只解中心区域。真正的 early tile decode 仍属于未来 adapter 优化。
@@ -248,9 +249,10 @@ width × height × 4 bytes
 
 例如 7008 × 4672 约 125 MiB，仅计算一份紧密 RGBA；decoder 中间帧、完整 `DynamicImage`、
 tile copies 和 Canvas backing store 会继续增加峰值。当前开始新 session 时清空旧 tile，但单个
-session 仍可能同时持有完整图和所有瓦片。规范缓存编码在串行 HEIF cache-write lane 中执行，不复制
-另一份完整 RGBA；Windows FFmpeg 的 JPEG tiles 会拼入这一个规范 buffer。进行并发或预加载优化前
-必须测量峰值 RSS。
+session 的 RGBA backend 仍可能同时持有完整图和所有瓦片。缓存编码在串行 HEIF cache-write lane
+中执行。Windows FFmpeg 的兼容 JPEG tiles 直接做 DCT 系数拼接，保留完整输出和最大单 tile 的
+量化系数，按这两部分加 8 MiB 余量检查 256 MiB 预算；33 MP 样本的系数部分约 219.6 MiB。
+不兼容输入才回退到像素组装，其画布另有 256 MiB 上限。进行并发或预加载优化前仍须测量峰值 RSS。
 
 ## 12. 本章检查点
 
@@ -262,3 +264,17 @@ session 仍可能同时持有完整图和所有瓦片。规范缓存编码在串
 - acceleration 为 Unknown 与 Software 有何区别？
 
 下一章：[05：状态、数据与安全边界](05-data-and-state.md)。
+
+
+## 2026-09-10：缓存状态闭环与后续优化
+
+后台保留不可变 tile Arc 快照，dwell 后组装，不重新解码 HIF。DCT 适配层从内存读取 JPEG，
+逐 tile 熵解码和复制量化系数，再使用固定 Huffman 表写入 ArtifactCache 临时文件。
+libjpeg-turbo 3.1.3 静态链接；C 层捕获错误与 longjmp，回调返回后才跳转，禁止跨 Rust 栈跳转。
+读、拷贝、写各阶段检查取消；完整覆盖、无重叠、内存预算、源版本及缓存 generation 均校验。
+当前接收 8-bit sequential YCbCr 4:4:4 JPEG（允许各分量均为 1×2 的实际采样配置）；
+带色度子采样的 JPEG 会在新拼接边界产生跨 tile 插值，故回退像素路径。
+ICC/EXIF、progressive/arithmetic 编码或不兼容量化/采样/对齐也会
+回退像素路径，损坏流及缺失/重叠布局直接失败并清理临时文件。输出沿用既有 orientation/color/
+sharpening；已知 sRGB 由发布层补 ICC，unknown 不冒充 sRGB。
+前台常驻 worker 仍未接入，详见 [前台/后台加速 TODO](../tasks/hif-performance-plan.md)。

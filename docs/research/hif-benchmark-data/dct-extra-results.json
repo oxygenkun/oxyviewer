@@ -1,0 +1,64 @@
+{
+  "portrait": {
+    "mode": "fast",
+    "total_ms": 468.539,
+    "entropy_read_ms": 237.345,
+    "coefficient_copy_ms": 68.844,
+    "entropy_write_ms": 133.239,
+    "coefficients": 98224128,
+    "peak_working_set_bytes": 235134976,
+    "wall_ms": 521.5070999984164,
+    "src": "portrait-tiles",
+    "output": "portrait.jpg",
+    "output_bytes": 6222917
+  },
+  "verification": [
+    {
+      "mode": "verify",
+      "total_ms": 546.401,
+      "entropy_read_ms": 236.889,
+      "coefficient_copy_ms": 21.365,
+      "entropy_write_ms": 0.0,
+      "coefficients": 98224128,
+      "peak_working_set_bytes": 235122688,
+      "wall_ms": 595.980399994005,
+      "src": "portrait-tiles",
+      "output": "portrait.jpg",
+      "output_bytes": 6222917,
+      "max_rgb_difference": 0,
+      "unequal_rgb_channels": 0
+    }
+  ],
+  "negative": [
+    {
+      "case": "misaligned_position",
+      "exit_code": 2,
+      "error": "tile bounds/alignment mismatch"
+    },
+    {
+      "case": "overlap",
+      "exit_code": 2,
+      "error": "overlap"
+    },
+    {
+      "case": "missing_tile",
+      "exit_code": 2,
+      "error": "incomplete coverage"
+    },
+    {
+      "case": "incomplete_canvas",
+      "exit_code": 2,
+      "error": "incomplete coverage"
+    },
+    {
+      "case": "quantization_mismatch",
+      "exit_code": 2,
+      "error": "quantization mismatch"
+    },
+    {
+      "case": "corrupt_jpeg",
+      "exit_code": 1,
+      "error": "Not a JPEG file: starts with 0x6e 0x6f"
+    }
+  ]
+}

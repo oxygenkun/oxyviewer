@@ -1,0 +1,717 @@
+{
+  "scenario": "0-0-warm",
+  "generatedAt": "2026-09-09T16:49:01.352Z",
+  "userAgent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/152.0.0.0 Safari/537.36 Edg/152.0.0.0",
+  "marks": [
+    {
+      "name": "harness:start",
+      "t": 178.70000000298023,
+      "detail": {
+        "scenario": "0-0-warm"
+      }
+    },
+    {
+      "name": "folder:open-requested",
+      "t": 178.79999999701977,
+      "detail": {
+        "path": "<BENCH_ROOT>/hif-bench"
+      }
+    },
+    {
+      "name": "folder:open-returned",
+      "t": 185.60000000149012,
+      "detail": {
+        "sessionId": "c60529ebe22d0ce2"
+      }
+    },
+    {
+      "name": "assets:first-page-returned",
+      "t": 199.39999999850988,
+      "detail": {
+        "directory": "<BENCH_ROOT>/hif-bench",
+        "total": 3,
+        "ipcMs": 5.799999997019768,
+        "sessionId": "c60529ebe22d0ce2",
+        "stage": "ready",
+        "source": "snapshot",
+        "discoveredCount": 3,
+        "elapsedMs": 0,
+        "cacheMs": 0,
+        "resolveMs": 0,
+        "enumerationMs": 0,
+        "attributesMs": 0,
+        "snapshotSerializeMs": 0,
+        "snapshotPersistMs": 0,
+        "sortMs": 0,
+        "error": null
+      }
+    },
+    {
+      "name": "harness:select",
+      "t": 201.70000000298023,
+      "detail": {
+        "assetName": "DSC01443.HIF"
+      }
+    },
+    {
+      "name": "preview:queued",
+      "t": 253.20000000298023,
+      "detail": {
+        "assetName": "DSC01443.HIF",
+        "level": "thumbnail",
+        "priority": "loupe"
+      }
+    },
+    {
+      "name": "preview:queued",
+      "t": 256.5,
+      "detail": {
+        "assetName": "DSC01444.HIF",
+        "level": "thumbnail",
+        "priority": "visible"
+      }
+    },
+    {
+      "name": "preview:queued",
+      "t": 256.70000000298023,
+      "detail": {
+        "assetName": "DSC01445.HIF",
+        "level": "thumbnail",
+        "priority": "visible"
+      }
+    },
+    {
+      "name": "preview:queued",
+      "t": 257.1000000014901,
+      "detail": {
+        "assetName": "DSC01443.HIF",
+        "level": "thumbnail",
+        "priority": "loupe"
+      }
+    },
+    {
+      "name": "preview:queued",
+      "t": 257.20000000298023,
+      "detail": {
+        "assetName": "DSC01444.HIF",
+        "level": "thumbnail",
+        "priority": "nearby"
+      }
+    },
+    {
+      "name": "preview:queued",
+      "t": 263.79999999701977,
+      "detail": {
+        "assetName": "DSC01443.HIF",
+        "level": "thumbnail",
+        "priority": "loupe"
+      }
+    },
+    {
+      "name": "preview:queued",
+      "t": 263.8999999985099,
+      "detail": {
+        "assetName": "DSC01444.HIF",
+        "level": "thumbnail",
+        "priority": "nearby"
+      }
+    },
+    {
+      "name": "preview:queued",
+      "t": 267.79999999701977,
+      "detail": {
+        "assetName": "DSC01443.HIF",
+        "level": "thumbnail",
+        "priority": "loupe"
+      }
+    },
+    {
+      "name": "preview:queued",
+      "t": 267.79999999701977,
+      "detail": {
+        "assetName": "DSC01444.HIF",
+        "level": "thumbnail",
+        "priority": "nearby"
+      }
+    },
+    {
+      "name": "preview:queued",
+      "t": 283.20000000298023,
+      "detail": {
+        "assetName": "DSC01443.HIF",
+        "level": "thumbnail",
+        "priority": "loupe"
+      }
+    },
+    {
+      "name": "preview:queued",
+      "t": 283.29999999701977,
+      "detail": {
+        "assetName": "DSC01444.HIF",
+        "level": "thumbnail",
+        "priority": "nearby"
+      }
+    },
+    {
+      "name": "preview:result",
+      "t": 283.79999999701977,
+      "detail": {
+        "assetName": "DSC01443.HIF",
+        "level": "thumbnail",
+        "priority": "loupe",
+        "width": 160,
+        "height": 120,
+        "kind": "embedded",
+        "renderLevel": "thumbnail",
+        "diagnostics": {
+          "backend": "Sony HIF embedded JPEG",
+          "queueWaitMs": 0,
+          "sourceWaitMs": 0,
+          "decodeMs": 17,
+          "encodeMs": 0,
+          "cacheSyncMs": null,
+          "cacheCommitMs": null,
+          "totalMs": 17,
+          "fallbackReason": null
+        }
+      }
+    },
+    {
+      "name": "preview:queued",
+      "t": 287.8999999985099,
+      "detail": {
+        "assetName": "DSC01443.HIF",
+        "level": "thumbnail",
+        "priority": "loupe"
+      }
+    },
+    {
+      "name": "preview:queued",
+      "t": 287.8999999985099,
+      "detail": {
+        "assetName": "DSC01444.HIF",
+        "level": "thumbnail",
+        "priority": "nearby"
+      }
+    },
+    {
+      "name": "preview:queued",
+      "t": 290.8999999985099,
+      "detail": {
+        "assetName": "DSC01443.HIF",
+        "level": "thumbnail",
+        "priority": "loupe"
+      }
+    },
+    {
+      "name": "preview:queued",
+      "t": 291,
+      "detail": {
+        "assetName": "DSC01444.HIF",
+        "level": "thumbnail",
+        "priority": "nearby"
+      }
+    },
+    {
+      "name": "preview:queued",
+      "t": 299,
+      "detail": {
+        "assetName": "DSC01443.HIF",
+        "level": "thumbnail",
+        "priority": "loupe"
+      }
+    },
+    {
+      "name": "preview:queued",
+      "t": 299.1000000014901,
+      "detail": {
+        "assetName": "DSC01444.HIF",
+        "level": "thumbnail",
+        "priority": "nearby"
+      }
+    },
+    {
+      "name": "preview:result",
+      "t": 299.29999999701977,
+      "detail": {
+        "assetName": "DSC01445.HIF",
+        "level": "thumbnail",
+        "priority": "visible",
+        "width": 160,
+        "height": 120,
+        "kind": "embedded",
+        "renderLevel": "thumbnail",
+        "diagnostics": {
+          "backend": "Sony HIF embedded JPEG",
+          "queueWaitMs": 0,
+          "sourceWaitMs": 0,
+          "decodeMs": 13,
+          "encodeMs": 0,
+          "cacheSyncMs": null,
+          "cacheCommitMs": null,
+          "totalMs": 13,
+          "fallbackReason": null
+        }
+      }
+    },
+    {
+      "name": "preview:result",
+      "t": 300.29999999701977,
+      "detail": {
+        "assetName": "DSC01444.HIF",
+        "level": "thumbnail",
+        "priority": "visible",
+        "width": 160,
+        "height": 120,
+        "kind": "embedded",
+        "renderLevel": "thumbnail",
+        "diagnostics": {
+          "backend": "Sony HIF embedded JPEG",
+          "queueWaitMs": 0,
+          "sourceWaitMs": 0,
+          "decodeMs": 12,
+          "encodeMs": 0,
+          "cacheSyncMs": null,
+          "cacheCommitMs": null,
+          "totalMs": 12,
+          "fallbackReason": null
+        }
+      }
+    },
+    {
+      "name": "heif:decode-requested",
+      "t": 301,
+      "detail": {
+        "path": "<BENCH_ROOT>/hif-bench/DSC01443.HIF"
+      }
+    },
+    {
+      "name": "image:loaded",
+      "t": 303,
+      "detail": {
+        "assetName": "DSC01443.HIF",
+        "large": false,
+        "stage": "thumbnail",
+        "renderLevel": "thumbnail",
+        "width": 160,
+        "height": 120
+      }
+    },
+    {
+      "name": "image:loaded",
+      "t": 303.29999999701977,
+      "detail": {
+        "assetName": "DSC01443.HIF",
+        "large": true,
+        "stage": "thumbnail",
+        "renderLevel": "thumbnail",
+        "width": 160,
+        "height": 120
+      }
+    },
+    {
+      "name": "preview:queued",
+      "t": 307.29999999701977,
+      "detail": {
+        "assetName": "DSC01443.HIF",
+        "level": "thumbnail",
+        "priority": "loupe"
+      }
+    },
+    {
+      "name": "preview:queued",
+      "t": 307.5,
+      "detail": {
+        "assetName": "DSC01444.HIF",
+        "level": "thumbnail",
+        "priority": "nearby"
+      }
+    },
+    {
+      "name": "harness:first-page-painted",
+      "t": 308.79999999701977
+    },
+    {
+      "name": "image:loaded",
+      "t": 311.8999999985099,
+      "detail": {
+        "assetName": "DSC01445.HIF",
+        "large": false,
+        "stage": "thumbnail",
+        "renderLevel": "thumbnail",
+        "width": 160,
+        "height": 120
+      }
+    },
+    {
+      "name": "image:loaded",
+      "t": 312.1000000014901,
+      "detail": {
+        "assetName": "DSC01444.HIF",
+        "large": false,
+        "stage": "thumbnail",
+        "renderLevel": "thumbnail",
+        "width": 160,
+        "height": 120
+      }
+    },
+    {
+      "name": "preview:result",
+      "t": 312.3999999985099,
+      "detail": {
+        "assetName": "DSC01443.HIF",
+        "level": "thumbnail",
+        "priority": "loupe",
+        "width": 160,
+        "height": 120,
+        "kind": "embedded",
+        "renderLevel": "thumbnail",
+        "diagnostics": {
+          "backend": "Sony HIF embedded JPEG",
+          "queueWaitMs": 0,
+          "sourceWaitMs": 0,
+          "decodeMs": 17,
+          "encodeMs": 0,
+          "cacheSyncMs": null,
+          "cacheCommitMs": null,
+          "totalMs": 17,
+          "fallbackReason": null
+        }
+      }
+    },
+    {
+      "name": "preview:queued",
+      "t": 312.79999999701977,
+      "detail": {
+        "assetName": "DSC01445.HIF",
+        "level": "thumbnail",
+        "priority": "nearby"
+      }
+    },
+    {
+      "name": "preview:result",
+      "t": 313,
+      "detail": {
+        "assetName": "DSC01444.HIF",
+        "level": "thumbnail",
+        "priority": "nearby",
+        "width": 160,
+        "height": 120,
+        "kind": "embedded",
+        "renderLevel": "thumbnail",
+        "diagnostics": {
+          "backend": "Sony HIF embedded JPEG",
+          "queueWaitMs": 0,
+          "sourceWaitMs": 0,
+          "decodeMs": 12,
+          "encodeMs": 0,
+          "cacheSyncMs": null,
+          "cacheCommitMs": null,
+          "totalMs": 12,
+          "fallbackReason": null
+        }
+      }
+    },
+    {
+      "name": "preview:queued",
+      "t": 314.20000000298023,
+      "detail": {
+        "assetName": "DSC01443.HIF",
+        "level": "thumbnail",
+        "priority": "loupe"
+      }
+    },
+    {
+      "name": "preview:queued",
+      "t": 314.29999999701977,
+      "detail": {
+        "assetName": "DSC01444.HIF",
+        "level": "thumbnail",
+        "priority": "nearby"
+      }
+    },
+    {
+      "name": "preview:result",
+      "t": 317.1000000014901,
+      "detail": {
+        "assetName": "DSC01444.HIF",
+        "level": "thumbnail",
+        "priority": "nearby",
+        "width": 160,
+        "height": 120,
+        "kind": "embedded",
+        "renderLevel": "thumbnail",
+        "diagnostics": {
+          "backend": "Sony HIF embedded JPEG",
+          "queueWaitMs": 0,
+          "sourceWaitMs": 0,
+          "decodeMs": 12,
+          "encodeMs": 0,
+          "cacheSyncMs": null,
+          "cacheCommitMs": null,
+          "totalMs": 12,
+          "fallbackReason": null
+        }
+      }
+    },
+    {
+      "name": "preview:queued",
+      "t": 317.1000000014901,
+      "detail": {
+        "assetName": "DSC01445.HIF",
+        "level": "thumbnail",
+        "priority": "nearby"
+      }
+    },
+    {
+      "name": "preview:result",
+      "t": 317.20000000298023,
+      "detail": {
+        "assetName": "DSC01443.HIF",
+        "level": "thumbnail",
+        "priority": "loupe",
+        "width": 160,
+        "height": 120,
+        "kind": "embedded",
+        "renderLevel": "thumbnail",
+        "diagnostics": {
+          "backend": "Sony HIF embedded JPEG",
+          "queueWaitMs": 0,
+          "sourceWaitMs": 0,
+          "decodeMs": 17,
+          "encodeMs": 0,
+          "cacheSyncMs": null,
+          "cacheCommitMs": null,
+          "totalMs": 17,
+          "fallbackReason": null
+        }
+      }
+    },
+    {
+      "name": "preview:queued",
+      "t": 317.70000000298023,
+      "detail": {
+        "assetName": "DSC01443.HIF",
+        "level": "thumbnail",
+        "priority": "loupe"
+      }
+    },
+    {
+      "name": "preview:queued",
+      "t": 317.79999999701977,
+      "detail": {
+        "assetName": "DSC01444.HIF",
+        "level": "thumbnail",
+        "priority": "nearby"
+      }
+    },
+    {
+      "name": "preview:result",
+      "t": 319.1000000014901,
+      "detail": {
+        "assetName": "DSC01443.HIF",
+        "level": "thumbnail",
+        "priority": "loupe",
+        "width": 160,
+        "height": 120,
+        "kind": "embedded",
+        "renderLevel": "thumbnail",
+        "diagnostics": {
+          "backend": "Sony HIF embedded JPEG",
+          "queueWaitMs": 0,
+          "sourceWaitMs": 0,
+          "decodeMs": 17,
+          "encodeMs": 0,
+          "cacheSyncMs": null,
+          "cacheCommitMs": null,
+          "totalMs": 17,
+          "fallbackReason": null
+        }
+      }
+    },
+    {
+      "name": "preview:queued",
+      "t": 319.1000000014901,
+      "detail": {
+        "assetName": "DSC01445.HIF",
+        "level": "thumbnail",
+        "priority": "nearby"
+      }
+    },
+    {
+      "name": "preview:result",
+      "t": 319.29999999701977,
+      "detail": {
+        "assetName": "DSC01444.HIF",
+        "level": "thumbnail",
+        "priority": "nearby",
+        "width": 160,
+        "height": 120,
+        "kind": "embedded",
+        "renderLevel": "thumbnail",
+        "diagnostics": {
+          "backend": "Sony HIF embedded JPEG",
+          "queueWaitMs": 0,
+          "sourceWaitMs": 0,
+          "decodeMs": 12,
+          "encodeMs": 0,
+          "cacheSyncMs": null,
+          "cacheCommitMs": null,
+          "totalMs": 12,
+          "fallbackReason": null
+        }
+      }
+    },
+    {
+      "name": "preview:result",
+      "t": 320.70000000298023,
+      "detail": {
+        "assetName": "DSC01445.HIF",
+        "level": "thumbnail",
+        "priority": "nearby",
+        "width": 160,
+        "height": 120,
+        "kind": "embedded",
+        "renderLevel": "thumbnail",
+        "diagnostics": {
+          "backend": "Sony HIF embedded JPEG",
+          "queueWaitMs": 0,
+          "sourceWaitMs": 0,
+          "decodeMs": 13,
+          "encodeMs": 0,
+          "cacheSyncMs": null,
+          "cacheCommitMs": null,
+          "totalMs": 13,
+          "fallbackReason": null
+        }
+      }
+    },
+    {
+      "name": "heif:full-cache-hit",
+      "t": 322.79999999701977,
+      "detail": {
+        "assetName": "DSC01443.HIF",
+        "width": 7008,
+        "height": 4672
+      }
+    },
+    {
+      "name": "preview:queued",
+      "t": 324.6000000014901,
+      "detail": {
+        "assetName": "DSC01443.HIF",
+        "level": "thumbnail",
+        "priority": "loupe"
+      }
+    },
+    {
+      "name": "preview:queued",
+      "t": 324.6000000014901,
+      "detail": {
+        "assetName": "DSC01444.HIF",
+        "level": "thumbnail",
+        "priority": "nearby"
+      }
+    },
+    {
+      "name": "preview:result",
+      "t": 331,
+      "detail": {
+        "assetName": "DSC01443.HIF",
+        "level": "thumbnail",
+        "priority": "loupe",
+        "width": 160,
+        "height": 120,
+        "kind": "embedded",
+        "renderLevel": "thumbnail",
+        "diagnostics": {
+          "backend": "Sony HIF embedded JPEG",
+          "queueWaitMs": 0,
+          "sourceWaitMs": 0,
+          "decodeMs": 17,
+          "encodeMs": 0,
+          "cacheSyncMs": null,
+          "cacheCommitMs": null,
+          "totalMs": 17,
+          "fallbackReason": null
+        }
+      }
+    },
+    {
+      "name": "preview:queued",
+      "t": 331.1000000014901,
+      "detail": {
+        "assetName": "DSC01445.HIF",
+        "level": "thumbnail",
+        "priority": "nearby"
+      }
+    },
+    {
+      "name": "preview:result",
+      "t": 331.29999999701977,
+      "detail": {
+        "assetName": "DSC01444.HIF",
+        "level": "thumbnail",
+        "priority": "nearby",
+        "width": 160,
+        "height": 120,
+        "kind": "embedded",
+        "renderLevel": "thumbnail",
+        "diagnostics": {
+          "backend": "Sony HIF embedded JPEG",
+          "queueWaitMs": 0,
+          "sourceWaitMs": 0,
+          "decodeMs": 12,
+          "encodeMs": 0,
+          "cacheSyncMs": null,
+          "cacheCommitMs": null,
+          "totalMs": 12,
+          "fallbackReason": null
+        }
+      }
+    },
+    {
+      "name": "preview:result",
+      "t": 332.3999999985099,
+      "detail": {
+        "assetName": "DSC01445.HIF",
+        "level": "thumbnail",
+        "priority": "nearby",
+        "width": 160,
+        "height": 120,
+        "kind": "embedded",
+        "renderLevel": "thumbnail",
+        "diagnostics": {
+          "backend": "Sony HIF embedded JPEG",
+          "queueWaitMs": 0,
+          "sourceWaitMs": 0,
+          "decodeMs": 13,
+          "encodeMs": 0,
+          "cacheSyncMs": null,
+          "cacheCommitMs": null,
+          "totalMs": 13,
+          "fallbackReason": null
+        }
+      }
+    },
+    {
+      "name": "image:loaded",
+      "t": 397.1000000014901,
+      "detail": {
+        "assetName": "DSC01443.HIF",
+        "large": true,
+        "stage": "full",
+        "renderLevel": "full",
+        "width": 7008,
+        "height": 4672
+      }
+    },
+    {
+      "name": "harness:done",
+      "t": 397.29999999701977,
+      "detail": {
+        "reason": "complete"
+      }
+    }
+  ]
+}

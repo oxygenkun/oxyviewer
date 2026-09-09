@@ -393,7 +393,7 @@ end-to-end regression harness that enforces these budgets is described in
   the global decode permit is released after decode, before JPEG encode and
   cache sync. Full-tile publication converts the decoded image to RGBA once
   and copies contiguous rows into tiles. On the reference Mac against
-  `literal:<NAS_FIXTURE_DIR>/DSC00463.HIF`,
+  `<NAS_FIXTURE_DIR>/DSC00463.HIF`,
   the optimized Debug backend measured about 46 ms ImageIO decode and 31 ms
   tile publication, versus the previous in-app 308 ms and 1363 ms. A real
   cold loupe run painted its first tile in 505 ms and all tiles in 756 ms while
@@ -691,3 +691,35 @@ Warm RAW required persisted-artifact provenance; warm HIF required
 `cachedArtifact` and all tiles painted (538 / 540 ms). All six cold 800 ms / warm
 150 ms first-preview gates passed. These are local samples, with no historical
 baseline regression claim. The test runner closed each owned native instance.
+
+### Windows session tile and full-cache separation (2026-09-10)
+
+Windows FFmpeg sessions publish JPEG tiles directly, including display sharpening.
+A matching full cache is now presented directly: Display when sharpening is enabled,
+None when disabled. Cache hits do not apply sharpening again.
+
+After tile publication, foreground admission is released and completion is emitted.
+A cancellable dwell and independent cache lane admit assembly of the actual display
+tiles; Arc references avoid copying their compressed payloads. Compatible JPEG tiles
+now use statically linked libjpeg-turbo 3.1.3 coefficient stitching with fixed Huffman
+tables. Output plus largest input coefficient arrays and 8 MiB headroom must fit
+256 MiB. Unsupported formats use the background pixel fallback (256 MiB canvas);
+corrupt/incomplete inputs fail without publication. Neither path reopens HIF for a
+second decode. The subsequent cache check never triggers generic full generation.
+See [HIF acceleration TODO](tasks/hif-performance-plan.md) and the linked reports.
+
+The earlier isolated pixel-baseline run on DSC01443.HIF painted all six cold tiles
+(backend 665 ms), with the background Display full artifact appearing about 45 s later.
+After restarting the app, full request → cache hit was 23.6 ms and full request →
+image load was 120.6 ms, without a tile session. These are single-run checks, not
+p50/p95 budget certification; raw cold/warm reports are linked from the TODO.
+
+After DCT integration, six Release WebView runs (three local HIF files × two rounds)
+completed cold tiles, persisted Display JPEG, and reopened via full artifact without
+tile decoding. Median DCT encode was 459 ms (444–483 ms), cache commit 27 ms
+(25–93 ms), and full request → warm image load 96 ms. Disk cache was observable
+1.24–1.46 s after all tiles painted, including the existing one-second dwell.
+Native app peak working set was 262–264 MiB (excludes FFmpeg/WebView children).
+Three production files passed independent comparison of all 98,224,128 coefficients
+per image. Concurrent next-selection p50/p95 and cross-platform fixture matrices
+remain follow-up measurements; see the TODO for raw records and validation limits.

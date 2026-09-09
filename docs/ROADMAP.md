@@ -109,6 +109,10 @@ now fixture coverage, cancellation, platform packaging, and conflict safety.
 
 ### HEIF reliability
 
+- [ ] Follow the [HIF foreground/background acceleration plan](tasks/hif-performance-plan.md):
+  display-state cache correctness and background DCT stitching are implemented;
+  concurrent performance matrices and measured foreground worker reuse remain planned.
+
 - [ ] Bundle and validate a working HEVC decoder, including libde265 where used,
   in macOS, Windows, and Linux release packages.
 - [ ] Complete the HEIF/HEIC/HIF fixture matrix across embedded-thumbnail,

@@ -1,0 +1,35 @@
+[
+  {
+    "mode": "verify",
+    "total_ms": 605.172,
+    "entropy_read_ms": 259.32,
+    "coefficient_copy_ms": 23.466,
+    "entropy_write_ms": 0.0,
+    "coefficients": 98224128,
+    "peak_working_set_bytes": 235085824,
+    "source": "DSC01443.HIF",
+    "outputSha256": "46074473E5EBBF8C3115E955EE109659C3AFA0F2C8CD4163364DC7192A32CFA9"
+  },
+  {
+    "mode": "verify",
+    "total_ms": 565.264,
+    "entropy_read_ms": 247.818,
+    "coefficient_copy_ms": 23.245,
+    "entropy_write_ms": 0.0,
+    "coefficients": 98224128,
+    "peak_working_set_bytes": 235081728,
+    "source": "DSC01444.HIF",
+    "outputSha256": "6CAFD0964BD67CFF539A0688C4E0191D3F8047D6332DA998C7186C34B3C36E90"
+  },
+  {
+    "mode": "verify",
+    "total_ms": 586.869,
+    "entropy_read_ms": 264.718,
+    "coefficient_copy_ms": 21.415,
+    "entropy_write_ms": 0.0,
+    "coefficients": 98224128,
+    "peak_working_set_bytes": 235081728,
+    "source": "DSC01445.HIF",
+    "outputSha256": "798C7C07A73E4C73195C7D33635D852C9CFF3558D285B4506D782FD6A82A6B32"
+  }
+]
