@@ -5,11 +5,11 @@ import { renderPlan } from "./preview";
 import { browserPreloadQueue, orderedPriorityWeight } from "./previewQueue";
 
 /**
- * Warms the first useful loupe stage in both React Query and the WebView image
+ * Warms the reusable thumbnail base in both React Query and the WebView image
  * decoder. Full-resolution work remains selection-driven because it can be
- * expensive for RAW and HEIF files.
+ * expensive for RAW and HEIF files. Loupe does not require a separate preview.
  */
-export async function preloadAssetLoupePreview(
+export async function preloadAssetLoupeBase(
   asset: AssetSummary,
   rank = 0,
   signal?: AbortSignal,

@@ -28,14 +28,14 @@ Use three semantic render levels shared by Rust and TypeScript:
 | Level | Interaction guarantee |
 | --- | --- |
 | `thumbnail` | Fast representation for grid, list, and filmstrip scrolling |
-| `preview` | Persistent fit-to-window layer established when entering loupe |
+| `preview` | Optional fit-to-window artifact for callers that explicitly request it |
 | `full` | Best available pixel-inspection representation |
 
 The interaction graph is fixed independently of formats:
 
 ```text
 thumbnail surface: thumbnail
-loupe surface:     preview -> full
+loupe surface:     thumbnail -> full
 ```
 
 The frontend render profile maps every `(platform, asset kind, level)` to a
@@ -50,12 +50,13 @@ concrete native method and target size:
 | --- | --- | --- | --- |
 | JPEG/PNG/WebP | original | original | original |
 | RAW | LibRaw 512 | LibRaw 4096 | embedded/full development |
-| Sony HIF/HEIF | embedded 160 | same embedded 160 | HEIF full/tile session |
+| HIF/HEIF | embedded/decoded 512 | optional decoded 4096 | HEIF full/tile session |
 | TIFF | system 512 | system 512 | system 4096 |
 
 Other platforms can provide a different profile without changing the
-interaction graph. The currently qualified Sony HIF fast path uses the same
-160 artifact on every platform; a platform should diverge only after its
+interaction graph. The Sony HIF fast path may satisfy the thumbnail with its
+embedded 160 artifact; an explicit `preview` request may use that artifact as
+an interim result before upgrading. A platform should diverge only after its
 native path has fixture-backed performance and fidelity evidence.
 
 React Query keys identify the resolved artifact method, not scheduling
@@ -69,10 +70,10 @@ pixel dimensions in an enum name.
 
 ## Consequences
 
-- Changing a decoder from 512 px to 160x120, an embedded JPEG, a native GPU
-  surface, or another representation cannot remove a loupe layer.
-- Sony HIF keeps the 160x120 image painted below the tile canvas and
-  performs no redundant 512/4096 HEVC preview decode.
+- Loupe reuses the already requested thumbnail below its full-detail renderer;
+  it does not require a separate `preview` decode.
+- Sony HIF keeps its thumbnail painted below the tile canvas and performs no
+  redundant fit-to-window HEVC preview decode.
 - Cache identity, render progression, and queue priority are separate concerns.
 - Adding a format requires a frontend renderer profile and a backend native
   method mapping, both expressed against the same three levels.

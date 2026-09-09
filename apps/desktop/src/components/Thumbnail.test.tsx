@@ -156,7 +156,7 @@ describe("filmstrip thumbnail display retention", () => {
     expect(apiMocks.renewMediaResource).toHaveBeenCalledWith("resource-2");
   });
 
-  it("leases only displayed and pending, then releases preview after full loads", async () => {
+  it("leases the thumbnail base until full loads", async () => {
     const raw = { ...asset, kind: "raw" as const, path: "/photos/a.arw" };
     const projectStage = (level: "thumbnail" | "preview" | "full", revision = 1) => {
       acceptImageProjection({
@@ -174,20 +174,15 @@ describe("filmstrip thumbnail display retention", () => {
     </QueryClientProvider></StrictMode>);
     await act(async () => mount());
     await act(async () => container.querySelector(".thumbnail__pending-image")!.dispatchEvent(new Event("load")));
-    await act(async () => projectStage("preview"));
     expect(apiMocks.renewMediaResource).toHaveBeenCalledWith("thumbnail");
-    expect(apiMocks.renewMediaResource).toHaveBeenCalledWith("preview");
+    await act(async () => projectStage("full"));
+    expect(apiMocks.renewMediaResource).toHaveBeenCalledWith("full");
     expect(apiMocks.releaseMediaResource).not.toHaveBeenCalledWith("thumbnail");
     await act(async () => container.querySelector(".thumbnail__pending-image")!.dispatchEvent(new Event("load")));
     expect(apiMocks.releaseMediaResource).toHaveBeenCalledWith("thumbnail");
-    await act(async () => projectStage("full"));
-    expect(apiMocks.releaseMediaResource).not.toHaveBeenCalledWith("preview");
-    await act(async () => container.querySelector(".thumbnail__pending-image")!.dispatchEvent(new Event("load")));
-    expect(apiMocks.releaseMediaResource).toHaveBeenCalledWith("preview");
     apiMocks.renewMediaResource.mockClear();
     await act(async () => projectStage("thumbnail", 2));
     expect(apiMocks.renewMediaResource).not.toHaveBeenCalledWith("thumbnail");
-    expect(apiMocks.renewMediaResource).not.toHaveBeenCalledWith("preview");
     expect(container.querySelectorAll("img")).toHaveLength(1);
   });
 

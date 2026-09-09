@@ -1,5 +1,5 @@
 import { useEffect } from "react";
-import { preloadAssetLoupePreview } from "../lib/loupePreload";
+import { preloadAssetLoupeBase } from "../lib/loupePreload";
 import { protectBrowserImages } from "../lib/browserImageCache";
 import { imageProjectionKey, useImageProjectionStore } from "../lib/imageProjection";
 import { previewUrl } from "../lib/api";
@@ -30,7 +30,7 @@ export function FilmstripPreviewPreloader({ assets }: FilmstripPreviewPreloaderP
         const rank = next++;
         const asset = assets[rank];
         try {
-          await preloadAssetLoupePreview(asset, rank, controller.signal);
+          await preloadAssetLoupeBase(asset, rank, controller.signal);
         } catch (error) {
           if (controller.signal.aborted) return;
           console.warn(`[OxyPreview] filmstrip preload failed for ${asset.name}`, error);

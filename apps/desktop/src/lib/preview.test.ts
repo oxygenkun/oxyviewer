@@ -1,6 +1,5 @@
 import { describe, expect, it } from "vitest";
 import {
-  loupeThumbnailFallback,
   renderMethodKey,
   renderPlan,
   runtimeRenderPlatform,
@@ -11,47 +10,37 @@ describe("semantic render graph", () => {
     expect(renderPlan("raw", "thumbnail", "windows").map((step) => step.level))
       .toEqual(["thumbnail"]);
     expect(renderPlan("raw", "loupe", "windows").map((step) => step.level))
-      .toEqual(["preview", "full"]);
+      .toEqual(["thumbnail", "full"]);
     expect(renderPlan("heif", "loupe", "windows").map((step) => step.level))
-      .toEqual(["preview", "full"]);
+      .toEqual(["thumbnail", "full"]);
   });
 
-  it("keeps HEIF thumbnail and preview requests distinct while full uses tiles", () => {
+  it("reuses the HEIF thumbnail in loupe while full uses tiles", () => {
     const thumbnail = renderPlan("heif", "thumbnail", "windows")[0];
-    const [preview, full] = renderPlan("heif", "loupe", "windows");
+    const [base, full] = renderPlan("heif", "loupe", "windows");
 
-    expect(preview.method).toEqual({ type: "generatedImage", requestLevel: "preview" });
-    expect(renderMethodKey(preview.method)).not.toBe(renderMethodKey(thumbnail.method));
+    expect(base.method).toEqual({ type: "generatedImage", requestLevel: "thumbnail" });
+    expect(renderMethodKey(base.method)).toBe(renderMethodKey(thumbnail.method));
     expect(full.method).toEqual({ type: "heifFull" });
   });
 
   it("delegates HEIF full delivery to Rust on every platform", () => {
     for (const platform of ["windows", "macos", "linux"] as const) {
-      const [preview, full] = renderPlan("heif", "loupe", platform);
-      expect(preview.method).toEqual({ type: "generatedImage", requestLevel: "preview" });
+      const [base, full] = renderPlan("heif", "loupe", platform);
+      expect(base.method).toEqual({ type: "generatedImage", requestLevel: "thumbnail" });
       expect(full.method).toEqual({ type: "heifFull" });
     }
   });
 
   it("maps RAW and TIFF levels without exposing concrete pixel sizes", () => {
     expect(renderPlan("raw", "loupe", "windows").map((step) => step.method)).toEqual([
-      { type: "generatedImage", requestLevel: "preview" },
+      { type: "generatedImage", requestLevel: "thumbnail" },
       { type: "generatedImage", requestLevel: "full" },
     ]);
     expect(renderPlan("tiff", "loupe", "windows").map((step) => step.method)).toEqual([
-      { type: "generatedImage", requestLevel: "preview" },
+      { type: "generatedImage", requestLevel: "thumbnail" },
       { type: "generatedImage", requestLevel: "full" },
     ]);
-  });
-
-  it("reuses filmstrip artifacts when loupe previews are distinct", () => {
-    expect(loupeThumbnailFallback("raw", "windows")).toEqual({
-      level: "thumbnail",
-      method: { type: "generatedImage", requestLevel: "thumbnail" },
-    });
-    expect(loupeThumbnailFallback("tiff", "windows")?.level).toBe("thumbnail");
-    expect(loupeThumbnailFallback("heif", "windows")?.level).toBe("thumbnail");
-    expect(loupeThumbnailFallback("jpeg", "windows")).toBeUndefined();
   });
 
   it("registers one reusable original resource for browser-native raster formats", () => {

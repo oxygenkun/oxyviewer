@@ -18,7 +18,6 @@ import { retainMediaResource, releaseUnretainedMediaResource } from "../lib/medi
 import { imageProjectionKey, useImageProjectionStore } from "../lib/imageProjection";
 import {
   assetRenderQueryKey,
-  loupeThumbnailFallback,
   renderMethodKey,
   renderPlan,
   type RenderMethod,
@@ -86,19 +85,11 @@ export function Thumbnail({
   const fullStep = plan.find((step) => step.level === "full");
   const previewMethod = previewStep.method;
   const fullMethod = fullStep?.method;
-  const fallbackThumbnailStep = useMemo(
-    () => large ? loupeThumbnailFallback(asset.kind) : undefined,
-    [asset.kind, large],
-  );
   const previewLevel = generatedLevel(previewMethod);
   const fullLevel = generatedLevel(fullMethod);
   const previewMethodIdentity = renderMethodKey(previewMethod);
-  const fallbackThumbnailLevel = generatedLevel(fallbackThumbnailStep?.method);
   const fullMethodIdentity = fullMethod ? renderMethodKey(fullMethod) : undefined;
   const distinctFullLevel = fullMethodIdentity !== previewMethodIdentity ? fullLevel : undefined;
-  const thumbnailProjection = useImageProjectionStore((state) => fallbackThumbnailLevel
-    ? state.records[imageProjectionKey(asset.path, fallbackThumbnailLevel)]
-    : undefined);
   const previewProjection = useImageProjectionStore((state) => previewLevel
     ? state.records[imageProjectionKey(asset.path, previewLevel)]
     : undefined);
@@ -156,16 +147,14 @@ export function Thumbnail({
   });
   const refetchPreview = previewQuery.refetch;
   const refetchFull = fullQuery.refetch;
-  const thumbnailSource = thumbnailProjection?.result;
   const previewSource = previewProjection?.result;
   const fullSource = fullProjection?.result;
   const preparedSource = firstReadyBrowserImage([
     !fullImageFailed ? fullSource?.url : undefined,
     directSource,
     previewSource?.url,
-    thumbnailSource?.url,
   ]);
-  const resourceForSource = (url: string | undefined) => [thumbnailSource, previewSource, fullSource]
+  const resourceForSource = (url: string | undefined) => [previewSource, fullSource]
     .find((result) => result?.url === url)?.resource?.resourceId;
   const preparedResourceId = resourceForSource(preparedSource);
   const preparedSize = preparedSource ? getBrowserImageSize(preparedSource) : undefined;
@@ -175,7 +164,6 @@ export function Thumbnail({
       ? { assetId: asset.id, source: preparedSource, resourceId: preparedResourceId }
       : undefined;
   const generatedSource = nextProgressiveStage(Boolean(visibleImage), [
-    thumbnailSource,
     previewSource,
     !fullImageFailed ? fullSource : undefined,
   ]);
@@ -191,7 +179,7 @@ export function Thumbnail({
   const resourceIds = [visibleImage?.resourceId, !failed && pendingSource ? resourceForSource(pendingSource) : undefined]
     .filter((id): id is string => Boolean(id));
   const resourceIdentity = [...new Set(resourceIds)].sort().join("\u0000");
-  const projectionResourceIdentity = [thumbnailSource, previewSource, fullSource]
+  const projectionResourceIdentity = [previewSource, fullSource]
     .map((result) => result?.resource?.resourceId).filter(Boolean).join("\u0000");
   const seed = hashSeed(asset.name);
   const style = {
@@ -206,9 +194,7 @@ export function Thumbnail({
   ) => {
     const loadedLevel = result && result === fullSource
       ? fullStep?.level ?? "full"
-      : result && result === thumbnailSource
-        ? "thumbnail"
-        : previewStep.level;
+      : previewStep.level;
     const reportKey = `${asset.id}\u0000${loadedSource}\u0000${loadedLevel}`;
     if (reportedLoads.current.has(reportKey)) return;
     reportedLoads.current.add(reportKey);
@@ -320,9 +306,7 @@ export function Thumbnail({
       ? fullSource
       : previewSource?.url === preparedSource
         ? previewSource
-        : thumbnailSource?.url === preparedSource
-          ? thumbnailSource
-          : undefined;
+        : undefined;
     if (preparedSource) reportImageLoaded(preparedSize, preparedResult, preparedSource);
     onImageLoad?.(preparedSize);
     if (!ownsFullDetailStage || (previewSource?.url !== preparedSource && fullSource?.url !== preparedSource)) return;
@@ -339,7 +323,6 @@ export function Thumbnail({
     preparedSize,
     preparedSource,
     fullSource,
-    thumbnailSource,
     previewSource?.url,
   ]);
 
@@ -405,7 +388,7 @@ export function Thumbnail({
     }
     debug?.complete();
     if (source) markBrowserImageReady(source, size, image);
-    if (ownsFullDetailStage && large && result && result !== thumbnailSource) {
+    if (ownsFullDetailStage && large && result?.renderLevel !== "thumbnail") {
       setLoaded({ assetId: asset.id, mode: result === fullSource ? "full" : "preview" });
     }
     if (source) setDisplayedImage({ assetId: asset.id, source, resourceId: result?.resource?.resourceId });
