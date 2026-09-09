@@ -222,6 +222,50 @@ impl PreviewQueue {
         queue
     }
 
+    /// A presentation-ready HEIF full result belongs to this display request.
+    /// Do not store a Display variant in the generic (path, level) projections:
+    /// those requests still require unsharpened pixels for other consumers.
+    pub fn cached_heif_full_projection(
+        &self,
+        path: &std::path::Path,
+        preview_dir: &std::path::Path,
+        display_sharpening: bool,
+    ) -> Result<Option<ImageProjection>, String> {
+        let revision = ProjectionSourceRevision::observe(
+            path,
+            preview_dir,
+            AssetKind::Heif,
+            RenderLevel::Full,
+        )?;
+        let Some(result) =
+            oxy_media::cached_heif_full_for_display(path, preview_dir, display_sharpening)
+                .map_err(|error| error.to_string())?
+        else {
+            return Ok(None);
+        };
+        let observed = oxy_media::SourceRevision::observe(path).map_err(|error| error.to_string());
+        if observed.as_ref().ok() != Some(&revision.media_revision) {
+            if let Some(resource) = &result.resource {
+                oxy_media::shared_resource_registry().release(&resource.resource_id);
+            }
+            return Err("HEIF source changed during display cache lookup".into());
+        }
+        let sequence = self
+            .library
+            .next_resource_revision()
+            .map_err(|error| error.to_string())?;
+        Ok(Some(ImageProjection {
+            path: path.to_owned(),
+            source_revision: format!("{}:heif-display:{display_sharpening}", revision.token()),
+            state_revision: sequence,
+            valid_at: sequence,
+            status: ResourceLoadStatus::Ready,
+            level: RenderLevel::Full,
+            result: Some(result),
+            error: None,
+        }))
+    }
+
     fn restore_cached_projection(
         &self,
         cached: ImageProjection,

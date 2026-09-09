@@ -63,15 +63,37 @@ afterEach(async () => {
   vi.unstubAllGlobals();
 });
 
-async function render(selected = asset) {
+async function render(selected = asset, displaySharpening = true) {
   await act(async () => root.render(
-    <StrictMode><HeifTileCanvas asset={selected} displaySharpening
+    <StrictMode><HeifTileCanvas asset={selected} displaySharpening={displaySharpening}
       onArtifactDisplayed={artifactDisplayed}
       onImageSize={imageSize} onStatus={status} /></StrictMode>,
   ));
 }
 
 describe("HEIF full presentation lifecycle", () => {
+  it("displays the matching full artifact directly and requeries when sharpening changes", async () => {
+    mocks.start.mockResolvedValue(artifact);
+    const context = vi.spyOn(HTMLCanvasElement.prototype, "getContext");
+    await render(asset, true);
+    expect(mocks.start.mock.lastCall?.[2]).toBe(true);
+    const pending = container.querySelector("img")!;
+    expect(pending.src).toBe(artifact.result.url);
+    await act(async () => pending.dispatchEvent(new Event("load")));
+    expect(container.querySelector("img")?.style.visibility).not.toBe("hidden");
+    expect(context).not.toHaveBeenCalled();
+    const plain = { ...artifact, result: {
+      ...artifact.result, url: "oxy-media://localhost/resource/plain",
+      resource: { ...artifact.result.resource, resourceId: "plain", url: "oxy-media://localhost/resource/plain" },
+    } };
+    mocks.start.mockResolvedValue(plain);
+    await render(asset, false);
+    expect(mocks.start.mock.lastCall?.[2]).toBe(false);
+    expect([...container.querySelectorAll("img")].map((image) => image.src)).not.toContain(artifact.result.url);
+    expect(container.querySelector("img")?.src).toBe(plain.result.url);
+    expect(context).not.toHaveBeenCalled();
+  });
+
   it("does not draw a late bitmap onto the next selection and always closes it", async () => {
     const drawImage = vi.fn();
     vi.spyOn(HTMLCanvasElement.prototype, "getContext").mockReturnValue({ drawImage } as unknown as CanvasRenderingContext2D);

@@ -212,8 +212,30 @@ pub(crate) async fn start_heif_full(
     }
     let service = state.heif.clone();
     let preview_dir = state.cache.preview_dir();
-    let use_artifact = oxy_media::full_uses_artifact(&path, &preview_dir, display_sharpening)
-        .map_err(|error| error.to_string())?;
+    let lookup_queue = state.preview_queue.clone();
+    let lookup_path = path.clone();
+    let lookup_dir = preview_dir.clone();
+    let (cached, use_artifact) = tauri::async_runtime::spawn_blocking(move || {
+        let cached = lookup_queue.cached_heif_full_projection(
+            &lookup_path,
+            &lookup_dir,
+            display_sharpening,
+        )?;
+        let use_artifact = if cached.is_some() || display_sharpening {
+            false
+        } else {
+            oxy_media::full_uses_artifact(&lookup_path, &lookup_dir, false)
+                .map_err(|error| error.to_string())?
+        };
+        Ok::<_, String>((cached, use_artifact))
+    })
+    .await
+    .map_err(|error| error.to_string())??;
+    if let Some(projection) = cached {
+        return Ok(HeifFullPresentation::Artifact {
+            projection: Box::new(projection),
+        });
+    }
     if use_artifact {
         let preview_queue = state.preview_queue.clone();
         let projection = tauri::async_runtime::spawn_blocking(move || {
@@ -255,9 +277,14 @@ pub(crate) async fn start_heif_full(
             },
         );
         if result.is_ok() {
-            match resolve_heif_full_projection(&app, &preview_queue, asset, preview_dir, request_id)
-            {
-                Ok(projection) => {
+            // Lookup only: a cancelled dwell/cache failure must not trigger a
+            // second source decode via the generic unsharpened preview queue.
+            match preview_queue.cached_heif_full_projection(
+                &asset.path,
+                &preview_dir,
+                display_sharpening,
+            ) {
+                Ok(Some(projection)) => {
                     if let Some(artifact) = projection.result {
                         if cache.try_start_prune() {
                             loop {
@@ -269,9 +296,13 @@ pub(crate) async fn start_heif_full(
                                 }
                             }
                         }
+                        if let Some(resource) = artifact.resource {
+                            oxy_media::shared_resource_registry().release(&resource.resource_id);
+                        }
                     }
                 }
-                Err(error) => eprintln!("failed to publish HEIF full projection: {error}"),
+                Ok(None) => {}
+                Err(error) => eprintln!("failed to inspect HEIF full cache: {error}"),
             }
         }
         let event = match result {

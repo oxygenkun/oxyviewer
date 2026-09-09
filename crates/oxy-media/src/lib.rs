@@ -27,7 +27,7 @@ pub use media_source::{ImageDimensions, dimensions};
 pub use pipeline::dispatcher::{
     AppPreview, preview, preview_for_app, preview_for_app_upgrade, preview_for_app_with_completion,
 };
-pub use pipeline::heif::artifact::full_uses_artifact;
+pub use pipeline::heif::artifact::{cached_heif_full_for_display, full_uses_artifact};
 pub use policy::preview_policy_revision;
 pub use publication::{
     ArtifactPublisher, PersistenceCompletion, PersistenceFailure, PersistenceStatus,

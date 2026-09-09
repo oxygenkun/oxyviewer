@@ -27,6 +27,7 @@ use image::DynamicImage;
 use oxy_domain::{PreviewDiagnostics, PreviewResult, RenderLevel};
 use oxy_runtime::CancellationToken;
 use std::{
+    borrow::Cow,
     fs::OpenOptions,
     path::{Path, PathBuf},
     sync::Arc,
@@ -55,13 +56,28 @@ pub(crate) fn preview_request(
 }
 
 pub(crate) fn full_decoded_request(artifacts: &ArtifactCache) -> crate::cache::CacheRequest {
+    full_display_request(artifacts, false)
+}
+
+pub(crate) const fn display_sharpening_state(enabled: bool) -> SharpeningState {
+    if enabled {
+        SharpeningState::Display
+    } else {
+        SharpeningState::None
+    }
+}
+
+fn full_display_request(
+    artifacts: &ArtifactCache,
+    display_sharpening: bool,
+) -> crate::cache::CacheRequest {
     artifacts.request(
         DetailRequirement::NativeDetail,
         RepresentationRequirement::Exact(ArtifactRepresentation::Decoded),
         PresentationRequirement {
             orientation: OrientationRequirement::Exact(OrientationState::Applied),
             color: crate::cache::ColorRequirement::Any,
-            sharpening: SharpeningState::None,
+            sharpening: display_sharpening_state(display_sharpening),
         },
         false,
     )
@@ -126,14 +142,11 @@ pub fn full_uses_artifact(
     cache_dir: &Path,
     display_sharpening: bool,
 ) -> Result<bool, MediaError> {
-    if display_sharpening {
-        return Ok(false);
-    }
-    if cached_heif_full(path, cache_dir)?.is_some() {
+    if cached_heif_full_display(path, cache_dir, display_sharpening)?.is_some() {
         return Ok(true);
     }
     #[cfg(target_os = "macos")]
-    return Ok(true);
+    return Ok(!display_sharpening);
     #[cfg(any(target_os = "windows", target_os = "linux"))]
     Ok(false)
 }
@@ -433,13 +446,35 @@ pub(crate) fn full(
     )
 }
 
+#[cfg(test)]
 pub(crate) fn cached_heif_full(
     path: &Path,
     cache_dir: &Path,
 ) -> Result<Option<PreviewResult>, MediaError> {
+    cached_heif_full_display(path, cache_dir, false)
+}
+
+pub(crate) fn cached_heif_full_display(
+    path: &Path,
+    cache_dir: &Path,
+    display_sharpening: bool,
+) -> Result<Option<PreviewResult>, MediaError> {
     let artifacts = ArtifactCache::new(path, cache_dir)?;
-    let request = full_decoded_request(&artifacts);
+    let request = full_display_request(&artifacts, display_sharpening);
     artifacts.lookup(&request, RenderLevel::Full)
+}
+
+/// A full-display cache hit is already presentation-ready. Register its leased
+/// resource without routing Display variants through the unsharpened preview queue.
+pub fn cached_heif_full_for_display(
+    path: &Path,
+    cache_dir: &Path,
+    display_sharpening: bool,
+) -> Result<Option<PreviewResult>, MediaError> {
+    crate::pipeline::artifact::with_app_publication(|| {
+        cached_heif_full_display(path, cache_dir, display_sharpening)
+    })
+    .0
 }
 
 #[cfg(test)]
@@ -460,15 +495,70 @@ pub(crate) fn cache_full_image(
     image: &DynamicImage,
     presentation: ArtifactPresentation,
 ) -> Result<PathBuf, MediaError> {
+    cache_full_image_from(
+        source_revision,
+        cache_dir,
+        presentation,
+        || false,
+        || Ok(Cow::Borrowed(image)),
+    )
+}
+
+/// Admit before assembling pixels, so clearing the cache during assembly cannot
+/// resurrect an artifact from the old generation. The producer runs only on a miss.
+pub(crate) fn cache_full_image_from<'a>(
+    source_revision: &crate::cache::SourceRevision,
+    cache_dir: &Path,
+    presentation: ArtifactPresentation,
+    cancelled: impl Fn() -> bool,
+    produce: impl FnOnce() -> Result<Cow<'a, DynamicImage>, MediaError>,
+) -> Result<PathBuf, MediaError> {
+    cache_full_output(
+        source_revision,
+        cache_dir,
+        presentation,
+        &cancelled,
+        |destination| {
+            let image = produce()?;
+            if cancelled() {
+                return Err(MediaError::Cancelled);
+            }
+            write_session_jpeg(&image, destination, presentation)
+        },
+    )
+}
+
+pub(crate) fn write_session_jpeg(
+    image: &DynamicImage,
+    destination: &Path,
+    presentation: ArtifactPresentation,
+) -> Result<(), MediaError> {
+    if presentation.color == CacheColorState::Srgb {
+        #[cfg(target_os = "macos")]
+        apple_image_io::write_jpeg(image, destination, 95)?;
+        #[cfg(any(target_os = "windows", target_os = "linux"))]
+        write_jpeg_atomically(image, destination, 95, HEIF_DECODED_JPEG)?;
+    } else {
+        write_jpeg_atomically(image, destination, 95, HEIF_UNCONVERTED_JPEG)?;
+    }
+    Ok(())
+}
+
+/// Prepares the generation fence before invoking an encoder, then validates and
+/// atomically publishes its temporary output using the same artifact contract.
+pub(crate) fn cache_full_output(
+    source_revision: &crate::cache::SourceRevision,
+    cache_dir: &Path,
+    presentation: ArtifactPresentation,
+    cancelled: impl Fn() -> bool,
+    write_output: impl FnOnce(&Path) -> Result<(), MediaError>,
+) -> Result<PathBuf, MediaError> {
     let path = &source_revision.canonical_path;
+    if cancelled() {
+        return Err(MediaError::Cancelled);
+    }
     if crate::cache::SourceRevision::observe(path)? != *source_revision {
         return Err(MediaError::StaleSourceRevision);
-    }
-    let source_dimensions = libheif::dimensions(path)?;
-    if (image.width(), image.height()) != (source_dimensions.width, source_dimensions.height) {
-        return Err(MediaError::CacheArtifact(
-            "HEIF session pixels do not contain native display detail".into(),
-        ));
     }
     let artifacts = ArtifactCache::for_source_revision(source_revision.clone(), cache_dir)?;
     let request = artifacts.request(
@@ -489,28 +579,39 @@ pub(crate) fn cache_full_image(
         ArtifactPreparation::Generate { cache_generation } => cache_generation,
     };
     let destination = artifacts.temporary_output(".jpg")?;
-    if presentation.color == CacheColorState::Srgb {
-        #[cfg(target_os = "macos")]
-        apple_image_io::write_jpeg(image, &destination, 95)?;
-        #[cfg(any(target_os = "windows", target_os = "linux"))]
-        write_jpeg_atomically(image, &destination, 95, HEIF_DECODED_JPEG)?;
-    } else {
-        write_jpeg_atomically(image, &destination, 95, HEIF_UNCONVERTED_JPEG)?;
+    let encode_started = Instant::now();
+    write_output(&destination)?;
+    let encode_ms = encode_started.elapsed().as_secs_f64() * 1000.0;
+    if cancelled() {
+        return Err(MediaError::Cancelled);
     }
-    let dimensions = image::image_dimensions(&destination)?.into();
-    artifacts
-        .publish_staged(
-            destination,
-            dimensions,
-            ArtifactRepresentation::Decoded,
-            presentation,
-            true,
-            format!("{HEIF_FULL}:native"),
-            RenderLevel::Full,
-            generation,
-            &request,
-        )
-        .map(|result| result.path)
+    let source_dimensions = libheif::dimensions(path)?;
+    let dimensions = image::image_dimensions(&destination)?;
+    if dimensions != (source_dimensions.width, source_dimensions.height) {
+        return Err(MediaError::CacheArtifact(
+            "HEIF session pixels do not contain native display detail".into(),
+        ));
+    }
+    if cancelled() {
+        return Err(MediaError::Cancelled);
+    }
+    let commit_started = Instant::now();
+    let result = artifacts.publish_staged(
+        destination,
+        dimensions.into(),
+        ArtifactRepresentation::Decoded,
+        presentation,
+        true,
+        format!("{HEIF_FULL}:native"),
+        RenderLevel::Full,
+        generation,
+        &request,
+    )?;
+    eprintln!(
+        "HEIF full cache: encode_ms={encode_ms:.3} commit_ms={:.3}",
+        commit_started.elapsed().as_secs_f64() * 1000.0
+    );
+    Ok(result.path)
 }
 
 fn transcode_heif_source(
@@ -651,7 +752,100 @@ mod delivery_tests {
     }
 
     #[test]
-    fn sharpening_always_uses_tiles_without_touching_the_canonical_cache() {
+    fn display_full_lookup_is_exact_and_does_not_rebuild_a_cached_variant() {
+        let directory = tempfile::tempdir().unwrap();
+        let source = directory.path().join("display.heif");
+        std::fs::write(&source, b"cache identity fixture").unwrap();
+        let artifacts = ArtifactCache::new(&source, directory.path()).unwrap();
+        let request = full_display_request(&artifacts, true);
+        let mut presentation = unconverted_presentation();
+        presentation.sharpening = SharpeningState::Display;
+        let mut jpeg = Vec::new();
+        image::codecs::jpeg::JpegEncoder::new(&mut jpeg)
+            .encode_image(&DynamicImage::new_rgb8(8, 4))
+            .unwrap();
+        let generation = match artifacts.prepare(&request, RenderLevel::Full).unwrap() {
+            ArtifactPreparation::Generate { cache_generation } => cache_generation,
+            ArtifactPreparation::Cached(_) => panic!("fresh cache"),
+        };
+        let stored = artifacts
+            .publish(
+                Arc::from(jpeg),
+                (8, 4).into(),
+                ArtifactRepresentation::Decoded,
+                presentation,
+                true,
+                format!("{HEIF_FULL}:native"),
+                RenderLevel::Full,
+                generation,
+                &request,
+            )
+            .unwrap();
+        assert!(
+            cached_heif_full_display(&source, directory.path(), false)
+                .unwrap()
+                .is_none()
+        );
+        assert!(
+            artifacts
+                .lookup(
+                    &preview_request(
+                        &artifacts,
+                        DetailRequirement::Display { min_long_edge: 4 },
+                        false
+                    ),
+                    RenderLevel::Preview
+                )
+                .unwrap()
+                .is_none()
+        );
+        let cached = cached_heif_full_for_display(&source, directory.path(), true)
+            .unwrap()
+            .unwrap();
+        assert_eq!(cached.path, stored.path);
+        assert!(cached.resource.is_some());
+        assert!(full_uses_artifact(&source, directory.path(), true).unwrap());
+        let path = cache_full_image_from(
+            &crate::cache::SourceRevision::observe(&source).unwrap(),
+            directory.path(),
+            presentation,
+            || false,
+            || panic!("a cache hit must not assemble pixels"),
+        )
+        .unwrap();
+        assert_eq!(path, cached.path);
+        crate::shared_resource_registry().release(&cached.resource.unwrap().resource_id);
+    }
+
+    #[test]
+    fn failed_output_encoder_removes_partial_artifact() {
+        let directory = tempfile::tempdir().unwrap();
+        let source = directory.path().join("cancelled.heif");
+        std::fs::write(&source, b"source revision fixture").unwrap();
+        let revision = crate::cache::SourceRevision::observe(&source).unwrap();
+        let partial = std::cell::RefCell::new(PathBuf::new());
+        let result = cache_full_output(
+            &revision,
+            directory.path(),
+            unconverted_presentation(),
+            || false,
+            |destination| {
+                *partial.borrow_mut() = destination.to_owned();
+                std::fs::write(destination, b"partial jpeg")?;
+                Err(MediaError::Cancelled)
+            },
+        );
+        assert!(matches!(result, Err(MediaError::Cancelled)));
+        assert!(!partial.borrow().exists());
+        assert!(
+            cached_heif_full(&source, directory.path())
+                .unwrap()
+                .is_none()
+        );
+    }
+
+    #[test]
+    fn sharpening_uses_tiles_when_no_display_variant_exists() {
         let directory = tempfile::tempdir().unwrap();
         let source = directory.path().join("source.heif");
         std::fs::write(&source, b"cache identity").unwrap();
