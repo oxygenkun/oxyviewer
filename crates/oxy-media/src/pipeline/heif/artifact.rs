@@ -6,6 +6,8 @@ use super::backend::{
 use crate::backends::apple_image_io;
 #[cfg(target_os = "windows")]
 use crate::backends::windows_wic;
+#[cfg(target_os = "macos")]
+use crate::pipeline::artifact::applied_srgb;
 use crate::{
     MediaError,
     backends::{ffmpeg_heif, libheif},
@@ -17,7 +19,7 @@ use crate::{
     },
     decode_control::{DecodePriority, acquire_decode, acquire_file_lock, file_lock},
     formats::heif::quirks::sony,
-    pipeline::artifact::{ArtifactCache, ArtifactPreparation, applied_srgb, duration_ms},
+    pipeline::artifact::{ArtifactCache, ArtifactPreparation, duration_ms},
     policy::{HEIF_FULL, HEIF_PREVIEW},
     presentation::{HEIF_DECODED_JPEG, HEIF_UNCONVERTED_JPEG},
 };

@@ -21,6 +21,9 @@ use thiserror::Error;
 
 #[cfg(target_os = "macos")]
 mod bulk_attributes;
+mod identity;
+
+pub use identity::{FileObservation, observe_file};
 
 const DEFAULT_PAGE_SIZE: usize = 250;
 const MAX_PAGE_SIZE: usize = 1_000;
@@ -574,8 +577,10 @@ const SCAN_PROGRESS_INTERVAL: usize = 256;
 /// Keep size/mtime accurate because sorting and preview cache keys need them.
 pub fn scan_assets_with_progress(
     root: &Path,
-    mut report: impl FnMut(ScanProgress),
+    report: impl FnMut(ScanProgress),
 ) -> Result<Vec<AssetSummary>, FsError> {
+    #[cfg(target_os = "macos")]
+    let mut report = report;
     #[cfg(target_os = "macos")]
     if let Some(assets) = bulk_attributes::scan(root, &mut report)? {
         return Ok(assets);

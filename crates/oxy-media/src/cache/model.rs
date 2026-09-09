@@ -1,7 +1,8 @@
 use crate::{ImageDimensions, MediaError};
+use oxy_fs::observe_file;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
-use std::{fs, path::PathBuf};
+use std::path::PathBuf;
 
 pub const MEDIA_CACHE_POLICY_REVISION: u32 = 1;
 
@@ -17,24 +18,20 @@ pub struct SourceRevision {
 
 impl SourceRevision {
     pub fn observe(path: &std::path::Path) -> Result<Self, MediaError> {
-        let canonical_path = path.canonicalize()?;
-        let metadata = fs::metadata(&canonical_path)?;
-        let file_identity = platform_file_identity(&metadata);
-        let modified = platform_modified(&metadata);
-        let size_bytes = metadata.len();
+        let observed = observe_file(path)?;
         let mut hasher = Sha256::new();
         hasher.update(b"oxy-media-source-revision-v2\0");
-        update_path(&mut hasher, &canonical_path);
-        hasher.update(file_identity.as_bytes());
+        update_path(&mut hasher, &observed.canonical_path);
+        hasher.update(observed.file_identity.as_bytes());
         hasher.update([0]);
-        hasher.update(size_bytes.to_le_bytes());
-        hasher.update(modified.as_bytes());
+        hasher.update(observed.size_bytes.to_le_bytes());
+        hasher.update(observed.modified.as_bytes());
         let revision_id = format!("{:x}", hasher.finalize());
         Ok(Self {
-            canonical_path,
-            file_identity,
-            size_bytes,
-            modified,
+            canonical_path: observed.canonical_path,
+            file_identity: observed.file_identity,
+            size_bytes: observed.size_bytes,
+            modified: observed.modified,
             revision_id,
         })
     }
@@ -292,37 +289,10 @@ fn update_path(hasher: &mut Sha256, path: &std::path::Path) {
     hasher.update([0, 0]);
 }
 
-#[cfg(unix)]
-fn platform_file_identity(metadata: &fs::Metadata) -> String {
-    use std::os::unix::fs::MetadataExt;
-    format!("{}:{}", metadata.dev(), metadata.ino())
-}
-
-#[cfg(windows)]
-fn platform_file_identity(metadata: &fs::Metadata) -> String {
-    use std::os::windows::fs::MetadataExt;
-    format!(
-        "{}:{}",
-        metadata.volume_serial_number().unwrap_or_default(),
-        metadata.file_index().unwrap_or_default()
-    )
-}
-
-#[cfg(unix)]
-fn platform_modified(metadata: &fs::Metadata) -> String {
-    use std::os::unix::fs::MetadataExt;
-    format!("{}:{}", metadata.mtime(), metadata.mtime_nsec())
-}
-
-#[cfg(windows)]
-fn platform_modified(metadata: &fs::Metadata) -> String {
-    use std::os::windows::fs::MetadataExt;
-    metadata.last_write_time().to_string()
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::fs;
 
     fn artifact(
         representation: ArtifactRepresentation,

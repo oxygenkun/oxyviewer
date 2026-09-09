@@ -479,7 +479,7 @@ fn decode_session_backend(
             crate::backends::ffmpeg_heif::can_decode(path)?;
             #[cfg(target_os = "windows")]
             {
-                return Ok(SessionDecode::EncodedTiles(
+                Ok(SessionDecode::EncodedTiles(
                     crate::backends::ffmpeg_heif::decode_full_jpeg_tiles(
                         path,
                         crate::ImageDimensions {
@@ -488,7 +488,7 @@ fn decode_session_backend(
                         },
                         false,
                     )?,
-                ));
+                ))
             }
             #[cfg(any(target_os = "macos", target_os = "linux"))]
             {

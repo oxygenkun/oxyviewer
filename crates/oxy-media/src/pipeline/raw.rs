@@ -34,7 +34,9 @@ static FAILED_EMBEDDED_REVISIONS: OnceLock<Mutex<VecDeque<String>>> = OnceLock::
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum RawBackend {
+    #[cfg(target_os = "macos")]
     AppleCoreImage,
+    #[cfg(target_os = "macos")]
     AppleImageIo,
     LibRawDevelopment,
 }
@@ -327,14 +329,10 @@ fn render_developed(
             RawBackend::AppleCoreImage => {
                 apple_core_image::render_raw_jpeg(path, &destination, max_size, quality)
             }
-            #[cfg(not(target_os = "macos"))]
-            RawBackend::AppleCoreImage => Err(MediaError::NativeDecoderUnavailable),
             #[cfg(target_os = "macos")]
             RawBackend::AppleImageIo => {
                 apple_image_io::render_jpeg(path, &destination, max_size, quality)
             }
-            #[cfg(not(target_os = "macos"))]
-            RawBackend::AppleImageIo => Err(MediaError::NativeDecoderUnavailable),
             RawBackend::LibRawDevelopment => libraw::developed(path, max_size)
                 .map_err(|message| MediaError::LibRaw {
                     path: path.to_owned(),
