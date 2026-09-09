@@ -350,8 +350,9 @@ Tauri `CacheManager` 为每个 preview 请求提供当前目录快照。默认�
 `app_cache_dir()/previews`；自定义父目录会追加应用专属的 `OxyViewer Cache/previews`。位置和
 1–500 GB 容量上限写入 app data 配置，切换位置不迁移旧 artifact。
 
-legacy flat cache 命中仍可刷新文件时间；v2 artifact 文件是不可变内容，不能 touch，否则会使
-resource 记录的 file revision 失效。v2 recency/lease 位于 manifest 和 lease marker。同步 cache hit
+应用启动时会删除 app-owned preview 目录第一层的 pre-v2 平铺文件，不再读取、统计或裁剪旧布局。
+v2 artifact 文件是不可变内容，不能 touch，否则会使 resource 记录的 file revision 失效；
+recency/lease 位于 manifest 和 lease marker。同步 cache hit
 返回后可后台清理；异步 publication 必须在真正提交完成后清理，同一时刻最多一个维护任务。当前
 WebView resource 的磁盘 lease 会跨 cache instance 保护文件；clear 使它不再成为新 lookup 命中，但
 延迟删除活跃文件。
@@ -366,8 +367,8 @@ lock，因此 generation 一致性不依赖异步持久化的文件写入速度�
 中先释放再重新持有。组件仍负责定时续租和过期后的重新请求；IPC teardown 失败由后端 TTL
 兜底，迟到且无使用者的 artifact 也走同一释放入口。
 
-容量扫描是并发目录的近似快照，不是事务：原子写入可能在枚举临时文件后、读取属性前完成
-重命名。目录打开、枚举和属性读取遇到 `NotFound` 时按已消失处理；权限及其他 IO 错误仍返回。
+启动清理只删除第一层普通文件，不遍历子目录也不跟随符号链接。v2 容量维护受 cache lock 和
+manifest 约束；目录项消失按并发删除处理，权限及其他 IO 错误仍返回。
 扫描不再用 `exists()` 前置检查来掩盖错误，也不为此持有解码锁或阻塞缓存写入。
 
 ## 11. 取消的真实语义

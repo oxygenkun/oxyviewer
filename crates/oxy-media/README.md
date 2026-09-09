@@ -165,21 +165,19 @@ HEIF Full 的容量错误不进入 8192px fallback，保留已显示的过渡图
 ### Cache 管理
 
 ```rust
-pub fn preview_cache_usage(cache_dir: &Path) -> Result<CacheUsage, MediaError>;
-pub fn prune_preview_cache(
-    cache_dir: &Path,
-    max_size_bytes: u64,
-    protected_path: Option<&Path>,
-) -> Result<CacheUsage, MediaError>;
-pub fn clear_preview_cache(cache_dir: &Path) -> Result<CacheUsage, MediaError>;
+let cache = DiskMediaCache::new(cache_parent, manifest_index_capacity)?;
+let usage = cache.usage()?;
+let usage = cache.prune(max_size_bytes)?;
+cache.clear()?;
 ```
 
-- `preview_cache_usage`：统计 cache 目录第一层普通文件。
-- `prune_preview_cache`：按修改时间从旧到新删除，直到满足容量限制；可保护当前刚返回的 artifact。
-- `clear_preview_cache`：只删除目录第一层普通文件，不递归删除子目录。
-- `CacheUsage` 返回 `size_bytes` 和 `file_count`。
+- `usage` 只统计 v2 manifest 管理的 artifact。
+- `prune` 按 manifest recency 从旧到新删除，lease 和显式 protected path 会保护在用 artifact。
+- `clear` 提升 generation，并按 lease 规则清理 v2 artifact，使旧 generation 不再命中。
+- `CacheUsage` 返回 `size_bytes` 和 `artifact_count`。
 
-Cache 是可重建数据。调用者负责选择应用专属目录，并避免把任意用户目录直接交给清理接口。
+Cache 是可重建数据。调用者负责选择应用专属父目录；`DiskMediaCache` 只维护其中固定的
+`media-cache-v2` owned layout。
 
 ### 版本和错误
 

@@ -824,7 +824,6 @@ impl PreviewQueue {
             };
             if let Some(managed_path) = managed_path {
                 result.path = managed_path.clone();
-                queue.cache.mark_used(&managed_path);
                 if queue.cache.try_start_prune() {
                     let cache = Arc::clone(&queue.cache);
                     std::thread::spawn(move || {

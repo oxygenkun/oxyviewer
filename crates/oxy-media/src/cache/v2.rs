@@ -285,7 +285,7 @@ struct ManifestArtifact {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct V2CacheUsage {
+pub struct CacheUsage {
     pub size_bytes: u64,
     pub artifact_count: usize,
 }
@@ -640,7 +640,7 @@ impl DiskMediaCache {
         Ok(protected)
     }
 
-    pub fn usage(&self) -> Result<V2CacheUsage, MediaError> {
+    pub fn usage(&self) -> Result<CacheUsage, MediaError> {
         let _operation = self
             .inner
             .operation
@@ -649,7 +649,7 @@ impl DiskMediaCache {
         let cache_lock = self.open_cache_lock()?;
         FileExt::lock_shared(&cache_lock)?;
         let usage = collect_artifacts(&self.inner.root)?.into_iter().fold(
-            V2CacheUsage {
+            CacheUsage {
                 size_bytes: 0,
                 artifact_count: 0,
             },
@@ -663,7 +663,7 @@ impl DiskMediaCache {
         Ok(usage)
     }
 
-    pub fn prune(&self, max_size_bytes: u64) -> Result<V2CacheUsage, MediaError> {
+    pub fn prune(&self, max_size_bytes: u64) -> Result<CacheUsage, MediaError> {
         self.prune_with_protected(max_size_bytes, None)
     }
 
@@ -671,7 +671,7 @@ impl DiskMediaCache {
         &self,
         max_size_bytes: u64,
         protected_path: Option<&Path>,
-    ) -> Result<V2CacheUsage, MediaError> {
+    ) -> Result<CacheUsage, MediaError> {
         let _operation = self
             .inner
             .operation
@@ -689,7 +689,7 @@ impl DiskMediaCache {
         // exclusive lock to scan leases or rewrite/fsync every manifest.
         if total <= max_size_bytes {
             FileExt::unlock(&cache_lock)?;
-            return Ok(V2CacheUsage {
+            return Ok(CacheUsage {
                 size_bytes: total,
                 artifact_count: artifacts.len(),
             });
@@ -721,7 +721,7 @@ impl DiskMediaCache {
             .clear();
         FileExt::unlock(&cache_lock)?;
         let remaining = collect_artifacts(&self.inner.root)?;
-        Ok(V2CacheUsage {
+        Ok(CacheUsage {
             size_bytes: remaining.iter().map(|entry| entry.size_bytes).sum(),
             artifact_count: remaining.len(),
         })

@@ -478,6 +478,14 @@ cache key、artifact 文件名或执行 cache 原子提交；需要文件输出�
 接入资源 DTO 时补 fixture 验证。HEIF tile 的完整产物继续登记 v2，但 tile 传输生命周期没有重写。
 本里程碑未运行会清应用缓存的 E2E runner，也未更新性能 baseline。
 
+## 实施记录：移除旧缓存兼容（2026-09-09）
+
+应用缓存管理现只使用 `DiskMediaCache`：settings/usage/prune/clear 不再调用旧 flat store API，
+`oxy-media` 也不再导出该兼容层。启动时会清理当前 cache 位置及已知默认 preview 目录第一层的
+pre-v2 普通文件；切换到自定义位置时同样先执行一次该清理。清理不递归、不跟随链接，
+`media-cache-v2` 和其他子目录保持不变。运行期 recency、容量和在用保护统一由 v2 manifest、
+generation 与 lease 管理。
+
 ## 实施记录：应用发布接入里程碑（2026-09-08）
 
 生产 `PreviewQueue` 现调用保留 dispatcher 的 `preview_for_app`：磁盘命中和原始 JPEG/PNG/WebP

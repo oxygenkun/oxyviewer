@@ -2,13 +2,12 @@ use oxy_domain::{CacheSettings, CacheSettingsUpdate};
 use oxy_media::MediaCache;
 use serde::{Deserialize, Serialize};
 use std::{
-    fs::{self, File, FileTimes},
+    fs,
     path::{Path, PathBuf},
     sync::{
         RwLock,
         atomic::{AtomicU8, Ordering},
     },
-    time::SystemTime,
 };
 
 pub const DEFAULT_MAX_SIZE_BYTES: u64 = 10 * 1024 * 1024 * 1024;
@@ -59,13 +58,20 @@ impl CacheManager {
         {
             config.custom_parent = None;
         }
+        let preview_dir =
+            resolve_preview_dir(&default_preview_dir, config.custom_parent.as_deref());
+        fs::create_dir_all(&preview_dir).map_err(|error| error.to_string())?;
+        remove_legacy_cache_files(&preview_dir)?;
+        if preview_dir != default_preview_dir {
+            remove_legacy_cache_files(&default_preview_dir)?;
+        }
+        oxy_media::DiskMediaCache::new(&preview_dir, 256).map_err(|error| error.to_string())?;
         let manager = Self {
             default_preview_dir,
             config_path,
             config: RwLock::new(config),
             prune_state: AtomicU8::new(PRUNE_IDLE),
         };
-        fs::create_dir_all(manager.preview_dir()).map_err(|error| error.to_string())?;
         Ok(manager)
     }
 
@@ -91,9 +97,7 @@ impl CacheManager {
             .unwrap_or_else(std::sync::PoisonError::into_inner);
         let location =
             resolve_preview_dir(&self.default_preview_dir, config.custom_parent.as_deref());
-        let legacy_usage =
-            oxy_media::preview_cache_usage(&location).map_err(|error| error.to_string())?;
-        let v2_usage = oxy_media::DiskMediaCache::new(&location, 256)
+        let usage = oxy_media::DiskMediaCache::new(&location, 256)
             .and_then(|cache| cache.usage())
             .map_err(|error| error.to_string())?;
         Ok(CacheSettings {
@@ -102,7 +106,7 @@ impl CacheManager {
             custom_parent: config.custom_parent.clone(),
             is_custom_location: config.custom_parent.is_some(),
             max_size_bytes: config.max_size_bytes,
-            used_size_bytes: legacy_usage.size_bytes.saturating_add(v2_usage.size_bytes),
+            used_size_bytes: usage.size_bytes,
         })
     }
 
@@ -126,22 +130,16 @@ impl CacheManager {
         let preview_dir =
             resolve_preview_dir(&self.default_preview_dir, next.custom_parent.as_deref());
         fs::create_dir_all(&preview_dir).map_err(|error| error.to_string())?;
+        remove_legacy_cache_files(&preview_dir)?;
         self.persist(&next)?;
         *self
             .config
             .write()
             .unwrap_or_else(std::sync::PoisonError::into_inner) = next;
-        let v2 =
-            oxy_media::DiskMediaCache::new(&preview_dir, 256).map_err(|error| error.to_string())?;
-        let v2_usage = v2
+        oxy_media::DiskMediaCache::new(&preview_dir, 256)
+            .map_err(|error| error.to_string())?
             .prune(update.max_size_bytes)
             .map_err(|error| error.to_string())?;
-        oxy_media::prune_preview_cache(
-            &preview_dir,
-            update.max_size_bytes.saturating_sub(v2_usage.size_bytes),
-            None,
-        )
-        .map_err(|error| error.to_string())?;
         self.settings()
     }
 
@@ -150,22 +148,7 @@ impl CacheManager {
         oxy_media::DiskMediaCache::new(&preview_dir, 256)
             .and_then(|cache| cache.clear())
             .map_err(|error| error.to_string())?;
-        oxy_media::clear_preview_cache(&preview_dir).map_err(|error| error.to_string())?;
         self.settings()
-    }
-
-    pub fn mark_used(&self, path: &Path) {
-        let cache_dir = self.preview_dir();
-        let is_legacy = path.parent() == Some(cache_dir.as_path());
-        // V2 artifacts are immutable and resource IDs record their observed
-        // file revision. Recency for v2 belongs in its manifest; touching the
-        // file here would invalidate an already-registered resource.
-        if !is_legacy {
-            return;
-        }
-        if let Ok(file) = File::options().write(true).open(path) {
-            let _ = file.set_times(FileTimes::new().set_modified(SystemTime::now()));
-        }
     }
 
     pub fn try_start_prune(&self) -> bool {
@@ -249,23 +232,15 @@ impl CacheManager {
         // An in-flight decode may have completed in the previous location.
         // Leave that old artifact alone; the selected location is authoritative
         // for all subsequent requests.
-        let is_legacy = protected_path.parent() == Some(cache_dir.as_path());
-        let v2 =
+        let cache =
             oxy_media::DiskMediaCache::new(&cache_dir, 256).map_err(|error| error.to_string())?;
-        let is_v2 = protected_path.starts_with(v2.root());
-        if !is_legacy && !is_v2 {
+        if !protected_path.starts_with(cache.root()) {
             return Ok(());
         }
-        let v2_usage = v2
-            .prune_with_protected(self.max_size_bytes(), is_v2.then_some(protected_path))
-            .map_err(|error| error.to_string())?;
-        oxy_media::prune_preview_cache(
-            &cache_dir,
-            self.max_size_bytes().saturating_sub(v2_usage.size_bytes),
-            is_legacy.then_some(protected_path),
-        )
-        .map(|_| ())
-        .map_err(|error| error.to_string())
+        cache
+            .prune_with_protected(self.max_size_bytes(), Some(protected_path))
+            .map(|_| ())
+            .map_err(|error| error.to_string())
     }
 
     fn persist(&self, config: &PersistedCacheConfig) -> Result<(), String> {
@@ -286,6 +261,38 @@ fn resolve_preview_dir(default: &Path, custom_parent: Option<&Path>) -> PathBuf 
 
 fn valid_limit(value: u64) -> bool {
     (MIN_MAX_SIZE_BYTES..=MAX_MAX_SIZE_BYTES).contains(&value)
+}
+
+/// Removes the pre-v2 flat cache format without traversing directories or
+/// following links. The preview directory is application-owned even when its
+/// parent was selected by the user.
+fn remove_legacy_cache_files(cache_dir: &Path) -> Result<(), String> {
+    let entries = match fs::read_dir(cache_dir) {
+        Ok(entries) => entries,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+        Err(error) => return Err(error.to_string()),
+    };
+    for entry in entries {
+        let entry = match entry {
+            Ok(entry) => entry,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => continue,
+            Err(error) => return Err(error.to_string()),
+        };
+        let file_type = match entry.file_type() {
+            Ok(file_type) => file_type,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => continue,
+            Err(error) => return Err(error.to_string()),
+        };
+        if !file_type.is_file() {
+            continue;
+        }
+        match fs::remove_file(entry.path()) {
+            Ok(()) => {}
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(error) => return Err(error.to_string()),
+        }
+    }
+    Ok(())
 }
 
 #[cfg(test)]
@@ -322,33 +329,51 @@ mod tests {
     }
 
     #[test]
-    fn marking_v2_resource_used_does_not_mutate_its_immutable_file_revision() {
+    fn startup_removes_flat_cache_files_and_preserves_owned_directories() {
         let parent = tempfile::tempdir().unwrap();
         let preview_dir = parent.path().join("previews");
-        let manager =
-            CacheManager::load(preview_dir.clone(), parent.path().join("settings.json")).unwrap();
-        let v2 = oxy_media::DiskMediaCache::new(&preview_dir, 8).unwrap();
-        let source_dir = v2.root().join("aa");
-        std::fs::create_dir(&source_dir).unwrap();
-        let artifact = source_dir.join("artifact.jpg");
-        std::fs::write(&artifact, b"immutable resource bytes").unwrap();
-        let registry =
-            oxy_media::ResourceRegistry::new(oxy_media::ResourceRegistryLimits::new(1, 1024));
-        let resource = registry
-            .register_file(
-                &artifact,
-                "image/jpeg",
-                oxy_media::DisplayDimensions {
-                    width: 1,
-                    height: 1,
-                },
-                oxy_media::ArtifactRepresentation::Decoded,
-            )
-            .unwrap();
+        std::fs::create_dir_all(&preview_dir).unwrap();
+        let legacy = preview_dir.join("legacy-preview.jpg");
+        std::fs::write(&legacy, b"legacy").unwrap();
+        let nested = preview_dir.join("unrelated");
+        std::fs::create_dir(&nested).unwrap();
+        std::fs::write(nested.join("keep.txt"), b"keep").unwrap();
 
-        manager.mark_used(&artifact);
+        CacheManager::load(preview_dir.clone(), parent.path().join("settings.json")).unwrap();
 
-        assert!(registry.resolve(&resource.descriptor.resource_id).is_some());
+        assert!(!legacy.exists());
+        assert_eq!(std::fs::read(nested.join("keep.txt")).unwrap(), b"keep");
+        assert!(preview_dir.join("media-cache-v2").is_dir());
+    }
+
+    #[test]
+    fn startup_cleans_configured_and_default_cache_locations() {
+        let parent = tempfile::tempdir().unwrap();
+        let default = parent.path().join("default/previews");
+        let custom_parent = parent.path().join("custom");
+        let custom = custom_parent.join(CUSTOM_CACHE_FOLDER).join("previews");
+        std::fs::create_dir_all(&default).unwrap();
+        std::fs::create_dir_all(&custom).unwrap();
+        let default_legacy = default.join("old-default.jpg");
+        let custom_legacy = custom.join("old-custom.jpg");
+        std::fs::write(&default_legacy, b"legacy").unwrap();
+        std::fs::write(&custom_legacy, b"legacy").unwrap();
+        let config_path = parent.path().join("settings.json");
+        std::fs::write(
+            &config_path,
+            serde_json::to_vec(&PersistedCacheConfig {
+                custom_parent: Some(custom_parent.canonicalize().unwrap()),
+                max_size_bytes: DEFAULT_MAX_SIZE_BYTES,
+            })
+            .unwrap(),
+        )
+        .unwrap();
+
+        let manager = CacheManager::load(default, config_path).unwrap();
+
+        assert_eq!(manager.preview_dir(), custom.canonicalize().unwrap());
+        assert!(!default_legacy.exists());
+        assert!(!custom_legacy.exists());
     }
 
     #[test]

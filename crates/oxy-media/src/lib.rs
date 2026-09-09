@@ -19,8 +19,7 @@ pub use cache::{
     DetailRequirement, DiskMediaCache, DisplayDimensions, MEDIA_CACHE_POLICY_REVISION,
     MediaArtifact, MediaCache, MemoryMediaCache, OrientationRequirement, OrientationState,
     PendingArtifact, PendingStagedArtifact, PresentationRequirement, RepresentationRequirement,
-    Satisfaction, SharpeningState, SourceRevision, V2CacheUsage, VariantIdentity,
-    clear_preview_cache, preview_cache_usage, prune_preview_cache, satisfies,
+    Satisfaction, SharpeningState, SourceRevision, VariantIdentity, satisfies,
 };
 pub use error::MediaError;
 pub use heif_service::{HeifDecodeService, HeifTile, HeifTileData, HeifTilePublication};

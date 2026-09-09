@@ -57,7 +57,6 @@ pub(crate) async fn get_preview(
         .ok_or_else(|| "ready image projection has no artifact".to_owned())?;
     if result.persistence == Some(oxy_domain::MediaPersistence::Persisted) {
         let protected_path = result.path.clone();
-        cache.mark_used(&protected_path);
         if cache.try_start_prune() {
             tauri::async_runtime::spawn_blocking(move || {
                 loop {
@@ -230,15 +229,13 @@ pub(crate) async fn start_heif_full(
         .map_err(|error| error.to_string())?;
     if use_artifact {
         let preview_queue = state.preview_queue.clone();
-        let cache = state.cache.clone();
         let projection = tauri::async_runtime::spawn_blocking(move || {
             let projection =
                 resolve_heif_full_projection(&app, &preview_queue, asset, preview_dir, request_id)?;
-            let artifact = projection
+            projection
                 .result
                 .as_ref()
                 .ok_or_else(|| "ready HEIF full projection has no artifact".to_owned())?;
-            cache.mark_used(&artifact.path);
             Ok::<_, String>(projection)
         })
         .await
@@ -275,7 +272,6 @@ pub(crate) async fn start_heif_full(
             {
                 Ok(projection) => {
                     if let Some(artifact) = projection.result {
-                        cache.mark_used(&artifact.path);
                         if cache.try_start_prune() {
                             loop {
                                 if let Err(error) = cache.prune_after_write(&artifact.path) {
