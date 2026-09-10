@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { clearBrowserImageResources, isBrowserImageReady, markBrowserImageReady } from "./browserImageCache";
 import type { ImageProjection } from "../types";
 import {
   acceptImageProjection,
@@ -21,6 +22,20 @@ const projection = (stateRevision: number): ImageProjection => ({
 });
 
 describe("image projection mirror", () => {
+  it("keeps decoded immutable resources through persistence updates", () => {
+    clearBrowserImageResources();
+    useImageProjectionStore.setState({ records: {} });
+    const ready: ImageProjection = { ...projection(1), status: "ready",
+      result: { path: "one.jpg", width: 1, height: 1, kind: "decoded", renderLevel: "thumbnail",
+        resource: { resourceId: "same", url: "oxy-media://localhost/resource/same", mediaType: "image/jpeg" } } };
+    acceptImageProjection(ready);
+    const url = useImageProjectionStore.getState().records[imageProjectionKey(ready.path, ready.level)].result!.url;
+    markBrowserImageReady(url, { width: 1, height: 1 });
+    acceptImageProjection({ ...ready, stateRevision: 2 });
+    expect(isBrowserImageReady(url)).toBe(true);
+    acceptImageProjection({ ...ready, stateRevision: 3, sourceRevision: "changed" });
+    expect(isBrowserImageReady(url)).toBe(false);
+  });
   beforeEach(() => useImageProjectionStore.setState({ records: {} }));
 
   it("accepts only increasing Rust state revisions", () => {

@@ -1,7 +1,8 @@
-import { useEffect } from "react";
+import { useEffect, useRef } from "react";
 import { preloadAssetLoupeBase } from "../lib/loupePreload";
 import { protectBrowserImages } from "../lib/browserImageCache";
 import { imageProjectionKey, useImageProjectionStore } from "../lib/imageProjection";
+import { browserImageWorkerCount } from "../lib/previewQueue";
 import { previewUrl } from "../lib/api";
 import type { AssetSummary } from "../types";
 
@@ -9,7 +10,7 @@ interface FilmstripPreviewPreloaderProps {
   assets: AssetSummary[];
 }
 
-/** Two bounded workers keep a slow NAS read from blocking every neighbor. */
+/** Reconcile neighbors without restarting requests shared by consecutive viewports. */
 export function FilmstripPreviewPreloader({ assets }: FilmstripPreviewPreloaderProps) {
   const records = useImageProjectionStore((state) => state.records);
   useEffect(() => {
@@ -22,25 +23,43 @@ export function FilmstripPreviewPreloader({ assets }: FilmstripPreviewPreloaderP
     return () => protectBrowserImages([]);
   }, [assets, records]);
 
+  const tasks = useRef(new Map<string, { controller: AbortController; done: boolean }>());
+  const latestAssets = useRef(assets);
+  latestAssets.current = assets;
+  const pump = useRef<() => void>(() => {});
+  pump.current = () => {
+    let running = [...tasks.current.values()].filter((task) => !task.done).length;
+    for (const [rank, asset] of latestAssets.current.entries()) {
+      if (running >= browserImageWorkerCount) break;
+      const key = `${asset.path}\0${asset.modifiedAtMs}`;
+      if (tasks.current.has(key)) continue;
+      const task = { controller: new AbortController(), done: false };
+      tasks.current.set(key, task);
+      running += 1;
+      void preloadAssetLoupeBase(asset, rank, task.controller.signal)
+        .catch(() => undefined)
+        .finally(() => {
+          task.done = true;
+          if (!task.controller.signal.aborted) pump.current();
+        });
+    }
+  };
   useEffect(() => {
-    const controller = new AbortController();
-    let next = 0;
-    const run = async () => {
-      while (!controller.signal.aborted && next < assets.length) {
-        const rank = next++;
-        const asset = assets[rank];
-        try {
-          await preloadAssetLoupeBase(asset, rank, controller.signal);
-        } catch (error) {
-          if (controller.signal.aborted) return;
-          console.warn(`[OxyPreview] filmstrip preload failed for ${asset.name}`, error);
-        }
+    const wanted = new Set(assets.map((asset) => `${asset.path}\0${asset.modifiedAtMs}`));
+    for (const [key, task] of tasks.current) {
+      if (!wanted.has(key)) {
+        task.controller.abort();
+        tasks.current.delete(key);
       }
-    };
-    // Defer dispatch so StrictMode's discarded mount cannot start I/O.
-    queueMicrotask(() => { void run(); void run(); });
-    return () => controller.abort();
+    }
+    let disposed = false;
+    queueMicrotask(() => { if (!disposed) pump.current(); });
+    return () => { disposed = true; };
   }, [assets]);
+  useEffect(() => () => {
+    for (const task of tasks.current.values()) task.controller.abort();
+    tasks.current.clear();
+  }, []);
 
   return null;
 }

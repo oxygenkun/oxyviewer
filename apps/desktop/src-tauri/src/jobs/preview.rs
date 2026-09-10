@@ -24,7 +24,6 @@ use std::{
 use tauri::{AppHandle, Emitter};
 
 pub const IMAGE_PROJECTION_UPDATED_EVENT: &str = "image-projection-updated";
-const PREVIEW_WORKER_COUNT: usize = 2;
 const PROJECTION_SOURCE_REVISION_VERSION: &str = "projection-source-v1";
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
@@ -93,9 +92,21 @@ struct WorkRequest {
     valid_at: u64,
     waiters: Vec<Waiter>,
     cancellation: CancellationToken,
+    started_tier: u16,
 }
 
 impl WorkRequest {
+    fn take_waiters_for_restart(&mut self, priority: PreviewPriority) -> Option<Vec<Waiter>> {
+        if self.cancellation.is_cancelled()
+            || (priority == PreviewPriority::Loupe && self.started_tier > 0)
+        {
+            self.cancellation.cancel();
+            Some(std::mem::take(&mut self.waiters))
+        } else {
+            None
+        }
+    }
+
     fn remove_waiter(&mut self, request_id: &str) -> bool {
         let previous_len = self.waiters.len();
         self.waiters.retain(|waiter| waiter.id != request_id);
@@ -216,7 +227,7 @@ impl PreviewQueue {
             cache,
             request_generation: Arc::new(AtomicU64::new(0)),
         };
-        for worker_index in 0..PREVIEW_WORKER_COUNT {
+        for worker_index in 0..oxy_runtime::image_worker_count() {
             queue.spawn_worker(app.clone(), worker_index);
         }
         queue
@@ -420,6 +431,22 @@ impl PreviewQueue {
             .effective_position(&schedule_key)
             .unwrap_or(requested_position);
 
+        // A selected observer must not wait behind the old decode-gate
+        // priority of a nearby request. Restart with a fresh cancellation
+        // token and carry its subscribers into the new authoritative revision.
+        let mut carried_waiters = Vec::new();
+        let replace_active = work.active.get(&key).is_some_and(|active| {
+            let mut active = active.lock().expect("active preview request lock poisoned");
+            if let Some(waiters) = active.take_waiters_for_restart(priority) {
+                carried_waiters = waiters;
+                true
+            } else {
+                false
+            }
+        });
+        if replace_active {
+            work.active.remove(&key);
+        }
         // 相同 RequestKey 已 active
         if let Some(active) = work.active.get(&key) {
             active
@@ -488,12 +515,16 @@ impl PreviewQueue {
         let request = WorkRequest {
             source_revision,
             valid_at,
-            waiters: vec![Waiter {
-                id: request_id,
-                sender,
-                interim_delivered: false,
-            }],
+            waiters: {
+                carried_waiters.push(Waiter {
+                    id: request_id,
+                    sender,
+                    interim_delivered: false,
+                });
+                carried_waiters
+            },
             cancellation: CancellationToken::default(),
+            started_tier: effective_position.tier,
         };
         work.pending.push_or_merge(
             key.clone(),
@@ -624,7 +655,7 @@ impl PreviewQueue {
     }
 
     /// Drops work that has not started for assets outside the directory the
-    /// user is currently viewing. Active decodes are allowed to finish.
+    /// user is currently viewing and cancels active work outside it.
     pub fn clear_pending_outside_directory(&self, directory: &std::path::Path) -> usize {
         let mut work = self.work.0.lock().expect("preview queue lock poisoned");
         work.active_directory = Some(directory.to_owned());
@@ -645,6 +676,15 @@ impl PreviewQueue {
             for waiter in &request.waiters {
                 let changes = work.schedule.release_scope(&waiter.id);
                 work.apply_schedule_changes(changes);
+            }
+        }
+        for (key, request) in &work.active {
+            if key.source_revision.path.parent() != Some(directory) {
+                request
+                    .lock()
+                    .expect("active preview request lock poisoned")
+                    .cancellation
+                    .cancel();
             }
         }
         let removed_count = removed.len();
@@ -705,7 +745,7 @@ impl PreviewQueue {
             .collect();
         DebugQueueState {
             name: "preview".into(),
-            concurrency: PREVIEW_WORKER_COUNT,
+            concurrency: oxy_runtime::image_worker_count(),
             pending,
             active,
         }
@@ -924,13 +964,14 @@ impl PreviewQueue {
                                 .wait(pending)
                                 .expect("preview queue lock poisoned");
                         }
-                        // Leave background requests in the priority queue so
-                        // a newly visible request can wake and pass them.
-                        while (queue.library.foreground.is_busy() || !pending.active.is_empty())
+                        // Keep one worker available for a newly selected image;
+                        // other work remains ordered in the shared queue.
+                        while pending.active.len()
+                            >= oxy_runtime::image_worker_count().saturating_sub(1).max(1)
                             && !pending
                                 .pending
                                 .entries()
-                                .any(|(_, _, position)| position.tier <= 1)
+                                .any(|(_, _, position)| position.tier == 0)
                         {
                             pending = queue
                                 .work
@@ -950,6 +991,8 @@ impl PreviewQueue {
                                     pending.pending_keys.remove(&schedule_key);
                                 }
                             }
+                            let mut request = request;
+                            request.started_tier = position.tier;
                             let request = Arc::new(Mutex::new(request));
                             pending.active.insert(key.clone(), request.clone());
                             (key, request, position)
@@ -1068,7 +1111,13 @@ impl PreviewQueue {
                                 .expect("active preview request lock poisoned")
                                 .waiters,
                         );
-                        work.active.remove(&key);
+                        if work
+                            .active
+                            .get(&key)
+                            .is_some_and(|active| Arc::ptr_eq(active, &request))
+                        {
+                            work.active.remove(&key);
+                        }
                         for waiter in &waiters {
                             let changes = work.schedule.release_scope(&waiter.id);
                             work.apply_schedule_changes(changes);
@@ -1652,10 +1701,55 @@ mod tests {
                 interim_delivered: true,
             }],
             cancellation: cancellation.clone(),
+            started_tier: 0,
         };
 
         assert!(request.remove_waiter("consumer"));
         assert!(cancellation.is_cancelled());
+    }
+
+    #[test]
+    fn selection_promotes_active_neighbors_without_losing_subscribers() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("image.HIF");
+        std::fs::write(&path, b"source").unwrap();
+        let (sender, _receiver) = mpsc::channel();
+        let mut request = WorkRequest {
+            source_revision: ProjectionSourceRevision::observe(
+                &path,
+                directory.path(),
+                AssetKind::Heif,
+                RenderLevel::Thumbnail,
+            )
+            .unwrap(),
+            valid_at: 1,
+            waiters: vec![Waiter {
+                id: "neighbor".into(),
+                sender,
+                interim_delivered: false,
+            }],
+            cancellation: CancellationToken::default(),
+            started_tier: 2,
+        };
+        assert!(
+            request
+                .take_waiters_for_restart(PreviewPriority::Visible)
+                .is_none()
+        );
+        assert!(!request.cancellation.is_cancelled());
+        let waiters = request
+            .take_waiters_for_restart(PreviewPriority::Loupe)
+            .unwrap();
+        assert_eq!(waiters[0].id, "neighbor");
+        assert!(request.waiters.is_empty());
+        assert!(request.cancellation.is_cancelled());
+        // A rapid return to a cancelled request must restart even at the same priority.
+        request.started_tier = 0;
+        assert!(
+            request
+                .take_waiters_for_restart(PreviewPriority::Loupe)
+                .is_some()
+        );
     }
 
     #[test]

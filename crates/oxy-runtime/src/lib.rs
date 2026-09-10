@@ -13,6 +13,13 @@ use std::{
     },
 };
 
+/// Maximum concurrent image workers, based on the CPUs available to this process.
+pub fn image_worker_count() -> usize {
+    static COUNT: std::sync::LazyLock<usize> =
+        std::sync::LazyLock::new(|| std::thread::available_parallelism().map_or(1, usize::from));
+    *COUNT
+}
+
 /// Cloneable cooperative cancellation shared by queues and blocking workers.
 #[derive(Debug, Clone, Default)]
 pub struct CancellationToken {

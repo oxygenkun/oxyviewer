@@ -179,7 +179,7 @@ describe("filmstrip thumbnail display retention", () => {
     expect(apiMocks.renewMediaResource).toHaveBeenCalledWith("full");
     expect(apiMocks.releaseMediaResource).not.toHaveBeenCalledWith("thumbnail");
     await act(async () => container.querySelector(".thumbnail__pending-image")!.dispatchEvent(new Event("load")));
-    expect(apiMocks.releaseMediaResource).toHaveBeenCalledWith("thumbnail");
+    expect(apiMocks.releaseMediaResource).not.toHaveBeenCalledWith("thumbnail");
     apiMocks.renewMediaResource.mockClear();
     await act(async () => projectStage("thumbnail", 2));
     expect(apiMocks.renewMediaResource).not.toHaveBeenCalledWith("thumbnail");
@@ -194,6 +194,8 @@ describe("filmstrip thumbnail display retention", () => {
     expect(apiMocks.releaseMediaResource).not.toHaveBeenCalledWith("old");
     expect(apiMocks.renewMediaResource).toHaveBeenCalledWith("new");
     await act(async () => container.querySelector(".thumbnail__pending-image")!.dispatchEvent(new Event("load")));
+    expect(apiMocks.releaseMediaResource).not.toHaveBeenCalledWith("old");
+    await act(async () => clearBrowserImageResources());
     expect(apiMocks.releaseMediaResource).toHaveBeenCalledWith("old");
   });
 

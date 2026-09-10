@@ -168,6 +168,10 @@ describe("generated preview cancellation", () => {
       "cancel_preview_request",
       expect.anything(),
     );
+    controller.abort();
+    expect(mocks.invoke).toHaveBeenCalledWith("cancel_preview_request", expect.objectContaining({
+      path: asset.path, level: "preview",
+    }));
   });
 
   it("retains Interim pixels when native publishes a terminal upgrade failure", async () => {

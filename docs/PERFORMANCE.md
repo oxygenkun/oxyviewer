@@ -16,6 +16,37 @@ end-to-end regression harness that enforces these budgets is described in
 
 ## Verification Log
 
+- 2026-09-10: Removed the scroll-idle resource gate for grid/list/filmstrip and
+  expanded overscan to 6 rows / 16 items / 12 items respectively. Preview workers
+  and the shared decode gate use available logical CPU count (8 on this Mac),
+  with a selected-image reserve on multicore systems. UI decoded images and HEIF
+  completed presentation nodes share a 1024-entry / 512 MiB LRU; cached-only
+  native pins are capped at 256 so tiny thumbnails cannot exhaust the native
+  registry's 512 slots. Immutable resource status updates retain decoded pixels.
+  Real HIF return testing found and fixed both a 180–220 ms full-canvas copy and
+  a parent effect that overwrote a cache hit with the loading state. Returns now
+  reattach the retained presentation node and reset selection state before commit.
+  Three isolated release/WebView runs of `navigation-cache-jpeg` verified 12
+  cached returns at 4–9 ms (median 5.5 ms). `navigation-cache-hif` verified 24
+  returns across sharpened canvas and unsharpened artifact presentations at
+  6–75 ms (median 8 ms), with an explicit memory-cache-hit requirement.
+  Earlier cold/warm JPEG first-preview median/P95 was 53/66 and 60/61 ms;
+  cold HIF was 40/49 ms, with first tile at 374/507 ms.
+  Three continuous grid-scroll runs over 600 JPEGs completed every stopped
+  viewport in 27–59 ms. The small-grid pressure test painted all 600 images,
+  peaked at 277 native entries, and settled at 61 entries for 61 mounted images;
+  the 80-HIF rapid-selection test revisited the last eight full images and
+  settled at 28 entries for 28 mounted images. Both passed cache-maintenance
+  protocol-read checks. These are local fixture results, not NAS measurements.
+  Final unlocked release verification passed three `filmstrip-scroll-hif` runs:
+  all 36 moving samples had all 17 visible thumbnails painted, with each sweep
+  taking 644–710 ms and whole-viewport readiness confirmed 27–33 ms after stop.
+  Three final 600-JPEG grid runs had 33/36 moving samples fully painted (the
+  minimum was 31/32), with all stopped viewports ready in 27–30 ms. Grid sweeps
+  took 1.62–2.72 seconds; these samples establish continued loading during
+  scrolling, not a frame-rate guarantee. The 100k first-page budget is not
+  claimed here.
+
 - 2026-09-09: On the reported 383-entry SMB HIF folder, three release/WebView continuous-scroll
   runs per implementation measured stop-to-whole-viewport readiness. Median times at the three
   stops changed from 1067/889/820 ms to 397/391/394 ms. The fixes bound the normal Sony prefix read

@@ -198,3 +198,20 @@ peak entries/encoded bytes 不越过配置，等待发布宽限和一次 10 秒�
 失败。`get_media_resource_stats` 仅在 debug 或显式 `OXY_PERF_SCENARIO` 下可用，不启动后台采样器。
 
 这些是 macOS packaged WebView 压力场景；Windows/Linux 原生环境须分别运行，不能用本机报告替代。
+
+### UI cache return and small-thumbnail pressure
+
+`navigation-cache-jpeg` and `navigation-cache-hif` warm two assets through the
+real loupe, then alternate four times (HEIF runs both unsharpened artifact and sharpened
+canvas presentations). Each return must commit the correct asset
+and a displayed image within 150 ms; JPEG URLs must match their warmed source,
+and HEIF must emit `heif:memory-cache-hit` instead of starting a new tile session.
+Marks `navigation:cache-return` retain the individual elapsed times.
+`resource-stress-small-grid` scrolls 600 small JPEGs to exercise native registry
+slots independently of the decoded-pixel budget, then runs the existing cache
+maintenance/read and resource-settlement checks.
+
+`filmstrip-scroll-hif` exercises the same continuous scroll probe horizontally
+with 80 HIF sources. Both scroll probes emit `*:moving` samples (displayed versus
+visible images) as well as stopped-viewport readiness. A locked or backgrounded
+WebView can clamp timers; such runs are not valid fast-scroll measurements.

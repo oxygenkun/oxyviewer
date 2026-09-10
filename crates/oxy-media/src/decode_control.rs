@@ -14,7 +14,8 @@ use std::{
 // own lane so it never blocks the unified thumbnail/loupe gate. The gate below
 // covers the progressive stages (512 / 4096) for every format.
 static RAW_FULL_DECODE_LOCK: Mutex<()> = Mutex::new(());
-static DECODE_GATE: DecodeGate = DecodeGate::new();
+static DECODE_GATE: LazyLock<DecodeGate> =
+    LazyLock::new(|| DecodeGate::with_capacity(oxy_runtime::image_worker_count()));
 // A stale selection may finish writing its rebuildable JPEG without blocking
 // the foreground decode gate needed by the newly selected HEIF.
 static HEIF_SESSION_CACHE_WRITE_LOCK: Mutex<()> = Mutex::new(());
@@ -51,10 +52,11 @@ impl From<oxy_domain::PreviewPriority> for DecodePriority {
 struct DecodeGate {
     state: Mutex<DecodeGateState>,
     ready: Condvar,
+    capacity: usize,
 }
 
 struct DecodeGateState {
-    active: bool,
+    active: usize,
     next_ticket: u64,
     waiters: VecDeque<DecodeWaiter>,
 }
@@ -62,7 +64,7 @@ struct DecodeGateState {
 impl DecodeGateState {
     const fn new() -> Self {
         Self {
-            active: false,
+            active: 0,
             next_ticket: 0,
             waiters: VecDeque::new(),
         }
@@ -80,10 +82,16 @@ pub(crate) struct DecodePermit<'a> {
 }
 
 impl DecodeGate {
+    #[cfg(test)]
     const fn new() -> Self {
+        Self::with_capacity(1)
+    }
+
+    const fn with_capacity(capacity: usize) -> Self {
         Self {
             state: Mutex::new(DecodeGateState::new()),
             ready: Condvar::new(),
+            capacity,
         }
     }
 
@@ -110,9 +118,16 @@ impl DecodeGate {
                 return Err(crate::MediaError::Cancelled);
             }
             let selected = selected_ticket(&state.waiters);
-            if !state.active && selected == Some(ticket) {
+            // Keep one CPU slot available for the latest selected image even
+            // when older visible/nearby native calls cannot be interrupted.
+            let limit = if priority == DecodePriority::Foreground {
+                self.capacity
+            } else {
+                self.capacity.saturating_sub(1).max(1)
+            };
+            if state.active < limit && selected == Some(ticket) {
                 state.waiters.retain(|waiter| waiter.ticket != ticket);
-                state.active = true;
+                state.active += 1;
                 return Ok(DecodePermit { gate: self });
             }
             let (next, _) = self
@@ -131,7 +146,11 @@ fn effective_priority(waiter: &DecodeWaiter) -> u8 {
         DecodePriority::Foreground => 2,
     };
     let aging = waiter.queued_at.elapsed().as_secs().min(2) as u8;
-    (base + aging).min(2)
+    if waiter.priority == DecodePriority::Foreground {
+        2
+    } else {
+        (base + aging).min(1)
+    }
 }
 
 fn selected_ticket(waiters: &VecDeque<DecodeWaiter>) -> Option<u64> {
@@ -148,7 +167,7 @@ impl Drop for DecodePermit<'_> {
             .state
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
-        state.active = false;
+        state.active -= 1;
         self.gate.ready.notify_all();
     }
 }
@@ -276,7 +295,7 @@ mod tests {
             priority: DecodePriority::Background,
             queued_at: Instant::now() - Duration::from_secs(2),
         };
-        assert_eq!(effective_priority(&waiter), 2);
+        assert_eq!(effective_priority(&waiter), 1);
     }
 
     #[test]
@@ -287,11 +306,39 @@ mod tests {
             panic!("simulate a failed decode");
         });
         assert!(result.is_err());
-        assert!(!gate.state.lock().unwrap().active);
+        assert_eq!(gate.state.lock().unwrap().active, 0);
         let permit = gate.acquire(DecodePriority::Background, &|| false).unwrap();
-        assert!(gate.state.lock().unwrap().active);
+        assert_eq!(gate.state.lock().unwrap().active, 1);
         drop(permit);
-        assert!(!gate.state.lock().unwrap().active);
+        assert_eq!(gate.state.lock().unwrap().active, 0);
+    }
+
+    #[test]
+    fn multiple_decodes_leave_capacity_for_selected_image() {
+        let gate = DecodeGate::with_capacity(3);
+        let first = gate.acquire(DecodePriority::Visible, &|| false).unwrap();
+        let second = gate.acquire(DecodePriority::Background, &|| false).unwrap();
+        let selected = gate.acquire(DecodePriority::Foreground, &|| false).unwrap();
+        assert_eq!(gate.state.lock().unwrap().active, 3);
+        drop((first, second, selected));
+        assert_eq!(gate.state.lock().unwrap().active, 0);
+    }
+
+    #[test]
+    fn old_background_never_overtakes_current_selection() {
+        let waiters = VecDeque::from([
+            DecodeWaiter {
+                ticket: 0,
+                priority: DecodePriority::Background,
+                queued_at: Instant::now() - Duration::from_secs(60),
+            },
+            DecodeWaiter {
+                ticket: 1,
+                priority: DecodePriority::Foreground,
+                queued_at: Instant::now(),
+            },
+        ]);
+        assert_eq!(selected_ticket(&waiters), Some(1));
     }
 
     #[test]
@@ -408,7 +455,7 @@ mod tests {
                 .count();
             if foreground == 1 && visible == 1 {
                 // Queued higher priorities cannot preempt the active permit.
-                assert!(state.active);
+                assert_eq!(state.active, 1);
                 assert!(matches!(
                     acquired_rx.try_recv(),
                     Err(mpsc::TryRecvError::Empty)

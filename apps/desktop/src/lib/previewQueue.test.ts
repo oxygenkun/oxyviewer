@@ -134,3 +134,14 @@ describe("serial preview task queue", () => {
     expect(effectivePriority).toBe(2);
   });
 });
+
+it("allows another transfer to finish while an older transfer is stalled", async () => {
+  const queue = new SerialTaskQueue(2);
+  let release!: () => void;
+  const blocked = queue.enqueue(0, undefined, () => new Promise<void>((resolve) => { release = resolve; }));
+  const selected = vi.fn(async () => undefined);
+  await queue.enqueue(priorityWeight("loupe"), undefined, selected);
+  expect(selected).toHaveBeenCalledOnce();
+  release();
+  await blocked;
+});

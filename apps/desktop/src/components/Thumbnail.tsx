@@ -13,6 +13,7 @@ import {
   markBrowserImageReady,
   touchBrowserImage,
 } from "../lib/browserImageCache";
+import { previewRequestSignal, retainPreviewRequest } from "../lib/previewRequestLifetime";
 import { perfMark } from "../lib/perfProbe";
 import { retainMediaResource, releaseUnretainedMediaResource } from "../lib/mediaResourceLease";
 import { imageProjectionKey, useImageProjectionStore } from "../lib/imageProjection";
@@ -103,13 +104,23 @@ export function Thumbnail({
     [asset, previewMethod.type],
   );
   const requestPriority = large ? "loupe" : priority;
+  const previewLifetimeKey = JSON.stringify(assetRenderQueryKey(asset, previewMethod));
+  const fullLifetimeKey = fullMethod ? JSON.stringify(assetRenderQueryKey(asset, fullMethod)) : undefined;
+  useLayoutEffect(() => {
+    if (!enabled || !previewLevel) return;
+    return retainPreviewRequest(previewLifetimeKey);
+  }, [enabled, previewLevel, previewLifetimeKey]);
+  useLayoutEffect(() => {
+    if (!enabled || !large || !distinctFullLevel || !fullLifetimeKey) return;
+    return retainPreviewRequest(fullLifetimeKey);
+  }, [enabled, large, distinctFullLevel, fullLifetimeKey]);
   const previewQuery = useQuery({
     queryKey: assetRenderQueryKey(asset, previewMethod),
     queryFn: async ({ signal }) => {
       await generatedPreview(
         asset,
         previewLevel ?? previewStep.level,
-        signal,
+        previewRequestSignal(previewLifetimeKey, signal),
         requestPriority,
         rank,
       );
@@ -129,7 +140,7 @@ export function Thumbnail({
       await generatedPreview(
         asset,
         distinctFullLevel ?? "full",
-        signal,
+        previewRequestSignal(fullLifetimeKey!, signal),
         "loupe",
         rank,
       );
@@ -168,9 +179,7 @@ export function Thumbnail({
     !fullImageFailed ? fullSource : undefined,
   ]);
   const sourceCandidate = directSource ?? generatedSource?.url;
-  // A mounted virtual row must not begin filesystem I/O or image decoding
-  // while its scroll container is moving. Already-decoded browser images can
-  // still paint immediately from the local in-memory cache.
+  // Explicitly disabled consumers can still paint retained decoded images.
   const source = browserImageSourceWhenEnabled(sourceCandidate, enabled);
   const debugResourceLabel = directSource
     ? "original"
@@ -387,7 +396,7 @@ export function Thumbnail({
       if (debug) imageDebug.current = { source, handle: debug };
     }
     debug?.complete();
-    if (source) markBrowserImageReady(source, size, image);
+    if (source) markBrowserImageReady(source, size, image, result?.resource?.resourceId);
     if (ownsFullDetailStage && large && result?.renderLevel !== "thumbnail") {
       setLoaded({ assetId: asset.id, mode: result === fullSource ? "full" : "preview" });
     }

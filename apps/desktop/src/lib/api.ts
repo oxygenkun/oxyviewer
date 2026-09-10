@@ -790,6 +790,7 @@ export async function generatedPreview(
     rejectAbort?.(signal?.reason ?? new DOMException("Aborted", "AbortError"));
   };
   signal?.addEventListener("abort", stopWaiting, { once: true });
+  let interim = false;
   try {
     const projection = await (signal ? Promise.race([backendRequest, aborted]) : backendRequest);
     if (signal?.aborted) throw signal.reason ?? new DOMException("Aborted", "AbortError");
@@ -822,13 +823,14 @@ export async function generatedPreview(
     // Rust keeps the native request alive through its upgrade and publishes
     // either Satisfied or terminal Error into the projection store. Settling
     // here also lets independent full-detail renderers (HEIF tiles) start.
+    interim = result.satisfaction === "interim";
     return { ...result, url: mediaProtocolUrl(result.resource.url) };
   } catch (error) {
     if (signal?.aborted) debug?.cancel();
     else debug?.fail(error);
     throw error;
   } finally {
-    signal?.removeEventListener("abort", stopWaiting);
+    if (!interim) signal?.removeEventListener("abort", stopWaiting);
   }
 }
 
@@ -913,7 +915,7 @@ export async function preloadAssetThumbnail(
         signal,
         async () => {
           if (id && !await renewMediaResource(id)) return;
-          await preloadBrowserImage(result.url, signal);
+          await preloadBrowserImage(result.url, signal, result.resource?.resourceId);
         },
       );
     } finally { release?.(); }

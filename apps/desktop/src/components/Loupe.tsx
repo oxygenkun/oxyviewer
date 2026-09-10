@@ -140,12 +140,12 @@ export function Loupe({
     gap: FILMSTRIP_GAP,
     getScrollElement: () => filmstripRef.current,
     horizontal: true,
-    overscan: 4,
+    overscan: 12,
   });
   const virtualFilmstripItems = filmstripVirtualizer.getVirtualItems();
   const filmstripViewportStart = filmstripRef.current?.scrollLeft ?? 0;
   const filmstripViewportEnd = filmstripViewportStart + (filmstripRef.current?.clientWidth ?? 0);
-  const visibleFilmstripIds = orderVisibleFilmstripItems(
+  const nextVisibleFilmstripIds = orderVisibleFilmstripItems(
     virtualFilmstripItems.flatMap((item) => {
       const asset = assets[item.index];
       return asset ? [{ id: asset.id, start: item.start, end: item.end }] : [];
@@ -153,6 +153,11 @@ export function Loupe({
     filmstripViewportStart,
     filmstripViewportEnd,
   );
+  const filmstripIdsRef = useRef(nextVisibleFilmstripIds);
+  if (filmstripIdsRef.current.join("\0") !== nextVisibleFilmstripIds.join("\0")) {
+    filmstripIdsRef.current = nextVisibleFilmstripIds;
+  }
+  const visibleFilmstripIds = filmstripIdsRef.current;
   const details = useQuery({
     queryKey: ["asset-details", active.id],
     queryFn: () => getAssetDetails(active),
@@ -228,12 +233,6 @@ export function Loupe({
   const handleImageLoad = useCallback((size: Size) => {
     setNaturalSize({ assetId: active.id, size });
   }, [active.id]);
-
-  useEffect(() => {
-    resetZoom();
-    setRawPreviewStatus({ state: "loadingPreview" });
-    setHeifStatus("probing");
-  }, [active.id, resetZoom]);
 
   useEffect(() => {
     if (!settingsOpen) return;
@@ -312,6 +311,12 @@ export function Loupe({
     if (activeIndex >= 0) filmstripVirtualizer.scrollToIndex(activeIndex, { align: "auto" });
   }, [active.id, activeIndex, filmstripVirtualizer]);
   if (navigation.id !== active.id) {
+    // Reset before committing the new renderer. An effect here would run
+    // after its cache-hit layout effect and overwrite "complete" with loading.
+    setZoom(1);
+    setOffset({ x: 0, y: 0 });
+    setRawPreviewStatus({ state: "loadingPreview" });
+    setHeifStatus("probing");
     setNaturalSize(undefined);
     setHeifFullSize(undefined);
     setNavigation({ id: active.id, index: activeIndex, direction: activeIndex < navigation.index ? -1 : 1 });
@@ -534,6 +539,7 @@ export function Loupe({
         >
           <div
             className="loupe__render"
+            data-asset-id={active.id}
             style={{
               width: fittedImageSize.width ? fittedImageSize.width * zoom : undefined,
               height: fittedImageSize.height ? fittedImageSize.height * zoom : undefined,
@@ -755,7 +761,7 @@ export function Loupe({
                 onContextMenu={(event) => onAssetContextMenu(event, asset)}
                 rank={viewportRankById.get(asset.id)
                   ?? visibleFilmstripIds.length + Math.abs(item.index - activeIndex)}
-                resourcesEnabled={!filmstripVirtualizer.isScrolling}
+                resourcesEnabled
                 showMetadata={loupeMetadataVisible}
                 style={{
                   transform: `translateX(${item.start}px)`,

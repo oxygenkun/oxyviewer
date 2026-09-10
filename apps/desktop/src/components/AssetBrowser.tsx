@@ -57,10 +57,6 @@ const FILE_MANAGER_LABEL = {
   generic: "openInFileManager",
 } as const satisfies Record<ReturnType<typeof platformFileManager>, MessageKey>;
 
-// Keep filesystem fetches and webview image decodes out of active scroll
-// frames. The virtualizer still paints summaries/placeholders immediately and
-// re-enables resource work once the viewport has settled.
-const RESOURCE_LOAD_SCROLL_IDLE_MS = 160;
 
 const AssetCard = memo(function AssetCard({
   asset,
@@ -274,11 +270,10 @@ function VirtualGrid({
     count: rowCount,
     getScrollElement: () => parentRef.current,
     estimateSize: () => rowHeight,
-    overscan: 3,
-    isScrollingResetDelay: RESOURCE_LOAD_SCROLL_IDLE_MS,
+    overscan: 6,
   });
   const rows = virtualizer.getVirtualItems();
-  const resourcesEnabled = !virtualizer.isScrolling;
+  const resourcesEnabled = true;
   const viewportCenter = (parentRef.current?.scrollTop ?? 0)
     + (parentRef.current?.clientHeight ?? rowHeight) / 2;
   const selectedAsset = assets.find((asset) => asset.id === activeId);
@@ -310,9 +305,8 @@ function VirtualGrid({
       .catch(() => undefined);
   }, [visibleMetadataSignature]);
   useEffect(() => {
-    // Keep the cheap native schedule synchronized while scrolling. Thumbnail
-    // queries and WebView image decodes remain paused by `resourcesEnabled`,
-    // but the latest viewport is already prioritized when scrolling settles.
+    // Visible and overscan requests remain active during scrolling. Rust
+    // prioritizes the latest viewport and cancels requests after unmount.
     viewportSchedule.reconcile(viewportIntents);
   }, [viewportIntents, viewportSchedule]);
 
@@ -429,11 +423,10 @@ function VirtualList({
     count: assetCount,
     getScrollElement: () => parentRef.current,
     estimateSize: () => rowHeight,
-    overscan: 8,
-    isScrollingResetDelay: RESOURCE_LOAD_SCROLL_IDLE_MS,
+    overscan: 16,
   });
   const rows = virtualizer.getVirtualItems();
-  const resourcesEnabled = !virtualizer.isScrolling;
+  const resourcesEnabled = true;
   const viewportCenter = (parentRef.current?.scrollTop ?? 0)
     + (parentRef.current?.clientHeight ?? rowHeight) / 2;
   const selectedAsset = assets.find((asset) => asset.id === activeId);
@@ -465,9 +458,8 @@ function VirtualList({
       .catch(() => undefined);
   }, [visibleMetadataSignature]);
   useEffect(() => {
-    // Keep the cheap native schedule synchronized while scrolling. Thumbnail
-    // queries and WebView image decodes remain paused by `resourcesEnabled`,
-    // but the latest viewport is already prioritized when scrolling settles.
+    // Visible and overscan requests remain active during scrolling. Rust
+    // prioritizes the latest viewport and cancels requests after unmount.
     viewportSchedule.reconcile(viewportIntents);
   }, [viewportIntents, viewportSchedule]);
 

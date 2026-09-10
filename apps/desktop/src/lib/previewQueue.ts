@@ -33,7 +33,9 @@ export function orderedPriorityWeight(priority: PreviewPriority, rank = 0): numb
 }
 
 export class SerialTaskQueue {
-  private active = false;
+  private active = 0;
+
+  constructor(private readonly concurrency = 1) {}
   private pending: Array<PendingTask<unknown>> = [];
 
   enqueue<T>(
@@ -70,7 +72,7 @@ export class SerialTaskQueue {
   }
 
   private drain() {
-    if (this.active) return;
+    if (this.active >= this.concurrency) return;
     const task = this.pending.shift();
     if (!task) return;
     if (task.signal?.aborted) {
@@ -78,11 +80,11 @@ export class SerialTaskQueue {
       this.drain();
       return;
     }
-    this.active = true;
+    this.active += 1;
     task.run(task.priority)
       .then(task.resolve, task.reject)
       .finally(() => {
-        this.active = false;
+        this.active -= 1;
         this.drain();
       });
   }
@@ -92,4 +94,5 @@ export class SerialTaskQueue {
  * Presentation-only queue for bytes that already have a Rust-owned artifact.
  * It does not decide resource validity or schedule native decode work.
  */
-export const browserPreloadQueue = new SerialTaskQueue();
+export const browserImageWorkerCount = Math.max(1, globalThis.navigator?.hardwareConcurrency || 1);
+export const browserPreloadQueue = new SerialTaskQueue(browserImageWorkerCount);

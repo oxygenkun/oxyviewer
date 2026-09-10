@@ -394,7 +394,7 @@ export interface PerfScenario {
   selectName?: string;
   enterLoupe?: boolean;
   scrollToEnd?: boolean;
-  resourceStress?: "grid" | "list" | "loupe" | "grid-scroll";
+  resourceStress?: "grid" | "list" | "loupe" | "grid-scroll" | "filmstrip-scroll" | "navigation-cache";
   awaitMarks: string[];
   timeoutMs?: number;
   reportPath: string;

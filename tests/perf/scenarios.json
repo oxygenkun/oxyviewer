@@ -2,6 +2,43 @@
   "$comment": "E2E performance scenarios for scripts/perf-e2e.mjs. Budgets mirror docs/PERFORMANCE.md; see docs/PERF_E2E.md. Metrics without a budget are recorded and regression-checked against baseline.json.",
   "regressionFactor": 1.2,
   "scenarios": {
+    "filmstrip-scroll-hif": {
+      "fixture": { "type": "file", "path": "tests/fixtures/DSC00449.HIF", "count": 80 },
+      "resourceStress": "filmstrip-scroll",
+      "awaitMarks": ["resource:stress-complete"],
+      "coldCache": true,
+      "runs": 3,
+      "timeoutMs": 60000,
+      "budgets": {}
+    },
+    "resource-stress-small-grid": {
+      "fixture": { "type": "synthetic", "format": "jpeg", "count": 600, "width": 160, "height": 120 },
+      "resourceStress": "grid",
+      "enterLoupe": false,
+      "awaitMarks": ["resource:stress-complete"],
+      "coldCache": true,
+      "runs": 1,
+      "timeoutMs": 120000,
+      "budgets": {}
+    },
+    "navigation-cache-jpeg": {
+      "fixture": { "type": "synthetic", "format": "jpeg", "count": 20, "width": 1600, "height": 1200 },
+      "resourceStress": "navigation-cache",
+      "awaitMarks": ["resource:stress-complete"],
+      "coldCache": true,
+      "runs": 3,
+      "timeoutMs": 45000,
+      "budgets": {}
+    },
+    "navigation-cache-hif": {
+      "fixture": { "type": "file", "path": "tests/fixtures/DSC00449.HIF", "count": 2 },
+      "resourceStress": "navigation-cache",
+      "awaitMarks": ["resource:stress-complete"],
+      "coldCache": true,
+      "runs": 3,
+      "timeoutMs": 45000,
+      "budgets": {}
+    },
     "folder-open-100k": {
       "fixture": { "type": "synthetic", "format": "png", "count": 100000, "width": 64, "height": 64 },
       "awaitMarks": ["harness:first-page-painted"],

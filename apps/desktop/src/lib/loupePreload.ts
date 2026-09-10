@@ -19,10 +19,10 @@ export async function preloadAssetLoupeBase(
   const previewStep = renderPlan(asset.kind, "loupe")[0];
   const previewMethod = previewStep.method;
   const priority = rank === 0 ? "loupe" : "nearby";
-  const preload = (source: string) => browserPreloadQueue.enqueue(
+  const preload = (source: string, resourceId?: string) => browserPreloadQueue.enqueue(
     orderedPriorityWeight(priority, rank),
     signal,
-    () => preloadBrowserImage(source, signal),
+    () => preloadBrowserImage(source, signal, resourceId),
   );
   if (previewMethod.type === "originalImage") {
     const source = previewUrl(asset);
@@ -38,5 +38,5 @@ export async function preloadAssetLoupeBase(
     priority,
     rank,
   );
-  if (result) await preload(result.url);
+  if (result) await preload(result.url, result.resource?.resourceId);
 }

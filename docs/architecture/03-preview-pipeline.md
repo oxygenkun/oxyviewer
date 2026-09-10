@@ -90,7 +90,7 @@ embedded 快速探测和 tile session 保持各自原有资源隔离。
 `Thumbnail` 组件只解释固定等级图：
 
 1. 网格/列表请求 `thumbnail`；
-2. 放大镜先请求并保留 `preview`，再启动 `full`；
+2. 放大镜先请求并保留 `thumbnail`，再启动 `full`；
 3. renderer profile 决定等级是原图、生成图、tile session，还是另一个等级的复用；
 4. 组件选择当前最高可用且未加载失败的 URL；
 5. 新等级图片真正完成浏览器加载后才取代现有图。
@@ -130,11 +130,13 @@ viewport intent 被释放；已有 consumer 的任务按其余 scope 降级，�
 去重，发送间隔不小于 50ms；background 排序先防抖 150ms，再以 200ms 最小间隔发送。每个 scope
 最多保留一个进行中的 IPC，后续更新继续在前端合并，从而让 native bridge 反压而不是堆积请求。
 单个 Thumbnail 不再随 queueOrder 变化发送独立提权 IPC；可见项优先级统一由 viewport scope 更新。
-滚动期间仍持续提交这个轻量 viewport 快照，只暂停实际文件读取和 WebView 图片解码；因此快速跳到
-冷缓存区域时，native 队列在滚动停止前就已收到最新区域，旧的尚未开始请求也会被取消并摘出队列。
+滚动期间持续提交 viewport 快照，同时加载可见项和 overscan；不再等待 160 ms 滚动停稳。
+Grid 预取前后 6 行、list 前后 16 项、filmstrip 前后 12 项。离开窗口的请求取消订阅，
+仍在新旧窗口交集中的 filmstrip 预加载保持进行，不因组件重复 render 重启。
 
 具体任务身份由 canonical path、source revision 和 semantic level 组成；相同请求无论尚在等待
-还是已经运行，都只挂接新的 consumer，不启动第二次解码。有效位置取所有 scope/consumer 中
+还是已经运行，通常只挂接新的 consumer。已取消的 active 请求不能接收新 consumer；
+附近任务升级为选中图时取消旧 token、迁移订阅者并重新以 loupe 优先级准入，避免继续等待旧 gate 优先级。有效位置取所有 scope/consumer 中
 最重要的 `(tier, rank)`，所以一个离屏组件不能把另一个仍可见组件的共享任务错误降级。
 全量 `reconcile`、单项 `upsert(front/back)` 和 `release` 的通用实现位于 `oxy-runtime`。
 
@@ -157,8 +159,10 @@ flowchart LR
     demote --> nearbyRun["空闲时完成并写缓存"]
 ```
 
-PreviewQueue 使用两个有界 worker，避免一个已经开始且不可抢占的慢任务完全堵住当前视窗。
-具体媒体解码器仍通过下一节的 gate 限制自身并发，防止快速滚动压垮 CPU、内存或磁盘。
+PreviewQueue 使用 `available_parallelism()` 个 worker（按进程可用逻辑 CPU 数，探测失败回退 1）。
+多核时普通可见/预加载任务最多占 N−1 个位置，为当前 loupe 保留一个位置。单核仍可正常执行。
+无订阅者的活跃任务和切换目录后的旧任务触发协作取消；快速 A→B→A 使用新的 token，
+旧 worker 完成时不能移除新请求，projection 的 validAt 围栏拒绝旧结果。
 
 ## 6. 第二层调度：后端 `DecodeGate`
 
@@ -175,8 +179,9 @@ crate 根模块只负责稳定 API re-export；格式执行分别位于 `pipelin
 | `nearby` | `Background` | 等待 foreground 和 visible |
 | `preload` | `Background` | 与 nearby 共用后端 background 档；前端保证它最后提交 |
 
-gate 只允许一个参与统一 gate 的 decode 活跃。高优先级可以插队等待者，但**不能抢占已经运行
-的 decode**。permit 离开作用域时由 Rust `Drop` 自动释放并通知等待者。
+gate 的并发上限同样为可用 CPU 数，多核时为 Foreground 保留一个位置。后台任务老化
+最多提升到 Visible，不能超过当前选中图片。等待 gate/同源锁时检查取消；已经进入不可中断
+的 native API 仍需返回后退出，不能安全强杀线程。permit 由 Rust `Drop` 释放。
 
 为什么有两层 Rust 调度：projection queue 负责资源身份、consumer 合并、优先级和状态提交；
 `DecodeGate` 负责跨格式原生解码资源竞争。前端只提供视口/选择提示和浏览器预加载。
@@ -192,9 +197,14 @@ entry 上限为 512，encoded 常驻内存上限为 `max(1 GiB, system RAM / 8)`
 不包含 Tauri 接管之后的 body 或 WebView 解码内存。
 
 descriptor 首次发布及再次交付使用 5 秒宽限，前端 renew 认领后为 30 秒，每 10 秒续租。
-组件只认领当前 displayed 和等待 load 的 pending，替代图显示后释放旧资源；Thumbnail、Loupe
-及 HEIF artifact renderer 的共享 ID 由前端引用计数协调。释放/过期资源在后续 publication/renew
-时回收，read lease 仍保护文件及在途读取。后台 timer 节流后可 refetch 恢复，不承诺零闪烁。
+组件认领 displayed 和 pending，UI 图片缓存额外持有已解码资源的引用，直到 LRU 淘汰、目录
+切换或显式失效。缓存最多 1024 项 / 512 MiB 解码像素，保留 HTMLImageElement 和完成后的
+HEIF canvas 节点；返回缓存中的图片直接绘制，HEIF 也不再重新启动 tile session。
+缓存额外持有的 native resource pin 最多 256 个，为 512 项原生注册表中的新请求留出容量；
+释放较旧的 native pin 不删除 WebView 中的解码像素，仍挂载的组件也继续持有自己的租约。
+不可变 resource URL 的 persistence/status 更新不会清除解码缓存；源 revision 改变仍会失效。
+释放/过期资源在后续 publication/renew 时回收，read lease 保护文件及在途读取。超出缓存预算
+或资源过期时允许恢复请求，不能把有限内存缓存理解为永久保留整个图库。
 
 恢复一个已淘汰资源会产生新 ID，必须通过 Library 的既有 projection sequence 增加 revision，
 不能让前端因旧 revision 拒收新 descriptor。恢复与普通 transition 共用 projection 锁和 validAt

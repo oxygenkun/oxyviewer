@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
   BROWSER_IMAGE_RESOURCE_LIMITS,
   browserImageSourceWhenEnabled,
@@ -10,6 +10,9 @@ import {
   touchBrowserImage,
   setBrowserImageResourceScope,
 } from "./browserImageCache";
+
+const leaseMocks = vi.hoisted(() => ({ release: vi.fn() }));
+vi.mock("./mediaResourceLease", () => ({ retainMediaResource: () => leaseMocks.release }));
 
 describe("browser image resource gating", () => {
   beforeEach(() => clearBrowserImageResources());
@@ -124,4 +127,18 @@ describe("immediate progressive source", () => {
     expect(firstReadyBrowserImage(sources)).toBe("full");
     expect(firstReadyBrowserImage([undefined, "missing", "thumbnail"])).toBe("thumbnail");
   });
+});
+
+it("retains tiny decoded thumbnails without exhausting native artifact slots", () => {
+  clearBrowserImageResources();
+  leaseMocks.release.mockClear();
+  const count = BROWSER_IMAGE_RESOURCE_LIMITS.maxResourceLeases + 20;
+  for (let index = 0; index < count; index += 1) {
+    markBrowserImageReady(`small:${index}`, { width: 160, height: 120 }, undefined, `resource:${index}`);
+  }
+  expect(leaseMocks.release).toHaveBeenCalledTimes(20);
+  expect(isBrowserImageReady("small:0")).toBe(true);
+  expect(isBrowserImageReady(`small:${count - 1}`)).toBe(true);
+  clearBrowserImageResources();
+  expect(leaseMocks.release).toHaveBeenCalledTimes(count);
 });

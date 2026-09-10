@@ -1,6 +1,8 @@
 import { clearPreviewCache, getMediaResourceStats, updateCacheSettings } from "./api";
+import { clearImageProjections } from "./imageProjection";
 import { onPerfMark, perfMark, perfSnapshot } from "./perfProbe";
 import { useWorkspaceStore } from "../store";
+import { runNavigationCacheProbe } from "./navigationCacheProbe";
 import { runGridScrollProbe } from "./gridScrollProbe";
 import type { AssetSummary, PerfScenario } from "../types";
 
@@ -11,6 +13,8 @@ export async function runResourceStress(
   signal: AbortSignal,
 ): Promise<void> {
   if (mode === "grid-scroll") return runGridScrollProbe(signal);
+  if (mode === "filmstrip-scroll") return runGridScrollProbe(signal, true);
+  if (mode === "navigation-cache") return runNavigationCacheProbe(assets(), signal);
   const wait = (ms: number) => new Promise<void>((resolve, reject) => {
     signal.throwIfAborted();
     const abort = () => { clearTimeout(timer); reject(signal.reason); };
@@ -62,8 +66,8 @@ export async function runResourceStress(
       scroller.scrollTop += scroller.clientHeight * 0.75;
       scroller.dispatchEvent(new Event("scroll", { bubbles: true }));
       atEnd = scroller.scrollTop === previous ? atEnd + 1 : 0;
-      // Let the production scroll-idle gate enable the visible and overscan
-      // resources before continuing; no test-specific overscan policy.
+      // This older pressure scenario measures bounded resources at a steady
+      // pace. Continuous fast scrolling uses the separate grid-scroll probe.
       await wait(350);
       if (step % 10 === 0) await snapshot(`scroll-${step}`);
     }
@@ -84,6 +88,9 @@ export async function runResourceStress(
     }
   };
   await Promise.all([...urls.map(read), clearPreviewCache()]);
+  // Match SettingsPanel: an explicit cache clear drops the UI cache too.
+  // Mounted presentations retain their own leases while cached-only pins leave.
+  clearImageProjections();
   await Promise.all([...urls.map(read), updateCacheSettings(null, 1024 ** 3)]);
   perfMark("resource:maintenance-read", { count: urls.length });
   await wait(11_000); // publish grace expires and at least one UI heartbeat runs

@@ -3,6 +3,7 @@ import { act, StrictMode } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { AssetSummary } from "../types";
+import { clearBrowserImageResources, markBrowserImageReady } from "../lib/browserImageCache";
 import { HeifTileCanvas } from "./HeifTileCanvas";
 
 const mocks = vi.hoisted(() => ({
@@ -58,6 +59,8 @@ beforeEach(() => {
 });
 afterEach(async () => {
   await act(async () => root.unmount());
+  clearBrowserImageResources();
+  await Promise.resolve();
   container.remove();
   vi.restoreAllMocks();
   vi.unstubAllGlobals();
@@ -72,6 +75,31 @@ async function render(selected = asset, displaySharpening = true) {
 }
 
 describe("HEIF full presentation lifecycle", () => {
+  it("keeps a restored displayed artifact leased when the UI cache is cleared", async () => {
+    const image = document.createElement("img");
+    markBrowserImageReady("heif-display:hif:1:true", { width: 600, height: 400 }, image, "full");
+    await render();
+    expect(container.contains(image)).toBe(true);
+    expect(mocks.renew).toHaveBeenCalledWith("full");
+    await act(async () => clearBrowserImageResources());
+    expect(mocks.release).not.toHaveBeenCalledWith("full");
+    await act(async () => root.render(null));
+    expect(mocks.release).toHaveBeenCalledWith("full");
+  });
+
+  it("restores completed pixels without another native decode on return", async () => {
+    const snapshot = document.createElement("canvas");
+    snapshot.width = 600; snapshot.height = 400;
+    markBrowserImageReady("heif-display:hif:1:true", { width: 600, height: 400 }, snapshot);
+    const drawImage = vi.fn();
+    vi.spyOn(HTMLCanvasElement.prototype, "getContext").mockReturnValue({ drawImage } as unknown as CanvasRenderingContext2D);
+    await render();
+    expect(mocks.start).not.toHaveBeenCalled();
+    expect(drawImage).not.toHaveBeenCalled();
+    expect(container.contains(snapshot)).toBe(true);
+    expect(status).toHaveBeenCalledWith("complete");
+  });
+
   it("displays the matching full artifact directly and requeries when sharpening changes", async () => {
     mocks.start.mockResolvedValue(artifact);
     const context = vi.spyOn(HTMLCanvasElement.prototype, "getContext");
@@ -148,6 +176,8 @@ describe("HEIF full presentation lifecycle", () => {
     expect(mocks.mark).toHaveBeenCalledWith("image:loaded", expect.objectContaining({ stage: "full" }));
     expect(artifactDisplayed).toHaveBeenCalledTimes(1);
     await act(async () => root.render(null));
+    expect(mocks.release).not.toHaveBeenCalledWith("full");
+    await act(async () => clearBrowserImageResources());
     expect(mocks.release).toHaveBeenCalledWith("full");
   });
 

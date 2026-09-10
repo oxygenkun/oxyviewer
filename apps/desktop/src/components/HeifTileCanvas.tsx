@@ -7,6 +7,7 @@ import {
   renewMediaResource,
   startHeifFull,
 } from "../lib/api";
+import { getBrowserImageDrawable, getBrowserImageResourceId, markBrowserImageReady } from "../lib/browserImageCache";
 import { retainMediaResource, releaseUnretainedMediaResource } from "../lib/mediaResourceLease";
 import { expectedHeifTiles, HeifTileProgressTracker } from "../lib/heifTileProgress";
 import { perfMark, isPerfActive } from "../lib/perfProbe";
@@ -38,7 +39,35 @@ export function HeifTileCanvas({
   onStatus,
 }: HeifTileCanvasProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
+  const memoryHostRef = useRef<HTMLDivElement>(null);
   const cacheIdentity = `${asset.id}:${asset.modifiedAtMs}:${displaySharpening}`;
+  const memoryKey = `heif-display:${cacheIdentity}`;
+  const restored = useRef(false);
+  const [retainedPresentation, setRetainedPresentation] = useState<{ identity: string; resourceId?: string }>();
+  useLayoutEffect(() => {
+    restored.current = false;
+    const image = getBrowserImageDrawable(memoryKey);
+    const host = memoryHostRef.current;
+    if (!image || !host) return;
+    const width = image instanceof HTMLImageElement ? image.naturalWidth : image.width;
+    const height = image instanceof HTMLImageElement ? image.naturalHeight : image.height;
+    // Reattach the retained presentation itself. Drawing a 33 MP image into
+    // a fresh canvas on every return costs hundreds of milliseconds in WebKit.
+    image.className = "loupe__heif-canvas";
+    host.appendChild(image);
+    restored.current = true;
+    const resourceId = getBrowserImageResourceId(memoryKey);
+    setRetainedPresentation((current) => current?.identity === memoryKey && current.resourceId === resourceId
+      ? current : { identity: memoryKey, resourceId });
+    perfMark("image:loaded", {
+      assetName: asset.name, large: true, stage: "full", renderLevel: "full", width, height,
+    });
+    perfMark("heif:memory-cache-hit", { assetName: asset.name, width, height });
+    onImageSize({ width, height });
+    onStatus("complete");
+    onArtifactDisplayed?.();
+    return () => { if (image.parentElement === host) image.remove(); };
+  }, [asset.name, memoryKey, onImageSize, onStatus, onArtifactDisplayed]);
   const [cachedImage, setCachedImage] = useState<{
     identity: string;
     result: PreviewResult;
@@ -50,8 +79,10 @@ export function HeifTileCanvas({
   const pendingCachedImage = candidateCachedImage?.url !== visibleCachedImage?.url
     ? candidateCachedImage : undefined;
   const [recovery, setRecovery] = useState(0);
-  const resourceIdentity = [...new Set([visibleCachedImage, pendingCachedImage]
-    .map((result) => result?.resource?.resourceId).filter(Boolean))].sort().join("\u0000");
+  const resourceIdentity = [...new Set([
+    ...[visibleCachedImage, pendingCachedImage].map((result) => result?.resource?.resourceId),
+    retainedPresentation?.identity === memoryKey ? retainedPresentation.resourceId : undefined,
+  ].filter(Boolean))].sort().join("\u0000");
   useLayoutEffect(() => {
     const ids = resourceIdentity ? resourceIdentity.split("\u0000") : [];
     if (!ids.length) return;
@@ -76,7 +107,7 @@ export function HeifTileCanvas({
   }, [resourceIdentity]);
 
   useEffect(() => {
-    if (!isTauri()) return;
+    if (!isTauri() || restored.current) return;
     const generation = ++nextGeneration;
     const debug = __OXY_DEBUG__
       ? beginPreviewDebug({
@@ -137,6 +168,10 @@ export function HeifTileCanvas({
         if (progress?.snapshot().failed) {
           debug?.fail(new Error("one or more HEIF tiles failed to draw"), completed);
         } else {
+          const canvas = canvasRef.current;
+          if (canvas) {
+            markBrowserImageReady(memoryKey, { width: canvas.width, height: canvas.height }, canvas);
+          }
           setDisplayedCachedImage(undefined);
           setCachedImage(undefined);
           debug?.complete(completed);
@@ -384,13 +419,15 @@ export function HeifTileCanvas({
     asset.modifiedAtMs,
     asset.path,
     cacheIdentity,
+    memoryKey,
     displaySharpening,
     onImageSize,
     onStatus,
   ]);
 
   return <>
-    <canvas key="tiles" className="loupe__heif-canvas" ref={canvasRef} />
+    <canvas key={memoryKey} className="loupe__heif-canvas" ref={canvasRef} />
+    <div ref={memoryHostRef} style={{ display: "contents" }} />
     {visibleCachedImage ? <img
       key={visibleCachedImage.url}
       className="loupe__heif-canvas"
@@ -406,7 +443,10 @@ export function HeifTileCanvas({
       alt=""
       draggable={false}
       onError={() => { setCachedImage(undefined); onStatus("failed"); }}
-      onLoad={() => {
+      onLoad={(event) => {
+        markBrowserImageReady(memoryKey, {
+          width: event.currentTarget.naturalWidth, height: event.currentTarget.naturalHeight,
+        }, event.currentTarget, pendingCachedImage.resource?.resourceId);
         setDisplayedCachedImage({ identity: cacheIdentity, result: pendingCachedImage });
         onArtifactDisplayed?.();
         perfMark("image:loaded", {

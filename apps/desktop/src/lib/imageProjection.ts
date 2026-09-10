@@ -73,12 +73,15 @@ export function acceptImageProjection(projection: ImageProjection) {
     const id = current.result?.resource?.resourceId;
     if (id && (projection.result || current.sourceRevision !== projection.sourceRevision)
       && id !== projection.result?.resource?.resourceId) releaseUnretainedMediaResource(id);
-    // A projection update may overwrite the same cache path. Drop both URL
-    // identities so the WebView cannot repaint a retained stale decode.
-    discardBrowserImageResource(current.result?.url);
-    discardBrowserImageResource(
-      projection.result ? projectionResultUrl(projection.result) : undefined,
-    );
+    // Registered resources have immutable URLs. Persistence/status updates for
+    // the same resource must not discard already decoded pixels.
+    const sourceChanged = current.sourceRevision !== projection.sourceRevision;
+    const nextUrl = projection.result ? projectionResultUrl(projection.result) : undefined;
+    const mutablePathReplaced = Boolean(projection.result && !projection.result.resource);
+    if (sourceChanged || mutablePathReplaced) {
+      discardBrowserImageResource(current.result?.url);
+      discardBrowserImageResource(nextUrl);
+    }
   }
   useImageProjectionStore.getState().accept(projection);
   return true;
