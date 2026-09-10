@@ -37,7 +37,12 @@ it("waits for the displayed image instead of counting a decoded but pending imag
   await vi.advanceTimersByTimeAsync(1600);
   expect(vi.mocked(perfMark).mock.calls.some(([name]) => name === "grid-scroll:stopped")).toBe(true);
   expect(vi.mocked(perfMark).mock.calls.some(([name]) => name === "grid-scroll:ready")).toBe(false);
-  document.querySelector("img")!.className = "";
+  const displayed = document.querySelector("img")!;
+  displayed.className = "";
+  const content = document.createElement("div");
+  content.className = "thumbnail__content";
+  displayed.parentElement!.append(content);
+  content.append(displayed);
   await vi.runAllTimersAsync();
   await run;
   const ready = vi.mocked(perfMark).mock.calls.filter(([name]) => name === "grid-scroll:ready");

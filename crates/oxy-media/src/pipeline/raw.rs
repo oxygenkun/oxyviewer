@@ -276,6 +276,7 @@ fn produce_embedded(
         dimensions.into(),
         ArtifactRepresentation::Embedded,
         ArtifactPresentation {
+            geometry: None,
             orientation: OrientationState::Metadata,
             color: CacheColorState::EmbeddedOrUnknown,
             sharpening: SharpeningState::None,

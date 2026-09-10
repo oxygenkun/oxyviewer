@@ -465,9 +465,36 @@ pub struct MediaResourceDescriptor {
     pub media_type: String,
 }
 
+/// Geometry in display-oriented pixels. The content rectangle covers the whole
+/// logical display canvas; encoded padding lies outside that rectangle.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Hash)]
+#[serde(rename_all = "camelCase")]
+pub struct PreviewGeometry {
+    pub display_size: PreviewDisplaySize,
+    pub content_rect: PreviewContentRect,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Hash)]
+#[serde(rename_all = "camelCase")]
+pub struct PreviewDisplaySize {
+    pub width: u32,
+    pub height: u32,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Hash)]
+#[serde(rename_all = "camelCase")]
+pub struct PreviewContentRect {
+    pub x: u32,
+    pub y: u32,
+    pub width: u32,
+    pub height: u32,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct PreviewResult {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub geometry: Option<PreviewGeometry>,
     pub path: PathBuf,
     pub width: u32,
     pub height: u32,

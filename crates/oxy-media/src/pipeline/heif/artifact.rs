@@ -55,6 +55,22 @@ pub(crate) fn preview_request(
     )
 }
 
+// Invalidate only the old Sony JPEG representation. Decoded previews must
+// retain the full decoder's policy identity so concurrent requests share work.
+fn sony_embedded_request(
+    artifacts: &ArtifactCache,
+    detail: DetailRequirement,
+) -> crate::cache::CacheRequest {
+    let mut request = artifacts.request(
+        detail,
+        RepresentationRequirement::Exact(ArtifactRepresentation::Embedded),
+        display_requirement(),
+        true,
+    );
+    request.policy_revision = 2;
+    request
+}
+
 pub(crate) fn full_decoded_request(artifacts: &ArtifactCache) -> crate::cache::CacheRequest {
     full_display_request(artifacts, false)
 }
@@ -85,6 +101,7 @@ fn full_display_request(
 
 const fn unconverted_presentation() -> ArtifactPresentation {
     ArtifactPresentation {
+        geometry: None,
         orientation: OrientationState::Applied,
         color: CacheColorState::EmbeddedOrUnknown,
         sharpening: SharpeningState::None,
@@ -124,12 +141,7 @@ fn lookup_preview(
         return Ok(Some(result));
     }
     if allow_embedded_interim {
-        let interim = artifacts.request(
-            detail,
-            RepresentationRequirement::Exact(ArtifactRepresentation::Embedded),
-            display_requirement(),
-            true,
-        );
+        let interim = sony_embedded_request(artifacts, detail);
         return artifacts.lookup(&interim, level);
     }
     Ok(None)
@@ -175,7 +187,9 @@ pub(crate) fn preview(
         DetailRequirement::NativeDetail
     } else {
         DetailRequirement::Display {
-            min_long_edge: max_size,
+            // ImageIO may round the requested edge down by one pixel.
+            // This is display tolerance, never proof of native detail.
+            min_long_edge: max_size.saturating_sub(1).max(1),
         }
     };
     if let Some(result) = lookup_preview(&artifacts, detail, try_fast_jpeg && allow_interim, level)?
@@ -184,9 +198,14 @@ pub(crate) fn preview(
     }
     let satisfied_request = preview_request(&artifacts, detail, false);
     let production_request = preview_request(&artifacts, detail, allow_interim);
+    // Embedded Sony results have their own lookup/version above. Reuse only
+    // decoded interim results here, never the obsolete padded JPEG policy.
+    let mut decoded_interim_request = production_request.clone();
+    decoded_interim_request.representation =
+        RepresentationRequirement::Exact(ArtifactRepresentation::Decoded);
     if require_native_detail
         && allow_interim
-        && let Some(result) = artifacts.lookup(&production_request, level)?
+        && let Some(result) = artifacts.lookup(&decoded_interim_request, level)?
     {
         return Ok(result);
     }
@@ -210,6 +229,7 @@ pub(crate) fn preview(
                 (image.width, image.height).into(),
                 ArtifactRepresentation::Embedded,
                 ArtifactPresentation {
+                    geometry: image.geometry,
                     orientation: OrientationState::Metadata,
                     color: CacheColorState::EmbeddedOrUnknown,
                     sharpening: SharpeningState::None,
@@ -218,7 +238,7 @@ pub(crate) fn preview(
                 format!("{HEIF_PREVIEW}:sony-embedded"),
                 level,
                 generation,
-                &production_request,
+                &sony_embedded_request(&artifacts, detail),
             )?;
             result.diagnostics = Some(PreviewDiagnostics {
                 backend: Some("Sony HIF embedded JPEG".into()),
@@ -241,7 +261,7 @@ pub(crate) fn preview(
     let queue_started = Instant::now();
     let source_wait_started = Instant::now();
     let work_request = if require_native_detail && allow_interim {
-        &production_request
+        &decoded_interim_request
     } else {
         &satisfied_request
     };
@@ -314,8 +334,10 @@ struct BackendPreviewDecode {
 }
 
 impl BackendPreviewDecode {
-    fn scaled(image: DynamicImage, max_size: u32) -> Self {
-        let native_detail = image.width().max(image.height()) < max_size;
+    fn scaled(image: DynamicImage) -> Self {
+        // A scaled/auxiliary decode does not establish the primary source
+        // dimensions. In particular, 511px for a 512px request is not full.
+        let native_detail = false;
         Self {
             image,
             representation: ArtifactRepresentation::Decoded,
@@ -337,17 +359,17 @@ fn decode_preview(
         |backend| match backend {
             PlannedHeifBackend::CachedArtifact => Err(MediaError::NativeDecoderUnavailable),
             #[cfg(target_os = "macos")]
-            PlannedHeifBackend::Platform(_) => apple_image_io::decode_rgba8(path, max_size)
-                .map(|image| BackendPreviewDecode::scaled(image, max_size)),
+            PlannedHeifBackend::Platform(_) => {
+                apple_image_io::decode_rgba8(path, max_size).map(BackendPreviewDecode::scaled)
+            }
             #[cfg(target_os = "windows")]
             PlannedHeifBackend::Platform(_) => windows_wic::decode_full_rgba8(path)
                 .map(|image| image.thumbnail(max_size, max_size))
-                .map(|image| BackendPreviewDecode::scaled(image, max_size)),
+                .map(BackendPreviewDecode::scaled),
             #[cfg(target_os = "linux")]
             PlannedHeifBackend::Platform(_) => Err(MediaError::NativeDecoderUnavailable),
             PlannedHeifBackend::Ffmpeg | PlannedHeifBackend::FfmpegRgbaFallback => {
-                ffmpeg_heif::decode_scaled_preview(path, max_size)
-                    .map(|image| BackendPreviewDecode::scaled(image, max_size))
+                ffmpeg_heif::decode_scaled_preview(path, max_size).map(BackendPreviewDecode::scaled)
             }
             PlannedHeifBackend::Libheif => libheif::decode_scaled(path, max_size, allow_interim)
                 .map(|decoded| {
@@ -665,6 +687,15 @@ fn transcode_heif_source(
 #[cfg(test)]
 mod delivery_tests {
     use super::*;
+
+    #[test]
+    fn a_rounded_or_auxiliary_scaled_preview_never_claims_native_detail() {
+        for (width, height) in [(340, 511), (2730, 4095), (1080, 1616)] {
+            let decoded = BackendPreviewDecode::scaled(DynamicImage::new_rgb8(width, height));
+            assert!(!decoded.native_detail);
+            assert_eq!(decoded.representation, ArtifactRepresentation::Decoded);
+        }
+    }
 
     #[test]
     fn libheif_container_thumbnail_is_embedded_and_never_native_detail() {

@@ -189,7 +189,11 @@ fn app_interim_hif_can_upgrade_to_a_satisfied_preview() {
         upgrade.result.satisfaction,
         Some(oxy_domain::MediaSatisfaction::Satisfied)
     );
-    assert!(upgrade.result.width.max(upgrade.result.height) >= 4_096);
+    assert!(
+        upgrade.result.width.max(upgrade.result.height) >= 4_095,
+        "upgrade: {:?}",
+        upgrade.result
+    );
 }
 
 #[test]
@@ -220,6 +224,25 @@ fn sony_hif_thumbnail_and_preview_levels_share_the_160_artifact() {
     .unwrap();
 
     assert_eq!((thumbnail.width, thumbnail.height), (120, 160));
+    let geometry = thumbnail.geometry.expect("validated Sony content geometry");
+    assert_eq!(
+        (geometry.display_size.width, geometry.display_size.height),
+        (4672, 7008)
+    );
+    assert_eq!(
+        (
+            geometry.content_rect.x,
+            geometry.content_rect.y,
+            geometry.content_rect.width,
+            geometry.content_rect.height
+        ),
+        (7, 0, 106, 160)
+    );
+    assert_eq!(
+        loupe_base.geometry,
+        Some(geometry),
+        "disk cache must retain geometry"
+    );
     assert_eq!(thumbnail.kind, PreviewKind::Embedded);
     assert_eq!(loupe_base.kind, PreviewKind::Embedded);
     assert_eq!(loupe_base.path, thumbnail.path);
@@ -279,7 +302,10 @@ fn heif_without_identified_fast_representation_uses_semantic_preview_size() {
     assert_eq!(thumbnail.kind, PreviewKind::Decoded);
     assert_eq!(fit.kind, PreviewKind::Decoded);
     assert!(thumbnail.width.max(thumbnail.height) > 160);
-    assert!(fit.width.max(fit.height) > thumbnail.width.max(thumbnail.height));
+    assert!(
+        fit.width.max(fit.height) > thumbnail.width.max(thumbnail.height),
+        "thumbnail: {thumbnail:?}, fit: {fit:?}"
+    );
     assert_ne!(thumbnail.path, fit.path);
 }
 

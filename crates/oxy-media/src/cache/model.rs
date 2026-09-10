@@ -93,6 +93,8 @@ pub enum SharpeningState {
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ArtifactPresentation {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub geometry: Option<oxy_domain::PreviewGeometry>,
     pub orientation: OrientationState,
     pub color: ColorState,
     pub sharpening: SharpeningState,
@@ -308,6 +310,7 @@ mod tests {
             variant: VariantIdentity {
                 representation,
                 presentation: ArtifactPresentation {
+                    geometry: None,
                     orientation: OrientationState::Applied,
                     color: ColorState::Srgb,
                     sharpening: SharpeningState::None,

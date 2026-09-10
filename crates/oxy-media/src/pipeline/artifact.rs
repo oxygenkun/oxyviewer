@@ -424,6 +424,7 @@ impl ArtifactCache {
             unreachable!("active publication uses a managed or staged file fact")
         };
         Ok(Some(PreviewResult {
+            geometry: hit.artifact.variant.presentation.geometry,
             path,
             width: hit.artifact.actual_dimensions.width,
             height: hit.artifact.actual_dimensions.height,
@@ -507,7 +508,7 @@ impl ArtifactCache {
             variant: VariantIdentity {
                 representation,
                 presentation,
-                policy_revision: MEDIA_CACHE_POLICY_REVISION,
+                policy_revision: request.policy_revision,
                 target,
             },
             actual_dimensions: dimensions,
@@ -557,6 +558,7 @@ impl ArtifactCache {
             };
             record_completion(published.completion);
             return Ok(PreviewResult {
+                geometry: presentation.geometry,
                 path: published.managed_path.unwrap_or_default(),
                 width: dimensions.width,
                 height: dimensions.height,
@@ -609,7 +611,7 @@ impl ArtifactCache {
         let variant = VariantIdentity {
             representation,
             presentation,
-            policy_revision: MEDIA_CACHE_POLICY_REVISION,
+            policy_revision: request.policy_revision,
             target,
         };
         let candidate = crate::cache::MediaArtifact {
@@ -657,6 +659,7 @@ impl ArtifactCache {
             };
             record_completion(published.completion);
             return Ok(PreviewResult {
+                geometry: presentation.geometry,
                 path: staged_path,
                 width: dimensions.width,
                 height: dimensions.height,
@@ -848,6 +851,7 @@ fn presentation_requirement_implies(
 
 pub(crate) const fn applied_srgb() -> ArtifactPresentation {
     ArtifactPresentation {
+        geometry: None,
         orientation: OrientationState::Applied,
         color: CacheColorState::Srgb,
         sharpening: SharpeningState::None,
@@ -899,6 +903,7 @@ fn preview_result(
         unreachable!("pipeline cache lookup contains managed artifacts")
     };
     PreviewResult {
+        geometry: artifact.variant.presentation.geometry,
         path,
         width: artifact.actual_dimensions.width,
         height: artifact.actual_dimensions.height,
@@ -1164,6 +1169,7 @@ mod tests {
                                 },
                                 ArtifactRepresentation::Decoded,
                                 ArtifactPresentation {
+                                    geometry: None,
                                     orientation: OrientationState::Applied,
                                     color: CacheColorState::EmbeddedOrUnknown,
                                     sharpening: SharpeningState::None,
@@ -1256,6 +1262,7 @@ mod tests {
                             },
                             ArtifactRepresentation::Decoded,
                             ArtifactPresentation {
+                                geometry: None,
                                 orientation: OrientationState::Applied,
                                 color: CacheColorState::EmbeddedOrUnknown,
                                 sharpening: SharpeningState::None,
@@ -1361,6 +1368,7 @@ mod tests {
                                 crate::publication::PersistenceStatus::SkippedBackpressure
                             );
                             Ok(PreviewResult {
+                                geometry: None,
                                 path: std::path::PathBuf::new(),
                                 width: 16,
                                 height: 8,
@@ -1469,6 +1477,7 @@ mod tests {
                                 },
                                 ArtifactRepresentation::Decoded,
                                 ArtifactPresentation {
+                                    geometry: None,
                                     orientation: OrientationState::Applied,
                                     color: CacheColorState::EmbeddedOrUnknown,
                                     sharpening: SharpeningState::None,

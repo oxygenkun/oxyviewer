@@ -1,6 +1,8 @@
 //! Sony SHIF's bounded embedded-JPEG extraction and orientation compatibility.
 //! This is not a generic HEIF thumbnail extractor or a decoder backend.
 
+mod geometry;
+
 use crate::{ImageDimensions, MediaError};
 use image::GenericImageView;
 use std::{fs::File, io::Read, path::Path};
@@ -14,6 +16,7 @@ const MAX_EDGE: u32 = 512;
 
 #[derive(Debug)]
 pub struct EmbeddedJpeg {
+    pub geometry: Option<oxy_domain::PreviewGeometry>,
     pub bytes: Vec<u8>,
     pub width: u32,
     pub height: u32,
@@ -127,7 +130,21 @@ fn inspect_bytes(bytes: &[u8], display_size: Option<ImageDimensions>) -> Inspect
             embedded_jpeg: None,
         };
     };
-    let orientation = heif_exif_orientation(bytes).unwrap_or(1);
+    let primary = geometry::primary(bytes);
+    let orientation = primary.map_or_else(
+        || heif_exif_orientation(bytes).unwrap_or(1),
+        |(_, turn)| match turn {
+            1 => 8,
+            2 => 3,
+            3 => 6,
+            _ => 1,
+        },
+    );
+    let geometry = primary.and_then(|(size, turn)| {
+        image::load_from_memory(&jpeg)
+            .ok()
+            .and_then(|image| geometry::detect(&image, size, turn))
+    });
     let needs_axis_swap = matches!(orientation, 6 | 8);
     let display_size = display_size.or_else(|| {
         heif_display_dimensions(bytes).map(|mut dimensions| {
@@ -137,9 +154,15 @@ fn inspect_bytes(bytes: &[u8], display_size: Option<ImageDimensions>) -> Inspect
             dimensions
         })
     });
-    let needs_orientation = display_size.map_or(needs_axis_swap, |display_size| {
-        (height > width) != (display_size.height > display_size.width)
-    });
+    let known_landscape_jpeg =
+        (width, height) == (160, 120) && primary.is_some_and(|(size, _)| size.width >= size.height);
+    let needs_orientation = if known_landscape_jpeg {
+        orientation != 1
+    } else {
+        display_size.map_or(needs_axis_swap, |display_size| {
+            (height > width) != (display_size.height > display_size.width)
+        })
+    };
     if needs_orientation {
         // The JPEG item itself has no orientation tag. Apply the primary HEIF
         // item's irot transform so the fast thumbnail agrees with libheif's
@@ -148,10 +171,13 @@ fn inspect_bytes(bytes: &[u8], display_size: Option<ImageDimensions>) -> Inspect
         // choose between EXIF 6 and 8.
         let orientation = if orientation != 1 { orientation } else { 6 };
         jpeg = with_exif_orientation(jpeg, orientation);
-        std::mem::swap(&mut width, &mut height);
+        if matches!(orientation, 6 | 8) {
+            std::mem::swap(&mut width, &mut height);
+        }
     }
     Inspection {
         embedded_jpeg: Some(EmbeddedJpeg {
+            geometry,
             bytes: jpeg,
             width,
             height,
@@ -300,6 +326,24 @@ mod tests {
                 height: 7_008,
             })
         );
+    }
+
+    #[test]
+    fn fallback_portrait_rotation_reports_the_rotated_raster_dimensions() {
+        let mut bytes = header_with_jpeg(155_648);
+        bytes[32..41].fill(0); // No usable primary transform: legacy fallback.
+        let image = inspect_bytes(
+            &bytes,
+            Some(ImageDimensions {
+                width: 4672,
+                height: 7008,
+            }),
+        )
+        .embedded_jpeg
+        .unwrap();
+        assert_eq!((image.width, image.height), (120, 160));
+        assert_eq!(&image.bytes[30..32], &[6, 0]);
+        assert!(image.geometry.is_none());
     }
 
     #[test]

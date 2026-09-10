@@ -28,6 +28,7 @@ interface HeifTileCanvasProps {
   displaySharpening: boolean;
   onArtifactDisplayed?: () => void;
   onImageSize: (size: { width: number; height: number }) => void;
+  previewDisplaySize?: { width: number; height: number };
   onStatus: (status: HeifDecodeStatus, diagnostics?: HeifDiagnostics) => void;
 }
 
@@ -36,9 +37,13 @@ export function HeifTileCanvas({
   displaySharpening,
   onArtifactDisplayed,
   onImageSize,
+  previewDisplaySize,
   onStatus,
 }: HeifTileCanvasProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
+  const previewSizeRef = useRef(previewDisplaySize);
+  useLayoutEffect(() => { previewSizeRef.current = previewDisplaySize; }, [previewDisplaySize]);
+  const [canvasVisible, setCanvasVisible] = useState(false);
   const memoryHostRef = useRef<HTMLDivElement>(null);
   const cacheIdentity = `${asset.id}:${asset.modifiedAtMs}:${displaySharpening}`;
   const memoryKey = `heif-display:${cacheIdentity}`;
@@ -108,6 +113,7 @@ export function HeifTileCanvas({
 
   useEffect(() => {
     if (!isTauri() || restored.current) return;
+    setCanvasVisible(false);
     const generation = ++nextGeneration;
     const debug = __OXY_DEBUG__
       ? beginPreviewDebug({
@@ -170,6 +176,10 @@ export function HeifTileCanvas({
         } else {
           const canvas = canvasRef.current;
           if (canvas) {
+            // A conflicting geometry cannot be progressively composited over
+            // the old preview. Commit that complete canvas and its size together.
+            setCanvasVisible(true);
+            onImageSize({ width: canvas.width, height: canvas.height });
             markBrowserImageReady(memoryKey, { width: canvas.width, height: canvas.height }, canvas);
           }
           setDisplayedCachedImage(undefined);
@@ -227,6 +237,14 @@ export function HeifTileCanvas({
           slowestTileMs = Math.max(slowestTileMs, drawnAt - tileStarted);
         }
         const settled = progress?.settle(tile, true);
+        if (settled?.firstDrawn) {
+          const canvas = canvasRef.current;
+          const preview = previewSizeRef.current;
+          if (canvas && (!preview || (preview.width === canvas.width && preview.height === canvas.height))) {
+            setCanvasVisible(true);
+            onImageSize({ width: canvas.width, height: canvas.height });
+          }
+        }
         if (track && settled?.firstDrawn && firstPaintFrame === undefined) {
           firstPaintFrame = requestAnimationFrame(() => {
             firstPaintFrame = undefined;
@@ -347,8 +365,7 @@ export function HeifTileCanvas({
           width: result.width,
           height: result.height,
         });
-        onImageSize({ width: result.width, height: result.height });
-        onStatus("complete");
+        // Geometry is committed with visible pixels in the image load handler.
         if (__OXY_DEBUG__) debug?.complete({ artifact: true });
         return;
       }
@@ -367,7 +384,7 @@ export function HeifTileCanvas({
         canvas.width = session.width;
         canvas.height = session.height;
       }
-      onImageSize({ width: session.width, height: session.height });
+      // A session describes pending pixels; it must not move the focus overlay.
       if (__OXY_DEBUG__) {
         debug?.mark("session-ready", {
           sessionId: session.id,
@@ -426,7 +443,8 @@ export function HeifTileCanvas({
   ]);
 
   return <>
-    <canvas key={memoryKey} className="loupe__heif-canvas" ref={canvasRef} />
+    <canvas key={memoryKey} className="loupe__heif-canvas" ref={canvasRef}
+      style={{ visibility: canvasVisible ? "visible" : "hidden" }} />
     <div ref={memoryHostRef} style={{ display: "contents" }} />
     {visibleCachedImage ? <img
       key={visibleCachedImage.url}
@@ -448,6 +466,8 @@ export function HeifTileCanvas({
           width: event.currentTarget.naturalWidth, height: event.currentTarget.naturalHeight,
         }, event.currentTarget, pendingCachedImage.resource?.resourceId);
         setDisplayedCachedImage({ identity: cacheIdentity, result: pendingCachedImage });
+        onImageSize({ width: pendingCachedImage.width, height: pendingCachedImage.height });
+        onStatus("complete");
         onArtifactDisplayed?.();
         perfMark("image:loaded", {
           assetName: asset.name,

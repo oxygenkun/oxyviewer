@@ -1456,6 +1456,7 @@ mod tests {
         VariantIdentity {
             representation,
             presentation: ArtifactPresentation {
+                geometry: None,
                 orientation: OrientationState::Applied,
                 color: CacheColorState::Srgb,
                 sharpening: SharpeningState::None,

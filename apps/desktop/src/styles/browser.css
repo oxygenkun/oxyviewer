@@ -421,3 +421,15 @@
 .virtual-list--portrait .asset-list-row .thumbnail { width: 34px; height: 52px; }
 .asset-list-row > .asset-metadata-badges { justify-content: flex-start; }
 .asset-list-row strong { overflow: hidden; color: #d4d5d0; text-overflow: ellipsis; white-space: nowrap; }
+
+/* The outer thumbnail keeps its existing grid/filmstrip dimensions. Container
+   units fit the logical image without per-thumbnail ResizeObservers. */
+.thumbnail__content-host {
+  position: absolute;
+  inset: 0;
+  container-type: size;
+  display: grid;
+  place-items: center;
+}
+.thumbnail__content { position: relative; overflow: hidden; }
+.thumbnail__content > img { position: absolute; display: block; max-width: none; }

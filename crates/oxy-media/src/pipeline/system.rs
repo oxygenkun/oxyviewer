@@ -23,6 +23,7 @@ pub fn preview(
 ) -> Result<PreviewResult, MediaError> {
     let artifacts = ArtifactCache::new(path, cache_dir)?;
     let presentation = ArtifactPresentation {
+        geometry: None,
         orientation: OrientationState::Applied,
         color: CacheColorState::EmbeddedOrUnknown,
         sharpening: SharpeningState::None,

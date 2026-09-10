@@ -2710,6 +2710,7 @@ mod tests {
                 status: ResourceLoadStatus::Ready,
                 level: RenderLevel::Preview,
                 result: Some(oxy_domain::PreviewResult {
+                    geometry: None,
                     path: artifact.clone(),
                     width: 1600,
                     height: 1067,
@@ -2748,6 +2749,7 @@ mod tests {
             status: ResourceLoadStatus::Ready,
             level: RenderLevel::Preview,
             result: Some(oxy_domain::PreviewResult {
+                geometry: None,
                 path: artifact,
                 width: 16,
                 height: 8,
@@ -2788,6 +2790,7 @@ mod tests {
                 status: ResourceLoadStatus::Ready,
                 level: RenderLevel::Preview,
                 result: Some(oxy_domain::PreviewResult {
+                    geometry: None,
                     path: PathBuf::new(),
                     width: 16,
                     height: 8,
@@ -2874,6 +2877,7 @@ mod tests {
             status: ResourceLoadStatus::Ready,
             level: RenderLevel::Thumbnail,
             result: Some(oxy_domain::PreviewResult {
+                geometry: None,
                 path: artifact.to_owned(),
                 width: 160,
                 height: 120,

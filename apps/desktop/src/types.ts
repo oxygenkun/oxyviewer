@@ -242,7 +242,15 @@ export interface MediaResourceDescriptor {
   mediaType: string;
 }
 
+export interface PreviewGeometry {
+  /** Full display-oriented canvas; does not describe the preview's resolution. */
+  displaySize: { width: number; height: number };
+  /** Display-oriented raster pixel edges, covering the complete logical canvas. */
+  contentRect: { x: number; y: number; width: number; height: number };
+}
+
 export interface PreviewResult {
+  geometry?: PreviewGeometry;
   path: string;
   url: string;
   width: number;

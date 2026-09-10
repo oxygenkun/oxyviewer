@@ -96,6 +96,38 @@ afterEach(async () => {
 });
 
 describe("filmstrip thumbnail display retention", () => {
+  it("retains the displayed geometry until replacement pixels load, including a cache remount", async () => {
+    const geometry = {
+      displaySize: { width: 7008, height: 4672 },
+      contentRect: { x: 0, y: 7, width: 160, height: 106 },
+    };
+    const publish = (revision: number, path: string, padded: boolean) => acceptImageProjection({
+      path: asset.path, sourceRevision: "source-1", stateRevision: revision,
+      validAt: 1, status: "ready", level: "thumbnail",
+      result: { path, width: 160, height: 120, kind: "embedded", renderLevel: "thumbnail",
+        geometry: padded ? geometry : undefined },
+    });
+    publish(2, url, true);
+    markBrowserImageReady(url, { width: 160, height: 120 });
+    await render("loupe");
+    const content = container.querySelector<HTMLImageElement>(".thumbnail__content img")!;
+    expect(content.src).toContain(url);
+    expect(parseFloat(content.style.top)).toBeCloseTo(-7 / 106 * 100);
+    // A new projection describes different pixels. The retained image must
+    // keep its crop while that replacement remains hidden and undecoded.
+    await act(async () => publish(3, "/cache/replacement.jpg", false));
+    expect(container.querySelector(".thumbnail__content img")).toBe(content);
+    const pending = container.querySelector<HTMLImageElement>(".thumbnail__pending-image")!;
+    Object.defineProperties(pending, { naturalWidth: { value: 160 }, naturalHeight: { value: 120 } });
+    await act(async () => pending.dispatchEvent(new Event("load")));
+    expect(container.querySelector(".thumbnail__content")).toBeNull();
+    expect(container.querySelector("img")?.src).toContain("/cache/replacement.jpg");
+    await act(async () => root.render(null));
+    await render("visible");
+    expect(container.querySelector(".thumbnail__content")).toBeNull();
+    expect(container.querySelector("img")?.src).toContain("/cache/replacement.jpg");
+  });
+
   it("does not hide a cached image when deselection follows a projection update", async () => {
     markBrowserImageReady(url, { width: 160, height: 120 });
     await render("loupe");

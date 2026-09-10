@@ -1,4 +1,4 @@
-import type { AssetKind, ThumbnailOrientation } from "../types";
+import type { AssetKind, PreviewGeometry, ThumbnailOrientation } from "../types";
 
 export interface Point {
   x: number;
@@ -73,11 +73,12 @@ export function resolveLoupeSourceSize(
   fullResolutionSize: Size | undefined,
   metadataSize: Size | undefined,
   fallback: Size,
+  previewGeometry?: PreviewGeometry,
 ) {
   // HEIF's <img> is only a 512 px placeholder. It must never define the
   // pixel-zoom scale once the full-resolution tile canvas is available.
   if (kind === "heif") {
-    return fullResolutionSize ?? metadataSize ?? previewNaturalSize ?? fallback;
+    return fullResolutionSize ?? previewGeometry?.displaySize ?? metadataSize ?? previewNaturalSize ?? fallback;
   }
   return previewNaturalSize ?? metadataSize ?? fallback;
 }

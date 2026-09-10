@@ -40,6 +40,7 @@ pub(crate) fn preview_result(
 ) -> Result<PreviewResult, MediaError> {
     let size = raster_dimensions(&path)?;
     Ok(PreviewResult {
+        geometry: None,
         path,
         width: size.width,
         height: size.height,

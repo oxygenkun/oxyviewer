@@ -28,7 +28,7 @@ export async function runGridScrollProbe(signal: AbortSignal, horizontal = false
         });
     };
     const hasDisplayedImage = (card: HTMLElement) => {
-      const image = card.querySelector<HTMLImageElement>(".thumbnail > img:not(.thumbnail__pending-image)");
+      const image = card.querySelector<HTMLImageElement>(".thumbnail img:not(.thumbnail__pending-image)");
       return Boolean(image?.complete && image.naturalWidth > 0);
     };
     const start = horizontal ? scroller.scrollLeft : scroller.scrollTop;

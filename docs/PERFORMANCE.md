@@ -16,6 +16,20 @@ end-to-end regression harness that enforces these budgets is described in
 
 ## Verification Log
 
+- 2026-09-10: Sony HIF fast JPEGs now carry display-oriented content geometry
+  in their artifact presentation. The original 160px JPEG is retained; CSS
+  removes verified padding and maps the content to the full image's logical
+  canvas without re-encoding or waiting for metadata/full decoding. The bounded
+  256 KiB fast read / 2 MiB fallback remains. Three final release/WebView runs
+  measured cold HIF first-preview at 37–46 ms (median 38 ms, 800 ms budget),
+  first tile at 337–341 ms, warm first-preview at 36–39 ms (median 38 ms,
+  150 ms budget), and warm full artifact at 46–49 ms. Both scenarios passed;
+  no matching baseline exists, so this establishes budget compliance, not a
+  before/after speedup. The browser regression with the real oriented JPEG
+  verified unchanged canvas/focus bounds when metadata arrives and the full
+  representation replaces the thumbnail. These are local fixture results,
+  not a broader Sony camera or NAS benchmark.
+
 - 2026-09-10: Directory-tree foreground reads now run independently of older
   requests and the browse background gate; collapsed descendants are discovered
   by a separate background queue. One rebuilt release/WebView

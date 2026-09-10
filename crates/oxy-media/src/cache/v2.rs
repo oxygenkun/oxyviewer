@@ -1839,6 +1839,7 @@ mod tests {
             variant: VariantIdentity {
                 representation: ArtifactRepresentation::Decoded,
                 presentation: ArtifactPresentation {
+                    geometry: None,
                     orientation: OrientationState::Applied,
                     color: ColorState::Srgb,
                     sharpening: SharpeningState::None,

@@ -227,7 +227,10 @@ flowchart TD
 - HEIF 缩略预览和 tile session 在内存 decode 完成后，会在后续 JPEG encode/fsync 前释放
   decode permit；直接生成 full artifact 的 backend transcode 作为一次完整操作受 gate 保护。
 - 同一源文件的并发请求通过 source lock 合并，等待者在真正解码前再次检查 cache。
-- Sony HIF 已验证的 160px 内嵌 JPEG 不进入 HEVC decode gate。
+- Sony HIF 已验证的 160px 内嵌 JPEG 不进入 HEVC decode gate；可确认的 padding 通过
+  `PreviewResult.geometry` 描述，保留 JPEG 原字节并由前端映射到 full 逻辑画布。
+  geometry 随 artifact presentation 缓存；未知布局/暗场保持原路径。详见
+  [内容几何](../../docs/architecture/05-preview-content-geometry.md)。
 
 ## Fallback 流程
 

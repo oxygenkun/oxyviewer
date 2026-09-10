@@ -8,7 +8,7 @@ needed. Fixture-dependent tests skip automatically when a file is missing.
 
 | File           | Description                              | Size     | SHA-256                                                            |
 | -------------- | ---------------------------------------- | -------- | ------------------------------------------------------------------ |
-| `DSC00449.HIF` | Sony HEIF, 4672x7008, 10-bit, no embedded thumbnail | 9,490,432 | `8d226283fa6e5fdc75a7dbb70b7314c6c545fe3bd7cb74cae94e7996125aa4c4` |
+| `DSC00449.HIF` | Sony HEIF, 4672x7008, 10-bit, embedded 160×120 JPEG with padding | 9,490,432 | `8d226283fa6e5fdc75a7dbb70b7314c6c545fe3bd7cb74cae94e7996125aa4c4` |
 
 ### How to obtain
 

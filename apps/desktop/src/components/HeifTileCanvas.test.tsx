@@ -66,15 +66,42 @@ afterEach(async () => {
   vi.unstubAllGlobals();
 });
 
-async function render(selected = asset, displaySharpening = true) {
+async function render(selected = asset, displaySharpening = true, previewDisplaySize?: { width: number; height: number }) {
   await act(async () => root.render(
     <StrictMode><HeifTileCanvas asset={selected} displaySharpening={displaySharpening}
+      previewDisplaySize={previewDisplaySize}
       onArtifactDisplayed={artifactDisplayed}
       onImageSize={imageSize} onStatus={status} /></StrictMode>,
   ));
 }
 
 describe("HEIF full presentation lifecycle", () => {
+  it("holds conflicting tile geometry until the complete canvas can replace the preview", async () => {
+    mocks.start.mockResolvedValue({ delivery: "tiles", session: {
+      id: "session", width: 1024, height: 512, tileSize: 512,
+      expectedTiles: 2, status: "decoding",
+    } });
+    vi.spyOn(HTMLCanvasElement.prototype, "getContext").mockReturnValue({ drawImage: vi.fn() } as unknown as CanvasRenderingContext2D);
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue({ ok: true, blob: async () => new Blob(["jpeg"]) }));
+    vi.stubGlobal("createImageBitmap", vi.fn().mockResolvedValue({ close: vi.fn() }));
+    await render(asset, true, { width: 4672, height: 7008 });
+    const generation = mocks.start.mock.lastCall![1];
+    const tileListener = mocks.listen.mock.calls.find(([name]) => name === "heif-tile-ready")![1];
+    const statusListener = mocks.listen.mock.calls.find(([name]) => name === "heif-decode-status")![1];
+    for (const x of [0, 512]) {
+      await act(async () => tileListener({ payload: {
+        sessionId: "session", generation, url: `tile-${x}`, payload: "jpeg", x, y: 0, width: 512, height: 512,
+      } }));
+      expect(imageSize).not.toHaveBeenCalled();
+      expect(container.querySelector("canvas")?.style.visibility).toBe("hidden");
+    }
+    await act(async () => statusListener({ payload: { sessionId: "session", generation, status: "complete" } }));
+    const paint = vi.mocked(requestAnimationFrame).mock.lastCall![0];
+    await act(async () => paint(0));
+    expect(imageSize).toHaveBeenCalledWith({ width: 1024, height: 512 });
+    expect(container.querySelector("canvas")?.style.visibility).toBe("visible");
+  });
+
   it("keeps a restored displayed artifact leased when the UI cache is cleared", async () => {
     const image = document.createElement("img");
     markBrowserImageReady("heif-display:hif:1:true", { width: 600, height: 400 }, image, "full");
@@ -107,8 +134,10 @@ describe("HEIF full presentation lifecycle", () => {
     expect(mocks.start.mock.lastCall?.[2]).toBe(true);
     const pending = container.querySelector("img")!;
     expect(pending.src).toBe(artifact.result.url);
+    expect(imageSize).not.toHaveBeenCalled();
     await act(async () => pending.dispatchEvent(new Event("load")));
     expect(container.querySelector("img")?.style.visibility).not.toBe("hidden");
+    expect(imageSize).toHaveBeenCalledWith({ width: 6000, height: 4000 });
     expect(context).not.toHaveBeenCalled();
     const plain = { ...artifact, result: {
       ...artifact.result, url: "oxy-media://localhost/resource/plain",
@@ -158,7 +187,7 @@ describe("HEIF full presentation lifecycle", () => {
     await render();
     expect(mocks.listen).toHaveBeenCalledTimes(2);
     expect(mocks.start).toHaveBeenCalledTimes(1);
-    expect(imageSize).toHaveBeenCalledWith({ width: 6000, height: 4000 });
+    expect(imageSize).not.toHaveBeenCalled();
     const signal = mocks.start.mock.calls[0][3] as AbortSignal;
     expect(signal.aborted).toBe(false);
     await act(async () => root.render(null));

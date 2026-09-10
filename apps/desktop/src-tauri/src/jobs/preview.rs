@@ -1337,6 +1337,7 @@ mod tests {
             status: ResourceLoadStatus::Ready,
             level: RenderLevel::Preview,
             result: Some(PreviewResult {
+                geometry: None,
                 path: PathBuf::new(),
                 width: 160,
                 height: 120,
@@ -1387,6 +1388,7 @@ mod tests {
         )
         .unwrap();
         let interim = PreviewResult {
+            geometry: None,
             path: state.path().join("interim.jpg"),
             width: 160,
             height: 120,
@@ -1436,6 +1438,7 @@ mod tests {
                 variant: oxy_media::VariantIdentity {
                     representation: oxy_media::ArtifactRepresentation::Embedded,
                     presentation: oxy_media::ArtifactPresentation {
+                        geometry: None,
                         orientation: oxy_media::OrientationState::Applied,
                         color: oxy_media::CacheColorState::EmbeddedOrUnknown,
                         sharpening: oxy_media::SharpeningState::None,
@@ -1473,6 +1476,7 @@ mod tests {
             status: ResourceLoadStatus::Ready,
             level: RenderLevel::Preview,
             result: Some(PreviewResult {
+                geometry: None,
                 path: managed_path,
                 width: 1,
                 height: 1,
@@ -1517,6 +1521,7 @@ mod tests {
             status: ResourceLoadStatus::Ready,
             level: RenderLevel::Thumbnail,
             result: Some(PreviewResult {
+                geometry: None,
                 path,
                 width: 8,
                 height: 4,
@@ -1609,6 +1614,7 @@ mod tests {
             )
             .unwrap();
         let mut result = PreviewResult {
+            geometry: None,
             path: directory.path().join("pending.jpg"),
             width: 8,
             height: 4,

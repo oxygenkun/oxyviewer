@@ -24,6 +24,7 @@ import {
   type RenderMethod,
 } from "../lib/preview";
 import { beginPreviewDebug, type PreviewDebugHandle } from "../lib/previewDebug";
+import { previewContentStyles, validPreviewGeometry, type DisplayedPreviewSize } from "../lib/previewGeometry";
 import { nextProgressiveStage } from "../lib/progressiveImage";
 import { rawPreviewStatus, type RawPreviewStatus } from "../lib/rawPreview";
 import type {
@@ -40,7 +41,7 @@ interface ThumbnailProps {
   priority?: PreviewPriority;
   rank?: number;
   onContextMenu?: React.MouseEventHandler<HTMLDivElement>;
-  onImageLoad?: (size: { width: number; height: number }) => void;
+  onImageLoad?: (size: DisplayedPreviewSize) => void;
   onRawPreviewStatus?: (status: RawPreviewStatus) => void;
 }
 
@@ -48,6 +49,7 @@ interface DisplayedImage {
   assetId: string;
   source: string;
   resourceId?: string;
+  size?: DisplayedPreviewSize;
 }
 
 function hashSeed(value: string) {
@@ -168,11 +170,15 @@ export function Thumbnail({
   const resourceForSource = (url: string | undefined) => [previewSource, fullSource]
     .find((result) => result?.url === url)?.resource?.resourceId;
   const preparedResourceId = resourceForSource(preparedSource);
+  const preparedResult = [previewSource, fullSource].find((result) => result?.url === preparedSource);
+  const preparedGeometry = preparedResult
+    ? validPreviewGeometry(preparedResult.geometry, preparedResult) : undefined;
   const preparedSize = preparedSource ? getBrowserImageSize(preparedSource) : undefined;
   const visibleImage = displayedImage?.assetId === asset.id
     ? displayedImage
     : preparedSource
-      ? { assetId: asset.id, source: preparedSource, resourceId: preparedResourceId }
+      ? { assetId: asset.id, source: preparedSource, resourceId: preparedResourceId,
+          size: preparedSize ? { ...preparedSize, geometry: preparedGeometry } : undefined }
       : undefined;
   const generatedSource = nextProgressiveStage(Boolean(visibleImage), [
     previewSource,
@@ -298,8 +304,9 @@ export function Thumbnail({
     // which does not reliably fire another load event to reveal it again.
     setDisplayedImage((current) => current?.assetId === asset.id
       ? current
-      : { assetId: asset.id, source: preparedSource, resourceId: preparedResourceId });
-  }, [asset.id, preparedResourceId, preparedSource]);
+      : { assetId: asset.id, source: preparedSource, resourceId: preparedResourceId,
+          size: preparedSize ? { ...preparedSize, geometry: preparedGeometry } : undefined });
+  }, [asset.id, preparedResourceId, preparedSource, preparedSize, preparedGeometry]);
 
   useEffect(() => {
     setFullImageFailed(false);
@@ -317,7 +324,7 @@ export function Thumbnail({
         ? previewSource
         : undefined;
     if (preparedSource) reportImageLoaded(preparedSize, preparedResult, preparedSource);
-    onImageLoad?.(preparedSize);
+    onImageLoad?.({ ...preparedSize, geometry: visibleImage?.size?.geometry });
     if (!ownsFullDetailStage || (previewSource?.url !== preparedSource && fullSource?.url !== preparedSource)) return;
     setLoaded((current) => current?.assetId === asset.id
       ? current
@@ -329,6 +336,7 @@ export function Thumbnail({
     onImageLoad,
     ownsFullDetailStage,
     visibleImage?.source,
+    visibleImage?.size?.geometry,
     preparedSize,
     preparedSource,
     fullSource,
@@ -400,8 +408,9 @@ export function Thumbnail({
     if (ownsFullDetailStage && large && result?.renderLevel !== "thumbnail") {
       setLoaded({ assetId: asset.id, mode: result === fullSource ? "full" : "preview" });
     }
-    if (source) setDisplayedImage({ assetId: asset.id, source, resourceId: result?.resource?.resourceId });
-    onImageLoad?.(size);
+    const displayedSize = { ...size, geometry: validPreviewGeometry(result?.geometry, size) };
+    if (source) setDisplayedImage({ assetId: asset.id, source, resourceId: result?.resource?.resourceId, size: displayedSize });
+    onImageLoad?.(displayedSize);
   };
 
   const handleError = (result?: PreviewResult) => {
@@ -434,6 +443,10 @@ export function Thumbnail({
     }
   };
 
+  const visibleSize = visibleImage?.size;
+  const contentStyles = visibleSize?.geometry
+    ? previewContentStyles(visibleSize.geometry, visibleSize) : undefined;
+
   return (
     <div
       className={`thumbnail ${large ? "thumbnail--large" : ""}`}
@@ -447,13 +460,16 @@ export function Thumbnail({
           <i />
         </div>
       ) : null}
-      {visibleImage ? (
-        <img
-          key={`${asset.id}:${visibleImage.source}`}
-          src={visibleImage.source}
-          alt=""
-          draggable={false}
-        />
+      {visibleImage ? contentStyles ? (
+        <div className="thumbnail__content-host">
+          <div className="thumbnail__content" style={contentStyles.frame}>
+            <img key={`${asset.id}:${visibleImage.source}`} src={visibleImage.source}
+              style={contentStyles.image} alt="" draggable={false} />
+          </div>
+        </div>
+      ) : (
+        <img key={`${asset.id}:${visibleImage.source}`} src={visibleImage.source}
+          alt="" draggable={false} />
       ) : null}
       {pendingSource && !failed ? (
         <img

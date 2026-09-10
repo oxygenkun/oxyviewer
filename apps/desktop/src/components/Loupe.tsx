@@ -1,3 +1,4 @@
+import type { DisplayedPreviewSize } from "../lib/previewGeometry";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import {
   Check,
@@ -125,7 +126,7 @@ export function Loupe({
   const [hideControlsImmediately, setHideControlsImmediately] = useState(false);
   const [layoutVersion, setLayoutVersion] = useState(0);
   const [stageContentSize, setStageContentSize] = useState<Size>({ width: 0, height: 0 });
-  const [naturalSize, setNaturalSize] = useState<{ assetId: string; size: Size } | undefined>(undefined);
+  const [naturalSize, setNaturalSize] = useState<{ assetId: string; size: DisplayedPreviewSize } | undefined>(undefined);
   const [heifFullSize, setHeifFullSize] = useState<{ assetId: string; size: Size } | undefined>(undefined);
   const [rawPreviewStatus, setRawPreviewStatus] = useState<RawPreviewStatus>({ state: "loadingPreview" });
   const [displayedHeifArtifact, setDisplayedHeifArtifact] = useState<string>();
@@ -176,13 +177,14 @@ export function Loupe({
     heifFullSize?.assetId === active.id ? heifFullSize.size : undefined,
     metadataSize,
     DEFAULT_IMAGE_SIZE,
+    naturalSize?.assetId === active.id ? naturalSize.size.geometry : undefined,
   );
   const fittedImageSize = fitSize(stageContentSize, sourceSize);
   const navigatorImageSize = fitSize(NAVIGATOR_MAX_SIZE, sourceSize);
   const currentNaturalSize = naturalSize?.assetId === active.id ? naturalSize.size : undefined;
   const currentHeifSize = heifFullSize?.assetId === active.id ? heifFullSize.size : undefined;
   const displayedNaturalSize = active.kind === "heif"
-    ? currentHeifSize ?? currentNaturalSize ?? metadataSize
+    ? currentHeifSize ?? currentNaturalSize?.geometry?.displaySize ?? currentNaturalSize ?? metadataSize
     : currentNaturalSize ?? metadataSize;
   const mappedFocusRegions = useMemo(
     () => mapFocusRegions(details.data?.focusInfo, displayedNaturalSize, metadataSize),
@@ -230,7 +232,7 @@ export function Loupe({
         : "decoding");
   }, []);
 
-  const handleImageLoad = useCallback((size: Size) => {
+  const handleImageLoad = useCallback((size: DisplayedPreviewSize) => {
     setNaturalSize({ assetId: active.id, size });
   }, [active.id]);
 
@@ -560,6 +562,7 @@ export function Loupe({
                 asset={active}
                 displaySharpening={displaySharpening}
                 onImageSize={handleHeifImageSize}
+                previewDisplaySize={currentNaturalSize?.geometry?.displaySize}
                 onArtifactDisplayed={handleHeifArtifactDisplayed}
                 onStatus={setHeifStatus}
               />
