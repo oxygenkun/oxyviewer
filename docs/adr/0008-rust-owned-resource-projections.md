@@ -151,9 +151,10 @@ than receiving the originating process's Tauri event.
 
 The main directory tree is also a Rust-owned, revisioned, process-local projection.
 It distinguishes unloaded children from an authoritative empty child list and loads
-only a level explicitly expanded by the UI. React mirrors complete snapshots and
-rejects late command responses with older revisions. Directory reads enter a
-Rust-owned coalescing queue; the UI reports its active session and directory, while
+a requested level immediately, then discovers collapsed descendants in a separate
+background queue without changing expansion intent. React mirrors complete snapshots and
+rejects late command responses with older revisions. Interactive reads run independently of older reads and the background gate.
+Background reads enter a Rust-owned coalescing queue; the UI reports its active session and directory, while
 Rust owns promotion and demotion of pending node loads.
 
 ## Rejected alternatives

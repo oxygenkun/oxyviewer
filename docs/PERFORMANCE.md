@@ -16,6 +16,15 @@ end-to-end regression harness that enforces these budgets is described in
 
 ## Verification Log
 
+- 2026-09-10: Directory-tree foreground reads now run independently of older
+  requests and the browse background gate; collapsed descendants are discovered
+  by a separate background queue. One rebuilt release/WebView
+  `folder-open-100k` run measured first-page paint at 474 ms (300 ms budget:
+  failed), with directory enumeration at 368 ms. There is no recorded baseline
+  for this scenario, so this run does not establish whether the change caused
+  a regression. NAS rapid-switch latency and large nested-tree memory usage
+  have not been measured.
+
 - 2026-09-10: Removed the scroll-idle resource gate for grid/list/filmstrip and
   expanded overscan to 6 rows / 16 items / 12 items respectively. Preview workers
   and the shared decode gate use available logical CPU count (8 on this Mac),

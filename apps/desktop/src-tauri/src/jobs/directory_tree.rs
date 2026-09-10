@@ -2,9 +2,10 @@ use oxy_domain::{DebugQueueItem, DebugQueueState, DirectoryTreeSnapshot};
 use oxy_fs::FsCatalog;
 use oxy_runtime::CoalescingPriorityQueue;
 use std::{
-    collections::HashMap,
+    collections::{HashMap, HashSet},
     path::PathBuf,
     sync::{Arc, Condvar, Mutex},
+    time::{Duration, Instant},
 };
 use tauri::{AppHandle, Emitter};
 
@@ -29,9 +30,28 @@ struct WorkState {
     next_order: u64,
     active: Option<ActiveDirectory>,
     loading: Option<RequestKey>,
+    foreground: HashSet<RequestKey>,
+    rerun: HashSet<RequestKey>,
 }
 
 impl WorkState {
+    fn begin_foreground(&mut self, key: &RequestKey) -> bool {
+        if self.foreground.insert(key.clone()) {
+            true
+        } else {
+            self.rerun.insert(key.clone());
+            false
+        }
+    }
+
+    fn finish_foreground(&mut self, key: &RequestKey) -> bool {
+        if self.rerun.remove(key) {
+            return false;
+        }
+        self.foreground.remove(key);
+        true
+    }
+
     fn enqueue(&mut self, key: RequestKey) {
         if let Some(&order) = self.pending_order.get(&key) {
             let score = priority_score(self.active.as_ref(), &key, order);
@@ -70,6 +90,7 @@ impl WorkState {
 
 #[derive(Clone)]
 pub struct DirectoryTreeQueue {
+    app: AppHandle,
     files: Arc<FsCatalog>,
     library: Arc<oxy_library::Library>,
     work: Arc<(Mutex<WorkState>, Condvar)>,
@@ -78,6 +99,7 @@ pub struct DirectoryTreeQueue {
 impl DirectoryTreeQueue {
     pub fn new(app: AppHandle, files: Arc<FsCatalog>, library: Arc<oxy_library::Library>) -> Self {
         let queue = Self {
+            app: app.clone(),
             files,
             library,
             work: Arc::new((Mutex::new(WorkState::default()), Condvar::new())),
@@ -91,10 +113,42 @@ impl DirectoryTreeQueue {
             session_id,
             directory,
         };
-        let mut work = self.work.0.lock().expect("directory tree queue poisoned");
-        work.enqueue(key);
-        drop(work);
-        self.work.1.notify_one();
+        {
+            let mut work = self.work.0.lock().expect("directory tree queue poisoned");
+            if !work.begin_foreground(&key) {
+                return;
+            }
+        }
+        // Each distinct UI request starts independently: a blocked filesystem
+        // read for an old selection must not occupy the new selection's lane.
+        let queue = self.clone();
+        tauri::async_runtime::spawn_blocking(move || {
+            loop {
+                match queue
+                    .files
+                    .load_directory_children(&key.session_id, &key.directory)
+                {
+                    Ok(snapshot) => publish(&queue.app, snapshot),
+                    Err(error) => {
+                        if let Ok(snapshot) = queue.files.directory_tree(&key.session_id) {
+                            publish(&queue.app, snapshot);
+                        }
+                        eprintln!(
+                            "directory tree load failed for {}: {error}",
+                            key.directory.display()
+                        );
+                    }
+                }
+                let mut work = queue.work.0.lock().expect("directory tree queue poisoned");
+                if !work.finish_foreground(&key) {
+                    continue;
+                }
+                work.enqueue(key);
+                drop(work);
+                queue.work.1.notify_one();
+                break;
+            }
+        });
     }
 
     pub fn set_active(&self, session_id: String, directory: PathBuf) {
@@ -112,7 +166,7 @@ impl DirectoryTreeQueue {
             .entries()
             .map(|(key, _, score)| directory_debug_item(key, score))
             .collect::<Vec<_>>();
-        let active = work
+        let mut active = work
             .loading
             .as_ref()
             .map(|key| {
@@ -122,9 +176,14 @@ impl DirectoryTreeQueue {
                 )]
             })
             .unwrap_or_default();
+        active.extend(
+            work.foreground
+                .iter()
+                .map(|key| directory_debug_item(key, 3_000_000)),
+        );
         DebugQueueState {
             name: "directoryTree".into(),
-            concurrency: 1,
+            concurrency: 1 + work.foreground.len(),
             pending,
             active,
         }
@@ -135,6 +194,7 @@ impl DirectoryTreeQueue {
         std::thread::Builder::new()
             .name("oxy-directory-tree".into())
             .spawn(move || {
+                let mut last_publish = Instant::now();
                 loop {
                     let key = {
                         let mut work = queue.work.0.lock().expect("directory tree queue poisoned");
@@ -155,9 +215,28 @@ impl DirectoryTreeQueue {
                     queue.library.foreground.wait_for_background();
                     match queue
                         .files
-                        .load_directory_children(&key.session_id, &key.directory)
+                        .prefetch_directory_children(&key.session_id, &key.directory)
                     {
-                        Ok(snapshot) => publish(&app, snapshot),
+                        Ok((snapshot, children)) => {
+                            let mut work =
+                                queue.work.0.lock().expect("directory tree queue poisoned");
+                            for directory in children {
+                                work.enqueue(RequestKey {
+                                    session_id: key.session_id.clone(),
+                                    directory,
+                                });
+                            }
+                            let drained = !work
+                                .pending_order
+                                .keys()
+                                .any(|pending| pending.session_id == key.session_id);
+                            drop(work);
+                            // Avoid a full WebView tree update for every leaf.
+                            if drained || last_publish.elapsed() >= Duration::from_millis(100) {
+                                publish(&app, snapshot);
+                                last_publish = Instant::now();
+                            }
+                        }
                         Err(error) => {
                             if let Ok(snapshot) = queue.files.directory_tree(&key.session_id) {
                                 publish(&app, snapshot);
@@ -228,6 +307,29 @@ fn priority_score(active: Option<&ActiveDirectory>, key: &RequestKey, order: u64
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn foreground_selection_bypasses_old_work_and_keeps_readmitted_requests() {
+        let old = RequestKey {
+            session_id: "root".into(),
+            directory: "/root/old".into(),
+        };
+        let new = RequestKey {
+            session_id: "root".into(),
+            directory: "/root/new".into(),
+        };
+        let mut work = WorkState::default();
+        work.enqueue(old.clone());
+        assert!(work.begin_foreground(&old));
+        assert!(work.begin_foreground(&new));
+        // Collapse/re-expand can admit another load before its worker exits.
+        assert!(!work.begin_foreground(&new));
+        assert!(!work.finish_foreground(&new));
+        assert!(work.foreground.contains(&new));
+        assert!(work.finish_foreground(&new));
+        assert!(work.foreground.contains(&old));
+        assert!(!work.foreground.contains(&new));
+    }
 
     #[test]
     fn active_directory_precedes_its_session_and_other_favorites() {

@@ -158,7 +158,7 @@ impl FsCatalog {
     }
 
     /// Returns the Rust-owned, lazily loaded directory tree projection.
-    /// Only expanded levels are read from disk.
+    /// Background discovery can populate collapsed levels without expanding them.
     pub fn directory_tree(&self, session_id: &str) -> Result<DirectoryTreeSnapshot, FsError> {
         let tree = self.directory_tree_state(session_id)?;
         let state = tree.lock();
@@ -188,7 +188,7 @@ impl FsCatalog {
         directory: &Path,
         expanded: bool,
     ) -> Result<(DirectoryTreeSnapshot, bool), FsError> {
-        let directory = self.resolve_session_directory(session_id, Some(directory))?;
+        let directory = self.known_directory_tree_path(session_id, directory)?;
         let tree = self.directory_tree_state(session_id)?;
         let mut state = tree.lock();
         let needs_load = {
@@ -259,6 +259,46 @@ impl FsCatalog {
         replace_tree_children(node, directories.as_ref());
         state.snapshot.revision = self.next_tree_revision();
         Ok(state.snapshot.clone())
+    }
+
+    /// Discovers a collapsed level in the background without changing expansion
+    /// intent. Symlink aliases are not traversed, avoiding cycles and escapes.
+    pub fn prefetch_directory_children(
+        &self,
+        session_id: &str,
+        directory: &Path,
+    ) -> Result<(DirectoryTreeSnapshot, Vec<PathBuf>), FsError> {
+        let tree = self.directory_tree_state(session_id)?;
+        let needs_read = {
+            let state = tree.lock();
+            find_tree_node(&state.snapshot.root, directory)
+                .ok_or_else(|| FsError::InvalidFolder(directory.to_owned()))?
+                .children
+                .is_none()
+        };
+        if needs_read {
+            let resolved = self.resolve_session_directory(session_id, Some(directory))?;
+            if resolved != directory {
+                return Ok((tree.lock().snapshot.clone(), Vec::new()));
+            }
+            let directories = self.cached_directories(directory)?;
+            let mut state = tree.lock();
+            // A foreground load or refresh may have won while IO was running.
+            if let Some(node) = find_tree_node_mut(&mut state.snapshot.root, directory)
+                && node.children.is_none()
+            {
+                replace_tree_children(node, directories.as_ref());
+                state.snapshot.revision = self.next_tree_revision();
+            }
+        }
+        let state = tree.lock();
+        let children = find_tree_node(&state.snapshot.root, directory)
+            .and_then(|node| node.children.as_ref())
+            .into_iter()
+            .flatten()
+            .map(|child| child.entry.path.clone())
+            .collect();
+        Ok((state.snapshot.clone(), children))
     }
 
     pub fn refresh_directory(
@@ -1284,6 +1324,95 @@ mod tests {
             catalog.list_directories(&session.id, None).unwrap().len(),
             1
         );
+    }
+
+    #[test]
+    fn background_discovery_confirms_collapsed_branches_and_leaves() {
+        let root = tempdir().unwrap();
+        fs::create_dir_all(root.path().join("branch/leaf")).unwrap();
+        let catalog = FsCatalog::default();
+        let session = catalog.open_folder(root.path()).unwrap();
+        let (snapshot, children) = catalog
+            .prefetch_directory_children(&session.id, &session.root_path)
+            .unwrap();
+        assert!(!snapshot.root.expanded);
+        assert_eq!(children.len(), 1);
+        let (snapshot, leaves) = catalog
+            .prefetch_directory_children(&session.id, &children[0])
+            .unwrap();
+        let branch = &snapshot.root.children.as_ref().unwrap()[0];
+        assert!(!branch.expanded);
+        assert!(branch.entry.has_children);
+        let (snapshot, children) = catalog
+            .prefetch_directory_children(&session.id, &leaves[0])
+            .unwrap();
+        assert!(children.is_empty());
+        let leaf = find_tree_node(&snapshot.root, &leaves[0]).unwrap();
+        assert!(!leaf.entry.has_children);
+        assert_eq!(leaf.children, Some(Vec::new()));
+        let (_, should_load) = catalog
+            .set_directory_expanded(&session.id, &leaves[0], true)
+            .unwrap();
+        assert!(!should_load);
+    }
+
+    #[test]
+    fn new_selection_completes_before_an_older_admitted_load() {
+        let root = tempdir().unwrap();
+        fs::create_dir_all(root.path().join("old")).unwrap();
+        fs::create_dir_all(root.path().join("new/leaf")).unwrap();
+        let catalog = FsCatalog::default();
+        let session = catalog.open_folder(root.path()).unwrap();
+        catalog
+            .prefetch_directory_children(&session.id, &session.root_path)
+            .unwrap();
+        let old = session.root_path.join("old");
+        let new = session.root_path.join("new");
+        assert!(
+            catalog
+                .set_directory_expanded(&session.id, &old, true)
+                .unwrap()
+                .1
+        );
+        assert!(
+            catalog
+                .set_directory_expanded(&session.id, &new, true)
+                .unwrap()
+                .1
+        );
+        let snapshot = catalog.load_directory_children(&session.id, &new).unwrap();
+        assert!(
+            find_tree_node(&snapshot.root, &old)
+                .unwrap()
+                .children
+                .is_none()
+        );
+        assert_eq!(
+            find_tree_node(&snapshot.root, &new)
+                .unwrap()
+                .children
+                .as_ref()
+                .unwrap()
+                .len(),
+            1
+        );
+        catalog.load_directory_children(&session.id, &old).unwrap();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn background_discovery_does_not_follow_symlink_cycles() {
+        let root = tempdir().unwrap();
+        std::os::unix::fs::symlink(root.path(), root.path().join("loop")).unwrap();
+        let catalog = FsCatalog::default();
+        let session = catalog.open_folder(root.path()).unwrap();
+        let (_, children) = catalog
+            .prefetch_directory_children(&session.id, &session.root_path)
+            .unwrap();
+        let (_, descendants) = catalog
+            .prefetch_directory_children(&session.id, &children[0])
+            .unwrap();
+        assert!(descendants.is_empty());
     }
 
     #[test]
