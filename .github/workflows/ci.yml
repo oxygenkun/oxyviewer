@@ -60,6 +60,24 @@ jobs:
       - name: Linux system dependencies
         if: runner.os == 'Linux'
         run: sudo apt-get update && sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf
+      - name: Windows FFmpeg build tools
+        if: runner.os == 'Windows'
+        id: msys2
+        uses: msys2/setup-msys2@v2
+        with:
+          msystem: UCRT64
+          install: make diffutils nasm mingw-w64-ucrt-x86_64-gcc
+      - name: Configure Windows FFmpeg shell
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: '"OXY_FFMPEG_BASH=${{ steps.msys2.outputs.msys2-location }}\usr\bin\bash.exe" >> $env:GITHUB_ENV'
+      - name: Restore FFmpeg build cache
+        uses: actions/cache@v4
+        with:
+          path: |
+            target/ffmpeg
+            apps/desktop/src-tauri/binaries
+          key: ffmpeg-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('3rdpart/ffmpeg/**') }}
       - name: Restore Windows dependency cache
         id: vcpkg-cache
         if: runner.os == 'Windows'
@@ -104,6 +122,28 @@ jobs:
         if: runner.os == 'Windows'
         working-directory: apps/desktop
         run: pnpm tauri build --bundles msi
+      - name: Verify macOS app FFmpeg payload
+        if: runner.os == 'macOS'
+        run: node 3rdpart/ffmpeg/prepare.mjs --verify-bundle target/release/bundle/macos/OxyViewer.app
+      - name: Verify Windows MSI FFmpeg payload
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $installer = (Get-ChildItem target/release/bundle/msi/*.msi | Select-Object -First 1).FullName
+          $destination = Join-Path $env:RUNNER_TEMP 'oxy-msi-extracted'
+          $process = Start-Process msiexec.exe -ArgumentList @('/a', "`"$installer`"", '/qn', "TARGETDIR=`"$destination`"") -Wait -PassThru
+          if ($process.ExitCode -ne 0) { throw "MSI extraction failed: $($process.ExitCode)" }
+          node 3rdpart/ffmpeg/prepare.mjs --verify-bundle "$destination"
+      - name: Verify Linux package FFmpeg payloads
+        if: runner.os == 'Linux'
+        run: |
+          dpkg-deb -x target/release/bundle/deb/*.deb "$RUNNER_TEMP/oxy-deb"
+          node 3rdpart/ffmpeg/prepare.mjs --verify-bundle "$RUNNER_TEMP/oxy-deb"
+          appimage=$(realpath target/release/bundle/appimage/*.AppImage)
+          mkdir -p "$RUNNER_TEMP/oxy-appimage"
+          cd "$RUNNER_TEMP/oxy-appimage"
+          "$appimage" --appimage-extract > /dev/null
+          node "$GITHUB_WORKSPACE/3rdpart/ffmpeg/prepare.mjs" --verify-bundle squashfs-root
       - name: Upload macOS app
         if: runner.os == 'macOS'
         uses: actions/upload-artifact@v4

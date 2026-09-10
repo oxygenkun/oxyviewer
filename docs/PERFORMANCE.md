@@ -587,6 +587,9 @@ landed since the original investigation. Remaining improvements are:
   and crops the primary image, applies display orientation, emits RGBA8, and
   falls back to libheif if probing or decoding fails. Release packages that
   enable this backend must bundle compatible `ffmpeg` and `ffprobe` binaries.
+  Release builds now prepare the pinned standalone `oxy-ffmpeg` / `oxy-ffprobe`
+  pair; see [FFmpeg packaging](FFMPEG_PACKAGING.md). Discovery performs no new
+  eager process launch or folder indexing.
 - 2026-06-15: Unified the preview pipeline across RAW/HEIF/TIFF (ADR 0005).
   Every format now flows through a single `oxy_media::preview` dispatcher and
   a shared two-tier scheduler: the frontend `previewQueue` orders pending

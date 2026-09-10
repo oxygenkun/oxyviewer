@@ -39,6 +39,6 @@
 - [ ] Windows 安装包在没有系统 FFmpeg 的干净环境中完成全部格式与等级检查。
 - [ ] macOS 安装包在没有 Homebrew FFmpeg 的干净环境中完成全部格式与等级检查。
 - [ ] Linux 安装包在没有系统 FFmpeg 的干净环境中完成全部格式与等级检查。
-- [ ] 打包 FFmpeg 时，确认 `ffmpeg` 与 `ffprobe` 均可被应用目录、`resources/bin` 或 `OXY_FFMPEG_DIR` 发现。
+- [ ] 按 [FFmpeg 打包说明](FFMPEG_PACKAGING.md) 构建，确认安装包内的 `oxy-ffmpeg` 与 `oxy-ffprobe` 成对存在，清空 PATH 后校验通过，并包含对应源码和许可证。`OXY_FFMPEG_DIR` 仅作显式诊断覆盖。
 - [ ] 使用至少一个普通 HEIF、Sony HIF 和每个目标 RAW 厂商 fixture 验证实际回退顺序。
 - [ ] 对最终失败记录完整 backend attempt diagnostics，而不是只记录最后一个错误。

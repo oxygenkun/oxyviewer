@@ -22,8 +22,7 @@ static CAPABILITY: LazyLock<Result<(), String>> =
     LazyLock::new(|| capability_probe().map_err(|error| error.to_string()));
 static GRID_CACHE: LazyLock<Mutex<HashMap<GridCacheKey, TileGrid>>> =
     LazyLock::new(|| Mutex::new(HashMap::new()));
-static FFMPEG_COMMAND: LazyLock<PathBuf> = LazyLock::new(|| resolve_command("ffmpeg"));
-static FFPROBE_COMMAND: LazyLock<PathBuf> = LazyLock::new(|| resolve_command("ffprobe"));
+static COMMANDS: LazyLock<(PathBuf, PathBuf)> = LazyLock::new(resolve_commands);
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 struct GridCacheKey {
@@ -72,8 +71,8 @@ pub fn capability() -> Result<(), MediaError> {
 }
 
 fn capability_probe() -> Result<(), MediaError> {
-    command_supports(&FFMPEG_COMMAND, "-decoders", "hevc")?;
-    command_supports(&FFPROBE_COMMAND, "-h", "-show_stream_groups")?;
+    command_supports(&COMMANDS.0, "-decoders", "hevc")?;
+    command_supports(&COMMANDS.1, "-h", "-show_stream_groups")?;
     Ok(())
 }
 
@@ -102,7 +101,7 @@ pub fn decode_full_jpeg_tiles(
     let grid = cached_grid(path)?;
     filter_for_grid(&grid, display_size)?;
     let output_dir = tempfile::tempdir()?;
-    let mut command = media_command(&FFMPEG_COMMAND);
+    let mut command = media_command(&COMMANDS.0);
     command
         .args(["-v", "error", "-threads", "2", "-i"])
         .arg(path);
@@ -194,7 +193,7 @@ pub fn transcode_full_jpeg(
     let qscale = ((100_u16.saturating_sub(u16::from(quality))) / 4 + 1)
         .clamp(1, 31)
         .to_string();
-    let output = media_command(&FFMPEG_COMMAND)
+    let output = media_command(&COMMANDS.0)
         .args(["-v", "error", "-threads", "2", "-i"])
         .arg(path)
         .args([
@@ -227,7 +226,7 @@ fn decode_tile_bitmaps(
     display_sharpening: bool,
 ) -> Result<(tempfile::TempDir, Vec<PathBuf>), MediaError> {
     let output_dir = tempfile::tempdir()?;
-    let mut command = media_command(&FFMPEG_COMMAND);
+    let mut command = media_command(&COMMANDS.0);
     command
         .args(["-v", "error", "-threads", "2", "-i"])
         .arg(path);
@@ -419,7 +418,7 @@ pub fn decode_scaled_preview(path: &Path, max_size: u32) -> Result<DynamicImage,
         .ok_or_else(|| native_error("HEIF has no sufficiently large independent preview stream"))?;
     let map = format!("0:{}", stream.index);
     let scale = format!("scale={max_size}:{max_size}:force_original_aspect_ratio=decrease");
-    let output = media_command(&FFMPEG_COMMAND)
+    let output = media_command(&COMMANDS.0)
         .args(["-v", "error", "-i"])
         .arg(path)
         .args([
@@ -474,43 +473,61 @@ fn command_supports(
     }
 }
 
-fn resolve_command(name: &str) -> PathBuf {
-    #[cfg(target_os = "windows")]
-    let executable = format!("{name}.exe");
-    #[cfg(any(target_os = "macos", target_os = "linux"))]
-    let executable = name.to_owned();
-    let mut candidates = Vec::new();
+fn command_pair(directory: &Path, prefix: &str) -> (PathBuf, PathBuf) {
+    let extension = if cfg!(target_os = "windows") {
+        ".exe"
+    } else {
+        ""
+    };
+    (
+        directory.join(format!("{prefix}ffmpeg{extension}")),
+        directory.join(format!("{prefix}ffprobe{extension}")),
+    )
+}
+
+fn bundled_pair(directory: &Path) -> Option<(PathBuf, PathBuf)> {
+    let pair = command_pair(directory, "oxy-");
+    // A damaged/incomplete bundle must fail instead of mixing with PATH tools.
+    (pair.0.is_file() || pair.1.is_file()).then_some(pair)
+}
+
+fn resolve_commands() -> (PathBuf, PathBuf) {
+    // Explicit diagnostic override applies to the whole pair, even if missing.
     if let Some(directory) = std::env::var_os("OXY_FFMPEG_DIR") {
-        candidates.push(PathBuf::from(directory).join(&executable));
+        let directory = PathBuf::from(directory);
+        return bundled_pair(&directory).unwrap_or_else(|| command_pair(&directory, ""));
     }
     if let Ok(current_exe) = std::env::current_exe()
         && let Some(directory) = current_exe.parent()
     {
-        candidates.push(directory.join(&executable));
-        candidates.push(directory.join("resources").join(&executable));
-        candidates.push(directory.join("bin").join(&executable));
+        if let Some(pair) = bundled_pair(directory) {
+            return pair;
+        }
+        if !cfg!(debug_assertions) {
+            return command_pair(directory, "oxy-");
+        }
     }
-    #[cfg(target_os = "windows")]
+    // System tools are a development convenience, never a release dependency.
+    #[cfg(all(target_os = "windows", debug_assertions))]
     {
+        let mut directories = Vec::new();
         if let Some(scoop) = std::env::var_os("SCOOP") {
-            candidates.push(
-                PathBuf::from(scoop)
-                    .join("apps/ffmpeg/current/bin")
-                    .join(&executable),
-            );
+            directories.push(PathBuf::from(scoop).join("apps/ffmpeg/current/bin"));
         }
         if let Some(profile) = std::env::var_os("USERPROFILE") {
-            candidates.push(
-                PathBuf::from(profile)
-                    .join("scoop/apps/ffmpeg/current/bin")
-                    .join(&executable),
-            );
+            directories.push(PathBuf::from(profile).join("scoop/apps/ffmpeg/current/bin"));
+        }
+        for directory in directories {
+            let pair = command_pair(&directory, "");
+            if pair.0.is_file() && pair.1.is_file() {
+                return pair;
+            }
         }
     }
-    candidates
-        .into_iter()
-        .find(|candidate| candidate.is_file())
-        .unwrap_or_else(|| PathBuf::from(name))
+    command_pair(
+        Path::new(""),
+        if cfg!(debug_assertions) { "" } else { "oxy-" },
+    )
 }
 
 fn media_command(executable: &Path) -> Command {
@@ -528,7 +545,7 @@ fn media_command(executable: &Path) -> Command {
 }
 
 fn probe_grid(path: &Path) -> Result<TileGrid, MediaError> {
-    let output = media_command(&FFPROBE_COMMAND)
+    let output = media_command(&COMMANDS.1)
         .args([
             "-v",
             "error",
@@ -755,6 +772,21 @@ fn native_error(message: impl Into<String>) -> MediaError {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn bundled_commands_are_resolved_as_one_pair() {
+        let directory = tempfile::tempdir().unwrap();
+        assert!(super::bundled_pair(directory.path()).is_none());
+        let expected = super::command_pair(directory.path(), "oxy-");
+        std::fs::write(&expected.0, b"test executable").unwrap();
+        // Missing ffprobe stays in the same directory; no system fallback.
+        assert_eq!(
+            super::bundled_pair(directory.path()),
+            Some(expected.clone())
+        );
+        std::fs::write(&expected.1, b"test executable").unwrap();
+        assert_eq!(super::bundled_pair(directory.path()), Some(expected));
+    }
 
     const GRID_JSON: &[u8] = br#"{
       "stream_groups": [{
