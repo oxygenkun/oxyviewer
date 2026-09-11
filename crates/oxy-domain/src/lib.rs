@@ -354,6 +354,9 @@ pub struct DebugQueueState {
 #[serde(rename_all = "camelCase")]
 pub struct DebugQueueSnapshot {
     pub captured_at_unix_ms: u64,
+    pub worker_wait_micros: u64,
+    pub collection_micros: u64,
+    pub stale_queues: Vec<String>,
     pub queues: Vec<DebugQueueState>,
 }
 

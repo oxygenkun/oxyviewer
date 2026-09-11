@@ -201,6 +201,9 @@ export interface DebugQueueState {
 
 export interface DebugQueueSnapshot {
   capturedAtUnixMs: number;
+  workerWaitMicros: number;
+  collectionMicros: number;
+  staleQueues: string[];
   queues: DebugQueueState[];
 }
 export type SchedulePlacement = "front" | "back";

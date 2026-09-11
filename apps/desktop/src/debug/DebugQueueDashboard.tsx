@@ -1,5 +1,5 @@
 import { Activity, CirclePause, CirclePlay, RefreshCw, Server, Waves } from "lucide-react";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { listen } from "@tauri-apps/api/event";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import type { DebugQueueItem, DebugQueueSnapshot, DebugQueueState } from "../types";
@@ -93,8 +93,11 @@ export function DebugQueueDashboard({ onClose }: { onClose: () => void }) {
   const [paused, setPaused] = useState(false);
   const [pageActive, setPageActive] = useState(() => !isTauri());
   const [error, setError] = useState<string>();
+  const refreshing = useRef(false);
 
   const refresh = useCallback(async () => {
+    if (refreshing.current) return;
+    refreshing.current = true;
     const local = aggregatePreviewDebugSnapshot(getPreviewDebugSnapshot());
     setWebQueue({
       name: "webviewRequest",
@@ -107,6 +110,8 @@ export function DebugQueueDashboard({ onClose }: { onClose: () => void }) {
       setError(undefined);
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : String(reason));
+    } finally {
+      refreshing.current = false;
     }
   }, []);
 
@@ -163,8 +168,9 @@ export function DebugQueueDashboard({ onClose }: { onClose: () => void }) {
       </div>
 
       {error && <div className="debug-error"><Server size={16} /> Native snapshot unavailable: {error}</div>}
+      {!!snapshot?.staleQueues.length && <div className="debug-error">Busy queues: {snapshot.staleQueues.join(", ")}. Showing the last available sample.</div>}
       <div className="debug-grid">{queues.map((queue) => <QueueCard queue={queue} key={queue.name} />)}</div>
-      <footer>Read-only diagnostics · polling begins only while this page is open · release builds reject the native endpoint</footer>
+      <footer>Read-only diagnostics · polling begins only while this page is open · debug builds and explicit performance runs only</footer>
     </main>
   );
 }

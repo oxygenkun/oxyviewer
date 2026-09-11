@@ -16,6 +16,7 @@ pub(crate) struct AppState {
     pub(crate) metadata: oxy_metadata::MetadataFacade,
     pub(crate) metadata_queue: jobs::metadata::MetadataQueue,
     pub(crate) preview_queue: jobs::preview::PreviewQueue,
+    pub(crate) debug_snapshots: Arc<jobs::DebugSnapshotCache>,
     pub(crate) directory_tree_queue: jobs::directory_tree::DirectoryTreeQueue,
     pub(crate) library_index_queue: jobs::LibraryIndexQueue,
     pub(crate) metadata_provider: Arc<providers::exiftool::ProviderManager>,

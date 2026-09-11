@@ -24,7 +24,6 @@ pub(crate) async fn get_preview(
     let preview_queue = state.preview_queue.clone();
     let selection = (level == RenderLevel::Full).then(|| preview_queue.select_full(&path));
     let preview_dir = state.cache.preview_dir();
-    let cache = state.cache.clone();
     let projection = tauri::async_runtime::spawn_blocking(move || {
         let (projection, receiver) = preview_queue.request(
             &app,
@@ -48,24 +47,8 @@ pub(crate) async fn get_preview(
     })
     .await
     .map_err(|error| error.to_string())??;
-    let result = projection
-        .result
-        .as_ref()
-        .ok_or_else(|| "ready image projection has no artifact".to_owned())?;
-    if result.persistence == Some(oxy_domain::MediaPersistence::Persisted) {
-        let protected_path = result.path.clone();
-        if cache.try_start_prune() {
-            tauri::async_runtime::spawn_blocking(move || {
-                loop {
-                    if let Err(error) = cache.prune_after_write(&protected_path) {
-                        eprintln!("preview cache pruning failed: {error}");
-                    }
-                    if !cache.finish_prune() {
-                        break;
-                    }
-                }
-            });
-        }
+    if projection.result.is_none() {
+        return Err("ready image projection has no artifact".into());
     }
     Ok(projection)
 }
@@ -316,16 +299,7 @@ pub(crate) async fn start_heif_full(
                 ) {
                     Ok(Some(projection)) => {
                         if let Some(artifact) = projection.result {
-                            if cache.try_start_prune() {
-                                loop {
-                                    if let Err(error) = cache.prune_after_write(&artifact.path) {
-                                        eprintln!("preview cache pruning failed: {error}");
-                                    }
-                                    if !cache.finish_prune() {
-                                        break;
-                                    }
-                                }
-                            }
+                            cache.schedule_prune(Some(artifact.path));
                             if let Some(resource) = artifact.resource {
                                 oxy_media::shared_resource_registry()
                                     .release(&resource.resource_id);

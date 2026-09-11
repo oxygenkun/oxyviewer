@@ -131,8 +131,8 @@ impl MetadataQueue {
             .len()
     }
 
-    pub fn debug_snapshot(&self) -> DebugQueueState {
-        let work = self.work.0.lock().expect("metadata queue lock poisoned");
+    pub fn debug_snapshot(&self) -> Option<DebugQueueState> {
+        let work = self.work.0.try_lock().ok()?;
         let pending = work
             .pending
             .entries()
@@ -142,18 +142,16 @@ impl MetadataQueue {
             .active
             .iter()
             .map(|(key, request)| {
-                let request = request
-                    .lock()
-                    .expect("active metadata request lock poisoned");
-                metadata_debug_item(key, &request, request.priority)
+                let request = request.try_lock().ok()?;
+                Some(metadata_debug_item(key, &request, request.priority))
             })
-            .collect();
-        DebugQueueState {
+            .collect::<Option<Vec<_>>>()?;
+        Some(DebugQueueState {
             name: "metadata".into(),
             concurrency: 1,
             pending,
             active,
-        }
+        })
     }
 
     pub fn request_details(

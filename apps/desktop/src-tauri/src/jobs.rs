@@ -5,6 +5,7 @@ pub(crate) mod preview;
 use oxy_domain::{DebugQueueItem, DebugQueueState, LibraryIndexUpdate};
 use oxy_library::{IndexProgress, IndexStage, Library};
 use std::{
+    collections::HashMap,
     path::{Path, PathBuf},
     sync::{Arc, Mutex},
 };
@@ -12,6 +13,36 @@ use tauri::Emitter;
 
 const LIBRARY_INDEX_UPDATED_EVENT: &str = "library-index-updated";
 const LIBRARY_DIRECTORY_INDEX_UPDATED_EVENT: &str = "library-directory-index-updated";
+
+/// Retain the last successful sample when a worker owns a queue lock.
+/// This lock only copies diagnostics; no filesystem, database or queue work
+/// runs while it is held.
+#[derive(Default)]
+pub(crate) struct DebugSnapshotCache {
+    queues: Mutex<HashMap<String, DebugQueueState>>,
+}
+
+impl DebugSnapshotCache {
+    pub(crate) fn remember(
+        &self,
+        observations: [(&str, Option<DebugQueueState>); 5],
+    ) -> (Vec<DebugQueueState>, Vec<String>) {
+        let mut previous = self.queues.lock().expect("snapshot cache poisoned");
+        let mut queues = Vec::new();
+        let mut stale = Vec::new();
+        for (name, observed) in observations {
+            if let Some(observed) = observed {
+                previous.insert(name.to_owned(), observed);
+            } else {
+                stale.push(name.to_owned());
+            }
+            if let Some(queue) = previous.get(name) {
+                queues.push(queue.clone());
+            }
+        }
+        (queues, stale)
+    }
+}
 
 #[derive(Clone)]
 pub(crate) struct LibraryIndexQueue {
@@ -91,9 +122,9 @@ impl LibraryIndexQueue {
         });
     }
 
-    pub(crate) fn debug_snapshot(&self) -> DebugQueueState {
-        let work = self.work.lock().expect("library index queue poisoned");
-        DebugQueueState {
+    pub(crate) fn debug_snapshot(&self) -> Option<DebugQueueState> {
+        let work = self.work.try_lock().ok()?;
+        Some(DebugQueueState {
             name: "libraryIndex".into(),
             concurrency: 1,
             pending: work
@@ -111,7 +142,7 @@ impl LibraryIndexQueue {
                     )]
                 })
                 .unwrap_or_default(),
-        }
+        })
     }
 
     fn update_progress(&self, progress: IndexProgress) {
@@ -160,6 +191,32 @@ fn library_index_debug_item(root: &Path, progress: Option<&IndexProgress>) -> De
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn busy_snapshot_keeps_the_last_sample_and_marks_it_stale() {
+        let cache = DebugSnapshotCache::default();
+        let sample = DebugQueueState {
+            name: "thumbnail".into(),
+            concurrency: 3,
+            pending: vec![],
+            active: vec![],
+        };
+        let observations = |value| {
+            [
+                ("loupe", None),
+                ("thumbnail", value),
+                ("metadata", None),
+                ("directoryTree", None),
+                ("libraryIndex", None),
+            ]
+        };
+        let (first, stale) = cache.remember(observations(Some(sample.clone())));
+        assert_eq!(first, vec![sample.clone()]);
+        assert!(!stale.iter().any(|name| name == "thumbnail"));
+        let (busy, stale) = cache.remember(observations(None));
+        assert_eq!(busy, vec![sample]);
+        assert!(stale.iter().any(|name| name == "thumbnail"));
+    }
     use tempfile::tempdir;
 
     #[test]
@@ -171,7 +228,7 @@ mod tests {
         let queue = LibraryIndexQueue::new(library);
         queue.work.lock().unwrap().pending.push(root.clone());
 
-        let pending = queue.debug_snapshot();
+        let pending = queue.debug_snapshot().unwrap();
         assert_eq!(pending.name, "libraryIndex");
         assert_eq!(pending.pending[0].root_path.as_ref(), Some(&root));
         assert_eq!(pending.pending[0].stage, "waiting");
@@ -186,7 +243,7 @@ mod tests {
             stage: IndexStage::Directories,
         });
 
-        let active = queue.debug_snapshot();
+        let active = queue.debug_snapshot().unwrap();
         assert!(active.pending.is_empty());
         assert_eq!(active.active[0].path.as_ref(), Some(&current_directory));
         assert_eq!(active.active[0].root_path.as_ref(), Some(&root));

@@ -146,6 +146,7 @@ pub fn run() {
                 preview_dir,
                 data_dir.join("cache-settings.json"),
             )?);
+            cache.schedule_prune(None);
             let library = Arc::new(Library::open(&data_dir.join("oxyviewer.sqlite"))?);
             let metadata_provider = Arc::new(ProviderManager::load(data_dir));
             let files = Arc::new(FsCatalog::default());
@@ -174,6 +175,7 @@ pub fn run() {
                 metadata,
                 metadata_queue,
                 preview_queue,
+                debug_snapshots: Default::default(),
                 directory_tree_queue,
                 library_index_queue,
                 metadata_provider,

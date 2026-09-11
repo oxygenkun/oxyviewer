@@ -5,9 +5,10 @@ use std::{
     fs,
     path::{Path, PathBuf},
     sync::{
-        RwLock,
+        Arc, RwLock,
         atomic::{AtomicU8, Ordering},
     },
+    time::Duration,
 };
 
 pub const DEFAULT_MAX_SIZE_BYTES: u64 = 10 * 1024 * 1024 * 1024;
@@ -17,6 +18,7 @@ const CUSTOM_CACHE_FOLDER: &str = "OxyViewer Cache";
 const PRUNE_IDLE: u8 = 0;
 const PRUNE_RUNNING: u8 = 1;
 const PRUNE_PENDING: u8 = 2;
+const PRUNE_INTERVAL: Duration = Duration::from_secs(5);
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -151,7 +153,30 @@ impl CacheManager {
         self.settings()
     }
 
-    pub fn try_start_prune(&self) -> bool {
+    /// Coalesces publication bursts into one maintenance worker. Maintenance
+    /// is never part of a thumbnail reply or run once per cache hit.
+    pub fn schedule_prune(self: &Arc<Self>, protected_path: Option<PathBuf>) {
+        if !self.try_start_prune() {
+            return;
+        }
+        let cache = Arc::clone(self);
+        std::thread::Builder::new()
+            .name("oxy-cache-maintenance".into())
+            .spawn(move || {
+                loop {
+                    std::thread::sleep(PRUNE_INTERVAL);
+                    if let Err(error) = cache.prune_after_write(protected_path.as_deref()) {
+                        eprintln!("preview cache pruning failed: {error}");
+                    }
+                    if !cache.finish_prune() {
+                        break;
+                    }
+                }
+            })
+            .expect("failed to start cache maintenance worker");
+    }
+
+    fn try_start_prune(&self) -> bool {
         loop {
             match self.prune_state.load(Ordering::Acquire) {
                 PRUNE_IDLE => {
@@ -190,7 +215,7 @@ impl CacheManager {
 
     /// Completes one prune pass. Returns true while this worker owns a latched
     /// follow-up pass requested by a publication that overlapped the first.
-    pub fn finish_prune(&self) -> bool {
+    fn finish_prune(&self) -> bool {
         loop {
             match self.prune_state.load(Ordering::Acquire) {
                 PRUNE_PENDING => {
@@ -227,18 +252,16 @@ impl CacheManager {
         }
     }
 
-    pub fn prune_after_write(&self, protected_path: &Path) -> Result<(), String> {
+    fn prune_after_write(&self, protected_path: Option<&Path>) -> Result<(), String> {
         let cache_dir = self.preview_dir();
         // An in-flight decode may have completed in the previous location.
         // Leave that old artifact alone; the selected location is authoritative
         // for all subsequent requests.
         let cache =
             oxy_media::DiskMediaCache::new(&cache_dir, 256).map_err(|error| error.to_string())?;
-        if !protected_path.starts_with(cache.root()) {
-            return Ok(());
-        }
+        let protected_path = protected_path.filter(|path| path.starts_with(cache.root()));
         cache
-            .prune_with_protected(self.max_size_bytes(), Some(protected_path))
+            .prune_with_protected(self.max_size_bytes(), protected_path)
             .map(|_| ())
             .map_err(|error| error.to_string())
     }

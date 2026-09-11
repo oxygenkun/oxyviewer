@@ -730,6 +730,8 @@ impl Library {
 
     /// Atomically accepts an image artifact observation using the same
     /// transaction sequence as metadata projections.
+    /// A nonzero state revision is an optimistic restore: it may replace a
+    /// process-local descriptor only while that observed state is still current.
     pub fn accept_image_projection(
         &self,
         mut candidate: ImageProjection,
@@ -738,7 +740,9 @@ impl Library {
         let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
         if let Some(current) =
             read_image_projection(&transaction, &candidate.path, candidate.level)?
-            && current.valid_at > candidate.valid_at
+            && (current.valid_at > candidate.valid_at
+                || (candidate.state_revision != 0
+                    && current.state_revision > candidate.state_revision))
         {
             transaction.commit()?;
             return Ok(current);
@@ -2691,6 +2695,35 @@ mod tests {
                 .rating,
             Some(5)
         );
+    }
+
+    #[test]
+    fn stale_descriptor_restore_cannot_overwrite_a_newer_state_of_the_same_request() {
+        let library = Library::in_memory().unwrap();
+        let loading = library
+            .accept_image_projection(ImageProjection {
+                path: PathBuf::from("one.HIF"),
+                source_revision: "source".into(),
+                state_revision: 0,
+                valid_at: library.next_resource_revision().unwrap(),
+                status: ResourceLoadStatus::Loading,
+                level: RenderLevel::Thumbnail,
+                result: None,
+                error: None,
+            })
+            .unwrap();
+        let terminal = library
+            .accept_image_projection(ImageProjection {
+                state_revision: 0,
+                status: ResourceLoadStatus::Error,
+                error: Some("decode failed".into()),
+                ..loading.clone()
+            })
+            .unwrap();
+        let restored = library.accept_image_projection(loading).unwrap();
+        assert_eq!(restored.state_revision, terminal.state_revision);
+        assert_eq!(restored.status, ResourceLoadStatus::Error);
+        assert_eq!(restored.error, terminal.error);
     }
 
     #[test]

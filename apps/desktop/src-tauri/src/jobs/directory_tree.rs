@@ -159,8 +159,8 @@ impl DirectoryTreeQueue {
         });
     }
 
-    pub fn debug_snapshot(&self) -> DebugQueueState {
-        let work = self.work.0.lock().expect("directory tree queue poisoned");
+    pub fn debug_snapshot(&self) -> Option<DebugQueueState> {
+        let work = self.work.0.try_lock().ok()?;
         let pending = work
             .pending
             .entries()
@@ -181,12 +181,12 @@ impl DirectoryTreeQueue {
                 .iter()
                 .map(|key| directory_debug_item(key, 3_000_000)),
         );
-        DebugQueueState {
+        Some(DebugQueueState {
             name: "directoryTree".into(),
             concurrency: 1 + work.foreground.len(),
             pending,
             active,
-        }
+        })
     }
 
     fn spawn_worker(&self, app: AppHandle) {

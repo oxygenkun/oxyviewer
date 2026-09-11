@@ -2,7 +2,7 @@ use crate::state::AppState;
 use oxy_domain::{DebugQueueSnapshot, PerfScenario};
 use std::{
     path::PathBuf,
-    time::{SystemTime, UNIX_EPOCH},
+    time::{Instant, SystemTime, UNIX_EPOCH},
 };
 use tauri::{AppHandle, Emitter, Manager, State, WebviewUrl, WebviewWindowBuilder};
 
@@ -28,32 +28,55 @@ pub(crate) fn get_media_resource_stats() -> Result<oxy_domain::ResourceRegistryS
     Ok(oxy_media::shared_resource_registry().stats())
 }
 
-/// Returns a cheap point-in-time view of all native queues. The command is
-/// unavailable in release builds and never starts background diagnostics.
+/// Snapshot collection runs off the UI thread, including any queue contention.
 #[tauri::command]
-pub(crate) fn get_debug_queue_snapshot(
+pub(crate) async fn get_debug_queue_snapshot(
     state: State<'_, AppState>,
 ) -> Result<DebugQueueSnapshot, String> {
-    if !cfg!(debug_assertions) {
+    if !cfg!(debug_assertions) && get_perf_scenario().is_none() {
         return Err("queue diagnostics are only available in debug builds".into());
     }
-    let captured_at_unix_ms = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map_err(|error| error.to_string())?
-        .as_millis()
-        .try_into()
-        .unwrap_or(u64::MAX);
-    let [loupe, thumbnail] = state.preview_queue.debug_snapshot();
-    Ok(DebugQueueSnapshot {
-        captured_at_unix_ms,
-        queues: vec![
-            loupe,
-            thumbnail,
-            state.metadata_queue.debug_snapshot(),
-            state.directory_tree_queue.debug_snapshot(),
-            state.library_index_queue.debug_snapshot(),
-        ],
+    let preview = state.preview_queue.clone();
+    let metadata = state.metadata_queue.clone();
+    let directory_tree = state.directory_tree_queue.clone();
+    let library_index = state.library_index_queue.clone();
+    let snapshots = std::sync::Arc::clone(&state.debug_snapshots);
+    let requested_at = Instant::now();
+    tauri::async_runtime::spawn_blocking(move || {
+        let collection_started = Instant::now();
+        let worker_wait_micros = requested_at
+            .elapsed()
+            .as_micros()
+            .try_into()
+            .unwrap_or(u64::MAX);
+        let captured_at_unix_ms = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map_err(|error| error.to_string())?
+            .as_millis()
+            .try_into()
+            .unwrap_or(u64::MAX);
+        let [loupe, thumbnail] = preview.debug_snapshot();
+        let (queues, stale_queues) = snapshots.remember([
+            ("loupe", loupe),
+            ("thumbnail", thumbnail),
+            ("metadata", metadata.debug_snapshot()),
+            ("directoryTree", directory_tree.debug_snapshot()),
+            ("libraryIndex", library_index.debug_snapshot()),
+        ]);
+        Ok(DebugQueueSnapshot {
+            captured_at_unix_ms,
+            worker_wait_micros,
+            collection_micros: collection_started
+                .elapsed()
+                .as_micros()
+                .try_into()
+                .unwrap_or(u64::MAX),
+            queues,
+            stale_queues,
+        })
     })
+    .await
+    .map_err(|error| error.to_string())?
 }
 
 pub(crate) fn create_debug_queue_window(app: &AppHandle) -> tauri::Result<()> {

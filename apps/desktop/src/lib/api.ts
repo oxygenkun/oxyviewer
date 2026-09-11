@@ -721,7 +721,7 @@ export async function clearPreviewCache(): Promise<CacheSettings> {
 export async function getDebugQueueSnapshot(): Promise<DebugQueueSnapshot> {
   if (!__OXY_DEBUG__) throw new Error("Queue diagnostics require a debug build");
   if (!isTauri()) {
-    return { capturedAtUnixMs: Date.now(), queues: [] };
+    return { capturedAtUnixMs: Date.now(), workerWaitMicros: 0, collectionMicros: 0, staleQueues: [], queues: [] };
   }
   return invoke<DebugQueueSnapshot>("get_debug_queue_snapshot");
 }
