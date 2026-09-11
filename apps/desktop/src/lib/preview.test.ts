@@ -43,10 +43,10 @@ describe("semantic render graph", () => {
     ]);
   });
 
-  it("registers one reusable original resource for browser-native raster formats", () => {
+  it("requests full independently for browser-native raster formats", () => {
     expect(renderPlan("jpeg", "loupe", "windows").map((step) => step.method)).toEqual([
       { type: "generatedImage", requestLevel: "thumbnail" },
-      { type: "generatedImage", requestLevel: "thumbnail" },
+      { type: "generatedImage", requestLevel: "full" },
     ]);
   });
 

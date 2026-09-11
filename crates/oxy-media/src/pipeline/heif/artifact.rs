@@ -272,7 +272,15 @@ pub(crate) fn preview(
         || cancellation.is_cancelled(),
         |generation| {
             let source_wait_ms = duration_ms(source_wait_started);
-            let decode_permit = acquire_decode(priority, &|| cancellation.is_cancelled())?;
+            let decode_permit = acquire_decode(
+                if require_native_detail {
+                    RenderLevel::Full
+                } else {
+                    level
+                },
+                priority,
+                &|| cancellation.is_cancelled(),
+            )?;
             let queue_wait_ms = duration_ms(queue_started);
             let decode_started = Instant::now();
             let decoded = decode_preview(path, max_size, allow_interim, cancellation)?;
@@ -436,7 +444,9 @@ pub(crate) fn full(
         || cancellation.is_cancelled(),
         |generation| {
             let _decode_permit =
-                acquire_decode(DecodePriority::Foreground, &|| cancellation.is_cancelled())?;
+                acquire_decode(RenderLevel::Full, DecodePriority::Foreground, &|| {
+                    cancellation.is_cancelled()
+                })?;
             if cancellation.is_cancelled() {
                 return Err(MediaError::Cancelled);
             }
@@ -640,10 +650,10 @@ fn transcode_heif_source(
     source: &Path,
     destination: &Path,
     quality: u8,
-    cancelled: impl FnMut() -> bool,
+    cancelled: impl Fn() -> bool,
 ) -> Result<(&'static str, Option<String>, ArtifactPresentation), MediaError> {
     let plan = backend_plan(source, HeifOperation::FullArtifact);
-    let result = execute_backend_plan(&plan, cancelled, |backend| {
+    let result = execute_backend_plan(&plan, &cancelled, |backend| {
         OpenOptions::new()
             .create(true)
             .write(true)
@@ -658,12 +668,12 @@ fn transcode_heif_source(
             #[cfg(any(target_os = "windows", target_os = "linux"))]
             PlannedHeifBackend::Platform(_) => Err(MediaError::NativeDecoderUnavailable),
             PlannedHeifBackend::Ffmpeg | PlannedHeifBackend::FfmpegRgbaFallback => {
-                ffmpeg_heif::can_decode(source)?;
                 ffmpeg_heif::transcode_full_jpeg(
                     source,
                     destination,
                     libheif::dimensions(source)?,
                     quality,
+                    &cancelled,
                 )
             }
             PlannedHeifBackend::Libheif => Err(MediaError::NativeDecoderUnavailable),

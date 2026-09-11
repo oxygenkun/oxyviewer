@@ -170,10 +170,10 @@ fn execute(
             }
         },
         (AssetKind::Tiff, RenderLevel::Thumbnail | RenderLevel::Preview) => {
-            system::preview(path, cache_dir, 512, level, allow_interim)
+            system::preview(path, cache_dir, 512, level, allow_interim, cancellation)
         }
         (AssetKind::Tiff, RenderLevel::Full) => {
-            system::preview(path, cache_dir, 4_096, level, allow_interim)
+            system::preview(path, cache_dir, 4_096, level, allow_interim, cancellation)
         }
     }
 }

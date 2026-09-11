@@ -301,7 +301,9 @@ impl DiskMediaCache {
         lease_ttl: Duration,
     ) -> Result<Self, MediaError> {
         fs::create_dir_all(cache_parent.as_ref())?;
-        let root = cache_parent.as_ref().join(CACHE_FOLDER);
+        // Lease markers hash artifact paths. Publishers and maintenance must
+        // use the same spelling, including Windows' canonical path prefix.
+        let root = cache_parent.as_ref().canonicalize()?.join(CACHE_FOLDER);
         ensure_owned_directory(&root)?;
         ensure_owned_directory(&root.join(LOCK_FOLDER))?;
         ensure_owned_directory(&root.join(LEASE_FOLDER))?;

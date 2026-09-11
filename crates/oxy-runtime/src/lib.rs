@@ -20,6 +20,12 @@ pub fn image_worker_count() -> usize {
     *COUNT
 }
 
+/// Full rendering has independent capacity, including a slot for a replacement
+/// selection while a cancelled native call unwinds.
+pub const fn loupe_worker_count() -> usize {
+    2
+}
+
 /// Cloneable cooperative cancellation shared by queues and blocking workers.
 #[derive(Debug, Clone, Default)]
 pub struct CancellationToken {
@@ -33,6 +39,11 @@ impl CancellationToken {
 
     pub fn is_cancelled(&self) -> bool {
         self.cancelled.load(Ordering::Acquire)
+    }
+
+    /// Share cancellation with native adapters that poll an atomic flag.
+    pub fn shared_flag(&self) -> Arc<AtomicBool> {
+        Arc::clone(&self.cancelled)
     }
 }
 

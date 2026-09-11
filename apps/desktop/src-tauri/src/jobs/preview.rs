@@ -124,7 +124,20 @@ struct Waiter {
     interim_delivered: bool,
 }
 
+struct SessionWork {
+    id: String,
+    path: PathBuf,
+    cancellation: CancellationToken,
+    run: Box<dyn FnOnce(CancellationToken) + Send>,
+}
+
+enum WorkerTask {
+    Preview(RequestKey, Arc<Mutex<WorkRequest>>, SchedulePosition),
+    Session(SessionWork),
+}
+
 pub struct PreviewRequest {
+    pub selection: Option<u64>,
     pub request_id: String,
     pub path: PathBuf,
     pub preview_dir: PathBuf,
@@ -148,6 +161,9 @@ struct ProjectionUpdate {
 
 #[derive(Default)]
 struct WorkState {
+    selection: Option<(PathBuf, u64)>,
+    sessions: VecDeque<SessionWork>,
+    active_sessions: HashMap<String, (PathBuf, CancellationToken)>,
     pending: CoalescingPriorityQueue<RequestKey, WorkRequest, SchedulePosition>,
     pending_keys: HashMap<PreviewScheduleKey, HashSet<RequestKey>>,
     active: HashMap<RequestKey, Arc<Mutex<WorkRequest>>>,
@@ -157,6 +173,55 @@ struct WorkState {
 }
 
 impl WorkState {
+    fn select_full(&mut self, path: &std::path::Path) -> u64 {
+        if let Some((current, epoch)) = &self.selection
+            && current == path
+        {
+            return *epoch;
+        }
+        let epoch = self.selection.as_ref().map_or(1, |(_, epoch)| epoch + 1);
+        self.selection = Some((path.to_owned(), epoch));
+        for session in self.sessions.drain(..) {
+            session.cancellation.cancel();
+        }
+        for (_, cancellation) in self.active_sessions.values() {
+            cancellation.cancel();
+        }
+        let removed = self.pending.remove_if(|_, _| true);
+        self.pending_keys.clear();
+        let mut released = Vec::new();
+        for (_, request, _) in removed {
+            request.cancellation.cancel();
+            for waiter in request.waiters {
+                let _ = waiter.sender.send(Err("full selection changed".into()));
+                released.push(waiter.id);
+            }
+        }
+        for request in self.active.values() {
+            let mut request = request
+                .lock()
+                .expect("active preview request lock poisoned");
+            request.cancellation.cancel();
+            for waiter in std::mem::take(&mut request.waiters) {
+                let _ = waiter.sender.send(Err("full selection changed".into()));
+                released.push(waiter.id);
+            }
+        }
+        for id in released {
+            self.schedule.release_scope(&id);
+        }
+        epoch
+    }
+
+    fn check_selection(&self, selection: Option<u64>) -> Result<(), String> {
+        if let Some(epoch) = selection
+            && self.selection.as_ref().map(|(_, current)| *current) != Some(epoch)
+        {
+            return Err("full selection changed before admission".into());
+        }
+        Ok(())
+    }
+
     fn remember_early_cancellation(&mut self, request_id: &str) {
         self.expire_early_cancellations();
         // Commands may still be observing source metadata when cancellation
@@ -211,23 +276,194 @@ impl WorkState {
 
 #[derive(Clone)]
 pub struct PreviewQueue {
+    thumbnail: RenderQueue,
+    loupe: RenderQueue,
+}
+
+impl PreviewQueue {
+    /// HEIF tile delivery uses exactly the same bounded full workers as file
+    /// artifacts. The session token also reaches subprocess/native decode work.
+    pub fn enqueue_full_session(
+        &self,
+        id: String,
+        path: PathBuf,
+        epoch: u64,
+        run: impl FnOnce(CancellationToken) + Send + 'static,
+    ) -> Result<(), String> {
+        let mut work = self
+            .loupe
+            .work
+            .0
+            .lock()
+            .expect("preview queue lock poisoned");
+        work.check_selection(Some(epoch))?;
+        if work.take_early_cancellation(&id) {
+            return Err("full request cancelled before admission".into());
+        }
+        work.sessions.push_back(SessionWork {
+            id,
+            path,
+            cancellation: CancellationToken::default(),
+            run: Box::new(run),
+        });
+        drop(work);
+        self.loupe.work.1.notify_one();
+        Ok(())
+    }
+    /// Runs at command admission, before any blocking source/cache observation.
+    pub fn select_full(&self, path: &std::path::Path) -> u64 {
+        let epoch = self
+            .loupe
+            .work
+            .0
+            .lock()
+            .expect("preview queue lock poisoned")
+            .select_full(path);
+        self.loupe.work.1.notify_all();
+        epoch
+    }
+
+    pub fn check_full_selection(&self, epoch: u64, request_id: &str) -> Result<(), String> {
+        let mut work = self
+            .loupe
+            .work
+            .0
+            .lock()
+            .expect("preview queue lock poisoned");
+        work.check_selection(Some(epoch))?;
+        if work.take_early_cancellation(request_id) {
+            return Err("full request cancelled before admission".into());
+        }
+        Ok(())
+    }
+
+    pub fn new(app: AppHandle, library: Arc<Library>, cache: Arc<CacheManager>) -> Self {
+        Self {
+            thumbnail: RenderQueue::new(
+                app.clone(),
+                library.clone(),
+                cache.clone(),
+                RenderLevel::Thumbnail,
+            ),
+            loupe: RenderQueue::new(app, library, cache, RenderLevel::Full),
+        }
+    }
+
+    fn queue(&self, level: RenderLevel) -> &RenderQueue {
+        if level == RenderLevel::Full {
+            &self.loupe
+        } else {
+            &self.thumbnail
+        }
+    }
+
+    pub fn request(
+        &self,
+        app: &AppHandle,
+        request: PreviewRequest,
+    ) -> Result<(ImageProjection, Receiver<Result<ImageProjection, String>>), String> {
+        self.queue(request.level).request(app, request)
+    }
+
+    pub fn cached_heif_full_projection(
+        &self,
+        path: &std::path::Path,
+        preview_dir: &std::path::Path,
+        display_sharpening: bool,
+    ) -> Result<Option<ImageProjection>, String> {
+        self.loupe
+            .cached_heif_full_projection(path, preview_dir, display_sharpening)
+    }
+
+    pub fn cancel_request(&self, identity: PreviewIdentity, request_id: &str) -> bool {
+        self.queue(identity.level)
+            .cancel_request(identity, request_id)
+    }
+
+    pub fn reconcile_schedule(
+        &self,
+        scope_id: String,
+        epoch: u64,
+        intents: Vec<PreviewScheduleIntent>,
+        omitted: PreviewOmittedPolicy,
+    ) -> Result<bool, String> {
+        let (full, thumbnails) = intents
+            .into_iter()
+            .partition(|intent: &PreviewScheduleIntent| intent.level == RenderLevel::Full);
+        let thumbnail =
+            self.thumbnail
+                .reconcile_schedule(scope_id.clone(), epoch, thumbnails, omitted)?;
+        let loupe = self
+            .loupe
+            .reconcile_schedule(scope_id, epoch, full, omitted)?;
+        Ok(thumbnail || loupe)
+    }
+
+    pub fn upsert_schedule(
+        &self,
+        scope_id: String,
+        epoch: u64,
+        key: PreviewScheduleKey,
+        priority: PreviewPriority,
+        placement: SchedulePlacement,
+    ) -> bool {
+        self.queue(key.level)
+            .upsert_schedule(scope_id, epoch, key, priority, placement)
+    }
+
+    pub fn release_schedule(&self, scope_id: &str, epoch: u64, key: &PreviewScheduleKey) -> bool {
+        self.queue(key.level).release_schedule(scope_id, epoch, key)
+    }
+
+    pub fn clear_pending_outside_directory(&self, directory: &std::path::Path) -> usize {
+        self.thumbnail.clear_pending_outside_directory(directory)
+            + self.loupe.clear_pending_outside_directory(directory)
+    }
+
+    pub fn invalidate_directory(&self, directory: &std::path::Path) {
+        self.thumbnail.invalidate_directory(directory);
+        self.loupe.invalidate_directory(directory);
+    }
+
+    pub fn invalidate_all(&self) {
+        if let Err(error) = self.thumbnail.library.invalidate_image_projections() {
+            eprintln!("failed to invalidate persisted image projections: {error}");
+        }
+        self.thumbnail.invalidate_all();
+        self.loupe.invalidate_all();
+    }
+
+    pub fn debug_snapshot(&self) -> [DebugQueueState; 2] {
+        [self.loupe.debug_snapshot(), self.thumbnail.debug_snapshot()]
+    }
+}
+
+#[derive(Clone)]
+struct RenderQueue {
     work: Arc<(Mutex<WorkState>, Condvar)>,
+    lane: RenderLevel,
     projections: Arc<RwLock<HashMap<(PathBuf, RenderLevel), ImageProjection>>>,
     library: Arc<Library>,
     cache: Arc<CacheManager>,
     request_generation: Arc<AtomicU64>,
 }
 
-impl PreviewQueue {
-    pub fn new(app: AppHandle, library: Arc<Library>, cache: Arc<CacheManager>) -> Self {
+impl RenderQueue {
+    fn new(
+        app: AppHandle,
+        library: Arc<Library>,
+        cache: Arc<CacheManager>,
+        lane: RenderLevel,
+    ) -> Self {
         let queue = Self {
             work: Arc::new((Mutex::new(WorkState::default()), Condvar::new())),
+            lane,
             projections: Arc::new(RwLock::new(HashMap::new())),
             library,
             cache,
             request_generation: Arc::new(AtomicU64::new(0)),
         };
-        for worker_index in 0..oxy_runtime::image_worker_count() {
+        for worker_index in 0..queue.worker_count() {
             queue.spawn_worker(app.clone(), worker_index);
         }
         queue
@@ -347,6 +583,7 @@ impl PreviewQueue {
         request: PreviewRequest,
     ) -> Result<(ImageProjection, Receiver<Result<ImageProjection, String>>), String> {
         let PreviewRequest {
+            selection,
             request_id,
             path,
             preview_dir,
@@ -354,6 +591,11 @@ impl PreviewQueue {
             priority,
             rank,
         } = request;
+        self.work
+            .0
+            .lock()
+            .expect("preview queue lock poisoned")
+            .check_selection(selection)?;
         let kind =
             AssetKind::from_path(&path).ok_or_else(|| "unsupported image type".to_owned())?;
         let source_revision = ProjectionSourceRevision::observe(&path, &preview_dir, kind, level)?;
@@ -409,6 +651,7 @@ impl PreviewQueue {
             level: source_revision.level,
         };
         let mut work = self.work.0.lock().expect("preview queue lock poisoned");
+        work.check_selection(selection)?;
         if work.take_early_cancellation(&request_id) {
             return Err("preview request was cancelled before admission".into());
         }
@@ -551,6 +794,18 @@ impl PreviewQueue {
         let mut work = self.work.0.lock().expect("preview queue lock poisoned");
         let changes = work.schedule.release_scope(&request_id.to_owned());
         let mut changed = !changes.is_empty();
+        work.sessions.retain(|session| {
+            if session.id != request_id {
+                return true;
+            }
+            session.cancellation.cancel();
+            changed = true;
+            false
+        });
+        if let Some((_, cancellation)) = work.active_sessions.get(request_id) {
+            cancellation.cancel();
+            changed = true;
+        }
         work.apply_schedule_changes(changes);
         let remaining_position = work
             .schedule
@@ -596,6 +851,8 @@ impl PreviewQueue {
         if !changed {
             work.remember_early_cancellation(request_id);
         }
+        drop(work);
+        self.work.1.notify_all();
         changed
     }
 
@@ -659,6 +916,18 @@ impl PreviewQueue {
     pub fn clear_pending_outside_directory(&self, directory: &std::path::Path) -> usize {
         let mut work = self.work.0.lock().expect("preview queue lock poisoned");
         work.active_directory = Some(directory.to_owned());
+        work.sessions.retain(|session| {
+            if session.path.parent() == Some(directory) {
+                return true;
+            }
+            session.cancellation.cancel();
+            false
+        });
+        for (path, cancellation) in work.active_sessions.values() {
+            if path.parent() != Some(directory) {
+                cancellation.cancel();
+            }
+        }
         let removed = work
             .pending
             .remove_if(|key, _| key.source_revision.path.parent() != Some(directory));
@@ -709,9 +978,6 @@ impl PreviewQueue {
 
     pub fn invalidate_all(&self) {
         self.request_generation.fetch_add(1, Ordering::Relaxed);
-        if let Err(error) = self.library.invalidate_image_projections() {
-            eprintln!("failed to invalidate persisted image projections: {error}");
-        }
         self.projections
             .write()
             .expect("image projection lock poisoned")
@@ -720,12 +986,12 @@ impl PreviewQueue {
 
     pub fn debug_snapshot(&self) -> DebugQueueState {
         let work = self.work.0.lock().expect("preview queue lock poisoned");
-        let pending = work
+        let mut pending = work
             .pending
             .entries()
             .map(|(key, request, position)| debug_item(key, request, position))
             .collect::<Vec<_>>();
-        let active = work
+        let mut active = work
             .active
             .iter()
             .map(|(key, request)| {
@@ -742,10 +1008,25 @@ impl PreviewQueue {
                     .unwrap_or_else(|| schedule_position(PreviewPriority::Preload, u32::MAX));
                 debug_item(key, &request, position)
             })
-            .collect();
+            .collect::<Vec<_>>();
+        pending.extend(
+            work.sessions
+                .iter()
+                .map(|session| session_debug_item(&session.id, &session.path)),
+        );
+        active.extend(
+            work.active_sessions
+                .iter()
+                .map(|(id, (path, _))| session_debug_item(id, path)),
+        );
         DebugQueueState {
-            name: "preview".into(),
-            concurrency: oxy_runtime::image_worker_count(),
+            name: if self.lane == RenderLevel::Full {
+                "loupe"
+            } else {
+                "thumbnail"
+            }
+            .into(),
+            concurrency: self.worker_count(),
             pending,
             active,
         }
@@ -829,6 +1110,9 @@ impl PreviewQueue {
                 return Err(message);
             }
         };
+        if cancellation.is_cancelled() {
+            return Ok(None);
+        }
         if upgrade.result.satisfaction != Some(MediaSatisfaction::Satisfied) {
             let message = "preview upgrade did not produce a satisfied artifact".to_owned();
             let projection =
@@ -949,57 +1233,80 @@ impl PreviewQueue {
         });
     }
 
+    fn worker_count(&self) -> usize {
+        if self.lane == RenderLevel::Full {
+            oxy_runtime::loupe_worker_count()
+        } else {
+            oxy_runtime::image_worker_count()
+        }
+    }
+
     fn spawn_worker(&self, app: AppHandle, worker_index: usize) {
         let queue = self.clone();
         std::thread::Builder::new()
-            .name(format!("oxy-image-projection-{worker_index}"))
+            .name(format!("oxy-{:?}-{worker_index}", self.lane))
             .spawn(move || {
                 loop {
                     let request = {
                         let mut pending = queue.work.0.lock().expect("preview queue lock poisoned");
-                        while pending.pending.is_empty() {
+                        while pending.pending.is_empty() && pending.sessions.is_empty() {
                             pending = queue
                                 .work
                                 .1
                                 .wait(pending)
                                 .expect("preview queue lock poisoned");
                         }
-                        // Keep one worker available for a newly selected image;
-                        // other work remains ordered in the shared queue.
-                        while pending.active.len()
-                            >= oxy_runtime::image_worker_count().saturating_sub(1).max(1)
-                            && !pending
-                                .pending
-                                .entries()
-                                .any(|(_, _, position)| position.tier == 0)
-                        {
-                            pending = queue
-                                .work
-                                .1
-                                .wait_timeout(pending, std::time::Duration::from_millis(50))
-                                .expect("preview queue lock poisoned")
-                                .0;
-                        }
-                        pending.pending.pop().map(|(key, request, position)| {
-                            let schedule_key = PreviewScheduleKey {
-                                path: key.source_revision.path.clone(),
-                                level: key.source_revision.level,
-                            };
-                            if let Some(keys) = pending.pending_keys.get_mut(&schedule_key) {
-                                keys.remove(&key);
-                                if keys.is_empty() {
-                                    pending.pending_keys.remove(&schedule_key);
+                        if let Some(session) = pending.sessions.pop_front() {
+                            pending.active_sessions.insert(
+                                session.id.clone(),
+                                (session.path.clone(), session.cancellation.clone()),
+                            );
+                            Some(WorkerTask::Session(session))
+                        } else {
+                            pending.pending.pop().map(|(key, request, position)| {
+                                let schedule_key = PreviewScheduleKey {
+                                    path: key.source_revision.path.clone(),
+                                    level: key.source_revision.level,
+                                };
+                                if let Some(keys) = pending.pending_keys.get_mut(&schedule_key) {
+                                    keys.remove(&key);
+                                    if keys.is_empty() {
+                                        pending.pending_keys.remove(&schedule_key);
+                                    }
                                 }
-                            }
-                            let mut request = request;
-                            request.started_tier = position.tier;
-                            let request = Arc::new(Mutex::new(request));
-                            pending.active.insert(key.clone(), request.clone());
-                            (key, request, position)
-                        })
+                                let mut request = request;
+                                request.started_tier = position.tier;
+                                let request = Arc::new(Mutex::new(request));
+                                pending.active.insert(key.clone(), request.clone());
+                                WorkerTask::Preview(key, request, position)
+                            })
+                        }
                     };
-                    let Some((key, request, position)) = request else {
-                        continue;
+                    let (key, request, position) = match request {
+                        Some(WorkerTask::Preview(key, request, position)) => {
+                            (key, request, position)
+                        }
+                        Some(WorkerTask::Session(session)) => {
+                            let _foreground = queue.library.foreground.enter();
+                            let id = session.id;
+                            if !session.cancellation.is_cancelled() {
+                                // A failed adapter must not permanently remove a full worker.
+                                let _ =
+                                    std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                                        (session.run)(session.cancellation);
+                                    }));
+                            }
+                            queue
+                                .work
+                                .0
+                                .lock()
+                                .expect("preview queue lock poisoned")
+                                .active_sessions
+                                .remove(&id);
+                            queue.work.1.notify_all();
+                            continue;
+                        }
+                        None => continue,
                     };
                     let _foreground =
                         (position.tier <= 1).then(|| queue.library.foreground.enter());
@@ -1024,21 +1331,27 @@ impl PreviewQueue {
                         Ok(preview) => (Ok(preview.result), preview.completions),
                         Err(error) => (Err(error.to_string()), Vec::new()),
                     };
-                    let projection = match &result {
-                        Ok(result) => queue.transition(ProjectionUpdate {
-                            source_revision: source_revision.clone(),
-                            valid_at,
-                            status: ResourceLoadStatus::Ready,
-                            result: Some(result.clone()),
-                            error: None,
-                        }),
-                        Err(error) => queue.transition(ProjectionUpdate {
-                            source_revision: source_revision.clone(),
-                            valid_at,
-                            status: ResourceLoadStatus::Error,
-                            result: None,
-                            error: Some(error.clone()),
-                        }),
+                    let projection = if cancellation.is_cancelled() {
+                        // Another consumer can own the same immutable resource.
+                        // Leave its lease intact; unclaimed publication grace expires.
+                        Err("preview request cancelled".to_owned())
+                    } else {
+                        match &result {
+                            Ok(result) => queue.transition(ProjectionUpdate {
+                                source_revision: source_revision.clone(),
+                                valid_at,
+                                status: ResourceLoadStatus::Ready,
+                                result: Some(result.clone()),
+                                error: None,
+                            }),
+                            Err(error) => queue.transition(ProjectionUpdate {
+                                source_revision: source_revision.clone(),
+                                valid_at,
+                                status: ResourceLoadStatus::Error,
+                                result: None,
+                                error: Some(error.clone()),
+                            }),
+                        }
                     };
                     let (projection, accepted) = match projection {
                         Ok(projection)
@@ -1070,9 +1383,10 @@ impl PreviewQueue {
                             completion,
                         );
                     }
-                    let is_interim = result.as_ref().is_ok_and(|result| {
-                        result.satisfaction == Some(MediaSatisfaction::Interim)
-                    });
+                    let is_interim = !cancellation.is_cancelled()
+                        && result.as_ref().is_ok_and(|result| {
+                            result.satisfaction == Some(MediaSatisfaction::Interim)
+                        });
                     if is_interim {
                         // Keep the request active after the displayable Interim
                         // reply. Its subscribers and cancellation token continue
@@ -1285,6 +1599,21 @@ fn omitted_policy(policy: PreviewOmittedPolicy) -> Result<OmittedIntentPolicy, S
     }
 }
 
+fn session_debug_item(id: &str, path: &std::path::Path) -> DebugQueueItem {
+    DebugQueueItem {
+        key: id.to_owned(),
+        path: Some(path.to_owned()),
+        root_path: None,
+        stage: "full-tiles".into(),
+        priority: "loupe".into(),
+        rank: Some(0),
+        consumers: 1,
+        pending_count: None,
+        asset_count: None,
+        directory_count: None,
+    }
+}
+
 fn schedule_position(priority: PreviewPriority, rank: u32) -> SchedulePosition {
     let tier = match priority {
         PreviewPriority::Loupe => 0,
@@ -1307,6 +1636,116 @@ fn priority_from_position(position: SchedulePosition) -> PreviewPriority {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn full_selection_and_worker_capacity_are_independent_of_thumbnail_work() {
+        let directory = tempfile::tempdir().unwrap();
+        let library = Arc::new(Library::in_memory().unwrap());
+        let cache = Arc::new(
+            CacheManager::load(
+                directory.path().join("previews"),
+                directory.path().join("config.json"),
+            )
+            .unwrap(),
+        );
+        let make = |lane| RenderQueue {
+            lane,
+            work: Arc::new((Mutex::new(WorkState::default()), Condvar::new())),
+            projections: Arc::new(RwLock::new(HashMap::new())),
+            library: library.clone(),
+            cache: cache.clone(),
+            request_generation: Arc::new(AtomicU64::new(0)),
+        };
+        let queues = PreviewQueue {
+            thumbnail: make(RenderLevel::Thumbnail),
+            loupe: make(RenderLevel::Full),
+        };
+        assert_eq!(queues.queue(RenderLevel::Full).worker_count(), 2);
+        assert_eq!(
+            queues.queue(RenderLevel::Thumbnail).worker_count(),
+            oxy_runtime::image_worker_count()
+        );
+        assert!(!Arc::ptr_eq(
+            &queues.queue(RenderLevel::Thumbnail).work,
+            &queues.queue(RenderLevel::Full).work
+        ));
+        let guard = queues.thumbnail.work.0.lock().unwrap();
+        let other = queues.clone();
+        let (sender, receiver) = mpsc::channel();
+        let worker = std::thread::spawn(move || {
+            sender
+                .send(other.select_full(std::path::Path::new("selected.hif")))
+                .unwrap();
+        });
+        let selected = receiver.recv_timeout(Duration::from_secs(1));
+        drop(guard);
+        worker.join().unwrap();
+        assert!(selected.is_ok(), "thumbnail work blocked full admission");
+        let [full, thumbnail] = queues.debug_snapshot();
+        assert_eq!(full.name, "loupe");
+        assert_eq!(thumbnail.name, "thumbnail");
+    }
+
+    #[test]
+    fn full_selection_cancels_active_and_pending_artifacts_and_sessions() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("first.hif");
+        std::fs::write(&path, b"source").unwrap();
+        let source_revision = ProjectionSourceRevision::observe(
+            &path,
+            directory.path(),
+            AssetKind::Heif,
+            RenderLevel::Full,
+        )
+        .unwrap();
+        let key = RequestKey {
+            source_revision: source_revision.clone(),
+            generation: 0,
+        };
+        let (sender, receiver) = mpsc::channel();
+        let token = CancellationToken::default();
+        let request = WorkRequest {
+            source_revision,
+            valid_at: 1,
+            waiters: vec![Waiter {
+                id: "first".into(),
+                sender,
+                interim_delivered: false,
+            }],
+            cancellation: token.clone(),
+            started_tier: 0,
+        };
+        let mut work = WorkState::default();
+        let first_epoch = work.select_full(&path);
+        work.active.insert(key, Arc::new(Mutex::new(request)));
+        let session_token = CancellationToken::default();
+        work.active_sessions.insert(
+            "active-session".into(),
+            (path.clone(), session_token.clone()),
+        );
+        let pending_token = CancellationToken::default();
+        work.sessions.push_back(SessionWork {
+            id: "pending-session".into(),
+            path: path.clone(),
+            cancellation: pending_token.clone(),
+            run: Box::new(|_| panic!("stale session must not run")),
+        });
+
+        assert_eq!(work.select_full(&path), first_epoch);
+        assert!(!token.is_cancelled());
+        let second_epoch = work.select_full(&directory.path().join("second.hif"));
+        assert!(token.is_cancelled());
+        assert!(session_token.is_cancelled());
+        assert!(pending_token.is_cancelled());
+        assert!(work.sessions.is_empty());
+        // IPC subscribers are released without waiting for the native call.
+        assert!(receiver.try_recv().unwrap().is_err());
+        assert!(work.check_selection(Some(first_epoch)).is_err());
+        assert!(work.check_selection(Some(second_epoch)).is_ok());
+        let return_epoch = work.select_full(&path);
+        assert!(return_epoch > second_epoch);
+        assert!(work.check_selection(Some(first_epoch)).is_err());
+    }
 
     #[test]
     fn cancellation_before_admission_is_consumed_and_bounded() {
@@ -1371,8 +1810,9 @@ mod tests {
             )
             .unwrap(),
         );
-        let queue = PreviewQueue {
+        let queue = RenderQueue {
             work: Arc::new((Mutex::new(WorkState::default()), Condvar::new())),
+            lane: RenderLevel::Thumbnail,
             projections: Arc::new(RwLock::new(HashMap::new())),
             library,
             cache,
@@ -1540,8 +1980,9 @@ mod tests {
         };
         let library = Arc::new(Library::in_memory().unwrap());
         let accepted = library.accept_image_projection(projection).unwrap();
-        let queue = PreviewQueue {
+        let queue = RenderQueue {
             work: Arc::new((Mutex::new(WorkState::default()), Condvar::new())),
+            lane: RenderLevel::Thumbnail,
             projections: Arc::new(RwLock::new(HashMap::new())),
             library,
             cache: Arc::new(

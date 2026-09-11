@@ -43,10 +43,12 @@ pub(crate) fn get_debug_queue_snapshot(
         .as_millis()
         .try_into()
         .unwrap_or(u64::MAX);
+    let [loupe, thumbnail] = state.preview_queue.debug_snapshot();
     Ok(DebugQueueSnapshot {
         captured_at_unix_ms,
         queues: vec![
-            state.preview_queue.debug_snapshot(),
+            loupe,
+            thumbnail,
             state.metadata_queue.debug_snapshot(),
             state.directory_tree_queue.debug_snapshot(),
             state.library_index_queue.debug_snapshot(),

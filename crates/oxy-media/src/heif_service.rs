@@ -100,6 +100,26 @@ impl HeifDecodeService {
         generation: u64,
         display_sharpening: bool,
     ) -> Result<HeifDecodeSession, MediaError> {
+        self.begin_cancellable(
+            path,
+            cache_dir,
+            generation,
+            display_sharpening,
+            oxy_runtime::CancellationToken::default(),
+        )
+    }
+
+    pub fn begin_cancellable(
+        &self,
+        path: &Path,
+        cache_dir: &Path,
+        generation: u64,
+        display_sharpening: bool,
+        cancellation: oxy_runtime::CancellationToken,
+    ) -> Result<HeifDecodeSession, MediaError> {
+        if cancellation.is_cancelled() {
+            return Err(MediaError::Cancelled);
+        }
         // Capture the identity before any source probing or decode. Session
         // pixels may be persisted after a dwell, but always retain this fence.
         let source_revision = crate::cache::SourceRevision::observe(path)?;
@@ -128,6 +148,9 @@ impl HeifDecodeService {
             .state
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
+        if cancellation.is_cancelled() {
+            return Err(MediaError::Cancelled);
+        }
         if let Some(active) = state.active.take() {
             active.cancelled.store(true, Ordering::Release);
         }
@@ -139,15 +162,16 @@ impl HeifDecodeService {
             decode_path,
             source_revision,
             display_sharpening: apply_sharpening,
-            cancelled: Arc::new(AtomicBool::new(false)),
+            cancelled: cancellation.shared_flag(),
             backend_plan,
         });
         let backend = selected_backend.kind();
         #[cfg(target_os = "windows")]
         let expected_tiles = if backend == HeifBackendKind::FfmpegSoftware {
-            crate::backends::ffmpeg_heif::tile_count(path).unwrap_or_else(|_| {
-                tile_coordinates(size.width, size.height, DEFAULT_TILE_SIZE).len()
-            })
+            crate::backends::ffmpeg_heif::tile_count(path, &|| cancellation.is_cancelled())
+                .unwrap_or_else(|_| {
+                    tile_coordinates(size.width, size.height, DEFAULT_TILE_SIZE).len()
+                })
         } else {
             tile_coordinates(size.width, size.height, DEFAULT_TILE_SIZE).len()
         } as u32;
@@ -199,9 +223,11 @@ impl HeifDecodeService {
                 active.backend_plan.clone(),
             )
         };
-        let decode_permit = acquire_decode(DecodePriority::Foreground, &|| {
-            cancelled.load(Ordering::Acquire)
-        })?;
+        let decode_permit = acquire_decode(
+            oxy_domain::RenderLevel::Full,
+            DecodePriority::Foreground,
+            &|| cancelled.load(Ordering::Acquire),
+        )?;
         let queue_wait_ms = elapsed_ms(started);
         if cancelled.load(Ordering::Acquire) {
             return Err(MediaError::Cancelled);
@@ -213,7 +239,11 @@ impl HeifDecodeService {
         let decoded = execute_backend_plan(
             &backend_plan,
             || cancelled.load(Ordering::Acquire),
-            |backend| decode_session_backend(backend, session, &decode_path, display_sharpening),
+            |backend| {
+                decode_session_backend(backend, session, &decode_path, display_sharpening, &|| {
+                    cancelled.load(Ordering::Acquire)
+                })
+            },
         )
         .map_err(BackendExecutionError::into_media_error)?;
         let decode_ms = elapsed_ms(decode_started);
@@ -490,6 +520,7 @@ fn decode_session_backend(
     session: &HeifDecodeSession,
     path: &Path,
     _display_sharpening: bool,
+    cancelled: &impl Fn() -> bool,
 ) -> Result<SessionDecode, MediaError> {
     let presentation = crate::pipeline::heif::artifact::backend_presentation(backend);
     match backend {
@@ -516,7 +547,6 @@ fn decode_session_backend(
         #[cfg(target_os = "linux")]
         PlannedHeifBackend::Platform(_) => Err(MediaError::NativeDecoderUnavailable),
         PlannedHeifBackend::Ffmpeg => {
-            crate::backends::ffmpeg_heif::can_decode(path)?;
             #[cfg(target_os = "windows")]
             {
                 Ok(SessionDecode::EncodedTiles(
@@ -527,6 +557,7 @@ fn decode_session_backend(
                             height: session.height,
                         },
                         _display_sharpening,
+                        cancelled,
                     )?,
                 ))
             }
@@ -540,6 +571,7 @@ fn decode_session_backend(
                             height: session.height,
                         },
                         false,
+                        cancelled,
                     )?,
                     codec: "FFmpeg HEVC tile-grid",
                     presentation,
@@ -554,6 +586,7 @@ fn decode_session_backend(
                     height: session.height,
                 },
                 false,
+                cancelled,
             )?,
             codec: "FFmpeg HEVC tile-grid",
             presentation,

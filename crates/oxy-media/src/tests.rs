@@ -436,7 +436,12 @@ fn writes_raw_backend_comparison_artifacts() {
                     apple_image_io::render_jpeg(&source, &destination, max_size, 90).unwrap();
                 }
                 PlannedRawBackend::LibRawDevelopment => {
-                    let image = libraw::developed(&source, max_size).unwrap();
+                    let image = libraw::developed(
+                        &source,
+                        max_size,
+                        &oxy_runtime::CancellationToken::default(),
+                    )
+                    .unwrap();
                     write_jpeg_atomically(&image, &destination, 90, RAW_DEVELOPED_JPEG).unwrap();
                 }
             }
@@ -630,6 +635,7 @@ fn generates_large_image_io_fallback_for_heif_fixture() {
         original.width.max(original.height).min(8_192),
         RenderLevel::Full,
         true,
+        &oxy_runtime::CancellationToken::default(),
     )
     .unwrap();
 
@@ -678,7 +684,14 @@ fn fixture_preview_performance_budgets() {
                 } else {
                     RenderLevel::Preview
                 };
-                system_preview(&fixture, cache.path(), size, level, true)
+                system_preview(
+                    &fixture,
+                    cache.path(),
+                    size,
+                    level,
+                    true,
+                    &oxy_runtime::CancellationToken::default(),
+                )
             }
         };
 

@@ -22,12 +22,14 @@ pub(crate) async fn get_preview(
     state: State<'_, AppState>,
 ) -> Result<oxy_domain::ImageProjection, String> {
     let preview_queue = state.preview_queue.clone();
+    let selection = (level == RenderLevel::Full).then(|| preview_queue.select_full(&path));
     let preview_dir = state.cache.preview_dir();
     let cache = state.cache.clone();
     let projection = tauri::async_runtime::spawn_blocking(move || {
         let (projection, receiver) = preview_queue.request(
             &app,
             PreviewRequest {
+                selection,
                 request_id,
                 path,
                 preview_dir,
@@ -203,6 +205,7 @@ pub(crate) async fn start_heif_full(
     app: tauri::AppHandle,
     state: State<'_, AppState>,
 ) -> Result<HeifFullPresentation, String> {
+    let selection = state.preview_queue.select_full(&path);
     let asset = state
         .files
         .get_asset(&path)
@@ -231,6 +234,9 @@ pub(crate) async fn start_heif_full(
     })
     .await
     .map_err(|error| error.to_string())??;
+    state
+        .preview_queue
+        .check_full_selection(selection, &request_id)?;
     if let Some(projection) = cached {
         return Ok(HeifFullPresentation::Artifact {
             projection: Box::new(projection),
@@ -239,8 +245,14 @@ pub(crate) async fn start_heif_full(
     if use_artifact {
         let preview_queue = state.preview_queue.clone();
         let projection = tauri::async_runtime::spawn_blocking(move || {
-            let projection =
-                resolve_heif_full_projection(&app, &preview_queue, asset, preview_dir, request_id)?;
+            let projection = resolve_heif_full_projection(
+                &app,
+                &preview_queue,
+                asset,
+                preview_dir,
+                request_id,
+                selection,
+            )?;
             projection
                 .result
                 .as_ref()
@@ -253,77 +265,104 @@ pub(crate) async fn start_heif_full(
             projection: Box::new(projection),
         });
     }
-    let session = service
-        .begin(&path, &preview_dir, generation, display_sharpening)
-        .map_err(|error| error.to_string())?;
-    let worker_session = session.clone();
     let cache = state.cache.clone();
     let preview_queue = state.preview_queue.clone();
-    tauri::async_runtime::spawn_blocking(move || {
-        let result = service.decode(
-            &worker_session,
-            &preview_dir,
-            |tile| {
-                let _ = app.emit("heif-tile-ready", heif_tile_event(tile));
-            },
-            |diagnostics| {
-                let event = heif_status_event(
-                    &worker_session,
-                    HeifDecodeStatus::Complete,
-                    Some(diagnostics.clone()),
-                    None,
-                );
-                let _ = app.emit("heif-decode-status", event);
-            },
-        );
-        if result.is_ok() {
-            // Lookup only: a cancelled dwell/cache failure must not trigger a
-            // second source decode via the generic unsharpened preview queue.
-            match preview_queue.cached_heif_full_projection(
-                &asset.path,
+    let (sender, receiver) = std::sync::mpsc::channel();
+    state.preview_queue.enqueue_full_session(
+        request_id,
+        path.clone(),
+        selection,
+        move |cancellation| {
+            let worker_session = match service.begin_cancellable(
+                &path,
                 &preview_dir,
+                generation,
                 display_sharpening,
+                cancellation,
             ) {
-                Ok(Some(projection)) => {
-                    if let Some(artifact) = projection.result {
-                        if cache.try_start_prune() {
-                            loop {
-                                if let Err(error) = cache.prune_after_write(&artifact.path) {
-                                    eprintln!("preview cache pruning failed: {error}");
-                                }
-                                if !cache.finish_prune() {
-                                    break;
+                Ok(session) => session,
+                Err(error) => {
+                    let _ = sender.send(Err(error.to_string()));
+                    return;
+                }
+            };
+            if sender.send(Ok(worker_session.clone())).is_err() {
+                service.cancel(&worker_session.id);
+                return;
+            }
+            let result = service.decode(
+                &worker_session,
+                &preview_dir,
+                |tile| {
+                    let _ = app.emit("heif-tile-ready", heif_tile_event(tile));
+                },
+                |diagnostics| {
+                    let event = heif_status_event(
+                        &worker_session,
+                        HeifDecodeStatus::Complete,
+                        Some(diagnostics.clone()),
+                        None,
+                    );
+                    let _ = app.emit("heif-decode-status", event);
+                },
+            );
+            if result.is_ok() {
+                // Lookup only: a cancelled dwell/cache failure must not trigger a
+                // second source decode via the generic unsharpened preview queue.
+                match preview_queue.cached_heif_full_projection(
+                    &asset.path,
+                    &preview_dir,
+                    display_sharpening,
+                ) {
+                    Ok(Some(projection)) => {
+                        if let Some(artifact) = projection.result {
+                            if cache.try_start_prune() {
+                                loop {
+                                    if let Err(error) = cache.prune_after_write(&artifact.path) {
+                                        eprintln!("preview cache pruning failed: {error}");
+                                    }
+                                    if !cache.finish_prune() {
+                                        break;
+                                    }
                                 }
                             }
-                        }
-                        if let Some(resource) = artifact.resource {
-                            oxy_media::shared_resource_registry().release(&resource.resource_id);
+                            if let Some(resource) = artifact.resource {
+                                oxy_media::shared_resource_registry()
+                                    .release(&resource.resource_id);
+                            }
                         }
                     }
+                    Ok(None) => {}
+                    Err(error) => eprintln!("failed to inspect HEIF full cache: {error}"),
                 }
-                Ok(None) => {}
-                Err(error) => eprintln!("failed to inspect HEIF full cache: {error}"),
             }
-        }
-        let event = match result {
-            Ok(_) => None,
-            Err(oxy_media::MediaError::Cancelled) => Some(heif_status_event(
-                &worker_session,
-                HeifDecodeStatus::Cancelled,
-                None,
-                None,
-            )),
-            Err(error) => Some(heif_status_event(
-                &worker_session,
-                HeifDecodeStatus::Failed,
-                None,
-                Some(error.to_string()),
-            )),
-        };
-        if let Some(event) = event {
-            let _ = app.emit("heif-decode-status", event);
-        }
-    });
+            let event = match result {
+                Ok(_) => None,
+                Err(oxy_media::MediaError::Cancelled) => Some(heif_status_event(
+                    &worker_session,
+                    HeifDecodeStatus::Cancelled,
+                    None,
+                    None,
+                )),
+                Err(error) => Some(heif_status_event(
+                    &worker_session,
+                    HeifDecodeStatus::Failed,
+                    None,
+                    Some(error.to_string()),
+                )),
+            };
+            if let Some(event) = event {
+                let _ = app.emit("heif-decode-status", event);
+            }
+        },
+    )?;
+    let session = tauri::async_runtime::spawn_blocking(move || {
+        receiver
+            .recv()
+            .map_err(|_| "full session cancelled before starting".to_owned())?
+    })
+    .await
+    .map_err(|error| error.to_string())??;
     Ok(HeifFullPresentation::Tiles { session })
 }
 
@@ -364,10 +403,12 @@ fn resolve_heif_full_projection(
     asset: AssetSummary,
     preview_dir: PathBuf,
     request_id: String,
+    selection: u64,
 ) -> Result<ImageProjection, String> {
     let (loading, receiver) = preview_queue.request(
         app,
         PreviewRequest {
+            selection: Some(selection),
             request_id,
             path: asset.path,
             preview_dir,

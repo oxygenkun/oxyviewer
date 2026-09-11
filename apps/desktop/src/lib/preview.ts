@@ -21,7 +21,7 @@ export interface RenderStep {
 /**
  * The interaction graph is deliberately format- and pixel-independent.
  * A list/grid asks for thumbnail; loupe retains that thumbnail as its
- * persistent base layer and then advances directly to full. Profiles below
+ * cached base layer without requesting it, and requests full immediately. Profiles below
  * decide how each node is rendered and may map several nodes to the same artifact.
  */
 const SURFACE_LEVELS: Record<RenderSurface, readonly RenderLevel[]> = {
@@ -32,7 +32,7 @@ const SURFACE_LEVELS: Record<RenderSurface, readonly RenderLevel[]> = {
 const originalProfile: RenderProfile = {
   thumbnail: { type: "generatedImage", requestLevel: "thumbnail" },
   preview: { type: "reuse", level: "thumbnail" },
-  full: { type: "reuse", level: "thumbnail" },
+  full: { type: "generatedImage", requestLevel: "full" },
 };
 
 const rawProfile: RenderProfile = {

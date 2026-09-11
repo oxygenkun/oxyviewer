@@ -90,7 +90,7 @@ embedded 快速探测和 tile session 保持各自原有资源隔离。
 `Thumbnail` 组件只解释固定等级图：
 
 1. 网格/列表请求 `thumbnail`；
-2. 放大镜先请求并保留 `thumbnail`，再启动 `full`；
+2. 放大镜立即请求 `full`，被动复用已有 `thumbnail` 作为底图，不主动请求或等待缩略图；
 3. renderer profile 决定等级是原图、生成图、tile session，还是另一个等级的复用；
 4. 组件选择当前最高可用且未加载失败的 URL；
 5. 新等级图片真正完成浏览器加载后才取代现有图。
@@ -108,8 +108,11 @@ Windows WebView2 `http://oxy-media.localhost` 规范化 helper。
 
 ## 5. 第一层调度：Rust `PreviewQueue`
 
-所有需要生成的格式和 stage 共用一个 Rust 多级队列。前端场景策略提交由选择、可见性和
-overscan 产生的 scope intent，并可在拿到 artifact URL 后预热 WebView 图片解码。规范化位置为
+Rust `PreviewQueue` 按 render level 分流到独立的 `loupe` 与 `thumbnail` 队列，
+各自拥有 pending、active、scope scheduler 和 worker。`full`（包括 HEIF tile session）进入 loupe；
+`thumbnail` 与保留的 `preview` API 进入 thumbnail。分流依据是等级，不是 priority：filmstrip
+选中项的 thumbnail 即使具有 loupe 优先级，也不会占 full worker。前端场景策略提交由选择、可见性和
+overscan 产生的 scope intent，并可在拿到 artifact URL 后预热 WebView 图片解码。各队列内部规范化位置为
 `(tier, rank)`，数值越小越重要：
 
 ```text
@@ -159,10 +162,15 @@ flowchart LR
     demote --> nearbyRun["空闲时完成并写缓存"]
 ```
 
-PreviewQueue 使用 `available_parallelism()` 个 worker（按进程可用逻辑 CPU 数，探测失败回退 1）。
-多核时普通可见/预加载任务最多占 N−1 个位置，为当前 loupe 保留一个位置。单核仍可正常执行。
-无订阅者的活跃任务和切换目录后的旧任务触发协作取消；快速 A→B→A 使用新的 token，
-旧 worker 完成时不能移除新请求，projection 的 validAt 围栏拒绝旧结果。
+thumbnail 使用 `available_parallelism()` 个 worker（按进程可用逻辑 CPU 数，探测失败回退 1），
+优先走 RAW 内嵌图和 Sony HIF 快速 JPEG；缺少可用内嵌表示时仍允许现有格式回退。
+loupe 使用独立的 2 个 worker，给取消中的旧 native 调用和当前图片分别留出执行位置，
+不再从 thumbnail 的并发数中预留位置。HEIF session 的 begin/decode 同样在 full worker 执行。
+
+Full 命令在源文件探测之前登记 selection epoch；切换路径立即取消旧 active task、删除 pending
+并释放等待 artifact 的 IPC 订阅者，较早 epoch 的请求不能在探测完成后重新入队。前端卸载
+发送 request-id 取消；未准入的请求由短期 tombstone 拦截。快速 A→B→A 使用新 epoch/token，
+旧 worker 不能删除新的 active request，取消后不发布迟到结果，projection 的 validAt 围栏继续有效。
 
 ## 6. 第二层调度：后端 `DecodeGate`
 
@@ -179,15 +187,18 @@ crate 根模块只负责稳定 API re-export；格式执行分别位于 `pipelin
 | `nearby` | `Background` | 等待 foreground 和 visible |
 | `preload` | `Background` | 与 nearby 共用后端 background 档；前端保证它最后提交 |
 
-gate 的并发上限同样为可用 CPU 数，多核时为 Foreground 保留一个位置。后台任务老化
-最多提升到 Visible，不能超过当前选中图片。等待 gate/同源锁时检查取消；已经进入不可中断
-的 native API 仍需返回后退出，不能安全强杀线程。permit 由 Rust `Drop` 释放。
+decode admission 同样按等级分成两个 gate：thumbnail 容量为可用 CPU 数，full 容量为 2；
+缩略图无法占用 full gate。每个 gate 内后台任务老化最多提升到 Visible。等待 gate/同源锁时
+检查取消，permit 由 Rust `Drop` 释放。FFmpeg/ffprobe 子进程轮询取消并 kill/wait 回收，
+诊断写临时文件以避免管道写满，另设 120 秒进程超时；LibRaw 开发通过 progress callback
+中断 unpack/process。未提供中断接口的 WIC/ImageIO/libheif 调用仍在返回后检查取消，
+不会强杀 Rust 线程，旧结果不会被发布。
 
 为什么有两层 Rust 调度：projection queue 负责资源身份、consumer 合并、优先级和状态提交；
 `DecodeGate` 负责跨格式原生解码资源竞争。前端只提供视口/选择提示和浏览器预加载。
 
-RAW full development 是例外。它可能耗时数十秒，使用独立 `RAW_FULL_DECODE_LOCK`，不进入
-统一 gate，否则一张 full RAW 会阻塞所有缩略图。
+RAW full development 在 full worker 内仍使用 `RAW_FULL_DECODE_LOCK`，限制大尺寸开发的内存
+占用；该锁与 thumbnail gate 独立。取消会传入 LibRaw 回调，而不是只在整张开发完成后检查。
 
 ### 资源注册表预算与前端租约（2026-09-09）
 

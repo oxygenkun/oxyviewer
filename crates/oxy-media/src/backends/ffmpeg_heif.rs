@@ -14,6 +14,57 @@ use std::{
 };
 
 const BACKEND: &str = "FFmpeg HEIF tile-grid";
+
+/// Full decodes write files. Drain diagnostics to a file so a full stderr pipe
+/// cannot prevent cancellation, and always reap the child before removing output.
+fn run_cancellable(
+    command: &mut Command,
+    cancelled: &impl Fn() -> bool,
+) -> Result<std::process::Output, MediaError> {
+    use std::io::{Read, Seek};
+    if cancelled() {
+        return Err(MediaError::Cancelled);
+    }
+    let mut errors = tempfile::tempfile()?;
+    let mut output = tempfile::tempfile()?;
+    let mut child = command
+        .stdin(Stdio::null())
+        .stdout(output.try_clone()?)
+        .stderr(errors.try_clone()?)
+        .spawn()?;
+    let started = std::time::Instant::now();
+    let status = loop {
+        if cancelled() || started.elapsed() > std::time::Duration::from_secs(120) {
+            let _ = child.kill();
+            let _ = child.wait();
+            return if cancelled() {
+                Err(MediaError::Cancelled)
+            } else {
+                Err(native_error("FFmpeg decode timed out"))
+            };
+        }
+        match child.try_wait() {
+            Ok(Some(status)) => break status,
+            Ok(None) => std::thread::sleep(std::time::Duration::from_millis(10)),
+            Err(error) => {
+                let _ = child.kill();
+                let _ = child.wait();
+                return Err(error.into());
+            }
+        }
+    };
+    errors.rewind()?;
+    let mut stderr = Vec::new();
+    errors.take(64 * 1024).read_to_end(&mut stderr)?;
+    output.rewind()?;
+    let mut stdout = Vec::new();
+    output.take(16 * 1024 * 1024).read_to_end(&mut stdout)?;
+    Ok(std::process::Output {
+        status,
+        stdout,
+        stderr,
+    })
+}
 #[cfg(target_os = "windows")]
 const CREATE_NO_WINDOW: u32 = 0x0800_0000;
 #[cfg(target_os = "windows")]
@@ -85,8 +136,8 @@ pub fn can_decode(path: &Path) -> Result<(), MediaError> {
 }
 
 #[cfg_attr(any(target_os = "macos", target_os = "linux"), allow(dead_code))]
-pub fn tile_count(path: &Path) -> Result<usize, MediaError> {
-    cached_grid(path).map(|grid| grid.tiles.len())
+pub fn tile_count(path: &Path, cancelled: &impl Fn() -> bool) -> Result<usize, MediaError> {
+    cached_grid_cancellable(path, cancelled).map(|grid| grid.tiles.len())
 }
 
 /// Lets FFmpeg keep each HEVC grid component compressed for delivery to the
@@ -97,8 +148,9 @@ pub fn decode_full_jpeg_tiles(
     path: &Path,
     display_size: ImageDimensions,
     display_sharpening: bool,
+    cancelled: &impl Fn() -> bool,
 ) -> Result<Vec<EncodedTile>, MediaError> {
-    let grid = cached_grid(path)?;
+    let grid = cached_grid_cancellable(path, cancelled)?;
     filter_for_grid(&grid, display_size)?;
     let output_dir = tempfile::tempdir()?;
     let mut command = media_command(&COMMANDS.0);
@@ -124,10 +176,7 @@ pub fn decode_full_jpeg_tiles(
             .arg(&output_path);
         outputs.push((output_path, x, y, width, height));
     }
-    let output = command
-        .stdin(Stdio::null())
-        .output()
-        .map_err(|error| native_error(format!("start ffmpeg JPEG tile decode: {error}")))?;
+    let output = run_cancellable(&mut command, cancelled)?;
     if !output.status.success() {
         return Err(native_error(format!(
             "JPEG tile decode failed with {}: {}",
@@ -165,10 +214,12 @@ pub fn decode_full_rgba8(
     path: &Path,
     display_size: ImageDimensions,
     display_sharpening: bool,
+    cancelled: &impl Fn() -> bool,
 ) -> Result<DynamicImage, MediaError> {
-    let grid = cached_grid(path)?;
+    let grid = cached_grid_cancellable(path, cancelled)?;
     filter_for_grid(&grid, display_size)?;
-    let (output_dir, output_paths) = decode_tile_bitmaps(path, &grid, display_sharpening)?;
+    let (output_dir, output_paths) =
+        decode_tile_bitmaps(path, &grid, display_sharpening, cancelled)?;
     let mut image = RgbaImage::new(display_size.width, display_size.height);
     for (tile, output_path) in grid.tiles.iter().zip(&output_paths) {
         let (_, x, y, width, height) = oriented_tile(&grid, tile)?;
@@ -186,14 +237,16 @@ pub fn transcode_full_jpeg(
     destination: &Path,
     display_size: ImageDimensions,
     quality: u8,
+    cancelled: &impl Fn() -> bool,
 ) -> Result<(), MediaError> {
-    let grid = cached_grid(path)?;
+    let grid = cached_grid_cancellable(path, cancelled)?;
     let (filter, _, _) = filter_for_grid(&grid, display_size)?;
     let filter = filter.replace(",format=rgba[out]", ",format=yuvj444p[out]");
     let qscale = ((100_u16.saturating_sub(u16::from(quality))) / 4 + 1)
         .clamp(1, 31)
         .to_string();
-    let output = media_command(&COMMANDS.0)
+    let mut command = media_command(&COMMANDS.0);
+    command
         .args(["-v", "error", "-threads", "2", "-i"])
         .arg(path)
         .args([
@@ -205,10 +258,8 @@ pub fn transcode_full_jpeg(
             "1",
         ])
         .args(["-c:v", "mjpeg", "-q:v", &qscale, "-y"])
-        .arg(destination)
-        .stdin(Stdio::null())
-        .output()
-        .map_err(|error| native_error(format!("start ffmpeg HEIF to JPEG conversion: {error}")))?;
+        .arg(destination);
+    let output = run_cancellable(&mut command, cancelled)?;
     if output.status.success() {
         Ok(())
     } else {
@@ -224,6 +275,7 @@ fn decode_tile_bitmaps(
     path: &Path,
     grid: &TileGrid,
     display_sharpening: bool,
+    cancelled: &impl Fn() -> bool,
 ) -> Result<(tempfile::TempDir, Vec<PathBuf>), MediaError> {
     let output_dir = tempfile::tempdir()?;
     let mut command = media_command(&COMMANDS.0);
@@ -249,10 +301,7 @@ fn decode_tile_bitmaps(
             .arg(&output_path);
         output_paths.push(output_path);
     }
-    let output = command
-        .stdin(Stdio::null())
-        .output()
-        .map_err(|error| native_error(format!("start ffmpeg tile decode: {error}")))?;
+    let output = run_cancellable(&mut command, cancelled)?;
     if !output.status.success() {
         return Err(native_error(format!(
             "decode failed with {}: {}",
@@ -544,8 +593,9 @@ fn media_command(executable: &Path) -> Command {
     }
 }
 
-fn probe_grid(path: &Path) -> Result<TileGrid, MediaError> {
-    let output = media_command(&COMMANDS.1)
+fn probe_grid(path: &Path, cancelled: &impl Fn() -> bool) -> Result<TileGrid, MediaError> {
+    let mut command = media_command(&COMMANDS.1);
+    command
         .args([
             "-v",
             "error",
@@ -554,10 +604,8 @@ fn probe_grid(path: &Path) -> Result<TileGrid, MediaError> {
             "-of",
             "json",
         ])
-        .arg(path)
-        .stdin(Stdio::null())
-        .output()
-        .map_err(|error| native_error(format!("start ffprobe: {error}")))?;
+        .arg(path);
+    let output = run_cancellable(&mut command, cancelled)?;
     if !output.status.success() {
         return Err(native_error(format!(
             "ffprobe failed with {}: {}",
@@ -569,6 +617,16 @@ fn probe_grid(path: &Path) -> Result<TileGrid, MediaError> {
 }
 
 fn cached_grid(path: &Path) -> Result<TileGrid, MediaError> {
+    cached_grid_cancellable(path, &|| false)
+}
+
+fn cached_grid_cancellable(
+    path: &Path,
+    cancelled: &impl Fn() -> bool,
+) -> Result<TileGrid, MediaError> {
+    if cancelled() {
+        return Err(MediaError::Cancelled);
+    }
     let metadata = fs::metadata(path)?;
     let key = GridCacheKey {
         path: path.to_owned(),
@@ -583,7 +641,7 @@ fn cached_grid(path: &Path) -> Result<TileGrid, MediaError> {
     {
         return Ok(grid);
     }
-    let grid = probe_grid(path)?;
+    let grid = probe_grid(path, cancelled)?;
     GRID_CACHE
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner)
@@ -774,6 +832,45 @@ mod tests {
     use super::*;
 
     #[test]
+    #[ignore = "subprocess fixture launched by cancellation test"]
+    fn cancellation_child_process_fixture() {
+        let Some(ready) = std::env::var_os("OXY_CANCEL_TEST_READY") else {
+            return;
+        };
+        // Exceed a pipe buffer before reporting readiness. A parent which only
+        // waits on the process and never drains stderr would deadlock here.
+        eprintln!("{}", "diagnostic".repeat(32_768));
+        std::fs::write(ready, std::process::id().to_string()).unwrap();
+        std::thread::sleep(std::time::Duration::from_secs(30));
+    }
+
+    #[test]
+    fn cancellation_kills_and_reaps_a_running_child_with_large_diagnostics() {
+        let directory = tempfile::tempdir().unwrap();
+        let ready = directory.path().join("ready");
+        let mut command = Command::new(std::env::current_exe().unwrap());
+        command
+            .args([
+                "--exact",
+                "backends::ffmpeg_heif::tests::cancellation_child_process_fixture",
+                "--ignored",
+                "--nocapture",
+            ])
+            .env("OXY_CANCEL_TEST_READY", &ready);
+        #[cfg(target_os = "windows")]
+        command.creation_flags(CREATE_NO_WINDOW);
+        let started = std::time::Instant::now();
+        let result = run_cancellable(&mut command, &|| {
+            ready.exists() || started.elapsed() > std::time::Duration::from_secs(5)
+        });
+        assert!(ready.exists(), "child never reached the running state");
+        assert!(matches!(result, Err(MediaError::Cancelled)));
+        assert!(started.elapsed() < std::time::Duration::from_secs(5));
+        // The wait in run_cancellable finished: its output files can be reopened.
+        std::fs::remove_file(ready).unwrap();
+    }
+
+    #[test]
     fn bundled_commands_are_resolved_as_one_pair() {
         let directory = tempfile::tempdir().unwrap();
         assert!(super::bundled_pair(directory.path()).is_none());
@@ -891,6 +988,7 @@ mod tests {
                 height: 7008,
             },
             false,
+            &|| false,
         )
         .unwrap();
         assert_eq!((image.width(), image.height()), (4672, 7008));
@@ -914,6 +1012,7 @@ mod tests {
                 height: 7008,
             },
             95,
+            &|| false,
         )
         .unwrap();
         let image = image::ImageReader::open(output.path())
@@ -953,6 +1052,7 @@ mod tests {
                 height: 7008,
             },
             false,
+            &|| false,
         )
         .unwrap()
         .thumbnail_exact(64, 96)

@@ -10,12 +10,13 @@ use std::{
     time::{Duration, Instant},
 };
 
-// Full-resolution RAW development (potentially tens of seconds) stays on its
-// own lane so it never blocks the unified thumbnail/loupe gate. The gate below
-// covers the progressive stages (512 / 4096) for every format.
+// Thumbnail extraction and full rendering have independent admission capacity.
+// RAW development additionally serializes its large native working set.
 static RAW_FULL_DECODE_LOCK: Mutex<()> = Mutex::new(());
-static DECODE_GATE: LazyLock<DecodeGate> =
+static THUMBNAIL_DECODE_GATE: LazyLock<DecodeGate> =
     LazyLock::new(|| DecodeGate::with_capacity(oxy_runtime::image_worker_count()));
+static FULL_DECODE_GATE: LazyLock<DecodeGate> =
+    LazyLock::new(|| DecodeGate::with_capacity(oxy_runtime::loupe_worker_count()));
 // A stale selection may finish writing its rebuildable JPEG without blocking
 // the foreground decode gate needed by the newly selected HEIF.
 static HEIF_SESSION_CACHE_WRITE_LOCK: Mutex<()> = Mutex::new(());
@@ -118,14 +119,7 @@ impl DecodeGate {
                 return Err(crate::MediaError::Cancelled);
             }
             let selected = selected_ticket(&state.waiters);
-            // Keep one CPU slot available for the latest selected image even
-            // when older visible/nearby native calls cannot be interrupted.
-            let limit = if priority == DecodePriority::Foreground {
-                self.capacity
-            } else {
-                self.capacity.saturating_sub(1).max(1)
-            };
-            if state.active < limit && selected == Some(ticket) {
+            if state.active < self.capacity && selected == Some(ticket) {
                 state.waiters.retain(|waiter| waiter.ticket != ticket);
                 state.active += 1;
                 return Ok(DecodePermit { gate: self });
@@ -172,14 +166,18 @@ impl Drop for DecodePermit<'_> {
     }
 }
 
-/// Acquire the unified decode gate. Higher-priority waiters are served before
-/// lower-priority ones; a running decode is never preempted (caller opted into
-/// the "order pending only" scheduling policy).
+/// Acquire capacity within the requested render lane. Native decoders must
+/// observe the same cancellation signal during their work.
 pub(crate) fn acquire_decode<F: Fn() -> bool>(
+    level: oxy_domain::RenderLevel,
     priority: DecodePriority,
     cancelled: &F,
 ) -> Result<DecodePermit<'static>, crate::MediaError> {
-    DECODE_GATE.acquire(priority, cancelled)
+    if level == oxy_domain::RenderLevel::Full {
+        FULL_DECODE_GATE.acquire(priority, cancelled)
+    } else {
+        THUMBNAIL_DECODE_GATE.acquire(priority, cancelled)
+    }
 }
 
 pub(crate) fn try_acquire_heif_session_cache_write() -> Option<impl Drop> {
@@ -247,6 +245,26 @@ mod tests {
         thread,
         time::{Duration, Instant},
     };
+
+    #[test]
+    fn full_admission_is_independent_of_saturated_thumbnail_capacity() {
+        let thumbnail = DecodeGate::with_capacity(2);
+        let full = DecodeGate::with_capacity(2);
+        let _thumbnail_a = thumbnail
+            .acquire(DecodePriority::Visible, &|| false)
+            .unwrap();
+        let _thumbnail_b = thumbnail
+            .acquire(DecodePriority::Visible, &|| false)
+            .unwrap();
+        let started = Instant::now();
+        let _full = full
+            .acquire(DecodePriority::Foreground, &|| {
+                started.elapsed() > Duration::from_secs(1)
+            })
+            .unwrap();
+        assert_eq!(thumbnail.state.lock().unwrap().active, 2);
+        assert_eq!(full.state.lock().unwrap().active, 1);
+    }
 
     #[test]
     fn maps_domain_priority_to_private_gate_priority() {

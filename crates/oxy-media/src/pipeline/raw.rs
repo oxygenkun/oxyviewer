@@ -133,7 +133,7 @@ pub(crate) fn preview_with_priority(
         "raw-compatible-development",
         || cancellation.is_cancelled(),
         |generation| {
-            let _decode_permit = acquire_decode(priority, &|| cancellation.is_cancelled())?;
+            let _decode_permit = acquire_decode(level, priority, &|| cancellation.is_cancelled())?;
             render_developed(
                 path,
                 &artifacts,
@@ -324,6 +324,9 @@ fn render_developed(
     let quality = if level == RenderLevel::Full { 95 } else { 90 };
     let mut errors = initial_error.into_iter().collect::<Vec<_>>();
     for backend in backend_plan(level) {
+        if cancellation.is_cancelled() {
+            return Err(MediaError::Cancelled);
+        }
         let destination = artifacts.temporary_output(".jpg")?;
         let result = match backend {
             #[cfg(target_os = "macos")]
@@ -334,20 +337,29 @@ fn render_developed(
             RawBackend::AppleImageIo => {
                 apple_image_io::render_jpeg(path, &destination, max_size, quality)
             }
-            RawBackend::LibRawDevelopment => libraw::developed(path, max_size)
+            RawBackend::LibRawDevelopment => libraw::developed(path, max_size, cancellation)
                 .map_err(|message| MediaError::LibRaw {
                     path: path.to_owned(),
                     message,
                 })
                 .and_then(|image| {
+                    if cancellation.is_cancelled() {
+                        return Err(MediaError::Cancelled);
+                    }
                     let image = if max_size.is_none() {
                         image.unsharpen(0.8, 2)
                     } else {
                         image
                     };
+                    if cancellation.is_cancelled() {
+                        return Err(MediaError::Cancelled);
+                    }
                     write_jpeg_atomically(&image, &destination, quality, RAW_DEVELOPED_JPEG)
                 }),
         };
+        if cancellation.is_cancelled() {
+            return Err(MediaError::Cancelled);
+        }
         match result {
             Ok(()) if has_complete_jpeg_markers(&destination)? => {
                 if cancellation.is_cancelled() {

@@ -4,7 +4,7 @@ use image::{
 #[cfg(any(target_os = "macos", target_os = "linux"))]
 use std::ffi::CString;
 use std::{
-    ffi::{CStr, c_char, c_int, c_uint},
+    ffi::{CStr, c_char, c_int, c_uint, c_void},
     io::Cursor,
     path::Path,
     slice,
@@ -46,6 +46,11 @@ unsafe extern "C" {
     fn libraw_unpack(raw: *mut LibRawData) -> c_int;
     fn libraw_adjust_sizes_info_only(raw: *mut LibRawData) -> c_int;
     fn libraw_dcraw_process(raw: *mut LibRawData) -> c_int;
+    fn libraw_set_progress_handler(
+        raw: *mut LibRawData,
+        callback: extern "C" fn(*mut c_void, c_int, c_int, c_int) -> c_int,
+        context: *mut c_void,
+    );
     fn libraw_dcraw_make_mem_image(
         raw: *mut LibRawData,
         error: *mut c_int,
@@ -88,8 +93,12 @@ pub fn embedded(path: &Path, max_size: u32) -> Result<Preview, String> {
     }
 }
 
-pub fn developed(path: &Path, max_size: Option<u32>) -> Result<DynamicImage, String> {
-    developed_preview(path, max_size.is_none()).map(|image| match max_size {
+pub fn developed(
+    path: &Path,
+    max_size: Option<u32>,
+    cancellation: &oxy_runtime::CancellationToken,
+) -> Result<DynamicImage, String> {
+    developed_preview(path, max_size.is_none(), cancellation).map(|image| match max_size {
         Some(size) => fit(image, size),
         None => image,
     })
@@ -101,8 +110,26 @@ fn embedded_preview(path: &Path, max_size: u32) -> Result<ProcessedImage, String
     ProcessedImage::thumbnail(&raw)
 }
 
-fn developed_preview(path: &Path, full: bool) -> Result<DynamicImage, String> {
-    let raw = Processor::open(path)?;
+extern "C" fn development_cancelled(
+    context: *mut c_void,
+    _stage: c_int,
+    _iteration: c_int,
+    _expected: c_int,
+) -> c_int {
+    // LibRaw invokes this synchronously; the borrowed token outlives Processor.
+    let cancellation = unsafe { &*context.cast::<oxy_runtime::CancellationToken>() };
+    c_int::from(cancellation.is_cancelled())
+}
+
+fn developed_preview(
+    path: &Path,
+    full: bool,
+    cancellation: &oxy_runtime::CancellationToken,
+) -> Result<DynamicImage, String> {
+    if cancellation.is_cancelled() {
+        return Err("RAW development cancelled".into());
+    }
+    let raw = Processor::open_cancellable(path, Some(cancellation))?;
     unsafe {
         if full {
             oxy_libraw_configure_full(raw.inner);
@@ -124,17 +151,39 @@ fn fit(image: DynamicImage, max_size: u32) -> DynamicImage {
     }
 }
 
-struct Processor {
+struct Processor<'c> {
     inner: *mut LibRawData,
+    _cancellation: std::marker::PhantomData<&'c oxy_runtime::CancellationToken>,
 }
 
-impl Processor {
+impl<'c> Processor<'c> {
     fn open(path: &Path) -> Result<Self, String> {
+        Self::open_cancellable(path, None)
+    }
+
+    fn open_cancellable(
+        path: &Path,
+        cancellation: Option<&'c oxy_runtime::CancellationToken>,
+    ) -> Result<Self, String> {
         let inner = unsafe { libraw_init(LIBRAW_OPTIONS_NO_DATAERR_CALLBACK) };
         if inner.is_null() {
             return Err("initialization failed".into());
         }
-        let processor = Self { inner };
+        let processor = Self {
+            inner,
+            _cancellation: std::marker::PhantomData,
+        };
+        if let Some(cancellation) = cancellation {
+            // LibRaw only invokes this callback synchronously during operations.
+            // Callers keep the borrowed token alive through Processor::drop.
+            unsafe {
+                libraw_set_progress_handler(
+                    inner,
+                    development_cancelled,
+                    std::ptr::from_ref(cancellation).cast_mut().cast(),
+                );
+            }
+        }
         processor.open_path(path)?;
         Ok(processor)
     }
@@ -161,7 +210,7 @@ impl Processor {
     }
 }
 
-impl Drop for Processor {
+impl Drop for Processor<'_> {
     fn drop(&mut self) {
         unsafe { libraw_close(self.inner) };
     }
@@ -172,11 +221,11 @@ struct ProcessedImage {
 }
 
 impl ProcessedImage {
-    fn thumbnail(raw: &Processor) -> Result<Self, String> {
+    fn thumbnail(raw: &Processor<'_>) -> Result<Self, String> {
         Self::make(|error| unsafe { libraw_dcraw_make_mem_thumb(raw.inner, error) })
     }
 
-    fn developed(raw: &Processor) -> Result<Self, String> {
+    fn developed(raw: &Processor<'_>) -> Result<Self, String> {
         Self::make(|error| unsafe { libraw_dcraw_make_mem_image(raw.inner, error) })
     }
 
@@ -250,4 +299,22 @@ fn check(code: c_int) -> Result<(), String> {
     }
     .unwrap_or_else(|| "unknown error".into());
     Err(format!("{message} ({code})"))
+}
+
+#[cfg(test)]
+mod cancellation_tests {
+    use super::*;
+
+    #[test]
+    fn progress_callback_observes_cancellation_and_prevents_new_development() {
+        let token = oxy_runtime::CancellationToken::default();
+        let context = std::ptr::from_ref(&token).cast_mut().cast();
+        assert_eq!(development_cancelled(context, 0, 0, 1), 0);
+        token.cancel();
+        assert_eq!(development_cancelled(context, 0, 0, 1), 1);
+        assert_eq!(
+            developed(Path::new("does-not-exist.arw"), None, &token).unwrap_err(),
+            "RAW development cancelled"
+        );
+    }
 }

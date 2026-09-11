@@ -96,6 +96,38 @@ afterEach(async () => {
 });
 
 describe("filmstrip thumbnail display retention", () => {
+  it("starts loupe full without a thumbnail and aborts each previous selection", async () => {
+    apiMocks.tauri = true;
+    clearImageProjections();
+    apiMocks.generatedPreview.mockImplementation((_asset: AssetSummary, _level: string, signal: AbortSignal) =>
+      new Promise((_resolve, reject) => signal.addEventListener("abort", () => reject(signal.reason), { once: true })));
+    const mountLoupe = async (id: string) => {
+      await act(async () => root.render(<QueryClientProvider client={client}>
+        <Thumbnail asset={{ ...asset, id, path: `/photos/${id}.arw`, kind: "raw" }} large />
+      </QueryClientProvider>));
+    };
+    for (const id of ["a", "b", "c", "a"]) {
+      await mountLoupe(id);
+      const calls = apiMocks.generatedPreview.mock.calls;
+      expect(calls.length).toBeGreaterThan(0);
+      expect(calls.every((call) => call[1] === "full")).toBe(true);
+      expect(calls.at(-1)![0].id).toBe(id);
+      expect(calls.at(-1)![2].aborted).toBe(false);
+      expect(calls.slice(0, -1).every((call) => call[2].aborted)).toBe(true);
+    }
+  });
+
+  it("uses an existing HEIF thumbnail base without issuing a thumbnail request", async () => {
+    apiMocks.tauri = true;
+    markBrowserImageReady(url, { width: 160, height: 120 });
+    await act(async () => root.render(<QueryClientProvider client={client}>
+      <Thumbnail asset={asset} large />
+    </QueryClientProvider>));
+    expect(container.querySelector("img")?.getAttribute("src")).toBe(url);
+    // HEIF full is owned by HeifTileCanvas; its base is a read-only observer.
+    expect(apiMocks.generatedPreview).not.toHaveBeenCalled();
+  });
+
   it("retains the displayed geometry until replacement pixels load, including a cache remount", async () => {
     const geometry = {
       displaySize: { width: 7008, height: 4672 },

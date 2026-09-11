@@ -42,18 +42,23 @@ export async function runResourceStress(
       useWorkspaceStore.getState().select(asset.id);
       await wait(120);
     }
-    // Revisit distinct images and require actual Full onLoad, including upgrades
+    // Revisit distinct images and require actual Full paint, including upgrades
     // that lost their first consumer during the rapid selection pass.
     for (const asset of batch.slice(-8)) {
       let loaded = false;
       const stop = onPerfMark((mark) => {
-        if (mark.name === "image:loaded" && mark.detail?.assetName === asset.name
-          && mark.detail?.stage === "full") loaded = true;
+        if (mark.detail?.assetName !== asset.name) return;
+        if (mark.name === "image:loaded" && mark.detail.stage === "full") loaded = true;
+        if (mark.name === "heif:all-tiles-painted" && mark.detail.failed === 0
+          && Number(mark.detail.drawn) > 0 && mark.detail.drawn === mark.detail.expected) loaded = true;
       });
+      const selectedAt = performance.now();
       try {
+        perfMark("resource:full-selection", { assetName: asset.name });
         useWorkspaceStore.getState().select(asset.id);
         for (let tries = 0; !loaded && tries < 300; tries += 1) await wait(100);
         if (!loaded) throw new Error(`Full did not paint for ${asset.name}`);
+        perfMark("resource:full-selection-painted", { assetName: asset.name, elapsedMs: performance.now() - selectedAt });
       } finally { stop(); }
       await snapshot(asset.name);
     }
@@ -81,17 +86,19 @@ export async function runResourceStress(
   const urls = [...new Set(Array.from(document.querySelectorAll<HTMLImageElement>("img"))
     .map((image) => image.src).filter((url) => url.includes("/resource/")))].slice(0, 4);
   if (!urls.length) throw new Error("No displayed media protocol resources");
-  const read = async (url: string) => {
+  const read = async (url: string, phase: string) => {
     const response = await fetch(url, { signal });
     if (!response.ok || (await response.arrayBuffer()).byteLength === 0) {
-      throw new Error(`Active resource could not be read during cache maintenance: ${response.status} ${url}`);
+      const mounted = Array.from(document.querySelectorAll<HTMLImageElement>("img")).filter((image) => image.src === url);
+      throw new Error(`Active resource could not be read ${phase}: ${response.status} ${url}; mounted=${mounted.length}; classes=${mounted.map((image) => image.className).join(",")}`);
     }
   };
-  await Promise.all([...urls.map(read), clearPreviewCache()]);
+  await Promise.all(urls.map((url) => read(url, "before cache maintenance")));
+  await Promise.all([...urls.map((url) => read(url, "during cache clear")), clearPreviewCache()]);
   // Match SettingsPanel: an explicit cache clear drops the UI cache too.
   // Mounted presentations retain their own leases while cached-only pins leave.
   clearImageProjections();
-  await Promise.all([...urls.map(read), updateCacheSettings(null, 1024 ** 3)]);
+  await Promise.all([...urls.map((url) => read(url, "after cache clear")), updateCacheSettings(null, 1024 ** 3)]);
   perfMark("resource:maintenance-read", { count: urls.length });
   await wait(11_000); // publish grace expires and at least one UI heartbeat runs
   const stats = await snapshot("settled");

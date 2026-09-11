@@ -35,6 +35,9 @@ pub fn preview(
 
 这是同步兼容入口。Tauri preview worker 使用保留同一 dispatcher 的
 `preview_for_app_with_completion(...)`：先返回受控资源，再接收异步 persistence completion。
+调用端按等级使用独立的 thumbnail/full 队列与 worker；HEIF tile session 也在 full worker
+执行。媒体层的两个 decode gate 保持同样的等级隔离。Full 切图取消会传入 FFmpeg 子进程
+和 LibRaw progress callback，完整调度说明见预览流水线架构文档。
 
 - `path`：源文件路径。
 - `cache_dir`：应用拥有的 preview cache 父目录；v2 在其中使用固定分层布局。

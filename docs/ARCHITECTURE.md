@@ -194,34 +194,20 @@ sequenceDiagram
 
 ```mermaid
 flowchart LR
-    visible["资源进入可见区域"] --> stage512["请求 512 px"]
-    stage512 --> direct{WebView 可直接显示?}
-    direct -->|是| original["返回原文件 URL"]
-    direct -->|否| command["get_preview command"]
-    command --> rustQueue["Rust projection 优先级队列"]
-    rustQueue --> dispatcher["oxy_media::preview"]
-    dispatcher --> cache{缓存命中?}
-    cache -->|是| previewUrl["返回缓存 URL"]
-    cache -->|否| decodeGate["后端 DecodeGate"]
-    decodeGate --> decoder["格式解码器"]
-    decoder --> cacheWrite["写入生成预览缓存"]
-    cacheWrite --> previewUrl
-    previewUrl --> upgrade{在放大镜中?}
-    upgrade -->|否| display["显示缩略图"]
-    upgrade -->|是| heif{HEIF?}
-    heif -->|是| heifJpeg["源 HEIF 转完整 JPEG"]
-    heifJpeg --> display
-    heif -->|否| stage4096["升级到 4096 px"]
-    stage4096 --> rawFull{RAW?}
-    rawFull -->|否| display
-    rawFull -->|是| fullStage["独立通道开发全分辨率"]
-    fullStage --> display
+    thumbnail["网格 / 列表 / filmstrip 请求 thumbnail"] --> thumbnailQueue["thumbnail 队列 + CPU 数 worker"]
+    loupe["当前放大镜请求 full"] --> fullQueue["loupe 队列 + 2 个 worker"]
+    thumbnailQueue --> embedded["优先内嵌小图 / 格式回退"]
+    fullQueue --> full["完整 artifact / HEIF tile session"]
+    embedded --> display["显示已就绪资源"]
+    full --> display
+    selection["切换选中图片"] --> cancel["取消旧 full，移除旧 pending"]
+    cancel --> fullQueue
 ```
 
-预览采用渐进式替换：先有可看的图，再提升清晰度。优先级只重排尚未开始的任务，
-不会中断已经进入原生解码器的工作。详见
-[03：统一预览流水线](architecture/03-preview-pipeline.md) 和
-[ADR 0005](adr/0005-unified-preview-pipeline.md)。
+两组队列和解码 gate 独立。放大镜直接启动 full，只复用已有 thumbnail 作底图；
+缩略图无需等待 full。切图在源探测前登记 selection epoch 并取消旧工作，
+FFmpeg 子进程和 LibRaw 开发可在执行中响应取消。无中断接口的 native API 返回后
+丢弃旧结果，不强杀 Rust 线程。详见 [03：统一预览流水线](architecture/03-preview-pipeline.md)。
 
 ### 6.3 HEIF 全分辨率显示
 
@@ -263,7 +249,7 @@ Tauri command 只负责：取状态、校验/转换参数、把阻塞工作转�
 | 排序、搜索、类型过滤、虚拟滚动 | 已实现 |
 | RAW `preview → full`（当前映射 4096 → full） | 已实现 |
 | Windows HIF 160×120 `preview` 底图 → 全分辨率瓦片 | 已实现 |
-| Rust 资源 projection 队列和后端解码门 | 已实现；同源 pending/in-flight 合并，不抢占运行中的解码 |
+| Rust 资源 projection 队列和后端解码门 | 已实现；full/thumbnail 独立队列与 worker，同源合并，切图取消旧 full |
 | metadata/image projection SQLite 重启缓存 | 已实现；WAL 事务 revision 拒绝迟到结果 |
 | 原生元数据读取与 XMP sidecar 写入 | 已实现；所有支持格式均为 sidecar-first；星级/颜色使用 `xmp:Rating`/`xmp:Label`，旗标使用 `digiKam:PickLabel`；ExifTool 只作解析失败兼容 fallback 或显式内嵌同步 |
 | SQLite 显式资料库根目录 | 已实现 |

@@ -109,9 +109,9 @@ export function Thumbnail({
   const previewLifetimeKey = JSON.stringify(assetRenderQueryKey(asset, previewMethod));
   const fullLifetimeKey = fullMethod ? JSON.stringify(assetRenderQueryKey(asset, fullMethod)) : undefined;
   useLayoutEffect(() => {
-    if (!enabled || !previewLevel) return;
+    if (!enabled || large || !previewLevel) return;
     return retainPreviewRequest(previewLifetimeKey);
-  }, [enabled, previewLevel, previewLifetimeKey]);
+  }, [enabled, large, previewLevel, previewLifetimeKey]);
   useLayoutEffect(() => {
     if (!enabled || !large || !distinctFullLevel || !fullLifetimeKey) return;
     return retainPreviewRequest(fullLifetimeKey);
@@ -130,7 +130,7 @@ export function Thumbnail({
       // completion without React Query treating undefined as a failed request.
       return null;
     },
-    enabled: enabled && isTauri() && Boolean(previewLevel),
+    enabled: enabled && !large && isTauri() && Boolean(previewLevel),
     staleTime: Infinity,
     retry: 0,
   });
@@ -153,8 +153,7 @@ export function Thumbnail({
     enabled: enabled
       && isTauri()
       && large
-      && Boolean(distinctFullLevel)
-      && Boolean(previewProjection?.result || previewQuery.isError || directSource),
+      && Boolean(distinctFullLevel),
     staleTime: Infinity,
     retry: 0,
   });
@@ -240,7 +239,7 @@ export function Thumbnail({
       // only once per descriptor set instead of retrying its immutable URL.
       recovering = true;
       await Promise.all([
-        refetchPreview(),
+        ...(!large ? [refetchPreview()] : []),
         ...(large && distinctFullLevel ? [refetchFull()] : []),
       ]);
     };

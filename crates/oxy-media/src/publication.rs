@@ -1555,7 +1555,9 @@ mod tests {
     fn managed_file_resource_renews_the_disk_lease_across_clear() {
         let directory = tempfile::tempdir().unwrap();
         let source = source(directory.path());
-        let cache = DiskMediaCache::new(directory.path(), 8).unwrap();
+        // The shared publisher canonicalizes its parent, while maintenance
+        // receives the configured path (C:\... vs \\?\C:\... on Windows).
+        let cache = DiskMediaCache::new(directory.path().canonicalize().unwrap(), 8).unwrap();
         let bytes = jpeg();
         cache
             .publish(PendingArtifact {

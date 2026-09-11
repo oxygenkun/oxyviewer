@@ -20,7 +20,11 @@ pub fn preview(
     max_size: u32,
     level: RenderLevel,
     allow_interim: bool,
+    cancellation: &oxy_runtime::CancellationToken,
 ) -> Result<PreviewResult, MediaError> {
+    if cancellation.is_cancelled() {
+        return Err(MediaError::Cancelled);
+    }
     let artifacts = ArtifactCache::new(path, cache_dir)?;
     let presentation = ArtifactPresentation {
         geometry: None,
@@ -58,10 +62,13 @@ pub fn preview(
         &request,
         level,
         "system-compatible-development",
-        || false,
+        || cancellation.is_cancelled(),
         |generation| {
             let temporary = artifacts.temporary_output(".jpg")?;
             generate(path, &temporary, max_size)?;
+            if cancellation.is_cancelled() {
+                return Err(MediaError::Cancelled);
+            }
             if !has_complete_jpeg_markers(&temporary)? {
                 return Err(MediaError::PreviewGenerationFailed {
                     path: path.to_owned(),
