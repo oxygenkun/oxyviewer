@@ -1,0 +1,82 @@
+[
+  {
+    "name": "folder-thumbnails:warmed",
+    "t": 20823.40000000596,
+    "detail": {
+      "count": 1100,
+      "decodedBytes": 84480000,
+      "generation": 0,
+      "elapsedMs": 20529.80000000447
+    }
+  },
+  {
+    "name": "folder-thumbnails:viewport-ready",
+    "t": 20882.30000000447,
+    "detail": {
+      "fraction": 1,
+      "count": 29,
+      "elapsedMs": 58.70000000298023
+    }
+  },
+  {
+    "name": "folder-thumbnails:viewport-ready",
+    "t": 20950.40000000596,
+    "detail": {
+      "fraction": 0,
+      "count": 35,
+      "elapsedMs": 68
+    }
+  },
+  {
+    "name": "folder-thumbnails:viewport-ready",
+    "t": 21036.5,
+    "detail": {
+      "fraction": 0.5,
+      "count": 42,
+      "elapsedMs": 86
+    }
+  },
+  {
+    "name": "folder-thumbnails:viewport-ready",
+    "t": 21116.10000000149,
+    "detail": {
+      "fraction": 0,
+      "count": 35,
+      "elapsedMs": 79.5
+    }
+  },
+  {
+    "name": "resource:stress-complete",
+    "t": 21136.5,
+    "detail": {
+      "mode": "folder-thumbnails",
+      "count": 1100,
+      "decodedBytes": 84480000,
+      "generation": 0,
+      "viewportWaitsMs": [
+        58.70000000298023,
+        68,
+        86,
+        79.5
+      ],
+      "nativeRequestsOnWarmScroll": 0,
+      "native": {
+        "maxEntries": 512,
+        "maxEncodedBytes": 4254970880,
+        "maxMaterializedResponses": 4,
+        "maxMaterializedBytes": 134217728,
+        "entries": 1,
+        "encodedBytes": 0,
+        "peakEncodedBytes": 0,
+        "peakEntries": 51,
+        "uiLeased": 0,
+        "readLeased": 0,
+        "releasedOrExpired": 1,
+        "stagedFiles": 0,
+        "stagedBytes": 0,
+        "materializedResponses": 0,
+        "materializedBytes": 0
+      }
+    }
+  }
+]

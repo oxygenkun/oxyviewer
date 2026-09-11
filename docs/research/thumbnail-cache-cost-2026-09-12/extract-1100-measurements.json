@@ -1,0 +1,69 @@
+{
+  "count": 1100,
+  "runs": [
+    {
+      "additionalJpegDecodeMs": 194.0785,
+      "extractMs": 2729.4529,
+      "first100Ms": 240.7107,
+      "jpegBytes": 9163000,
+      "last100Ms": 311.90349999999995,
+      "meanMs": 2.4813208181818185,
+      "p50Ms": 2.3314,
+      "p95Ms": 3.1576,
+      "round": 1
+    },
+    {
+      "additionalJpegDecodeMs": 187.0624,
+      "extractMs": 2350.9533,
+      "first100Ms": 209.45920000000004,
+      "jpegBytes": 9163000,
+      "last100Ms": 204.44509999999994,
+      "meanMs": 2.137230272727273,
+      "p50Ms": 2.1269,
+      "p95Ms": 2.3057,
+      "round": 2
+    },
+    {
+      "additionalJpegDecodeMs": 189.4134,
+      "extractMs": 2344.6987,
+      "first100Ms": 210.29100000000005,
+      "jpegBytes": 9163000,
+      "last100Ms": 203.70380000000003,
+      "meanMs": 2.1315442727272726,
+      "p50Ms": 2.1311,
+      "p95Ms": 2.2922,
+      "round": 3
+    },
+    {
+      "additionalJpegDecodeMs": 188.5274,
+      "extractMs": 2345.5924999999997,
+      "first100Ms": 209.63899999999995,
+      "jpegBytes": 9163000,
+      "last100Ms": 205.23100000000005,
+      "meanMs": 2.132356818181818,
+      "p50Ms": 2.1231,
+      "p95Ms": 2.2897999999999996,
+      "round": 4
+    },
+    {
+      "additionalJpegDecodeMs": 190.4111,
+      "extractMs": 2354.688,
+      "first100Ms": 213.56100000000004,
+      "jpegBytes": 9163000,
+      "last100Ms": 204.7575,
+      "meanMs": 2.1406254545454546,
+      "p50Ms": 2.1313,
+      "p95Ms": 2.3311,
+      "round": 5
+    }
+  ],
+  "method": {
+    "build": "release",
+    "mode": "serial sony::inspect(path, None), retain all returned JPEG byte vectors",
+    "fixture": "Existing folder-thumbnail-retention-hif: 1100 paths generated from DSC00449.HIF via hardlink-or-copy",
+    "cacheState": "Existing local fixture, OS cache not flushed; not 1100 distinct cold source images",
+    "included": "Open/read bounded header, discover and decode candidate JPEGs, geometry/orientation processing, retain JPEG bytes",
+    "excluded": "DiskMediaCache, resource registry, IPC, WebView decode/render",
+    "additionalDecode": "Rust image::load_from_memory over retained JPEGs, not WebView timing"
+  }
+}

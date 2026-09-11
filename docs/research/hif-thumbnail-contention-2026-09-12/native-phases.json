@@ -1,0 +1,513 @@
+{
+  "method": "Release, 31 distinct fixture paths from the same HIF sample, empty native artifact cache, constructor scans disabled, no Tauri/SQLite/WebView. Each call waits for its async persistence after timing display publication. Summary excludes first publisher initialization; all samples retained. No cold-OS-cache claim.",
+  "summary": {
+    "total": {
+      "count": 30,
+      "median": 9.871400000000001,
+      "mean": 9.946216666666666,
+      "min": 9.179400000000001,
+      "max": 11.117099999999999
+    },
+    "ctor": {
+      "count": 30,
+      "median": 2.2638,
+      "mean": 2.2842,
+      "min": 2.0299,
+      "max": 2.951
+    },
+    "firstLookup": {
+      "count": 30,
+      "median": 2.5207,
+      "mean": 2.548250000000001,
+      "min": 2.244,
+      "max": 3.2569999999999992
+    },
+    "prepare": {
+      "count": 30,
+      "median": 1.0001999999999995,
+      "mean": 1.0466866666666668,
+      "min": 0.9451,
+      "max": 1.3807
+    },
+    "fastLockAndRecheck": {
+      "count": 30,
+      "median": 2.0104000000000006,
+      "mean": 2.05029,
+      "min": 1.7803000000000004,
+      "max": 2.8320999999999996
+    },
+    "extract": {
+      "count": 30,
+      "median": 1.3196999999999992,
+      "mean": 1.32333,
+      "min": 1.1981000000000002,
+      "max": 1.498800000000001
+    },
+    "publish": {
+      "count": 30,
+      "median": 0.6794999999999991,
+      "mean": 0.6935533333333335,
+      "min": 0.6113,
+      "max": 0.9138000000000002
+    },
+    "materializeMs": {
+      "count": 30,
+      "median": 0.0083,
+      "mean": 0.00894,
+      "min": 0.0024,
+      "max": 0.018099999999999998
+    },
+    "persistenceRemainingMs": {
+      "count": 30,
+      "median": 18.4127,
+      "mean": 18.126939999999998,
+      "min": 15.119,
+      "max": 20.6016
+    },
+    "requestMs": {
+      "count": 30,
+      "median": 9.9779,
+      "mean": 10.055819999999999,
+      "min": 9.2852,
+      "max": 11.241
+    }
+  },
+  "phases": [
+    {
+      "total": 22.8122,
+      "ctor": 14.807,
+      "firstLookup": 2.4606000000000012,
+      "prepare": 0.921599999999998,
+      "fastLockAndRecheck": 1.828800000000001,
+      "extract": 2.157799999999998,
+      "publish": 0.6364000000000019
+    },
+    {
+      "total": 10.2299,
+      "ctor": 2.3474,
+      "firstLookup": 2.9749000000000003,
+      "prepare": 0.9841999999999995,
+      "fastLockAndRecheck": 2.0104000000000006,
+      "extract": 1.2853999999999992,
+      "publish": 0.627699999999999
+    },
+    {
+      "total": 9.6796,
+      "ctor": 2.2539000000000002,
+      "firstLookup": 2.3446000000000002,
+      "prepare": 0.9642,
+      "fastLockAndRecheck": 2.089899999999999,
+      "extract": 1.2973999999999997,
+      "publish": 0.7296999999999993
+    },
+    {
+      "total": 9.440000000000001,
+      "ctor": 2.0547,
+      "firstLookup": 2.3648000000000002,
+      "prepare": 0.9916999999999998,
+      "fastLockAndRecheck": 2.0435,
+      "extract": 1.2636999999999992,
+      "publish": 0.7217000000000002
+    },
+    {
+      "total": 9.950099999999999,
+      "ctor": 2.7047999999999996,
+      "firstLookup": 2.5919,
+      "prepare": 0.9473000000000011,
+      "fastLockAndRecheck": 1.828599999999999,
+      "extract": 1.1981000000000002,
+      "publish": 0.6794999999999991
+    },
+    {
+      "total": 9.3132,
+      "ctor": 2.2081,
+      "firstLookup": 2.4234,
+      "prepare": 0.9459999999999997,
+      "fastLockAndRecheck": 1.7803000000000004,
+      "extract": 1.3158000000000003,
+      "publish": 0.6396999999999995
+    },
+    {
+      "total": 9.5517,
+      "ctor": 2.1175,
+      "firstLookup": 2.5207,
+      "prepare": 0.9492000000000003,
+      "fastLockAndRecheck": 1.961899999999999,
+      "extract": 1.3602000000000016,
+      "publish": 0.6422999999999988
+    },
+    {
+      "total": 10.3771,
+      "ctor": 2.5769,
+      "firstLookup": 2.5949,
+      "prepare": 1.0646999999999993,
+      "fastLockAndRecheck": 2.1464000000000016,
+      "extract": 1.3726999999999983,
+      "publish": 0.6216000000000008
+    },
+    {
+      "total": 10.572700000000001,
+      "ctor": 2.2747,
+      "firstLookup": 2.6372999999999998,
+      "prepare": 1.1524,
+      "fastLockAndRecheck": 2.5011,
+      "extract": 1.2736999999999998,
+      "publish": 0.7336000000000009
+    },
+    {
+      "total": 9.4849,
+      "ctor": 2.2168,
+      "firstLookup": 2.2822999999999993,
+      "prepare": 0.9705000000000004,
+      "fastLockAndRecheck": 2.0796,
+      "extract": 1.3243999999999998,
+      "publish": 0.6113
+    },
+    {
+      "total": 9.2678,
+      "ctor": 2.0313000000000003,
+      "firstLookup": 2.4145999999999996,
+      "prepare": 1.0001999999999995,
+      "fastLockAndRecheck": 1.8305000000000007,
+      "extract": 1.2948999999999984,
+      "publish": 0.6965000000000021
+    },
+    {
+      "total": 10.406,
+      "ctor": 2.418,
+      "firstLookup": 2.8041,
+      "prepare": 1.1858999999999993,
+      "fastLockAndRecheck": 2.0211000000000006,
+      "extract": 1.3007000000000009,
+      "publish": 0.6762999999999995
+    },
+    {
+      "total": 11.117099999999999,
+      "ctor": 2.951,
+      "firstLookup": 2.8063,
+      "prepare": 1.1054000000000004,
+      "fastLockAndRecheck": 2.277799999999999,
+      "extract": 1.3085000000000004,
+      "publish": 0.668099999999999
+    },
+    {
+      "total": 9.5125,
+      "ctor": 2.3333999999999997,
+      "firstLookup": 2.3513000000000006,
+      "prepare": 0.9545999999999992,
+      "fastLockAndRecheck": 1.9562,
+      "extract": 1.2248,
+      "publish": 0.6922999999999995
+    },
+    {
+      "total": 10.4429,
+      "ctor": 2.2835,
+      "firstLookup": 2.5821999999999994,
+      "prepare": 1.1726,
+      "fastLockAndRecheck": 2.1873000000000005,
+      "extract": 1.3236000000000008,
+      "publish": 0.8937999999999988
+    },
+    {
+      "total": 10.0251,
+      "ctor": 2.2947,
+      "firstLookup": 2.2896999999999994,
+      "prepare": 1.2007000000000003,
+      "fastLockAndRecheck": 2.1260000000000012,
+      "extract": 1.3565000000000005,
+      "publish": 0.7575999999999983
+    },
+    {
+      "total": 9.6654,
+      "ctor": 2.3211999999999997,
+      "firstLookup": 2.4567,
+      "prepare": 1.0249000000000006,
+      "fastLockAndRecheck": 1.9365999999999994,
+      "extract": 1.2598000000000003,
+      "publish": 0.6663999999999994
+    },
+    {
+      "total": 9.5179,
+      "ctor": 2.2807,
+      "firstLookup": 2.3106000000000004,
+      "prepare": 0.9561999999999999,
+      "fastLockAndRecheck": 1.9906999999999995,
+      "extract": 1.298,
+      "publish": 0.6819000000000006
+    },
+    {
+      "total": 9.179400000000001,
+      "ctor": 2.0299,
+      "firstLookup": 2.2693999999999996,
+      "prepare": 0.9451,
+      "fastLockAndRecheck": 1.8725000000000005,
+      "extract": 1.3845999999999998,
+      "publish": 0.6779000000000011
+    },
+    {
+      "total": 9.9282,
+      "ctor": 2.2638,
+      "firstLookup": 2.5920000000000005,
+      "prepare": 1.1791999999999998,
+      "fastLockAndRecheck": 1.8709000000000007,
+      "extract": 1.3256999999999994,
+      "publish": 0.6966999999999999
+    },
+    {
+      "total": 11.0735,
+      "ctor": 2.2633,
+      "firstLookup": 2.7337,
+      "prepare": 1.3807,
+      "fastLockAndRecheck": 2.476499999999999,
+      "extract": 1.498800000000001,
+      "publish": 0.7205999999999992
+    },
+    {
+      "total": 9.2562,
+      "ctor": 2.1423,
+      "firstLookup": 2.2923000000000004,
+      "prepare": 0.9650999999999996,
+      "fastLockAndRecheck": 1.819,
+      "extract": 1.3576999999999995,
+      "publish": 0.6799
+    },
+    {
+      "total": 10.845600000000001,
+      "ctor": 2.0425999999999997,
+      "firstLookup": 2.9779000000000004,
+      "prepare": 0.9859,
+      "fastLockAndRecheck": 2.8320999999999996,
+      "extract": 1.3446999999999996,
+      "publish": 0.6624000000000017
+    },
+    {
+      "total": 9.3839,
+      "ctor": 2.227,
+      "firstLookup": 2.244,
+      "prepare": 1.0602999999999998,
+      "fastLockAndRecheck": 1.8903000000000008,
+      "extract": 1.291199999999999,
+      "publish": 0.6712000000000007
+    },
+    {
+      "total": 9.7462,
+      "ctor": 2.0928,
+      "firstLookup": 2.4588999999999994,
+      "prepare": 1.0176000000000007,
+      "fastLockAndRecheck": 2.1379,
+      "extract": 1.3705999999999996,
+      "publish": 0.6684999999999999
+    },
+    {
+      "total": 11.0813,
+      "ctor": 2.3343000000000003,
+      "firstLookup": 3.2569999999999992,
+      "prepare": 1.1947000000000014,
+      "fastLockAndRecheck": 2.2685000000000004,
+      "extract": 1.3421999999999983,
+      "publish": 0.6847000000000012
+    },
+    {
+      "total": 10.535900000000002,
+      "ctor": 2.6712,
+      "firstLookup": 2.6163,
+      "prepare": 1.0305,
+      "fastLockAndRecheck": 2.0936000000000003,
+      "extract": 1.4602000000000004,
+      "publish": 0.6641000000000012
+    },
+    {
+      "total": 9.871400000000001,
+      "ctor": 2.1375,
+      "firstLookup": 2.8093999999999992,
+      "prepare": 0.976700000000001,
+      "fastLockAndRecheck": 1.8359999999999994,
+      "extract": 1.3793999999999995,
+      "publish": 0.7324000000000019
+    },
+    {
+      "total": 9.910300000000001,
+      "ctor": 2.2527,
+      "firstLookup": 2.6823000000000006,
+      "prepare": 1.1732999999999993,
+      "fastLockAndRecheck": 1.8896000000000006,
+      "extract": 1.2821999999999987,
+      "publish": 0.6303000000000001
+    },
+    {
+      "total": 9.463799999999999,
+      "ctor": 2.3424,
+      "firstLookup": 2.3088,
+      "prepare": 0.9475999999999996,
+      "fastLockAndRecheck": 1.9163000000000006,
+      "extract": 1.284699999999999,
+      "publish": 0.6641000000000012
+    },
+    {
+      "total": 9.5569,
+      "ctor": 2.0576000000000003,
+      "firstLookup": 2.4552,
+      "prepare": 0.9732000000000003,
+      "fastLockAndRecheck": 1.8376000000000001,
+      "extract": 1.3196999999999992,
+      "publish": 0.9138000000000002
+    }
+  ],
+  "requests": [
+    {
+      "materializeMs": 0.0103,
+      "persistenceRemainingMs": 19.2383,
+      "requestMs": 22.9622
+    },
+    {
+      "materializeMs": 0.009099999999999999,
+      "persistenceRemainingMs": 17.4578,
+      "requestMs": 10.3452
+    },
+    {
+      "materializeMs": 0.0083,
+      "persistenceRemainingMs": 18.155,
+      "requestMs": 9.7839
+    },
+    {
+      "materializeMs": 0.0058000000000000005,
+      "persistenceRemainingMs": 17.3529,
+      "requestMs": 9.5327
+    },
+    {
+      "materializeMs": 0.0111,
+      "persistenceRemainingMs": 18.9742,
+      "requestMs": 10.0465
+    },
+    {
+      "materializeMs": 0.0059,
+      "persistenceRemainingMs": 18.8019,
+      "requestMs": 9.4169
+    },
+    {
+      "materializeMs": 0.011399999999999999,
+      "persistenceRemainingMs": 18.564600000000002,
+      "requestMs": 9.6538
+    },
+    {
+      "materializeMs": 0.005699999999999999,
+      "persistenceRemainingMs": 19.2628,
+      "requestMs": 10.485899999999999
+    },
+    {
+      "materializeMs": 0.0133,
+      "persistenceRemainingMs": 17.2946,
+      "requestMs": 10.6974
+    },
+    {
+      "materializeMs": 0.0122,
+      "persistenceRemainingMs": 16.4256,
+      "requestMs": 9.591199999999999
+    },
+    {
+      "materializeMs": 0.0123,
+      "persistenceRemainingMs": 19.097099999999998,
+      "requestMs": 9.3766
+    },
+    {
+      "materializeMs": 0.008,
+      "persistenceRemainingMs": 20.1885,
+      "requestMs": 10.5118
+    },
+    {
+      "materializeMs": 0.0024,
+      "persistenceRemainingMs": 20.0383,
+      "requestMs": 11.224599999999999
+    },
+    {
+      "materializeMs": 0.0068000000000000005,
+      "persistenceRemainingMs": 17.6678,
+      "requestMs": 9.629499999999998
+    },
+    {
+      "materializeMs": 0.0121,
+      "persistenceRemainingMs": 15.5435,
+      "requestMs": 10.554499999999999
+    },
+    {
+      "materializeMs": 0.0076,
+      "persistenceRemainingMs": 17.683500000000002,
+      "requestMs": 10.125399999999999
+    },
+    {
+      "materializeMs": 0.010499999999999999,
+      "persistenceRemainingMs": 18.1484,
+      "requestMs": 9.7784
+    },
+    {
+      "materializeMs": 0.0078,
+      "persistenceRemainingMs": 18.7412,
+      "requestMs": 9.6189
+    },
+    {
+      "materializeMs": 0.006,
+      "persistenceRemainingMs": 20.6016,
+      "requestMs": 9.2852
+    },
+    {
+      "materializeMs": 0.0062,
+      "persistenceRemainingMs": 15.5339,
+      "requestMs": 10.037
+    },
+    {
+      "materializeMs": 0.0066,
+      "persistenceRemainingMs": 18.9482,
+      "requestMs": 11.1772
+    },
+    {
+      "materializeMs": 0.0066,
+      "persistenceRemainingMs": 19.4498,
+      "requestMs": 9.3607
+    },
+    {
+      "materializeMs": 0.0063,
+      "persistenceRemainingMs": 18.2834,
+      "requestMs": 10.9464
+    },
+    {
+      "materializeMs": 0.0063,
+      "persistenceRemainingMs": 18.4127,
+      "requestMs": 9.4894
+    },
+    {
+      "materializeMs": 0.0068000000000000005,
+      "persistenceRemainingMs": 18.5127,
+      "requestMs": 9.8719
+    },
+    {
+      "materializeMs": 0.018099999999999998,
+      "persistenceRemainingMs": 16.548299999999998,
+      "requestMs": 11.241
+    },
+    {
+      "materializeMs": 0.0111,
+      "persistenceRemainingMs": 17.8051,
+      "requestMs": 10.640500000000001
+    },
+    {
+      "materializeMs": 0.0104,
+      "persistenceRemainingMs": 15.119,
+      "requestMs": 9.9779
+    },
+    {
+      "materializeMs": 0.01,
+      "persistenceRemainingMs": 18.186700000000002,
+      "requestMs": 10.0251
+    },
+    {
+      "materializeMs": 0.0112,
+      "persistenceRemainingMs": 18.5104,
+      "requestMs": 9.5905
+    },
+    {
+      "materializeMs": 0.0123,
+      "persistenceRemainingMs": 18.4987,
+      "requestMs": 9.6586
+    }
+  ]
+}

@@ -1,0 +1,298 @@
+diff --git a/crates/oxy-media/src/cache/v2.rs b/crates/oxy-media/src/cache/v2.rs
+index e4a5286..63a1a3d 100644
+--- a/crates/oxy-media/src/cache/v2.rs
++++ b/crates/oxy-media/src/cache/v2.rs
+@@ -300,6 +300,7 @@ impl DiskMediaCache {
+         max_manifests: usize,
+         lease_ttl: Duration,
+     ) -> Result<Self, MediaError> {
++        let profile_started = Instant::now();
+         fs::create_dir_all(cache_parent.as_ref())?;
+         // Lease markers hash artifact paths. Publishers and maintenance must
+         // use the same spelling, including Windows' canonical path prefix.
+@@ -316,7 +317,11 @@ impl DiskMediaCache {
+             .write(true)
+             .open(root.join(CACHE_LOCK_FILE))?;
+         ensure_regular_control_file(&root.join(CACHE_LOCK_FILE))?;
+-        cleanup_staging(&root, false, &[])?;
++        let profile_cleanup = Instant::now();
++        if std::env::var_os("OXY_PROFILE_SKIP_CONSTRUCTOR_SCAN").is_none() {
++            cleanup_staging(&root, false, &[])?;
++        }
++        eprintln!("HIF_PROFILE construct total={} cleanup={} thread={:?}", profile_started.elapsed().as_secs_f64()*1000.0, profile_cleanup.elapsed().as_secs_f64()*1000.0, std::thread::current().name());
+         Ok(Self {
+             inner: Arc::new(DiskCacheInner {
+                 root,
+@@ -674,6 +679,10 @@ impl DiskMediaCache {
+         max_size_bytes: u64,
+         protected_path: Option<&Path>,
+     ) -> Result<CacheUsage, MediaError> {
++        if std::env::var_os("OXY_PROFILE_SKIP_PRUNE").is_some() {
++            return Ok(CacheUsage { size_bytes: 0, artifact_count: 0 });
++        }
++        let profile_started = Instant::now();
+         let _operation = self
+             .inner
+             .operation
+@@ -681,7 +690,9 @@ impl DiskMediaCache {
+             .unwrap_or_else(std::sync::PoisonError::into_inner);
+         let cache_lock = self.open_cache_lock()?;
+         FileExt::lock_exclusive(&cache_lock)?;
++        let profile_lock_ms = profile_started.elapsed().as_secs_f64()*1000.0;
+         let mut artifacts = collect_artifacts(&self.inner.root)?;
++        let profile_scan_ms = profile_started.elapsed().as_secs_f64()*1000.0-profile_lock_ms;
+         let mut total = artifacts
+             .iter()
+             .map(|artifact| artifact.size_bytes)
+@@ -691,6 +702,7 @@ impl DiskMediaCache {
+         // exclusive lock to scan leases or rewrite/fsync every manifest.
+         if total <= max_size_bytes {
+             FileExt::unlock(&cache_lock)?;
++            eprintln!("HIF_PROFILE prune total={} wait={} scan={} count={}", profile_started.elapsed().as_secs_f64()*1000.0, profile_lock_ms, profile_scan_ms, artifacts.len());
+             return Ok(CacheUsage {
+                 size_bytes: total,
+                 artifact_count: artifacts.len(),
+@@ -891,10 +903,13 @@ impl MediaCache for DiskMediaCache {
+         // The generation file is protected by the cross-process cache lock.
+         // Do not serialize this read behind a publisher's in-process mutex:
+         // active UI lookups must not wait for unrelated artifact fsync/SMB I/O.
++        let profile_started = Instant::now();
+         let cache_lock = self.open_cache_lock()?;
+         FileExt::lock_shared(&cache_lock)?;
++        let profile_wait_ms = profile_started.elapsed().as_secs_f64()*1000.0;
+         let generation = self.current_generation_unlocked()?;
+         FileExt::unlock(&cache_lock)?;
++        if profile_wait_ms > 2.0 { eprintln!("HIF_PROFILE generation wait={profile_wait_ms}"); }
+         Ok(generation)
+     }
+ 
+diff --git a/apps/desktop/src-tauri/src/jobs/preview.rs b/apps/desktop/src-tauri/src/jobs/preview.rs
+index 19d43cd..e0eab01 100644
+--- a/apps/desktop/src-tauri/src/jobs/preview.rs
++++ b/apps/desktop/src-tauri/src/jobs/preview.rs
+@@ -649,6 +649,7 @@ impl RenderQueue {
+             priority,
+             rank,
+         } = request;
++        let profile_started = Instant::now();
+         self.work
+             .0
+             .lock()
+@@ -708,7 +709,10 @@ impl RenderQueue {
+             path: source_revision.path.clone(),
+             level: source_revision.level,
+         };
++        let profile_lock_started = Instant::now();
+         let mut work = self.work.0.lock().expect("preview queue lock poisoned");
++        let profile_wait_ms = profile_lock_started.elapsed().as_secs_f64()*1000.0;
++        let profile_held_started = Instant::now();
+         work.check_selection(selection)?;
+         if work.take_early_cancellation(&request_id) {
+             return Err("preview request was cancelled before admission".into());
+@@ -797,6 +801,7 @@ impl RenderQueue {
+             return Ok((projection, receiver));
+         }
+ 
++        let profile_sql_started = Instant::now();
+         let valid_at = match self.library.next_resource_revision() {
+             Ok(valid_at) => valid_at,
+             Err(error) => {
+@@ -805,6 +810,8 @@ impl RenderQueue {
+                 return Err(error.to_string());
+             }
+         };
++        let profile_revision_ms = profile_sql_started.elapsed().as_secs_f64()*1000.0;
++        let profile_transition_started = Instant::now();
+         let loading = match self.transition(ProjectionUpdate {
+             source_revision: source_revision.clone(),
+             valid_at,
+@@ -819,6 +826,7 @@ impl RenderQueue {
+                 return Err(error);
+             }
+         };
++        let profile_transition_ms = profile_transition_started.elapsed().as_secs_f64()*1000.0;
+         let _ = app.emit(IMAGE_PROJECTION_UPDATED_EVENT, loading.clone());
+         let request = WorkRequest {
+             source_revision,
+@@ -847,7 +855,9 @@ impl RenderQueue {
+             .entry(schedule_key)
+             .or_default()
+             .insert(key);
++        let profile_held_ms = profile_held_started.elapsed().as_secs_f64()*1000.0;
+         drop(work);
++        eprintln!("HIF_PROFILE admission total={} wait={} held={} revision={} transition={}",profile_started.elapsed().as_secs_f64()*1000.0,profile_wait_ms,profile_held_ms,profile_revision_ms,profile_transition_ms);
+         self.work.1.notify_one();
+         Ok((loading, receiver))
+     }
+@@ -1073,7 +1083,9 @@ impl RenderQueue {
+     }
+ 
+     pub fn debug_snapshot(&self) -> DebugQueueState {
++        let profile_started = Instant::now();
+         let work = self.work.0.lock().expect("preview queue lock poisoned");
++        eprintln!("HIF_PROFILE snapshot wait={} lane={:?} thread={:?}",profile_started.elapsed().as_secs_f64()*1000.0,self.lane,std::thread::current().name());
+         let mut pending = work
+             .pending
+             .entries()
+diff --git a/apps/desktop/src-tauri/src/commands/system.rs b/apps/desktop/src-tauri/src/commands/system.rs
+index c1e2ffd..99a9417 100644
+--- a/apps/desktop/src-tauri/src/commands/system.rs
++++ b/apps/desktop/src-tauri/src/commands/system.rs
+@@ -34,7 +34,7 @@ pub(crate) fn get_media_resource_stats() -> Result<oxy_domain::ResourceRegistryS
+ pub(crate) fn get_debug_queue_snapshot(
+     state: State<'_, AppState>,
+ ) -> Result<DebugQueueSnapshot, String> {
+-    if !cfg!(debug_assertions) {
++    if !cfg!(debug_assertions) && get_perf_scenario().is_none() {
+         return Err("queue diagnostics are only available in debug builds".into());
+     }
+     let captured_at_unix_ms = SystemTime::now()
+diff --git a/apps/desktop/src/lib/folderThumbnailProbe.ts b/apps/desktop/src/lib/folderThumbnailProbe.ts
+index c604847..25b67e2 100644
+--- a/apps/desktop/src/lib/folderThumbnailProbe.ts
++++ b/apps/desktop/src/lib/folderThumbnailProbe.ts
+@@ -1,70 +1,36 @@
+ import { getMediaResourceStats } from "./api";
+-import { getFolderThumbnail, getFolderThumbnailStats } from "./folderThumbnailCache";
+-import { perfMark, perfSnapshot } from "./perfProbe";
++import { invoke } from "@tauri-apps/api/core";
++import { getFolderThumbnailStats } from "./folderThumbnailCache";
++import { perfMark } from "./perfProbe";
+ import { useWorkspaceStore } from "../store";
+-import type { AssetSummary } from "../types";
++import type { AssetSummary, DebugQueueSnapshot } from "../types";
+ 
+-/** Explicit isolated desktop scenario; uses 1,100 files through native media. */
+ export async function runFolderThumbnailProbe(assets: () => AssetSummary[], signal: AbortSignal): Promise<void> {
+-  const wait = (ms: number) => new Promise<void>((resolve, reject) => {
+-    signal.throwIfAborted();
+-    const abort = () => { clearTimeout(timer); reject(signal.reason); };
+-    const timer = window.setTimeout(() => { signal.removeEventListener("abort", abort); resolve(); }, ms);
+-    signal.addEventListener("abort", abort, { once: true });
+-  });
+   useWorkspaceStore.setState({ view: "grid", inspectorOpen: false, leftPanelOpen: false });
+   const started = performance.now();
+-  for (;;) {
+-    const files = assets();
+-    if (files.length >= 1100 && files.every((asset) => getFolderThumbnail(asset))) break;
+-    if (performance.now() - started > 150_000) {
+-      throw new Error(`Folder warming timed out: ${getFolderThumbnailStats().count}/${files.length}`);
++  let inflight = false;
++  let lastBeat = performance.now();
++  const beats: number[] = [];
++  const snapshots: number[] = [];
++  const beat = window.setInterval(() => { const now = performance.now(); beats.push(now-lastBeat); lastBeat = now; }, 50);
++  const sample = window.setInterval(() => {
++    if (inflight) return;
++    inflight = true;
++    const begin = performance.now();
++    void invoke<DebugQueueSnapshot>("get_debug_queue_snapshot").then((snapshot) => {
++      snapshots.push(performance.now()-begin);
++      perfMark("hif-profile:queue", { elapsedMs: snapshots.at(-1), queues: snapshot.queues.map(q=>({name:q.name,active:q.active.length,pending:q.pending.length})), retained:getFolderThumbnailStats().count });
++    }).finally(()=>{inflight=false;});
++  }, 250);
++  try {
++    while (performance.now()-started < 30_000) {
++      signal.throwIfAborted();
++      if (getFolderThumbnailStats().count >= 1100) break;
++      await new Promise<void>(resolve=>window.setTimeout(resolve,100));
+     }
+-    await wait(100);
++    perfMark("resource:stress-complete", { mode:"folder-thumbnails", elapsedMs:performance.now()-started, retained:getFolderThumbnailStats(), files:assets().length, snapshotsMs:snapshots, beatsMs:beats, native:await getMediaResourceStats() });
++  } finally {
++    window.clearInterval(beat);
++    window.clearInterval(sample);
+   }
+-  const retained = getFolderThumbnailStats();
+-  perfMark("folder-thumbnails:warmed", { ...retained, elapsedMs: performance.now() - started });
+-  const before = perfSnapshot().filter((mark) => mark.name === "preview:queued").length;
+-  const waits: number[] = [];
+-  for (const fraction of [1, 0, 0.5, 0]) {
+-    const scroller = document.querySelector<HTMLElement>(".asset-scroll");
+-    if (!scroller) throw new Error("Grid scroll surface missing");
+-    const jumpedAt = performance.now();
+-    scroller.scrollTop = (scroller.scrollHeight - scroller.clientHeight) * fraction;
+-    scroller.dispatchEvent(new Event("scroll", { bubbles: true }));
+-    // Let virtual mounts reflect this destination before checking their pixels.
+-    await wait(40);
+-    let ready = false;
+-    for (let attempt = 0; attempt < 100; attempt++) {
+-      const viewport = scroller.getBoundingClientRect();
+-      const cards = [...scroller.querySelectorAll<HTMLElement>(".asset-card")].filter((card) => {
+-        const bounds = card.getBoundingClientRect();
+-        return bounds.bottom > viewport.top && bounds.top < viewport.bottom;
+-      });
+-      if (cards.length && cards.every((card) => {
+-        const image = card.querySelector<HTMLImageElement>(".thumbnail img:not(.thumbnail__pending-image)");
+-        return image?.src.startsWith("blob:") && image.complete && image.naturalWidth > 0;
+-      })) {
+-        ready = true;
+-        waits.push(performance.now() - jumpedAt);
+-        perfMark("folder-thumbnails:viewport-ready", { fraction, count: cards.length, elapsedMs: waits.at(-1) });
+-        break;
+-      }
+-      await wait(20);
+-    }
+-    if (!ready) throw new Error(`Cached grid did not paint at ${fraction}`);
+-  }
+-  const after = perfSnapshot().filter((mark) => mark.name === "preview:queued").length;
+-  if (after !== before) throw new Error(`Warm grid issued ${after - before} native preview requests`);
+-  const stats = await getMediaResourceStats();
+-  if (!stats || stats.peakEntries > stats.maxEntries || stats.peakEncodedBytes > stats.maxEncodedBytes) {
+-    throw new Error("Native resource budget was exceeded");
+-  }
+-  if (getFolderThumbnailStats().count !== retained.count || !getFolderThumbnail(assets()[0])) {
+-    throw new Error("Folder thumbnails were evicted during scrolling");
+-  }
+-  perfMark("resource:stress-complete", {
+-    mode: "folder-thumbnails", ...retained, viewportWaitsMs: waits,
+-    nativeRequestsOnWarmScroll: after - before, native: stats,
+-  });
+ }
+diff --git a/crates/oxy-media/src/pipeline/heif/artifact.rs b/crates/oxy-media/src/pipeline/heif/artifact.rs
+index 9729d38..9835c8e 100644
+--- a/crates/oxy-media/src/pipeline/heif/artifact.rs
++++ b/crates/oxy-media/src/pipeline/heif/artifact.rs
+@@ -183,6 +183,7 @@ pub(crate) fn preview(
+         RenderLevel::Preview
+     };
+     let artifacts = ArtifactCache::new(path, cache_dir)?;
++    let profile_ctor_ms = total_started.elapsed().as_secs_f64()*1000.0;
+     let detail = if require_native_detail {
+         DetailRequirement::NativeDetail
+     } else {
+@@ -197,6 +198,7 @@ pub(crate) fn preview(
+         return Ok(result);
+     }
+     let satisfied_request = preview_request(&artifacts, detail, false);
++    let profile_first_lookup_ms = total_started.elapsed().as_secs_f64()*1000.0-profile_ctor_ms;
+     let production_request = preview_request(&artifacts, detail, allow_interim);
+     // Embedded Sony results have their own lookup/version above. Reuse only
+     // decoded interim results here, never the obsolete padded JPEG policy.
+@@ -214,13 +216,17 @@ pub(crate) fn preview(
+         ArtifactPreparation::Generate { cache_generation } => cache_generation,
+     };
+ 
++    let profile_prepare_end_ms = total_started.elapsed().as_secs_f64()*1000.0;
+     if try_fast_jpeg && allow_interim {
+         let fast_lock = file_lock(&artifacts.source_lock_key("heif-fast-embedded"));
+         let _fast_guard = acquire_file_lock(&fast_lock, &|| cancellation.is_cancelled())?;
+         if let Some(result) = lookup_preview(&artifacts, detail, true, level)? {
+             return Ok(result);
+         }
+-        if let Ok(inspection) = sony::inspect(path, None)
++        let profile_recheck_end_ms = total_started.elapsed().as_secs_f64()*1000.0;
++        let inspection = sony::inspect(path, None);
++        let profile_extract_end_ms = total_started.elapsed().as_secs_f64()*1000.0;
++        if let Ok(inspection) = inspection
+             && let Some(image) = inspection.embedded_jpeg
+         {
+             let decode_ms = duration_ms(total_started);
+@@ -251,6 +257,7 @@ pub(crate) fn preview(
+                 total_ms: Some(duration_ms(total_started)),
+                 fallback_reason: None,
+             });
++            eprintln!("HIF_PROFILE heif total={} ctor={} firstLookup={} prepare={} fastLockAndRecheck={} extract={} publish={}",total_started.elapsed().as_secs_f64()*1000.0,profile_ctor_ms,profile_first_lookup_ms,profile_prepare_end_ms-profile_ctor_ms-profile_first_lookup_ms,profile_recheck_end_ms-profile_prepare_end_ms,profile_extract_end_ms-profile_recheck_end_ms,total_started.elapsed().as_secs_f64()*1000.0-profile_extract_end_ms);
+             return Ok(result);
+         }
+     }

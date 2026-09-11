@@ -87,6 +87,11 @@ For performance-sensitive browsing or media changes, verify against the budgets
 in `docs/PERFORMANCE.md` and avoid regressions to first-page rendering,
 virtualized scrolling, or preview latency.
 
+Before refactoring browsing, media caches, request queues, or queue diagnostics,
+read [`docs/PERFORMANCE_INVARIANTS.md`](docs/PERFORMANCE_INVARIANTS.md). Preserve its
+concurrency, invalidation, lease, whole-folder thumbnail retention, and nonblocking
+diagnostic contracts; validate equivalent behavior if replacing the implementation.
+
 ## Behavior
 
 Close debug instance when finished

@@ -14,7 +14,114 @@ end-to-end regression harness that enforces these budgets is described in
 | Search/filter response over loaded page | Under one animation frame |
 | Main-thread scroll work | No long task above 50 ms |
 
+Refactoring guardrails and regression checks: [Performance invariants](PERFORMANCE_INVARIANTS.md).
+
+## Whole-directory browser thumbnails
+
+After the first ordinary browse page commits, the frontend continues fetching
+the current directory in 250-item pages without waiting for scrolling. Each
+background fetch yields an animation frame and 200 ms so painting and thumbnail
+scheduling can run between pages. `BackgroundPreviewPreloader` now submits real
+thumbnail requests for all listed assets, then filtered-out same-directory
+assets. It starts after a 150 ms initial yield and keeps one background request
+in flight. Visible/nearby requests retain their higher priorities; the scheduling
+scope alone still only adjusts admitted work. This does not recursively enumerate
+subdirectories. Search and filters do not evict retained same-directory thumbnails.
+
+Small encoded thumbnails are fetched into a browser-owned Blob and decoded once.
+At up to 512 pixels on the longest edge, that Blob URL and decoded image are
+retained directly; no Canvas/PNG round trip is needed. Larger originals are
+resized into a lossless PNG with scaled content geometry and their original display
+geometry. Blob URLs and decoded `Image` references belong to the whole current
+folder; they are not evicted by the generic 1,024-entry/512 MiB image LRU. Native
+resource leases are released once the independent browser copy is ready. The
+virtualized DOM still mounts only viewport/overscan images. Cached remounts use
+the Blob copy without issuing another native preview request or renewing an old
+descriptor. Loupe can reuse this base while loading full detail separately.
+
+Folder changes and explicit image-cache invalidation release the copies and
+revoke Blob URLs. Source revision changes invalidate the affected thumbnail;
+generation checks discard asynchronous copies finishing after invalidation.
+Memory use grows with directory size: decoded 120x160 thumbnails use about
+75 KiB each before Blob/browser overhead; 512x384 copies use about 768 KiB each.
+Full-size/loupe resources keep their existing bounded cache. Original JPEG/PNG/
+WebP resources are resized for browser retention; this does not add a new native
+disk-thumbnail format for them. Other formats keep their existing artifact policy.
+
+Background pagination stops at the last page or a query error and clears pending
+timers when the directory/query changes or the view unmounts. Concurrent scroll
+requests share the active page fetch (`cancelRefetch: false`). Metadata-filtered
+browsing keeps its existing progressive pagination. This reduces waiting only
+for thumbnails already warmed; it does not guarantee immediate readiness after
+a distant jump. The first-page and scrolling budgets above still apply.
+
+## Cache maintenance and queue responsiveness
+
+Opening a disk cache never scans other sources for staging cleanup. Startup and
+publication completion schedule a single coalescing maintenance worker, with at
+least five seconds between passes. Cache hits do not schedule a pass. Usage and
+candidate enumeration hold a shared cross-process cache lock; eviction holds the
+exclusive lock only while rechecking one candidate's generation, file metadata
+and current leases, deleting it and repairing its source manifest. Old unleased
+staging files are collected by maintenance, including when below capacity.
+Usage remains a periodic directory scan, so very large caches still incur O(N)
+background I/O; the implementation does not claim an incremental size ledger.
+
+Image admission is serialized per canonical path/level. Filesystem validation,
+SQLite transactions and event emission run outside the global queue mutex.
+Before admission/reply, selection, cancellation, directory and invalidation
+generation are checked again. Projection writes also release the map lock during
+SQLite work; optimistic descriptor restoration rejects an older state revision.
+Native queue snapshots execute on a blocking worker and use `try_lock` for every
+queue and active request. Busy queues retain their last sample and are listed in
+`staleQueues`; an unseen busy queue is omitted rather than reported empty. The
+dashboard permits only one snapshot request at a time. Native worker-wait and
+collection timings are reported separately from the observed IPC round trip.
+
+HIF preview candidates use one manifest read for the ordered display/embedded
+policies, plus a mandatory recheck after the producer lock. The unused manifest
+LRU was removed: filesystem timestamps were never a valid coherence token and
+all production reads already bypassed it. Source, lease and generation checks
+remain in place, as do normal asynchronous disk persistence and decode fallback.
+
 ## Verification Log
+
+- 2026-09-12: Cache maintenance, preview admission, HIF candidate lookup and
+  small browser Blob retention were optimized. Final Release/WebView2 warming
+  completed all 1,100 HIF paths in 29.30 s, versus the earlier 150 s experiment
+  retaining only 678. Late native thumbnail total median was 8 ms; four warm
+  jumps issued no native preview requests. Snapshot collection now uses
+  nonblocking locks and stale samples: 115 samples had 18 us median / 34 us max
+  native collection time, including two busy metadata samples. Whole IPC RTT
+  was 0.8 ms median / 4 ms P95 / 87.4 ms max. First-page paint was 361.7 ms,
+  above the 300 ms target; this remaining render delay is not claimed fixed.
+  Frontend 200 tests/type checks/build, Rust workspace tests plus affected-crate
+  follow-ups, workspace Clippy/fmt, desktop build and HIF filmstrip checks passed.
+  [Implementation, measurements and limits](research/hif-thumbnail-optimization-2026-09-12.md).
+
+- 2026-09-12 (before cache/queue optimization): Whole-directory browser thumbnail retention passed the new
+  `folder-thumbnail-retention-png` release/WebView2 scenario with 1,100 real
+  160x120 PNG files. First page painted in 81.1 ms; background warming took
+  20.53 s. Four warm grid jumps painted all visible Blob images in 58.7/68.0/
+  86.0/79.5 ms with zero additional native preview requests. The probe includes
+  a minimum 40 ms settling wait; these are readiness checks, not precise paint
+  timestamps. Retained raster size was 84,480,000 bytes (excluding Blob/browser
+  overhead). Native registry peaked at 51/512 entries and ended with no UI or
+  read leases. [Native marks](research/folder-thumbnail-retention-2026-09-12.json).
+  An isolated Chromium probe with simulated native transport also retained
+  1,100 thumbnails beyond generic LRU pressure, painted first/last groups with
+  no native calls, resized a 4000x3000 original to 512x384, preserved crop
+  geometry, and released the previous directory's Blob URLs and image refs.
+  Release HIF filmstrip scrolling passed (three readiness checks at 25.7–26.5 ms).
+  Type checks, 198 frontend tests, frontend build and desktop build passed.
+  The 1,100-HIF cold warming experiment did **not** complete within 150 seconds:
+  678 copies were retained and the next request was still progressing. Native
+  thumbnail preparation grew from tens to hundreds of milliseconds as the
+  artifact directory filled. At that point `DiskMediaCache::new` repeatedly called
+  `cleanup_staging`, which traverses source directories; this is a code-grounded
+  candidate for the growing maintenance cost, not a measured attribution of all
+  elapsed time. No Rust cache behavior was changed in that initial step. Browser
+  retention success must not be presented as a fix for cold HIF preparation.
 
 - 2026-09-11: Filmstrip thumbnail consumers now share in-flight IPC requests;
   pending work follows current viewport/overscan scopes, and at most two

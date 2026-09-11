@@ -1,0 +1,66 @@
+{
+  "date": "2026-09-12",
+  "platform": "Windows Release / WebView2",
+  "png": {
+    "fixture": "1100 synthetic 160x120 PNG paths",
+    "firstPageMs": 316.2,
+    "warming": {
+      "count": 1100,
+      "decodedBytes": 84480000,
+      "generation": 0,
+      "elapsedMs": 19219.19999999553
+    },
+    "completion": {
+      "mode": "folder-thumbnails",
+      "count": 1100,
+      "decodedBytes": 84480000,
+      "generation": 0,
+      "viewportWaitsMs": [
+        63.099999994039536,
+        69.60000000149012,
+        87.70000000298023,
+        77.60000000149012
+      ],
+      "nativeRequestsOnWarmScroll": 0,
+      "native": {
+        "maxEntries": 512,
+        "maxEncodedBytes": 4254970880,
+        "maxMaterializedResponses": 4,
+        "maxMaterializedBytes": 134217728,
+        "entries": 1,
+        "encodedBytes": 0,
+        "peakEncodedBytes": 0,
+        "peakEntries": 77,
+        "uiLeased": 0,
+        "readLeased": 0,
+        "releasedOrExpired": 1,
+        "stagedFiles": 0,
+        "stagedBytes": 0,
+        "materializedResponses": 0,
+        "materializedBytes": 0
+      }
+    }
+  },
+  "filmstrip": {
+    "fixture": "tests/fixtures/DSC00449.HIF, 80 hardlink-or-copy paths",
+    "firstPageMs": 384.8,
+    "completed": true,
+    "readiness": [
+      {
+        "phase": 0,
+        "visibleCount": 7,
+        "allReadyMs": 25.200000002980232
+      },
+      {
+        "phase": 1,
+        "visibleCount": 7,
+        "allReadyMs": 26.69999999552965
+      },
+      {
+        "phase": 2,
+        "visibleCount": 7,
+        "allReadyMs": 25.80000000447035
+      }
+    ]
+  }
+}
