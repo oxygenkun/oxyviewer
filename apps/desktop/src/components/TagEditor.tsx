@@ -1,3 +1,4 @@
+import { createPortal } from "react-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   Check, FolderInput, Minus, MoreHorizontal, Pencil, Plus, RotateCcw, Search, Trash2, X,
@@ -42,7 +43,7 @@ export function TagEditor({
   const quickAddButtonRef = useRef<HTMLButtonElement>(null);
   const chipsRef = useRef<HTMLDivElement>(null);
   const pickerRef = useRef<HTMLDivElement>(null);
-  const [pickerTop, setPickerTop] = useState(23);
+  const [pickerPosition, setPickerPosition] = useState({ top: 23, right: 15 });
   const [open, setOpen] = useState(false);
   const [search, setSearch] = useState("");
   const [creating, setCreating] = useState(false);
@@ -178,7 +179,10 @@ export function TagEditor({
     if (!open && !deleteTarget && !removeTarget) return;
     const updatePosition = () => {
       const button = quickAddButtonRef.current;
-      if (button) setPickerTop(button.offsetTop + button.offsetHeight + 3);
+      if (button) {
+        const rect = button.getBoundingClientRect();
+        setPickerPosition({ top: rect.bottom + 3, right: Math.max(15, window.innerWidth - rect.right) });
+      }
     };
     updatePosition();
     const chips = chipsRef.current;
@@ -186,9 +190,11 @@ export function TagEditor({
     const observer = new ResizeObserver(updatePosition);
     observer.observe(chips);
     window.addEventListener("resize", updatePosition);
+    document.addEventListener("scroll", updatePosition, true);
     return () => {
       observer.disconnect();
       window.removeEventListener("resize", updatePosition);
+      document.removeEventListener("scroll", updatePosition, true);
     };
   }, [deleteTarget, open, removeTarget]);
 
@@ -241,8 +247,8 @@ export function TagEditor({
         </div>
       ) : null}
 
-      {open && !deleteTarget && !removeTarget ? (
-        <div ref={pickerRef} className="tag-picker" style={{ top: pickerTop }} role="dialog" aria-label={t("quickAddTag")}>
+      {createPortal(open && !deleteTarget && !removeTarget ? (
+        <div ref={pickerRef} className="tag-picker" style={pickerPosition} role="dialog" aria-label={t("quickAddTag")}>
           <div className="tag-picker__search">
             <Search />
             <input
@@ -321,7 +327,7 @@ export function TagEditor({
       ) : removeTarget ? (
         <div
           className="tag-picker tag-picker--remove-confirmation"
-          style={{ top: pickerTop }}
+          style={pickerPosition}
           role="dialog"
           aria-label={t("removeTagFromCurrent")}
         >
@@ -342,7 +348,7 @@ export function TagEditor({
           </div>
         </div>
       ) : deleteTarget ? (
-        <div className="tag-picker tag-picker--confirmation" style={{ top: pickerTop }} role="dialog" aria-label={t("tagDeleteTitle")}>
+        <div className="tag-picker tag-picker--confirmation" style={pickerPosition} role="dialog" aria-label={t("tagDeleteTitle")}>
           <DeletePanel
             tag={deleteTarget}
             impact={impactQuery.data}
@@ -352,7 +358,7 @@ export function TagEditor({
             onDelete={() => deleteMutation.mutate(deleteTarget.id)}
           />
         </div>
-      ) : null}
+      ) : null, document.body)}
       {assignmentMutation.isError || removeAssignmentMutation.isError ? (
         <small className="metadata-error">
           {String(assignmentMutation.error ?? removeAssignmentMutation.error)}

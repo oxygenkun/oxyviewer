@@ -202,6 +202,11 @@ end-to-end regression harness that enforces these budgets is described in
   scanning or establish NAS first-page timing. Persistent directory snapshots,
   cold-scan costs and foreground/background contention remain separate steps.
 
+- 2026-09-11: Filmstrip tag labels query existing library assignments only for
+  visible or active items. Results share the tag-assignment query cache and are
+  invalidated by tag edits; scrolling does not request metadata extraction or
+  scan all folder assets. Labels show leaf names with full paths in tooltips.
+
 - 2026-09-05: Disk-backed libraries now use separate read-only WAL connections
   for browsing/tag queries and resource-projection cache lookups. These readers
   do not acquire the writer mutex, and multi-statement asset/directory queries

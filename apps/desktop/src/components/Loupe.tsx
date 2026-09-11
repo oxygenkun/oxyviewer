@@ -36,7 +36,7 @@ import {
   type Size,
 } from "../lib/loupe";
 import { LAYOUT_SIZE_LIMITS } from "../lib/layoutSizing";
-import { getAssetDetails, requestMetadata } from "../lib/api";
+import { getAssetDetails, getAssetTagAssignments, requestMetadata } from "../lib/api";
 import { mapFocusRegions } from "../lib/focusArea";
 import type { MessageKey } from "../lib/i18n";
 import { acceptMetadataProjections } from "../lib/metadataProjection";
@@ -794,6 +794,13 @@ function FilmstripItem({
   style,
   visible,
 }: FilmstripItemProps) {
+  const tagsQuery = useQuery({
+    queryKey: ["asset-tag-assignments", [asset.path]],
+    queryFn: () => getAssetTagAssignments([asset.path]),
+    enabled: visible || active,
+    staleTime: Infinity,
+  });
+  const tags = (tagsQuery.data ?? []).filter((assignment) => assignment.assignedCount > 0);
   return (
     <button
       data-filmstrip-asset-id={asset.id}
@@ -809,9 +816,12 @@ function FilmstripItem({
         priority={active ? "loupe" : visible ? "visible" : "nearby"}
         rank={rank}
       />
-      {showMetadata ? (
+      {showMetadata || tags.length > 0 ? (
         <span className="filmstrip__metadata">
-          <AssetMetadataBadges asset={asset} />
+          {showMetadata ? <AssetMetadataBadges asset={asset} /> : null}
+          <span className="filmstrip__tags" title={tags.map(({ tag }) => tag.path.replaceAll("|", " › ")).join("\n")}>
+            {tags.map(({ tag }) => <span key={tag.id}>{tag.name}</span>)}
+          </span>
         </span>
       ) : null}
       <span className="filmstrip__name">{asset.name}</span>

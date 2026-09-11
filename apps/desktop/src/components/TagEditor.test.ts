@@ -6,6 +6,7 @@ import {
   ensureTagPath,
   flattenTags,
   parseTagPath,
+  normalizeCustomTag,
 } from "../lib/tagTree";
 
 const tags: CustomTag[] = [
@@ -51,6 +52,24 @@ describe("hierarchical tag presentation", () => {
     expect(created).toEqual([[2, "Newborn"]]);
     expect(result.id).toBe(10);
     expect(result.path).toBe("People|Family|Newborn");
+  });
+
+  it("reuses null-parent desktop roots for multiple sibling paths", async () => {
+    const available = tags.map((tag) => normalizeCustomTag({ ...tag, parentId: tag.parentId ?? null }));
+    const created: string[] = [];
+    for (const name of ["Newborn", "Holiday"]) {
+      await ensureTagPath(`People/Family/${name}`, available, async (parentId, childName) => {
+        expect(parentId).toBe(2);
+        created.push(childName);
+        const tag = { id: 10 + created.length, parentId, name: childName, path: `People|Family|${childName}`, sortOrder: 0 };
+        available.push(tag);
+        return tag;
+      });
+    }
+    expect(created).toEqual(["Newborn", "Holiday"]);
+    expect(await ensureTagPath("People/Family/Holiday", available, async () => {
+      throw new Error("Existing path must not be created again");
+    })).toMatchObject({ name: "Holiday" });
   });
 
   it("deduplicates embedded tags and leaves embedded-only values read-only", () => {

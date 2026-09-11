@@ -371,8 +371,8 @@
 }
 .filmstrip--landscape button { min-width: 90px; aspect-ratio: 1.25; }
 .filmstrip--portrait button { min-width: 48px; aspect-ratio: .68; }
-.filmstrip__metadata { display: flex; align-items: center; justify-content: center; height: 14px; }
-.filmstrip__metadata .asset-metadata-badges { gap: 4px; }
+.filmstrip__metadata { display: flex; align-items: center; justify-content: center; gap: 4px; min-width: 0; height: 14px; overflow: hidden; }
+.filmstrip__metadata .asset-metadata-badges { flex-shrink: 0; gap: 4px; }
 .filmstrip button.is-active { border-color: var(--accent); }
 .filmstrip .thumbnail { min-height: 0; height: 100%; }
 .filmstrip .thumbnail__badge, .filmstrip .thumbnail__fallback span { display: none; }
@@ -437,3 +437,7 @@
 .loupe__render .thumbnail__fallback::before,
 .loupe__render .thumbnail__fallback::after,
 .loupe__render .thumbnail__fallback i { display: none; }
+
+.filmstrip__tags { display: flex; gap: 3px; min-width: 0; overflow: hidden; font-size: 0.5rem; line-height: 12px; }
+.filmstrip__tags:empty { display: none; }
+.filmstrip__tags > span { min-width: 0; overflow: hidden; padding: 0 3px; border-radius: 3px; color: #b4bdaa; background: #242b22; text-overflow: ellipsis; white-space: nowrap; }

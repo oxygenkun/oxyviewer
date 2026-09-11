@@ -212,8 +212,8 @@
 .tag-sync-state.is-error { color: #d99b91; }
 .tag-sync-state button { display: grid; padding: 2px; place-items: center; color: currentColor; background: transparent; }
 .tag-picker {
-  position: absolute;
-  z-index: 24;
+  position: fixed;
+  z-index: 1000;
   top: 23px;
   right: 0;
   width: min(248px, calc(100vw - 30px));

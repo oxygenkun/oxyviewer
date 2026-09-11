@@ -124,3 +124,8 @@ export function embeddedOnlyTagPaths(
     return true;
   }).map(({ path }) => path);
 }
+
+// Rust serializes a root parent as null; keep the frontend tree identity consistent.
+export function normalizeCustomTag(tag: Omit<CustomTag, "parentId"> & { parentId?: number | null }): CustomTag {
+  return { ...tag, parentId: tag.parentId ?? undefined };
+}

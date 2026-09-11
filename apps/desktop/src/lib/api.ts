@@ -1,3 +1,4 @@
+import { normalizeCustomTag } from "./tagTree";
 import { retainMediaResource, releaseUnretainedMediaResource } from "./mediaResourceLease";
 import { invoke } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
@@ -507,7 +508,7 @@ function refreshDemoTagPaths(): void {
 
 export async function listCustomTags(): Promise<CustomTag[]> {
   if (!isTauri()) return demoTags.map((tag) => ({ ...tag }));
-  return invoke<CustomTag[]>("list_custom_tags");
+  return (await invoke<CustomTag[]>("list_custom_tags")).map(normalizeCustomTag);
 }
 
 export async function getAssetTagAssignments(paths: string[]): Promise<AssetTagAssignment[]> {
@@ -518,7 +519,8 @@ export async function getAssetTagAssignments(paths: string[]): Promise<AssetTagA
       assetCount: paths.length,
     }));
   }
-  return invoke<AssetTagAssignment[]>("get_asset_tag_assignments", { paths });
+  return (await invoke<AssetTagAssignment[]>("get_asset_tag_assignments", { paths }))
+    .map((assignment) => ({ ...assignment, tag: normalizeCustomTag(assignment.tag) }));
 }
 
 export async function createCustomTag(parentId: number | undefined, name: string): Promise<CustomTag> {
@@ -529,7 +531,7 @@ export async function createCustomTag(parentId: number | undefined, name: string
     refreshDemoTagPaths();
     return { ...demoTags.find((item) => item.id === tag.id)! };
   }
-  return invoke<CustomTag>("create_custom_tag", { parentId: parentId ?? null, name });
+  return normalizeCustomTag(await invoke<CustomTag>("create_custom_tag", { parentId: parentId ?? null, name }));
 }
 
 export async function updateCustomTag(
@@ -542,7 +544,7 @@ export async function updateCustomTag(
     refreshDemoTagPaths();
     return { ...demoTags.find((tag) => tag.id === id)! };
   }
-  return invoke<CustomTag>("update_custom_tag", { id, parentId: parentId ?? null, name });
+  return normalizeCustomTag(await invoke<CustomTag>("update_custom_tag", { id, parentId: parentId ?? null, name }));
 }
 
 export async function getCustomTagDeleteImpact(id: number): Promise<TagDeleteImpact> {
