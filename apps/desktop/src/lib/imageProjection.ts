@@ -7,6 +7,7 @@ import {
 } from "./browserImageCache";
 import { mediaProtocolUrl } from "./mediaProtocolUrl";
 import { sharedThumbnailRequests } from "./sharedThumbnailRequests";
+import { discardFolderThumbnail } from "./folderThumbnailCache";
 
 export interface ImageProjectionMirror extends Omit<ImageProjection, "result"> {
   result?: PreviewResult;
@@ -80,6 +81,7 @@ export function acceptImageProjection(projection: ImageProjection) {
     const nextUrl = projection.result ? projectionResultUrl(projection.result) : undefined;
     const mutablePathReplaced = Boolean(projection.result && !projection.result.resource);
     if (sourceChanged || mutablePathReplaced) {
+      discardFolderThumbnail(projection.path);
       discardBrowserImageResource(current.result?.url);
       discardBrowserImageResource(nextUrl);
     }

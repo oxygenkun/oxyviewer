@@ -4,6 +4,7 @@ import { onPerfMark, perfMark, perfSnapshot } from "./perfProbe";
 import { useWorkspaceStore } from "../store";
 import { runNavigationCacheProbe } from "./navigationCacheProbe";
 import { runGridScrollProbe } from "./gridScrollProbe";
+import { runFolderThumbnailProbe } from "./folderThumbnailProbe";
 import type { AssetSummary, PerfScenario } from "../types";
 
 /** Runs only in an explicitly injected, isolated native performance scenario. */
@@ -12,6 +13,7 @@ export async function runResourceStress(
   assets: () => AssetSummary[],
   signal: AbortSignal,
 ): Promise<void> {
+  if (mode === "folder-thumbnails") return runFolderThumbnailProbe(assets, signal);
   if (mode === "grid-scroll") return runGridScrollProbe(signal);
   if (mode === "filmstrip-scroll") return runGridScrollProbe(signal, true);
   if (mode === "navigation-cache") return runNavigationCacheProbe(assets(), signal);

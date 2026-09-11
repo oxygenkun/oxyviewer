@@ -27,6 +27,12 @@ vi.mock("../lib/api", () => ({
   releaseMediaResource: apiMocks.releaseMediaResource,
 }));
 vi.mock("@tauri-apps/api/core", () => ({ convertFileSrc: (path: string) => path }));
+// Canvas/Blob snapshots are covered by folderThumbnailCache tests and the real
+// browser probe; these tests isolate the existing native-image lease lifecycle.
+vi.mock("../lib/folderThumbnailCache", async (importOriginal) => ({
+  ...await importOriginal<typeof import("../lib/folderThumbnailCache")>(),
+  captureFolderThumbnail: async () => undefined,
+}));
 
 const asset: AssetSummary = {
   id: "a", path: "/photos/a.hif", name: "a.hif", extension: "hif",

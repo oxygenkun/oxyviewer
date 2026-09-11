@@ -12,6 +12,7 @@ import {
   firstReadyBrowserImage,
   markBrowserImageReady,
   touchBrowserImage,
+  discardBrowserImageResource,
 } from "../lib/browserImageCache";
 import { previewRequestSignal, retainPreviewRequest } from "../lib/previewRequestLifetime";
 import { perfMark } from "../lib/perfProbe";
@@ -27,6 +28,7 @@ import { beginPreviewDebug, type PreviewDebugHandle } from "../lib/previewDebug"
 import { previewContentStyles, validPreviewGeometry, type DisplayedPreviewSize } from "../lib/previewGeometry";
 import { nextProgressiveStage } from "../lib/progressiveImage";
 import { rawPreviewStatus, type RawPreviewStatus } from "../lib/rawPreview";
+import { captureFolderThumbnail, useFolderThumbnail } from "../lib/folderThumbnailCache";
 import type {
   AssetSummary,
   PreviewPriority,
@@ -78,6 +80,7 @@ export function Thumbnail({
   const [fullImageFailed, setFullImageFailed] = useState(false);
   const [loaded, setLoaded] = useState<{ assetId: string; mode: "preview" | "full" }>();
   const [displayedImage, setDisplayedImage] = useState<DisplayedImage>();
+  const folderThumbnail = useFolderThumbnail(asset);
   const imageDebug = useRef<{ source: string; handle: PreviewDebugHandle } | undefined>(undefined);
   const reportedLoads = useRef(new Set<string>());
   const plan = useMemo(
@@ -109,9 +112,9 @@ export function Thumbnail({
   const previewLifetimeKey = JSON.stringify(assetRenderQueryKey(asset, previewMethod));
   const fullLifetimeKey = fullMethod ? JSON.stringify(assetRenderQueryKey(asset, fullMethod)) : undefined;
   useLayoutEffect(() => {
-    if (!enabled || large || !previewLevel) return;
+    if (!enabled || large || !previewLevel || folderThumbnail) return;
     return retainPreviewRequest(previewLifetimeKey);
-  }, [enabled, large, previewLevel, previewLifetimeKey]);
+  }, [enabled, large, previewLevel, previewLifetimeKey, folderThumbnail]);
   useLayoutEffect(() => {
     if (!enabled || !large || !distinctFullLevel || !fullLifetimeKey) return;
     return retainPreviewRequest(fullLifetimeKey);
@@ -130,7 +133,7 @@ export function Thumbnail({
       // completion without React Query treating undefined as a failed request.
       return null;
     },
-    enabled: enabled && !large && isTauri() && Boolean(previewLevel),
+    enabled: enabled && !large && !folderThumbnail && isTauri() && Boolean(previewLevel),
     staleTime: Infinity,
     retry: 0,
   });
@@ -173,17 +176,25 @@ export function Thumbnail({
   const preparedGeometry = preparedResult
     ? validPreviewGeometry(preparedResult.geometry, preparedResult) : undefined;
   const preparedSize = preparedSource ? getBrowserImageSize(preparedSource) : undefined;
-  const visibleImage = displayedImage?.assetId === asset.id
+  const nativeImage = displayedImage?.assetId === asset.id
     ? displayedImage
     : preparedSource
       ? { assetId: asset.id, source: preparedSource, resourceId: preparedResourceId,
           size: preparedSize ? { ...preparedSize, geometry: preparedGeometry } : undefined }
       : undefined;
+  const retainedImage: DisplayedImage | undefined = folderThumbnail ? {
+    assetId: asset.id,
+    source: folderThumbnail.url,
+    size: { width: folderThumbnail.width, height: folderThumbnail.height, geometry: folderThumbnail.geometry },
+  } : undefined;
+  const showingFull = large && nativeImage && (nativeImage.source === fullSource?.url || nativeImage.source === directSource);
+  const visibleImage = showingFull ? nativeImage : retainedImage ?? nativeImage;
   const generatedSource = nextProgressiveStage(Boolean(visibleImage), [
     previewSource,
     !fullImageFailed ? fullSource : undefined,
   ]);
-  const sourceCandidate = directSource ?? generatedSource?.url;
+  const retainedBaseIsEnough = folderThumbnail && (!large || (!directSource && generatedSource?.renderLevel !== "full" && generatedSource?.renderLevel !== "preview"));
+  const sourceCandidate = retainedBaseIsEnough ? undefined : directSource ?? generatedSource?.url;
   // Explicitly disabled consumers can still paint retained decoded images.
   const source = browserImageSourceWhenEnabled(sourceCandidate, enabled);
   const debugResourceLabel = directSource
@@ -295,6 +306,13 @@ export function Thumbnail({
   }, [requestPriority]);
 
   useLayoutEffect(() => {
+    if (!folderThumbnail || visibleImage?.source !== folderThumbnail.url) return;
+    const size = { width: folderThumbnail.width, height: folderThumbnail.height, geometry: folderThumbnail.geometry };
+    reportImageLoaded(size, undefined, folderThumbnail.url);
+    onImageLoad?.(size);
+  }, [folderThumbnail, onImageLoad, visibleImage?.source]);
+
+  useLayoutEffect(() => {
     if (!preparedSource) return;
     // A cache-ready image paints without the pending image's onLoad handler.
     // Retain that displayed source locally: projection updates and LRU eviction
@@ -403,7 +421,16 @@ export function Thumbnail({
       if (debug) imageDebug.current = { source, handle: debug };
     }
     debug?.complete();
-    if (source) markBrowserImageReady(source, size, image, result?.resource?.resourceId);
+    if (source) {
+      markBrowserImageReady(source, size, image, result?.resource?.resourceId);
+      if (result?.renderLevel === "thumbnail" || (!large && directSource)) {
+        void captureFolderThumbnail(asset, image, result?.geometry)
+          .then((retained) => { if (retained) discardBrowserImageResource(source); })
+          .catch((error) => {
+            console.warn(`[OxyPreview] thumbnail retention failed for ${asset.name}`, error);
+          });
+      }
+    }
     if (ownsFullDetailStage && large && result?.renderLevel !== "thumbnail") {
       setLoaded({ assetId: asset.id, mode: result === fullSource ? "full" : "preview" });
     }
@@ -462,12 +489,12 @@ export function Thumbnail({
       {visibleImage ? contentStyles ? (
         <div className="thumbnail__content-host">
           <div className="thumbnail__content" style={contentStyles.frame}>
-            <img key={`${asset.id}:${visibleImage.source}`} src={visibleImage.source}
+            <img key={`${asset.id}:${visibleImage.source}`} src={visibleImage.source} crossOrigin="anonymous"
               style={contentStyles.image} alt="" draggable={false} />
           </div>
         </div>
       ) : (
-        <img key={`${asset.id}:${visibleImage.source}`} src={visibleImage.source}
+        <img key={`${asset.id}:${visibleImage.source}`} src={visibleImage.source} crossOrigin="anonymous"
           alt="" draggable={false} />
       ) : null}
       {pendingSource && !failed ? (
@@ -475,6 +502,7 @@ export function Thumbnail({
           className="thumbnail__pending-image"
           key={`${asset.id}:${pendingSource}`}
           src={pendingSource}
+          crossOrigin="anonymous"
           alt=""
           draggable={false}
           onError={() => handleError(generatedSource)}

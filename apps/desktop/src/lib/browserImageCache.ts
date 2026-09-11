@@ -1,4 +1,5 @@
 import { retainMediaResource } from "./mediaResourceLease";
+import { clearFolderThumbnails } from "./folderThumbnailCache";
 
 interface BrowserImageSize {
   width: number;
@@ -132,6 +133,7 @@ export function markBrowserImageReady(
 
 /** Discards all retained resources in response to an explicit app update. */
 export function clearBrowserImageResources(): void {
+  clearFolderThumbnails();
   for (const resource of readyImages.values()) resource.release?.();
   readyImages.clear();
   protectedUrls.clear();
@@ -168,6 +170,7 @@ export function preloadBrowserImage(url: string, signal?: AbortSignal, resourceI
       return;
     }
     const image = new Image();
+    image.crossOrigin = "anonymous";
     const cleanup = () => {
       image.onload = null;
       image.onerror = null;

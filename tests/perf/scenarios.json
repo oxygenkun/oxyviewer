@@ -2,6 +2,26 @@
   "$comment": "E2E performance scenarios for scripts/perf-e2e.mjs. Budgets mirror docs/PERFORMANCE.md; see docs/PERF_E2E.md. Metrics without a budget are recorded and regression-checked against baseline.json.",
   "regressionFactor": 1.2,
   "scenarios": {
+    "folder-thumbnail-retention-hif": {
+      "fixture": { "type": "file", "path": "tests/fixtures/DSC00449.HIF", "count": 1100 },
+      "resourceStress": "folder-thumbnails",
+      "enterLoupe": false,
+      "awaitMarks": ["resource:stress-complete"],
+      "coldCache": true,
+      "runs": 1,
+      "timeoutMs": 180000,
+      "budgets": {}
+    },
+    "folder-thumbnail-retention-png": {
+      "fixture": { "type": "synthetic", "format": "png", "count": 1100, "width": 160, "height": 120 },
+      "resourceStress": "folder-thumbnails",
+      "enterLoupe": false,
+      "awaitMarks": ["resource:stress-complete"],
+      "coldCache": true,
+      "runs": 1,
+      "timeoutMs": 180000,
+      "budgets": {}
+    },
     "filmstrip-scroll-hif": {
       "fixture": { "type": "file", "path": "tests/fixtures/DSC00449.HIF", "count": 80 },
       "resourceStress": "filmstrip-scroll",

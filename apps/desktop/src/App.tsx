@@ -34,6 +34,7 @@ import {
 import { filterAndSortAssets } from "./lib/assetFiltering";
 import { recordBrowseTiming } from "./lib/browseDiagnostics";
 import { firstBrowseCursor, nextBrowseCursor } from "./lib/browsePagination";
+import { useBackgroundAssetPagination } from "./lib/useBackgroundAssetPagination";
 import { insertRestoredFolder, restoreFoldersProgressively, type FolderRestoreState } from "./lib/folderRestoration";
 import { focusRestoreAction, replacementAssetIdAfterRemoval } from "./lib/assetViewPosition";
 import { setBrowserImageResourceScope } from "./lib/browserImageCache";
@@ -280,7 +281,7 @@ export function App({ perfScenario }: { perfScenario?: PerfScenario }) {
   if (metadataFiltersActive && activeId) filteredFocusRef.current = activeId;
   const filteredFocusRestoreId = metadataFiltersActive ? undefined : filteredFocusRef.current;
   const progressivelyFilterMetadata = Boolean(!search && (minimumRating || colorLabels.length));
-  const shouldPreloadFilteredAssets = Boolean(!search && (kind || minimumRating || colorLabels.length));
+  const shouldPreloadFilteredAssets = Boolean(search || kind || minimumRating || colorLabels.length);
   const preloadQuery = useMemo<AssetQuery>(() => ({
     sort: "name",
     direction: "ascending",
@@ -364,12 +365,13 @@ export function App({ perfScenario }: { perfScenario?: PerfScenario }) {
   // rebuilding the browser projection for a newly returned page.
   const displayedAssets = useDeferredValue(assets);
   const preloadCandidates = useMemo(() => {
-    const visibleIds = new Set(assets.map((asset) => asset.id));
+    const listed = progressivelyFilterMetadata ? assets : cheapAssets;
+    const visibleIds = new Set(listed.map((asset) => asset.id));
     const candidates = progressivelyFilterMetadata
-      ? progressivelyEnrichedAssets
+      ? progressiveMetadataQuery.data?.pages.flatMap((page) => page.items) ?? []
       : preloadAssetsQuery.data?.pages.flatMap((page) => page.items) ?? [];
-    return candidates.filter((asset) => !visibleIds.has(asset.id));
-  }, [assets, preloadAssetsQuery.data, progressivelyEnrichedAssets, progressivelyFilterMetadata]);
+    return [...listed, ...candidates.filter((asset) => !visibleIds.has(asset.id))];
+  }, [assets, cheapAssets, preloadAssetsQuery.data, progressiveMetadataQuery.data, progressivelyFilterMetadata]);
   const total = progressivelyFilterMetadata
     ? assets.length
     : assetsQuery.data?.pages[0]?.total ?? 0;
@@ -392,6 +394,15 @@ export function App({ perfScenario }: { perfScenario?: PerfScenario }) {
     // must leave the active page request running instead of restarting it.
     void assetsQuery.fetchNextPage({ cancelRefetch: false });
   }, [assetsQuery.fetchNextPage, progressivelyFilterMetadata]);
+  useBackgroundAssetPagination({
+    scopeKey: JSON.stringify([activeSession?.id, currentPath, query]),
+    enabled: Boolean(activeSession && currentPath && !progressivelyFilterMetadata),
+    pageCount: assetsQuery.data?.pages.length ?? 0,
+    hasNextPage: assetsQuery.hasNextPage,
+    isFetching: assetsQuery.isFetching,
+    isError: assetsQuery.isError,
+    fetchNextPage: assetsQuery.fetchNextPage,
+  });
   const filteredFocusAction = focusRestoreAction(
     assets,
     filteredFocusRestoreId,
@@ -432,15 +443,15 @@ export function App({ perfScenario }: { perfScenario?: PerfScenario }) {
     return () => cancelAnimationFrame(frame);
   }, [activeSession?.id, currentPath, assetsLoading]);
 
-  useEffect(() => {
-    if (!preloadAssetsQuery.hasNextPage || preloadAssetsQuery.isFetchingNextPage) return;
-    void preloadAssetsQuery.fetchNextPage();
-  }, [
-    preloadAssetsQuery.data?.pages.length,
-    preloadAssetsQuery.fetchNextPage,
-    preloadAssetsQuery.hasNextPage,
-    preloadAssetsQuery.isFetchingNextPage,
-  ]);
+  useBackgroundAssetPagination({
+    scopeKey: JSON.stringify([activeSession?.id, currentPath]),
+    enabled: shouldPreloadFilteredAssets && !progressivelyFilterMetadata,
+    pageCount: preloadAssetsQuery.data?.pages.length ?? 0,
+    hasNextPage: preloadAssetsQuery.hasNextPage,
+    isFetching: preloadAssetsQuery.isFetching,
+    isError: preloadAssetsQuery.isError,
+    fetchNextPage: preloadAssetsQuery.fetchNextPage,
+  });
 
   useEffect(() => {
     if (
@@ -818,8 +829,7 @@ export function App({ perfScenario }: { perfScenario?: PerfScenario }) {
         selectedCount={selectedIds.length}
         t={t}
       />
-      {shouldPreloadFilteredAssets &&
-      (progressivelyFilterMetadata ? progressiveMetadataQuery.isSuccess : assetsQuery.isSuccess) &&
+      {(progressivelyFilterMetadata ? progressiveMetadataQuery.isSuccess : assetsQuery.isSuccess) &&
       activeSession && currentPath ? (
         <BackgroundPreviewPreloader
           key={`${activeSession.id}:${currentPath}`}

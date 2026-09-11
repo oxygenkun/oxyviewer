@@ -39,8 +39,8 @@ import type {
   TagDeleteImpact,
   TagSyncStatus,
 } from "../types";
-import { preloadBrowserImage } from "./browserImageCache";
-import { browserPreloadQueue, priorityWeight } from "./previewQueue";
+import { getFolderThumbnail, getFolderThumbnailGeneration, preloadFolderThumbnail } from "./folderThumbnailCache";
+import { browserPreloadQueue, orderedPriorityWeight } from "./previewQueue";
 import { acceptImageProjection } from "./imageProjection";
 import { mediaProtocolUrl } from "./mediaProtocolUrl";
 import { acceptMetadataProjection } from "./metadataProjection";
@@ -904,35 +904,40 @@ export async function releasePreviewSchedule(
 }
 
 /**
- * Warms both the backend preview cache and the webview image cache. Filtered
- * results use the dedicated lowest queue priority so ordinary overscan can
- * always jump ahead of this work.
+ * Requests real thumbnail work and retains a small, native-resource-independent
+ * browser copy for the entire current directory. Nearby callers can jump ahead.
  */
 export async function preloadAssetThumbnail(
   asset: AssetSummary,
   signal?: AbortSignal,
+  priority: PreviewPriority = "preload",
+  rank = 0,
 ): Promise<void> {
-  if (!isTauri()) return;
+  signal?.throwIfAborted();
+  if (getFolderThumbnail(asset)) return;
+  const generation = getFolderThumbnailGeneration();
   const directSource = previewUrl(asset);
   if (directSource) {
     await browserPreloadQueue.enqueue(
-      priorityWeight("preload"),
+      orderedPriorityWeight(priority, rank),
       signal,
-      () => preloadBrowserImage(directSource, signal),
+      () => preloadFolderThumbnail(asset, directSource, undefined, signal, generation),
     );
     return;
   }
-  const result = await generatedPreview(asset, "thumbnail", signal, "preload");
+  const result = await generatedPreview(asset, "thumbnail", signal, priority, rank);
   if (result) {
     const id = result.resource?.resourceId;
     const release = id ? retainMediaResource(id) : undefined;
     try {
       await browserPreloadQueue.enqueue(
-        priorityWeight("preload"),
+        orderedPriorityWeight(priority, rank),
         signal,
         async () => {
-          if (id && !await renewMediaResource(id)) return;
-          await preloadBrowserImage(result.url, signal, result.resource?.resourceId);
+          signal?.throwIfAborted();
+          if (generation !== getFolderThumbnailGeneration()) return;
+          if (id && !await renewMediaResource(id)) throw new Error("Thumbnail resource expired before preload");
+          await preloadFolderThumbnail(asset, result.url, result.geometry, signal, generation);
         },
       );
     } finally { release?.(); }

@@ -405,7 +405,7 @@ export interface PerfScenario {
   selectName?: string;
   enterLoupe?: boolean;
   scrollToEnd?: boolean;
-  resourceStress?: "grid" | "list" | "loupe" | "grid-scroll" | "filmstrip-scroll" | "navigation-cache";
+  resourceStress?: "grid" | "list" | "loupe" | "grid-scroll" | "filmstrip-scroll" | "navigation-cache" | "folder-thumbnails";
   awaitMarks: string[];
   timeoutMs?: number;
   reportPath: string;
