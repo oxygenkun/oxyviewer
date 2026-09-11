@@ -125,7 +125,9 @@ tier 3  preload         视口外缓存预热
 Grid、list 和 loupe filmstrip 各自持有 viewport scope；稳定的已加载资产集合持有 background
 scope。viewport 随虚拟列表产生的视窗快照提交有界全量 reconcile，background 只在分页、排序或选择变化时
 更新。`epoch` 拒绝乱序到达的旧视窗快照。选中图排在 tier 0；可见图按选择或视窗中心产生 rank；
-附近项进入 tier 2；选中项离开真实可见区后不再保留 tier 0，而按 nearby/离屏规则处理。离屏后
+附近项进入 tier 2；grid/list 选中项离开真实可见区后按 nearby/离屏规则处理。Loupe filmstrip
+仍保留当前大图的 thumbnail tier 0，并为全部可见项和 overscan 提交位置，滑入 overscan 的旧可见项
+因此可以降级。离屏后
 viewport intent 被释放；已有 consumer 的任务按其余 scope 降级，没有 consumer 且尚未开始的任务
 会从队列删除。
 
@@ -139,9 +141,17 @@ Grid 预取前后 6 行、list 前后 16 项、filmstrip 前后 12 项。离开�
 
 具体任务身份由 canonical path、source revision 和 semantic level 组成；相同请求无论尚在等待
 还是已经运行，通常只挂接新的 consumer。已取消的 active 请求不能接收新 consumer；
-附近任务升级为选中图时取消旧 token、迁移订阅者并重新以 loupe 优先级准入，避免继续等待旧 gate 优先级。有效位置取所有 scope/consumer 中
-最重要的 `(tier, rank)`，所以一个离屏组件不能把另一个仍可见组件的共享任务错误降级。
+附近任务升级为选中图时取消旧 token、迁移订阅者并重新以 loupe 优先级准入，避免继续等待旧 gate 优先级。
+Thumbnail 的有效位置取当前各 scope 中最重要的 `(tier, rank)`；没有 scope 时才使用剩余 consumer
+最重要的初始位置。Thumbnail consumer 不再建立独立 request-id scope，避免初始 visible 优先级
+压住更新后的 nearby 排序。Preview/full 保留原有 scope/consumer 合并规则。
 全量 `reconcile`、单项 `upsert(front/back)` 和 `release` 的通用实现位于 `oxy-runtime`。
+
+`sharedThumbnailRequests` 在前端按路径、资产 ID、格式、修改时间和文件大小共享进行中的
+thumbnail IPC。组件与预加载器各自取消订阅，最后一个订阅者离开后才取消共享请求；一个微任务
+的合并窗口覆盖同轮 effect 替换。结果仍由 projection 管理，池内不保存已完成结果。刷新时清除
+对应目录的共享请求，迟到且无人接收的资源走已有 lease 释放流程。Thumbnail 没有后续 upgrade，
+即使结果标为 Interim，完成后也移除 abort listener；preview/full 的 Interim 升级取消仍保留。
 
 开启搜索、格式、评级或颜色过滤时，另一个无过滤的廉价分页查询会继续枚举当前目录。未出现在
 可见结果中的图片由 `BackgroundPreviewPreloader` 串行提交，每次只放入一个 `preload`
@@ -401,7 +411,11 @@ manifest 约束；目录项消失按并发删除处理，权限及其他 IO 错�
 3. **后端协作取消**：解码器定期检查 flag 并提前退出。
 
 统一 preview 通过独立 command 释放对应 request consumer：pending 工作在没有 consumer 时直接
-摘出；active 工作在最后一个 consumer 离开时取消共享 token。decode gate 与同源锁等待、后端
+摘出；active 工作在最后一个 consumer 离开时通常取消共享 token。同一活动目录、同一 generation
+的 thumbnail 允许最多 `min(2, worker_count - 1)` 个已经被 worker 取出的任务继续完成，无人订阅
+的 pending 工作不保留。单 worker 时上限为 0；重新进入视口可复用尚未取消的 active 工作。
+切目录、刷新或源失效会取消相应保留任务，旧 generation 不能重新获得保留资格。该例外不适用于
+preview/full。decode gate 与同源锁等待、后端
 attempt 边界、tile 发布以及缓存提交前都会检查 token。已经进入不可中断 native codec 调用时仍需
 等待调用返回，但迟到结果不会触发 fallback 或提交缓存。HEIF full session 另有 session token，
 见下一章。

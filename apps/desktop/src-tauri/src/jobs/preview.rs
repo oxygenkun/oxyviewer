@@ -25,6 +25,7 @@ use tauri::{AppHandle, Emitter};
 
 pub const IMAGE_PROJECTION_UPDATED_EVENT: &str = "image-projection-updated";
 const PROJECTION_SOURCE_REVISION_VERSION: &str = "projection-source-v1";
+const MAX_RETAINED_THUMBNAILS: usize = 2;
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 struct ProjectionSourceRevision {
@@ -96,6 +97,14 @@ struct WorkRequest {
 }
 
 impl WorkRequest {
+    fn requested_position(&self) -> SchedulePosition {
+        self.waiters
+            .iter()
+            .map(|waiter| waiter.position)
+            .max()
+            .unwrap_or_else(|| schedule_position(PreviewPriority::Preload, u32::MAX))
+    }
+
     fn take_waiters_for_restart(&mut self, priority: PreviewPriority) -> Option<Vec<Waiter>> {
         if self.cancellation.is_cancelled()
             || (priority == PreviewPriority::Loupe && self.started_tier > 0)
@@ -107,11 +116,11 @@ impl WorkRequest {
         }
     }
 
-    fn remove_waiter(&mut self, request_id: &str) -> bool {
+    fn remove_waiter(&mut self, request_id: &str, retain_unobserved: bool) -> bool {
         let previous_len = self.waiters.len();
         self.waiters.retain(|waiter| waiter.id != request_id);
         let removed = self.waiters.len() != previous_len;
-        if removed && self.waiters.is_empty() {
+        if removed && self.waiters.is_empty() && !retain_unobserved {
             self.cancellation.cancel();
         }
         removed
@@ -120,6 +129,7 @@ impl WorkRequest {
 
 struct Waiter {
     id: String,
+    position: SchedulePosition,
     sender: Sender<Result<ImageProjection, String>>,
     interim_delivered: bool,
 }
@@ -261,16 +271,64 @@ impl WorkState {
         changes: Vec<EffectiveScheduleChange<PreviewScheduleKey>>,
     ) {
         for change in changes {
-            let Some(position) = change.position else {
-                continue;
-            };
             let Some(request_keys) = self.pending_keys.get(&change.key).cloned() else {
                 continue;
             };
             for request_key in request_keys {
-                self.pending.reprioritize_if_present(&request_key, position);
+                self.pending
+                    .update_priority_if_present(&request_key, |request| {
+                        change
+                            .position
+                            .unwrap_or_else(|| request.requested_position())
+                    });
             }
         }
+    }
+
+    fn cancel_active_waiter(
+        &mut self,
+        identity: &PreviewScheduleKey,
+        request_id: &str,
+        retention_limit: usize,
+        generation: u64,
+    ) -> bool {
+        let same_directory = self
+            .active_directory
+            .as_deref()
+            .is_some_and(|directory| identity.path.parent() == Some(directory));
+        let mut retained = self
+            .active
+            .values()
+            .filter(|request| {
+                let request = request
+                    .lock()
+                    .expect("active preview request lock poisoned");
+                request.source_revision.level == RenderLevel::Thumbnail
+                    && request.waiters.is_empty()
+                    && !request.cancellation.is_cancelled()
+            })
+            .count();
+        let mut changed = false;
+        for (key, request) in &self.active {
+            if key.source_revision.path != identity.path
+                || key.source_revision.level != identity.level
+            {
+                continue;
+            }
+            let mut request = request
+                .lock()
+                .expect("active preview request lock poisoned");
+            let retain = same_directory
+                && identity.level == RenderLevel::Thumbnail
+                && key.generation == generation
+                && retained < retention_limit;
+            let removed = request.remove_waiter(request_id, retain);
+            if removed && request.waiters.is_empty() && !request.cancellation.is_cancelled() {
+                retained += 1;
+            }
+            changed |= removed;
+        }
+        changed
     }
 }
 
@@ -663,12 +721,16 @@ impl RenderQueue {
             return Err("preview request left the active directory".into());
         }
         let requested_position = schedule_position(priority, rank);
-        work.schedule.reconcile(
-            request_id.clone(),
-            0,
-            [(schedule_key.clone(), requested_position)],
-            OmittedIntentPolicy::Release,
-        );
+        // Thumbnail observers supply a fallback only. Their initial positions
+        // must not pin a stale visible rank over a newer viewport schedule.
+        if level != RenderLevel::Thumbnail {
+            work.schedule.reconcile(
+                request_id.clone(),
+                0,
+                [(schedule_key.clone(), requested_position)],
+                OmittedIntentPolicy::Release,
+            );
+        }
         let effective_position = work
             .schedule
             .effective_position(&schedule_key)
@@ -698,6 +760,7 @@ impl RenderQueue {
                 .waiters
                 .push(Waiter {
                     id: request_id,
+                    position: requested_position,
                     sender,
                     interim_delivered: false,
                 });
@@ -720,13 +783,15 @@ impl RenderQueue {
                 .get(&state_key)
                 .cloned()
                 .expect("pending preview request must have a projection");
+            let scheduled_position = work.schedule.effective_position(&schedule_key);
             let updated = work.pending.update_priority_if_present(&key, |current| {
                 current.waiters.push(Waiter {
                     id: request_id,
+                    position: requested_position,
                     sender,
                     interim_delivered: false,
                 });
-                effective_position
+                scheduled_position.unwrap_or_else(|| current.requested_position())
             });
             debug_assert!(updated);
             return Ok((projection, receiver));
@@ -761,6 +826,7 @@ impl RenderQueue {
             waiters: {
                 carried_waiters.push(Waiter {
                     id: request_id,
+                    position: requested_position,
                     sender,
                     interim_delivered: false,
                 });
@@ -807,10 +873,7 @@ impl RenderQueue {
             changed = true;
         }
         work.apply_schedule_changes(changes);
-        let remaining_position = work
-            .schedule
-            .effective_position(&schedule_key)
-            .unwrap_or_else(|| schedule_position(PreviewPriority::Preload, u32::MAX));
+        let remaining_position = work.schedule.effective_position(&schedule_key);
 
         let pending_keys = work
             .pending_keys
@@ -824,7 +887,8 @@ impl RenderQueue {
                 request.waiters.retain(|waiter| waiter.id != request_id);
                 changed |= request.waiters.len() != previous_len;
                 remove_key = request.waiters.is_empty();
-                (!remove_key).then_some(remaining_position)
+                (!remove_key)
+                    .then(|| remaining_position.unwrap_or_else(|| request.requested_position()))
             });
             if updated
                 && remove_key
@@ -837,17 +901,18 @@ impl RenderQueue {
             }
         }
 
-        for (key, request) in &work.active {
-            if key.source_revision.path != schedule_key.path
-                || key.source_revision.level != schedule_key.level
-            {
-                continue;
-            }
-            let mut request = request
-                .lock()
-                .expect("active preview request lock poisoned");
-            changed |= request.remove_waiter(request_id);
-        }
+        // Only work already taken by a worker may finish without observers.
+        // Leave capacity for the new viewport, including on a single-core host.
+        let retention_limit = self
+            .worker_count()
+            .saturating_sub(1)
+            .min(MAX_RETAINED_THUMBNAILS);
+        changed |= work.cancel_active_waiter(
+            &schedule_key,
+            request_id,
+            retention_limit,
+            self.request_generation.load(Ordering::Relaxed),
+        );
         if !changed {
             work.remember_early_cancellation(request_id);
         }
@@ -970,6 +1035,7 @@ impl RenderQueue {
 
     pub fn invalidate_directory(&self, directory: &std::path::Path) {
         self.request_generation.fetch_add(1, Ordering::Relaxed);
+        self.cancel_invalidated_requests(Some(directory));
         self.projections
             .write()
             .expect("image projection lock poisoned")
@@ -978,10 +1044,32 @@ impl RenderQueue {
 
     pub fn invalidate_all(&self) {
         self.request_generation.fetch_add(1, Ordering::Relaxed);
+        self.cancel_invalidated_requests(None);
         self.projections
             .write()
             .expect("image projection lock poisoned")
             .clear();
+    }
+
+    fn cancel_invalidated_requests(&self, directory: Option<&std::path::Path>) {
+        let work = self.work.0.lock().expect("preview queue lock poisoned");
+        let matches = |path: &std::path::Path| {
+            directory.is_none_or(|directory| path.parent() == Some(directory))
+        };
+        for (key, request, _) in work.pending.entries() {
+            if matches(&key.source_revision.path) {
+                request.cancellation.cancel();
+            }
+        }
+        for (key, request) in &work.active {
+            if matches(&key.source_revision.path) {
+                request
+                    .lock()
+                    .expect("active preview request lock poisoned")
+                    .cancellation
+                    .cancel();
+            }
+        }
     }
 
     pub fn debug_snapshot(&self) -> DebugQueueState {
@@ -1005,7 +1093,7 @@ impl RenderQueue {
                 let position = work
                     .schedule
                     .effective_position(&schedule_key)
-                    .unwrap_or_else(|| schedule_position(PreviewPriority::Preload, u32::MAX));
+                    .unwrap_or_else(|| request.requested_position());
                 debug_item(key, &request, position)
             })
             .collect::<Vec<_>>();
@@ -1637,6 +1725,234 @@ fn priority_from_position(position: SchedulePosition) -> PreviewPriority {
 mod tests {
     use super::*;
 
+    fn thumbnail_work(
+        directory: &std::path::Path,
+        name: &str,
+        priority: PreviewPriority,
+    ) -> (RequestKey, WorkRequest) {
+        let path = directory.join(name);
+        std::fs::write(&path, b"source").unwrap();
+        let source_revision = ProjectionSourceRevision::observe(
+            &path,
+            directory,
+            AssetKind::Heif,
+            RenderLevel::Thumbnail,
+        )
+        .unwrap();
+        let (sender, _receiver) = mpsc::channel();
+        let position = schedule_position(priority, 0);
+        (
+            RequestKey {
+                source_revision: source_revision.clone(),
+                generation: 0,
+            },
+            WorkRequest {
+                source_revision,
+                valid_at: 1,
+                waiters: vec![Waiter {
+                    id: name.into(),
+                    position,
+                    sender,
+                    interim_delivered: false,
+                }],
+                cancellation: CancellationToken::default(),
+                started_tier: position.tier,
+            },
+        )
+    }
+
+    fn schedule_key(key: &RequestKey) -> PreviewScheduleKey {
+        PreviewScheduleKey {
+            path: key.source_revision.path.clone(),
+            level: key.source_revision.level,
+        }
+    }
+
+    fn thumbnail_queue(directory: &std::path::Path) -> RenderQueue {
+        RenderQueue {
+            lane: RenderLevel::Thumbnail,
+            work: Arc::new((Mutex::new(WorkState::default()), Condvar::new())),
+            projections: Arc::new(RwLock::new(HashMap::new())),
+            library: Arc::new(Library::in_memory().unwrap()),
+            cache: Arc::new(
+                CacheManager::load(directory.join("previews"), directory.join("config.json"))
+                    .unwrap(),
+            ),
+            request_generation: Arc::new(AtomicU64::new(0)),
+        }
+    }
+
+    #[test]
+    fn newest_viewport_demotes_pending_work_despite_its_original_visible_priority() {
+        let directory = tempfile::tempdir().unwrap();
+        let mut work = WorkState::default();
+        let (old, old_request) =
+            thumbnail_work(directory.path(), "old.hif", PreviewPriority::Visible);
+        let (new, new_request) =
+            thumbnail_work(directory.path(), "new.hif", PreviewPriority::Nearby);
+        for (key, request) in [(old.clone(), old_request), (new.clone(), new_request)] {
+            let position = request.requested_position();
+            work.pending_keys
+                .insert(schedule_key(&key), HashSet::from([key.clone()]));
+            work.pending.push(key, request, position);
+        }
+        let changes = work
+            .schedule
+            .reconcile(
+                "viewport".into(),
+                1,
+                [
+                    (
+                        schedule_key(&old),
+                        schedule_position(PreviewPriority::Nearby, 0),
+                    ),
+                    (
+                        schedule_key(&new),
+                        schedule_position(PreviewPriority::Visible, 0),
+                    ),
+                ],
+                OmittedIntentPolicy::Release,
+            )
+            .unwrap();
+        work.apply_schedule_changes(changes);
+        assert_eq!(work.pending.pop().unwrap().0, new);
+        let changes = work.schedule.release_scope(&"viewport".into());
+        work.apply_schedule_changes(changes);
+        assert_eq!(
+            work.pending.pop().unwrap().2,
+            schedule_position(PreviewPriority::Visible, 0)
+        );
+    }
+
+    #[test]
+    fn retains_only_a_bounded_number_of_started_thumbnails_and_reuses_them() {
+        let directory = tempfile::tempdir().unwrap();
+        let mut work = WorkState {
+            active_directory: Some(directory.path().to_owned()),
+            ..Default::default()
+        };
+        let mut keys = Vec::new();
+        for name in ["a.hif", "b.hif", "c.hif"] {
+            let (key, request) = thumbnail_work(directory.path(), name, PreviewPriority::Visible);
+            work.active
+                .insert(key.clone(), Arc::new(Mutex::new(request)));
+            assert!(work.cancel_active_waiter(&schedule_key(&key), name, 2, 0));
+            keys.push(key);
+        }
+        for (index, key) in keys.iter().enumerate() {
+            let request = work.active[key].lock().unwrap();
+            assert!(request.waiters.is_empty());
+            assert_eq!(request.cancellation.is_cancelled(), index == 2);
+        }
+        let mut returning = work.active[&keys[0]].lock().unwrap();
+        assert!(
+            returning
+                .take_waiters_for_restart(PreviewPriority::Visible)
+                .is_none()
+        );
+        let (sender, _receiver) = mpsc::channel();
+        returning.waiters.push(Waiter {
+            id: "return".into(),
+            position: schedule_position(PreviewPriority::Visible, 0),
+            sender,
+            interim_delivered: false,
+        });
+        drop(returning);
+        let (key, request) = thumbnail_work(directory.path(), "d.hif", PreviewPriority::Visible);
+        work.active
+            .insert(key.clone(), Arc::new(Mutex::new(request)));
+        assert!(work.cancel_active_waiter(&schedule_key(&key), "d.hif", 2, 0));
+        assert!(
+            !work.active[&key]
+                .lock()
+                .unwrap()
+                .cancellation
+                .is_cancelled()
+        );
+    }
+
+    #[test]
+    fn active_retention_respects_directory_generation_and_available_capacity() {
+        let directory = tempfile::tempdir().unwrap();
+        for (same_directory, generation, limit) in [(false, 0, 2), (true, 1, 2), (true, 0, 0)] {
+            let (key, request) =
+                thumbnail_work(directory.path(), "image.hif", PreviewPriority::Visible);
+            let token = request.cancellation.clone();
+            let mut work = WorkState {
+                active_directory: Some(if same_directory {
+                    directory.path().to_owned()
+                } else {
+                    directory.path().join("other")
+                }),
+                ..Default::default()
+            };
+            work.active
+                .insert(key.clone(), Arc::new(Mutex::new(request)));
+            assert!(work.cancel_active_waiter(&schedule_key(&key), "image.hif", limit, generation));
+            assert!(token.is_cancelled());
+        }
+    }
+
+    #[test]
+    fn unobserved_pending_work_is_removed_and_invalidation_cancels_retained_work() {
+        let directory = tempfile::tempdir().unwrap();
+        let queue = thumbnail_queue(directory.path());
+        let (key, request) =
+            thumbnail_work(directory.path(), "pending.hif", PreviewPriority::Visible);
+        {
+            let mut work = queue.work.0.lock().unwrap();
+            work.active_directory = Some(directory.path().to_owned());
+            work.pending_keys
+                .insert(schedule_key(&key), HashSet::from([key.clone()]));
+            work.pending.push(
+                key.clone(),
+                request,
+                schedule_position(PreviewPriority::Visible, 0),
+            );
+        }
+        assert!(queue.cancel_request(
+            PreviewIdentity {
+                path: key.source_revision.path,
+                level: RenderLevel::Thumbnail
+            },
+            "pending.hif"
+        ));
+        assert!(queue.work.0.lock().unwrap().pending.is_empty());
+        let (key, mut request) =
+            thumbnail_work(directory.path(), "active.hif", PreviewPriority::Visible);
+        assert!(request.remove_waiter("active.hif", true));
+        let token = request.cancellation.clone();
+        queue
+            .work
+            .0
+            .lock()
+            .unwrap()
+            .active
+            .insert(key, Arc::new(Mutex::new(request)));
+        queue.invalidate_directory(directory.path());
+        assert!(token.is_cancelled());
+        assert_eq!(queue.request_generation.load(Ordering::Relaxed), 1);
+    }
+
+    #[test]
+    fn switching_directories_cancels_unobserved_running_thumbnails() {
+        let directory = tempfile::tempdir().unwrap();
+        let queue = thumbnail_queue(directory.path());
+        let (key, mut request) =
+            thumbnail_work(directory.path(), "retained.hif", PreviewPriority::Visible);
+        assert!(request.remove_waiter("retained.hif", true));
+        let token = request.cancellation.clone();
+        queue
+            .work
+            .0
+            .lock()
+            .unwrap()
+            .active
+            .insert(key, Arc::new(Mutex::new(request)));
+        queue.clear_pending_outside_directory(&directory.path().join("other"));
+        assert!(token.is_cancelled());
+    }
+
     #[test]
     fn full_selection_and_worker_capacity_are_independent_of_thumbnail_work() {
         let directory = tempfile::tempdir().unwrap();
@@ -1709,6 +2025,7 @@ mod tests {
             valid_at: 1,
             waiters: vec![Waiter {
                 id: "first".into(),
+                position: schedule_position(PreviewPriority::Loupe, 0),
                 sender,
                 interim_delivered: false,
             }],
@@ -2144,6 +2461,7 @@ mod tests {
             valid_at: 1,
             waiters: vec![Waiter {
                 id: "consumer".into(),
+                position: schedule_position(PreviewPriority::Loupe, 0),
                 sender,
                 interim_delivered: true,
             }],
@@ -2151,7 +2469,7 @@ mod tests {
             started_tier: 0,
         };
 
-        assert!(request.remove_waiter("consumer"));
+        assert!(request.remove_waiter("consumer", false));
         assert!(cancellation.is_cancelled());
     }
 
@@ -2172,6 +2490,7 @@ mod tests {
             valid_at: 1,
             waiters: vec![Waiter {
                 id: "neighbor".into(),
+                position: schedule_position(PreviewPriority::Nearby, 0),
                 sender,
                 interim_delivered: false,
             }],

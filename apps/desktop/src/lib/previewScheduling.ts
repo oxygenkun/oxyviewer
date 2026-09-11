@@ -126,6 +126,17 @@ export function backgroundPreviewIntents(
   }));
 }
 
+/** Loupe still owns its selected base while the filmstrip scrolls elsewhere. */
+export function filmstripPreviewIntents(
+  candidates: readonly PreviewViewportCandidate[],
+  selected: AssetSummary,
+): PreviewScheduleIntent[] {
+  return [
+    { path: selected.path, level: "thumbnail", priority: "loupe", rank: 0 },
+    ...viewportPreviewIntents(candidates, selected).filter((intent) => intent.path !== selected.path),
+  ];
+}
+
 export class PreviewScheduleScope {
   readonly id: string;
   private epoch = 0;

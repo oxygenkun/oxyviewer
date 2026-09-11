@@ -1,0 +1,303 @@
+{
+  "date": "2026-09-11",
+  "scope": "Windows release Tauri/WebView2; 241 real HIF files in one local directory; isolated app data and artifact cache per policy; OS file cache not cleared",
+  "metric": "Image complete/naturalWidth in actual visible filmstrip; 25 ms requested DOM sampling plus two animation frames. Full-folder measures native Ready projections, not off-screen browser image decode.",
+  "jumps": {
+    "baseline": {
+      "jump": {
+        "firstVisibleMs": 153.1,
+        "allVisibleMs": 359.7,
+        "visibleCount": 8,
+        "allImagesLoaded": true
+      },
+      "middle": {
+        "firstVisibleMs": 144.5,
+        "allVisibleMs": 326.5,
+        "visibleCount": 9,
+        "allImagesLoaded": true
+      },
+      "end": {
+        "firstVisibleMs": 273.4,
+        "allVisibleMs": 327.7,
+        "visibleCount": 8,
+        "allImagesLoaded": true
+      },
+      "warm-return": {
+        "firstVisibleMs": 26.1,
+        "allVisibleMs": 26.1,
+        "visibleCount": 8,
+        "allImagesLoaded": true
+      }
+    },
+    "no-cancel": {
+      "jump": {
+        "firstVisibleMs": 218.9,
+        "allVisibleMs": 350.8,
+        "visibleCount": 8,
+        "allImagesLoaded": true
+      },
+      "middle": {
+        "firstVisibleMs": 149.6,
+        "allVisibleMs": 356.1,
+        "visibleCount": 9,
+        "allImagesLoaded": true
+      },
+      "end": {
+        "firstVisibleMs": 180.5,
+        "allVisibleMs": 388.2,
+        "visibleCount": 8,
+        "allImagesLoaded": true
+      },
+      "warm-return": {
+        "firstVisibleMs": 25.8,
+        "allVisibleMs": 25.8,
+        "visibleCount": 8,
+        "allImagesLoaded": true
+      }
+    },
+    "serial": {
+      "jump": {
+        "firstVisibleMs": 435.1,
+        "allVisibleMs": 670.8,
+        "visibleCount": 8,
+        "allImagesLoaded": true
+      },
+      "middle": {
+        "firstVisibleMs": 713.5,
+        "allVisibleMs": 1253.7,
+        "visibleCount": 9,
+        "allImagesLoaded": true
+      },
+      "end": {
+        "firstVisibleMs": 1100,
+        "allVisibleMs": 1722.3,
+        "visibleCount": 8,
+        "allImagesLoaded": true
+      },
+      "warm-return": {
+        "firstVisibleMs": 25.7,
+        "allVisibleMs": 25.7,
+        "visibleCount": 8,
+        "allImagesLoaded": true
+      }
+    }
+  },
+  "sweeps": [
+    {
+      "round": 1,
+      "initialFullCacheCommitChecked": false,
+      "baseline": {
+        "firstVisibleMs": 1606,
+        "allVisibleMs": 1793.6,
+        "scrollFinishedMs": 683.7,
+        "afterStopFirstMs": 922.3,
+        "afterStopAllMs": 1109.9,
+        "visibleCount": 8,
+        "allImagesLoaded": true,
+        "visibility": "visible",
+        "hardwareConcurrency": 24,
+        "longestTaskMs": 0,
+        "longestFrameMs": 18.7,
+        "requestCount": 374,
+        "requestErrorCount": 251,
+        "cancellationMessages": 359,
+        "suppressedCancellationMessages": 0
+      },
+      "noCancel": {
+        "firstVisibleMs": 971.5,
+        "allVisibleMs": 1702.7,
+        "scrollFinishedMs": 679.9,
+        "afterStopFirstMs": 291.6,
+        "afterStopAllMs": 1022.8,
+        "visibleCount": 8,
+        "allImagesLoaded": true,
+        "visibility": "visible",
+        "hardwareConcurrency": 24,
+        "longestTaskMs": 0,
+        "longestFrameMs": 106.2,
+        "requestCount": 370,
+        "requestErrorCount": 0,
+        "cancellationMessages": 355,
+        "suppressedCancellationMessages": 355
+      }
+    },
+    {
+      "round": 2,
+      "initialFullCacheCommitChecked": false,
+      "baseline": {
+        "firstVisibleMs": 936.5,
+        "allVisibleMs": 1422.1,
+        "scrollFinishedMs": 680.5,
+        "afterStopFirstMs": 256,
+        "afterStopAllMs": 741.6,
+        "visibleCount": 8,
+        "allImagesLoaded": true,
+        "visibility": "visible",
+        "hardwareConcurrency": 24,
+        "longestTaskMs": 0,
+        "longestFrameMs": 99.9,
+        "requestCount": 371,
+        "requestErrorCount": 276,
+        "cancellationMessages": 356,
+        "suppressedCancellationMessages": 0
+      },
+      "noCancel": {
+        "firstVisibleMs": 1868.3,
+        "allVisibleMs": 2365.3,
+        "scrollFinishedMs": 754.3,
+        "afterStopFirstMs": 1114,
+        "afterStopAllMs": 1611,
+        "visibleCount": 8,
+        "allImagesLoaded": true,
+        "visibility": "visible",
+        "hardwareConcurrency": 24,
+        "longestTaskMs": 0,
+        "longestFrameMs": 31.2,
+        "requestCount": 374,
+        "requestErrorCount": 0,
+        "cancellationMessages": 359,
+        "suppressedCancellationMessages": 359
+      }
+    },
+    {
+      "round": 3,
+      "initialFullCacheCommitChecked": true,
+      "baseline": {
+        "firstVisibleMs": 1178.7,
+        "allVisibleMs": 1533.7,
+        "scrollFinishedMs": 614.9,
+        "afterStopFirstMs": 563.8,
+        "afterStopAllMs": 918.8,
+        "visibleCount": 8,
+        "allImagesLoaded": true,
+        "visibility": "visible",
+        "hardwareConcurrency": 24,
+        "longestTaskMs": 0,
+        "longestFrameMs": 12.6,
+        "requestCount": 374,
+        "requestErrorCount": 268,
+        "cancellationMessages": 359,
+        "suppressedCancellationMessages": 0
+      },
+      "noCancel": {
+        "firstVisibleMs": 1497,
+        "allVisibleMs": 2354,
+        "scrollFinishedMs": 608,
+        "afterStopFirstMs": 889,
+        "afterStopAllMs": 1746,
+        "visibleCount": 8,
+        "allImagesLoaded": true,
+        "visibility": "visible",
+        "hardwareConcurrency": 24,
+        "longestTaskMs": 0,
+        "longestFrameMs": 100,
+        "requestCount": 365,
+        "requestErrorCount": 0,
+        "cancellationMessages": 350,
+        "suppressedCancellationMessages": 350
+      }
+    }
+  ],
+  "folders": [
+    {
+      "concurrency": 1,
+      "count": 241,
+      "totalBackendReadyMs": 24333.6,
+      "errors": 0,
+      "readyCount": 241,
+      "checkpoints": [
+        {
+          "oneBasedIndex": 61,
+          "readyMs": 1876.5
+        },
+        {
+          "oneBasedIndex": 121,
+          "readyMs": 6559.3
+        },
+        {
+          "oneBasedIndex": 191,
+          "readyMs": 15480.2
+        },
+        {
+          "oneBasedIndex": 241,
+          "readyMs": 24333.6
+        }
+      ]
+    },
+    {
+      "concurrency": 24,
+      "count": 241,
+      "totalBackendReadyMs": 1766.8,
+      "errors": 0,
+      "readyCount": 241,
+      "checkpoints": [
+        {
+          "oneBasedIndex": 61,
+          "readyMs": 346.4
+        },
+        {
+          "oneBasedIndex": 121,
+          "readyMs": 848.9
+        },
+        {
+          "oneBasedIndex": 191,
+          "readyMs": 1346.3
+        },
+        {
+          "oneBasedIndex": 241,
+          "readyMs": 1722.6
+        }
+      ]
+    }
+  ],
+  "serialSweep": {
+    "firstVisibleMs": null,
+    "allVisibleMs": null,
+    "scrollFinishedMs": 681.7,
+    "afterStopFirstMs": null,
+    "afterStopAllMs": null,
+    "visibleCount": 8,
+    "allImagesLoaded": false,
+    "visibility": "visible",
+    "hardwareConcurrency": 24,
+    "longestTaskMs": 0,
+    "longestFrameMs": 43.8,
+    "requestCount": 374,
+    "requestErrorCount": 0,
+    "cancellationMessages": 359,
+    "suppressedCancellationMessages": 359,
+    "note": "Existing request FIFO without deduplication; visible target did not complete within 15 s. Not an optimized unique-file queue."
+  },
+  "developmentControls": {
+    "baselineAllVisibleMs": 781,
+    "deferredMetadataAllVisibleMs": 434.8,
+    "note": "Different cold cohorts; supports frontend cost, not a precise causal effect size.",
+    "productionFrontendAllVisibleMs": [
+      402.5,
+      426.7,
+      363.6
+    ],
+    "realLibraryProjectionRows": 52132,
+    "realLibraryAllVisibleMs": [
+      780.6,
+      772.4,
+      730.9
+    ]
+  },
+  "nativeExample": {
+    "source": "async native timing probe with copied real library",
+    "mediaStartedMs": 240.76,
+    "mediaFinishedMs": 274,
+    "readyEmittedMs": 278.5,
+    "frontendImageLoadedMs": 732.7,
+    "sqliteProjectionLookupMaxMs": 4.38,
+    "queueLockWaitMaxMs": 124.84,
+    "protocolMaxMs": 1.41
+  },
+  "excluded": [
+    "fetch-only policy attempts in packaged build: interception observed no messages",
+    "full-folder attempts rejected for noncanonical paths",
+    "full-folder attempts exceeding Windows argument length",
+    "synchronous stderr timing probes: instrumentation overhead"
+  ]
+}

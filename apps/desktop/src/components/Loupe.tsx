@@ -42,7 +42,7 @@ import type { MessageKey } from "../lib/i18n";
 import { acceptMetadataProjections } from "../lib/metadataProjection";
 import type { RawPreviewStatus } from "../lib/rawPreview";
 import { renderPlan } from "../lib/preview";
-import { PreviewScheduleScope } from "../lib/previewScheduling";
+import { filmstripPreviewIntents, PreviewScheduleScope } from "../lib/previewScheduling";
 import { useWorkspaceStore } from "../store";
 import type { AssetSummary, HeifDecodeStatus, NavigatorPosition } from "../types";
 import { AssetMetadataBadges } from "./AssetMetadataBadges";
@@ -359,27 +359,17 @@ export function Loupe({
       .catch(() => undefined);
   }, [visibleMetadataSignature]);
 
-  const filmstripScheduleIntents = useMemo(() => visibleFilmstripAssets.flatMap(
-    (asset, rank) => {
-      const priority = asset.id === active.id ? "loupe" as const : "visible" as const;
-      const thumbnailIntent = {
-        path: asset.path,
-        level: "thumbnail" as const,
-        priority,
-        rank,
-      };
-      const previewMethod = renderPlan(asset.kind, "loupe")[0].method;
-      return previewMethod.type === "generatedImage"
-        && previewMethod.requestLevel !== "thumbnail"
-        ? [thumbnailIntent, {
-            path: asset.path,
-            level: previewMethod.requestLevel,
-            priority,
-            rank,
-          }]
-        : [thumbnailIntent];
-    },
-  ), [active.id, visibleFilmstripAssets]);
+  const filmstripScheduleIntents = useMemo(() => filmstripPreviewIntents(
+    virtualFilmstripItems.flatMap((item) => {
+      const asset = assets[item.index];
+      return asset ? [{
+        asset,
+        visible: visibleFilmstripIdSet.has(asset.id),
+        distance: Math.abs((item.start + item.end) / 2 - (filmstripViewportStart + filmstripViewportEnd) / 2),
+      }] : [];
+    }),
+    active,
+  ), [active, assets, virtualFilmstripItems, visibleFilmstripIdSet, filmstripViewportStart, filmstripViewportEnd]);
   useEffect(() => {
     filmstripSchedule.reconcile(filmstripScheduleIntents);
   }, [filmstripSchedule, filmstripScheduleIntents]);

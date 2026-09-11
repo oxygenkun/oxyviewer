@@ -46,6 +46,7 @@ import { acceptMetadataProjection } from "./metadataProjection";
 import { perfMark } from "./perfProbe";
 import { recordBrowseTiming } from "./browseDiagnostics";
 import { beginPreviewDebug } from "./previewDebug";
+import { sharedThumbnailRequests } from "./sharedThumbnailRequests";
 
 function cancelGeneratedPreviewRequest(
   asset: AssetSummary,
@@ -754,6 +755,20 @@ export async function generatedPreview(
   rank = 0,
 ): Promise<PreviewResult | undefined> {
   if (!isTauri()) return undefined;
+  if (level === "thumbnail") {
+    return sharedThumbnailRequests.request(asset, signal, priority, rank, (sharedSignal, sharedPriority, sharedRank) =>
+      requestGeneratedPreview(asset, level, sharedSignal, sharedPriority, sharedRank));
+  }
+  return requestGeneratedPreview(asset, level, signal, priority, rank);
+}
+
+async function requestGeneratedPreview(
+  asset: AssetSummary,
+  level: RenderLevel,
+  signal: AbortSignal | undefined,
+  priority: PreviewPriority,
+  rank: number,
+): Promise<PreviewResult | undefined> {
   // Do not register a debug WAIT entry for work React Query has already
   // cancelled. There is no lifecycle handle to clean up if we throw first.
   if (signal?.aborted) throw signal.reason ?? new DOMException("Aborted", "AbortError");
@@ -823,7 +838,7 @@ export async function generatedPreview(
     // Rust keeps the native request alive through its upgrade and publishes
     // either Satisfied or terminal Error into the projection store. Settling
     // here also lets independent full-detail renderers (HEIF tiles) start.
-    interim = result.satisfaction === "interim";
+    interim = level !== "thumbnail" && result.satisfaction === "interim";
     return { ...result, url: mediaProtocolUrl(result.resource.url) };
   } catch (error) {
     if (signal?.aborted) debug?.cancel();

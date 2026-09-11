@@ -7,6 +7,7 @@ import {
 } from "./api";
 import {
   backgroundPreviewIntents,
+  filmstripPreviewIntents,
   PreviewScheduleScope,
   viewportPreviewIntents,
 } from "./previewScheduling";
@@ -87,6 +88,22 @@ describe("preview scheduling policy", () => {
       "/photos/l1.arw",
       "/photos/l2.arw",
     ]);
+  });
+
+  it("demotes filmstrip overscan while retaining the loupe selection", () => {
+    const selected = asset("selected");
+    const oldVisible = asset("old-visible");
+    const newVisible = asset("new-visible");
+    const intents = filmstripPreviewIntents([
+      { asset: oldVisible, visible: false, distance: 200 },
+      { asset: newVisible, visible: true, distance: 0 },
+    ], selected);
+    expect(intents.map(({ path, priority }) => [path, priority])).toEqual([
+      [selected.path, "loupe"], [newVisible.path, "visible"], [oldVisible.path, "nearby"],
+    ]);
+    expect(filmstripPreviewIntents([
+      { asset: selected, visible: true, distance: 0 },
+    ], selected)).toHaveLength(1);
   });
 
   it("coalesces same-frame snapshots and skips identical content", async () => {

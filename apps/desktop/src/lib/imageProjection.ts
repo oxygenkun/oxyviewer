@@ -6,6 +6,7 @@ import {
   discardBrowserImageResource,
 } from "./browserImageCache";
 import { mediaProtocolUrl } from "./mediaProtocolUrl";
+import { sharedThumbnailRequests } from "./sharedThumbnailRequests";
 
 export interface ImageProjectionMirror extends Omit<ImageProjection, "result"> {
   result?: PreviewResult;
@@ -88,11 +89,13 @@ export function acceptImageProjection(projection: ImageProjection) {
 }
 
 export function invalidateImageDirectory(directory: string) {
+  sharedThumbnailRequests.invalidate(directory);
   clearBrowserImageResources();
   useImageProjectionStore.getState().invalidateDirectory(directory);
 }
 
 export function clearImageProjections() {
+  sharedThumbnailRequests.invalidate();
   clearBrowserImageResources();
   useImageProjectionStore.getState().clear();
 }

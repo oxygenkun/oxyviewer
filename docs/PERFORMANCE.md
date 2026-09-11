@@ -16,6 +16,23 @@ end-to-end regression harness that enforces these budgets is described in
 
 ## Verification Log
 
+- 2026-09-11: Filmstrip thumbnail consumers now share in-flight IPC requests;
+  pending work follows current viewport/overscan scopes, and at most two
+  worker-active thumbnails may finish after their last consumer leaves the
+  same directory. Three alternating release/WebView2 A/B pairs over 241 local
+  HIF files measured median stop-to-whole-viewport readiness **741 -> 634 ms**
+  (14% less waiting). One pair was 3.4% slower; this is a small local sample.
+  Each after sweep requested all 199 encountered files once, compared with
+  371–374 requests before; median cancellation messages fell **359 -> 152**.
+  Warm filmstrip return stayed about 26 ms. Caches and app state were isolated;
+  OS file cache was not cleared. Frontend checks/184 tests/build and Rust
+  formatting/workspace Clippy/workspace tests passed. Packaged cold HIF,
+  cached navigation, filmstrip, and JPEG/HIF resource checks passed.
+  The JPEG registry peaked at 283 of 512 entries and settled to 78 for 78
+  displayed images; rapid selection across 80 HIF paths peaked at 80 entries
+  and settled to 32. [Implementation and limits](research/filmstrip-scheduling-2026-09-11.md),
+  [A/B samples](research/filmstrip-scheduling-measurements-2026-09-11.json).
+
 - 2026-09-11: Windows FFmpeg now publishes each completed JPEG tile while the
   decoder process is still running, using atomic image2 output files. The
   selected-image path also skips the two generic executable capability probes;

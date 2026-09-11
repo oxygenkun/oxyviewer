@@ -1,0 +1,413 @@
+{
+  "date": "2026-09-11",
+  "platform": "Windows release Tauri/WebView2",
+  "logicalProcessors": 24,
+  "input": {
+    "format": "HIF",
+    "files": 241,
+    "storage": "local",
+    "fitsFirstPage": true
+  },
+  "isolation": "New process, application database, artifact cache and WebView profile for each run. OS file cache not flushed.",
+  "readiness": "Displayed img complete and naturalWidth > 0, no visible placeholders; requested 25 ms polling and two animation frames after completion.",
+  "startup": "Initial selected full image and background full-image artifact commit settled before measurements.",
+  "ipc": "Observed WebView postMessage and thumbnail callback completion without modifying admission or cancellation.",
+  "rejectedCalls": "IPC rejections during scrolling include cancellation; these are not failed-decode counts.",
+  "runs": [
+    {
+      "name": "before-sweep-1",
+      "variant": "before",
+      "thumbnailRequests": 374,
+      "uniqueRequestedFiles": 199,
+      "cancellationMessages": 359,
+      "rejectedThumbnailCalls": 276,
+      "cases": [
+        {
+          "name": "sweep",
+          "fraction": 0.8,
+          "steps": 32,
+          "movementMs": 645.6,
+          "firstReadyAfterStopMs": 348.4,
+          "allReadyAfterStopMs": 888.5,
+          "endToEndAllReadyMs": 1534.1,
+          "visibleThumbnails": 8,
+          "allVisibleReady": true,
+          "visible": true,
+          "focused": true,
+          "longTasksOver50Ms": 0,
+          "maxFrameGapMs": 18.9
+        }
+      ]
+    },
+    {
+      "name": "after-sweep-1",
+      "variant": "after",
+      "thumbnailRequests": 199,
+      "uniqueRequestedFiles": 199,
+      "cancellationMessages": 147,
+      "rejectedThumbnailCalls": 116,
+      "cases": [
+        {
+          "name": "sweep",
+          "fraction": 0.8,
+          "steps": 32,
+          "movementMs": 692.9,
+          "firstReadyAfterStopMs": 297.4,
+          "allReadyAfterStopMs": 634,
+          "endToEndAllReadyMs": 1326.9,
+          "visibleThumbnails": 8,
+          "allVisibleReady": true,
+          "visible": true,
+          "focused": true,
+          "longTasksOver50Ms": 0,
+          "maxFrameGapMs": 24.9
+        }
+      ]
+    },
+    {
+      "name": "after-sweep-2",
+      "variant": "after",
+      "thumbnailRequests": 199,
+      "uniqueRequestedFiles": 199,
+      "cancellationMessages": 153,
+      "rejectedThumbnailCalls": 128,
+      "cases": [
+        {
+          "name": "sweep",
+          "fraction": 0.8,
+          "steps": 32,
+          "movementMs": 656.8,
+          "firstReadyAfterStopMs": 222.6,
+          "allReadyAfterStopMs": 570.4,
+          "endToEndAllReadyMs": 1227.2,
+          "visibleThumbnails": 8,
+          "allVisibleReady": true,
+          "visible": true,
+          "focused": true,
+          "longTasksOver50Ms": 0,
+          "maxFrameGapMs": 55.8
+        }
+      ]
+    },
+    {
+      "name": "before-sweep-2",
+      "variant": "before",
+      "thumbnailRequests": 374,
+      "uniqueRequestedFiles": 199,
+      "cancellationMessages": 359,
+      "rejectedThumbnailCalls": 253,
+      "cases": [
+        {
+          "name": "sweep",
+          "fraction": 0.8,
+          "steps": 32,
+          "movementMs": 655.7,
+          "firstReadyAfterStopMs": 651.5,
+          "allReadyAfterStopMs": 740.8,
+          "endToEndAllReadyMs": 1396.5,
+          "visibleThumbnails": 8,
+          "allVisibleReady": true,
+          "visible": true,
+          "focused": true,
+          "longTasksOver50Ms": 0,
+          "maxFrameGapMs": 18.8
+        }
+      ]
+    },
+    {
+      "name": "before-sweep-3",
+      "variant": "before",
+      "thumbnailRequests": 371,
+      "uniqueRequestedFiles": 199,
+      "cancellationMessages": 356,
+      "rejectedThumbnailCalls": 277,
+      "cases": [
+        {
+          "name": "sweep",
+          "fraction": 0.8,
+          "steps": 32,
+          "movementMs": 619.2,
+          "firstReadyAfterStopMs": 416.1,
+          "allReadyAfterStopMs": 691.5,
+          "endToEndAllReadyMs": 1310.7,
+          "visibleThumbnails": 8,
+          "allVisibleReady": true,
+          "visible": true,
+          "focused": true,
+          "longTasksOver50Ms": 0,
+          "maxFrameGapMs": 106.1
+        }
+      ]
+    },
+    {
+      "name": "after-sweep-3",
+      "variant": "after",
+      "thumbnailRequests": 199,
+      "uniqueRequestedFiles": 199,
+      "cancellationMessages": 152,
+      "rejectedThumbnailCalls": 129,
+      "cases": [
+        {
+          "name": "sweep",
+          "fraction": 0.8,
+          "steps": 32,
+          "movementMs": 625.1,
+          "firstReadyAfterStopMs": 381.9,
+          "allReadyAfterStopMs": 715.1,
+          "endToEndAllReadyMs": 1340.2,
+          "visibleThumbnails": 8,
+          "allVisibleReady": true,
+          "visible": true,
+          "focused": true,
+          "longTasksOver50Ms": 0,
+          "maxFrameGapMs": 18.8
+        }
+      ]
+    },
+    {
+      "name": "before-jumps",
+      "variant": "before",
+      "thumbnailRequests": 128,
+      "uniqueRequestedFiles": 96,
+      "cancellationMessages": 145,
+      "rejectedThumbnailCalls": 0,
+      "cases": [
+        {
+          "name": "jump",
+          "fraction": 0.25,
+          "steps": 1,
+          "movementMs": 0.6,
+          "firstReadyAfterStopMs": 118.1,
+          "allReadyAfterStopMs": 330.7,
+          "endToEndAllReadyMs": 331.3,
+          "visibleThumbnails": 8,
+          "allVisibleReady": true,
+          "visible": true,
+          "focused": true,
+          "longTasksOver50Ms": 0,
+          "maxFrameGapMs": 18.8
+        },
+        {
+          "name": "middle",
+          "fraction": 0.5,
+          "steps": 1,
+          "movementMs": 0.2,
+          "firstReadyAfterStopMs": 123.6,
+          "allReadyAfterStopMs": 356.3,
+          "endToEndAllReadyMs": 356.5,
+          "visibleThumbnails": 9,
+          "allVisibleReady": true,
+          "visible": true,
+          "focused": true,
+          "longTasksOver50Ms": 0,
+          "maxFrameGapMs": 12.6
+        },
+        {
+          "name": "end",
+          "fraction": 0.8,
+          "steps": 1,
+          "movementMs": 0.3,
+          "firstReadyAfterStopMs": 165.3,
+          "allReadyAfterStopMs": 345.8,
+          "endToEndAllReadyMs": 346.1,
+          "visibleThumbnails": 8,
+          "allVisibleReady": true,
+          "visible": true,
+          "focused": true,
+          "longTasksOver50Ms": 0,
+          "maxFrameGapMs": 12.5
+        },
+        {
+          "name": "warm-return",
+          "fraction": 0.25,
+          "steps": 1,
+          "movementMs": 0.3,
+          "firstReadyAfterStopMs": 25.5,
+          "allReadyAfterStopMs": 25.5,
+          "endToEndAllReadyMs": 25.8,
+          "visibleThumbnails": 8,
+          "allVisibleReady": true,
+          "visible": true,
+          "focused": true,
+          "longTasksOver50Ms": 0,
+          "maxFrameGapMs": 12.7
+        }
+      ]
+    },
+    {
+      "name": "after-jumps",
+      "variant": "after",
+      "thumbnailRequests": 104,
+      "uniqueRequestedFiles": 96,
+      "cancellationMessages": 0,
+      "rejectedThumbnailCalls": 0,
+      "cases": [
+        {
+          "name": "jump",
+          "fraction": 0.25,
+          "steps": 1,
+          "movementMs": 0.6,
+          "firstReadyAfterStopMs": 138.9,
+          "allReadyAfterStopMs": 241.7,
+          "endToEndAllReadyMs": 242.3,
+          "visibleThumbnails": 8,
+          "allVisibleReady": true,
+          "visible": true,
+          "focused": true,
+          "longTasksOver50Ms": 0,
+          "maxFrameGapMs": 106.2
+        },
+        {
+          "name": "middle",
+          "fraction": 0.5,
+          "steps": 1,
+          "movementMs": 0.5,
+          "firstReadyAfterStopMs": 223.6,
+          "allReadyAfterStopMs": 329.7,
+          "endToEndAllReadyMs": 330.2,
+          "visibleThumbnails": 9,
+          "allVisibleReady": true,
+          "visible": true,
+          "focused": true,
+          "longTasksOver50Ms": 0,
+          "maxFrameGapMs": 18.8
+        },
+        {
+          "name": "end",
+          "fraction": 0.8,
+          "steps": 1,
+          "movementMs": 0.4,
+          "firstReadyAfterStopMs": 186.5,
+          "allReadyAfterStopMs": 372.1,
+          "endToEndAllReadyMs": 372.5,
+          "visibleThumbnails": 8,
+          "allVisibleReady": true,
+          "visible": true,
+          "focused": true,
+          "longTasksOver50Ms": 0,
+          "maxFrameGapMs": 12.5
+        },
+        {
+          "name": "warm-return",
+          "fraction": 0.25,
+          "steps": 1,
+          "movementMs": 0.3,
+          "firstReadyAfterStopMs": 25.9,
+          "allReadyAfterStopMs": 25.9,
+          "endToEndAllReadyMs": 26.2,
+          "visibleThumbnails": 8,
+          "allVisibleReady": true,
+          "visible": true,
+          "focused": true,
+          "longTasksOver50Ms": 0,
+          "maxFrameGapMs": 10.5
+        }
+      ]
+    }
+  ],
+  "medians": {
+    "before": {
+      "samples": 3,
+      "allReadyAfterStopMs": 740.8,
+      "firstReadyAfterStopMs": 416.1,
+      "thumbnailRequests": 374,
+      "cancellationMessages": 359
+    },
+    "after": {
+      "samples": 3,
+      "allReadyAfterStopMs": 634,
+      "firstReadyAfterStopMs": 297.4,
+      "thumbnailRequests": 199,
+      "cancellationMessages": 152
+    }
+  },
+  "regressionChecks": [
+    {
+      "name": "cold-preview-hif",
+      "complete": true,
+      "firstPreviewMs": 88.3,
+      "budgetMs": 800
+    },
+    {
+      "name": "navigation-cache-hif",
+      "complete": true,
+      "returns": [
+        {
+          "elapsedMs": 5.6,
+          "heifMemoryHit": true,
+          "displaySharpening": false
+        },
+        {
+          "elapsedMs": 8.1,
+          "heifMemoryHit": true,
+          "displaySharpening": false
+        },
+        {
+          "elapsedMs": 5.3,
+          "heifMemoryHit": true,
+          "displaySharpening": false
+        },
+        {
+          "elapsedMs": 6.2,
+          "heifMemoryHit": true,
+          "displaySharpening": false
+        },
+        {
+          "elapsedMs": 5.3,
+          "heifMemoryHit": true,
+          "displaySharpening": true
+        },
+        {
+          "elapsedMs": 9.5,
+          "heifMemoryHit": true,
+          "displaySharpening": true
+        },
+        {
+          "elapsedMs": 4.9,
+          "heifMemoryHit": true,
+          "displaySharpening": true
+        },
+        {
+          "elapsedMs": 4.7,
+          "heifMemoryHit": true,
+          "displaySharpening": true
+        }
+      ]
+    },
+    {
+      "name": "filmstrip-scroll-hif",
+      "complete": true,
+      "stops": [
+        {
+          "visibleThumbnails": 17,
+          "allReadyMs": 26.9
+        },
+        {
+          "visibleThumbnails": 17,
+          "allReadyMs": 26.7
+        },
+        {
+          "visibleThumbnails": 17,
+          "allReadyMs": 25.4
+        }
+      ]
+    },
+    {
+      "name": "resource-stress-small-grid",
+      "complete": true,
+      "peakEntries": 283,
+      "maxEntries": 512,
+      "settledEntries": 78,
+      "displayedElements": 78,
+      "fixtureGeneration": "Windows System.Drawing, 600 paths to 160x120 gradient JPEG; original scenario unchanged."
+    },
+    {
+      "name": "resource-stress-hif",
+      "complete": true,
+      "peakEntries": 80,
+      "maxEntries": 512,
+      "settledEntries": 32,
+      "displayedElements": 33
+    }
+  ]
+}
