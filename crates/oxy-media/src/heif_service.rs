@@ -7,8 +7,8 @@ use crate::{
     decode_control::{DecodePriority, acquire_decode, try_acquire_heif_session_cache_write},
     pipeline::heif::backend::{
         BackendExecutionError, HeifBackend as PlannedHeifBackend, HeifBackendPlan, HeifOperation,
-        backend_plan, capabilities as backend_capabilities, execute_backend_plan,
-        format_attempt_diagnostics,
+        backend_plan, capabilities as backend_capabilities,
+        execute_backend_plan_with_fallback_policy, format_attempt_diagnostics,
     },
 };
 use image::{DynamicImage, RgbaImage};
@@ -17,13 +17,14 @@ use oxy_domain::{
     HeifTilePayload,
 };
 use std::{
+    cell::Cell,
     collections::HashMap,
     path::{Path, PathBuf},
     sync::{
         Arc, Mutex,
         atomic::{AtomicBool, AtomicU64, Ordering},
     },
-    time::Instant,
+    time::{Duration, Instant},
 };
 
 #[cfg(target_os = "windows")]
@@ -78,7 +79,7 @@ enum SessionDecode {
         presentation: crate::cache::ArtifactPresentation,
     },
     #[cfg(target_os = "windows")]
-    EncodedTiles(Vec<crate::backends::ffmpeg_heif::EncodedTile>),
+    PublishedTiles,
 }
 
 #[derive(Default)]
@@ -236,47 +237,60 @@ impl HeifDecodeService {
             return Err(MediaError::StaleSourceRevision);
         }
         let decode_started = Instant::now();
-        let decoded = execute_backend_plan(
+        let mut cache_tiles = Vec::new();
+        let published_tiles = Cell::new(false);
+        let mut streaming_publish_time = Duration::ZERO;
+        let decoded = execute_backend_plan_with_fallback_policy(
             &backend_plan,
             || cancelled.load(Ordering::Acquire),
+            || !published_tiles.get(),
             |backend| {
-                decode_session_backend(backend, session, &decode_path, display_sharpening, &|| {
-                    cancelled.load(Ordering::Acquire)
-                })
+                decode_session_backend(
+                    backend,
+                    session,
+                    &decode_path,
+                    display_sharpening,
+                    &|| cancelled.load(Ordering::Acquire),
+                    &mut |tile| {
+                        let publish_started = Instant::now();
+                        let event =
+                            tile_event(session, tile.x, tile.y, tile.width, tile.height, true);
+                        let stored = HeifTile {
+                            width: tile.width,
+                            height: tile.height,
+                            payload: HeifTileData::Jpeg(Arc::from(tile.jpeg)),
+                        };
+                        if !self.publish_tile_if_current(
+                            session,
+                            &cancelled,
+                            stored.clone(),
+                            event,
+                            &mut publish,
+                        ) {
+                            return Err(MediaError::Cancelled);
+                        }
+                        published_tiles.set(true);
+                        cache_tiles.push(tile_cache::PositionedTile {
+                            x: tile.x,
+                            y: tile.y,
+                            tile: stored,
+                        });
+                        streaming_publish_time += publish_started.elapsed();
+                        Ok(())
+                    },
+                )
             },
         )
         .map_err(BackendExecutionError::into_media_error)?;
-        let decode_ms = elapsed_ms(decode_started);
+        let streaming_publish_ms = streaming_publish_time.as_millis() as u64;
+        let decode_ms = elapsed_ms(decode_started).saturating_sub(streaming_publish_ms);
         let backend = decoded.backend.kind();
         let acceleration = decoded.backend.acceleration();
         let fallback_reason = format_attempt_diagnostics(&decoded.diagnostics);
         let tile_started = Instant::now();
-        let mut cache_tiles = Vec::new();
         let (codec, canonical_image) = match decoded.value {
             #[cfg(target_os = "windows")]
-            SessionDecode::EncodedTiles(tiles) => {
-                for tile in tiles {
-                    let event = tile_event(session, tile.x, tile.y, tile.width, tile.height, true);
-                    let stored = HeifTile {
-                        width: tile.width,
-                        height: tile.height,
-                        payload: HeifTileData::Jpeg(Arc::from(tile.jpeg)),
-                    };
-                    cache_tiles.push(tile_cache::PositionedTile {
-                        x: tile.x,
-                        y: tile.y,
-                        tile: stored.clone(),
-                    });
-                    if !self.publish_tile_if_current(
-                        session,
-                        &cancelled,
-                        stored,
-                        event,
-                        &mut publish,
-                    ) {
-                        return Err(MediaError::Cancelled);
-                    }
-                }
+            SessionDecode::PublishedTiles => {
                 // Only Arc references are retained here. DCT stitching (or pixel
                 // fallback) happens after completion and background admission.
                 ("FFmpeg HEVC tile-grid", None)
@@ -320,7 +334,7 @@ impl HeifDecodeService {
             codec: Some(codec.into()),
             queue_wait_ms,
             decode_ms,
-            tile_publish_ms: elapsed_ms(tile_started),
+            tile_publish_ms: streaming_publish_ms + elapsed_ms(tile_started),
             total_ms: elapsed_ms(started),
             fallback_reason,
         };
@@ -521,6 +535,7 @@ fn decode_session_backend(
     path: &Path,
     _display_sharpening: bool,
     cancelled: &impl Fn() -> bool,
+    _publish_jpeg: &mut impl FnMut(crate::backends::ffmpeg_heif::EncodedTile) -> Result<(), MediaError>,
 ) -> Result<SessionDecode, MediaError> {
     let presentation = crate::pipeline::heif::artifact::backend_presentation(backend);
     match backend {
@@ -549,17 +564,17 @@ fn decode_session_backend(
         PlannedHeifBackend::Ffmpeg => {
             #[cfg(target_os = "windows")]
             {
-                Ok(SessionDecode::EncodedTiles(
-                    crate::backends::ffmpeg_heif::decode_full_jpeg_tiles(
-                        path,
-                        crate::ImageDimensions {
-                            width: session.width,
-                            height: session.height,
-                        },
-                        _display_sharpening,
-                        cancelled,
-                    )?,
-                ))
+                crate::backends::ffmpeg_heif::decode_full_jpeg_tiles(
+                    path,
+                    crate::ImageDimensions {
+                        width: session.width,
+                        height: session.height,
+                    },
+                    _display_sharpening,
+                    cancelled,
+                    _publish_jpeg,
+                )?;
+                Ok(SessionDecode::PublishedTiles)
             }
             #[cfg(any(target_os = "macos", target_os = "linux"))]
             {

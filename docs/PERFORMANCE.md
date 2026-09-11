@@ -16,6 +16,26 @@ end-to-end regression harness that enforces these budgets is described in
 
 ## Verification Log
 
+- 2026-09-11: Windows FFmpeg now publishes each completed JPEG tile while the
+  decoder process is still running, using atomic image2 output files. The
+  selected-image path also skips the two generic executable capability probes;
+  per-file grid validation and decode fallback remain. Three release/WebView2
+  cold runs per version on the same local `DSC03306.HIF` folder measured median
+  first full tile **1033 -> 747 ms** and all full tiles **1082 -> 843 ms**.
+  Session preparation fell **245 -> 126 ms**; embedded-preview load remained
+  **106 -> 110 ms**. All three new samples confirmed computed Canvas visibility
+  `visible` with only 1-2 of 6 tiles drawn, before backend completion. Every
+  sample finished all 6 tiles without failures or fallback. Each sample used a
+  new process and isolated app data/artifact cache; OS file cache was not cleared.
+  These are sequential three-run batches, not the broader P2 alternating A/B or
+  NAS matrix. [Phase timings](research/hif-benchmark-data/streaming-jpeg-webview.json).
+  Release smoke scenarios also passed full-artifact warm reuse, navigation-cache
+  returns, and rapid selection across 80 HIF paths. The warm sample loaded its
+  preview in 88 ms and full artifact in 158 ms; the 150 ms budget applies to the
+  first preview. Frontend checks/178 tests/build and Rust fmt/workspace
+  Clippy/workspace tests passed. Partial decoder failure hides the incomplete
+  canvas and rejects pending tiles; no incomplete session is cached.
+
 - 2026-09-10: Sony HIF fast JPEGs now carry display-oriented content geometry
   in their artifact presentation. The original 160px JPEG is retained; CSS
   removes verified padding and maps the content to the full image's logical
@@ -780,6 +800,19 @@ Native app peak working set was 262–264 MiB (excludes FFmpeg/WebView children)
 Three production files passed independent comparison of all 98,224,128 coefficients
 per image. Concurrent next-selection p50/p95 and cross-platform fixture matrices
 remain follow-up measurements; see the TODO for raw records and validation limits.
+
+### Windows first-tile visibility (2026-09-11)
+
+Cold debug WebView2 checks with DSC03306.HIF confirmed six FFmpeg JPEG tiles,
+with no full artifact cache hit. Before the fix, the first-tile frame callback
+observed a hidden Canvas with four of six tiles drawn: React had not committed
+the asynchronous visibility update. The first successful tile now synchronously
+commits visibility and image geometry when compatible with the preview; conflicting
+geometry still waits for the complete canvas. A repeat observed a visible Canvas
+with three of six tiles drawn, first tile at 1208 ms and all tiles at 1261 ms after
+selection. These single debug runs verify progressive visibility, not release
+performance budgets. These debug checks preceded the streaming FFmpeg change
+recorded in the Verification Log above.
 
 ### Independent loupe and thumbnail workers (2026-09-11)
 

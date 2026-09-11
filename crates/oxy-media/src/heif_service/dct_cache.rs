@@ -203,24 +203,30 @@ mod tests {
         let dimensions = crate::backends::libheif::dimensions(&fixture).unwrap();
         let directory = tempfile::tempdir().unwrap();
         for sharpen in [false, true] {
-            let mut tiles = crate::backends::ffmpeg_heif::decode_full_jpeg_tiles(
+            let mut decoded_tiles = Vec::new();
+            crate::backends::ffmpeg_heif::decode_full_jpeg_tiles(
                 &fixture,
                 dimensions,
                 sharpen,
                 &|| false,
-            )
-            .unwrap()
-            .into_iter()
-            .map(|tile| PositionedTile {
-                x: tile.x,
-                y: tile.y,
-                tile: HeifTile {
-                    width: tile.width,
-                    height: tile.height,
-                    payload: HeifTileData::Jpeg(Arc::from(tile.jpeg)),
+                |tile| {
+                    decoded_tiles.push(tile);
+                    Ok(())
                 },
-            })
-            .collect::<Vec<_>>();
+            )
+            .unwrap();
+            let mut tiles = decoded_tiles
+                .into_iter()
+                .map(|tile| PositionedTile {
+                    x: tile.x,
+                    y: tile.y,
+                    tile: HeifTile {
+                        width: tile.width,
+                        height: tile.height,
+                        payload: HeifTileData::Jpeg(Arc::from(tile.jpeg)),
+                    },
+                })
+                .collect::<Vec<_>>();
             tiles.reverse();
             let path = directory.path().join("stitched.jpg");
             assert!(

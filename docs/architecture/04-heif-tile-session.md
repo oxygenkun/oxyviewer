@@ -111,6 +111,16 @@ loupe 完成条件。写入前还有一个可取消的短暂稳定期，快速�
 前端先安装 listener 再启动 command，避免非常快的后台事件在订阅前丢失。即使 event 早于
 `sessionId` 赋值到达，组件也会暂存 `pendingTiles`，拿到 session 后再筛选并绘制。
 
+Windows FFmpeg 的源网格 JPEG 会在解码进程仍运行时发布。每个输出使用 image2 的
+`atomic_writing`：关闭临时文件后才重命名为最终 JPEG。Rust 每 10 ms 检查尚未发布的最终文件，
+一旦可读就存入 tile store 并发送事件；同一批就绪文件按中心优先处理，不等待尚未完成的中心
+瓦片。进程成功退出后补读最后一批，并确认每个预期输出都已发布。取消、超时、读取或发布
+失败均先终止并回收子进程，再清理临时目录。
+
+首块发布前的解码失败仍可按 backend plan 回退。首块发布后禁止在同一 session 内换后端，
+避免把不同布局、方向或颜色的瓦片混到已经显示的内容里；该 session 报告失败，前端隐藏部分
+Canvas、取消尚未完成的读取，并继续显示预览底图。失败会话不会进入完整 JPEG 缓存写入。
+
 ## 4. Session 数据结构
 
 `HeifDecodeSession` 是发给前端的公开信息：
@@ -184,6 +194,10 @@ flowchart TD
 
 真正 decode 时仍可能失败，适配器内部必须保留 fallback 和可操作的 diagnostics。
 
+前台按当前文件的 `ffprobe` stream/grid JSON 判断 FFmpeg 是否可处理，并在进程内按路径、
+大小和修改时间复用该结果。选图链路不再先启动 `ffmpeg -decoders` 和 `ffprobe -h`；这些
+通用检查只用于显式能力查询。解码器缺失或不兼容仍通过执行阶段的错误和回退报告。
+
 ## 7. 解码、切片和中心优先
 
 当前非 grid-aware early decode 路径先得到完整 `DynamicImage`，再按 512 tile 裁切。瓦片坐标按
@@ -197,8 +211,9 @@ service 的 HashMap，event 只携带可定位它的 metadata 和 URL。
 完整图读取相邻像素，所以 512 px 瓦片边界不会产生格状接缝；规范 RGBA 本身保持未锐化，
 可作为未锐化派生源。最终显示瓦片可合成为 Display full cache，命中后不再锐化。用户关闭锐化时只查询 None。
 
-需要准确理解：当前中心优先优化的是**完整解码之后的发布顺序**。对于非 grid-aware backend，
-它并没有让 HEVC 只解中心区域。真正的 early tile decode 仍属于未来 adapter 优化。
+需要区分两种路径：Windows FFmpeg 源网格 JPEG 在各自编码完成后立即发布；其他先返回
+完整 `DynamicImage` 的 backend，中心优先仍只优化**完整解码之后的发布顺序**，没有让 HEVC
+只解中心区域。FFmpeg 同样会完成整张图，当前没有按视口跳过源网格组件。
 
 ## 8. 自定义协议响应
 

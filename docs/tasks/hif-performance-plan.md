@@ -1,6 +1,6 @@
 # HIF 前台与后台加速计划
 
-更新：2026-09-10。先保证缓存表示正确，再分别优化前台交互和后台持久化。
+更新：2026-09-11。先保证缓存表示正确，再分别优化前台交互和后台持久化。
 
 ## 已接通的正确性基线
 
@@ -30,7 +30,7 @@
 
 - [ ] 基于 [FFmpeg 进程复用研究](../research/2026-09-09-hif-ffmpeg-residency.md) 做独立常驻 libav worker 原型。先比较 CLI / 仅常驻 / 兼容上下文复用三组，不把 concat 吞吐当成单张收益。
 - [ ] 采用逐请求输入，保持 JPEG tile 输出与已应用方向。首次按需启动或异步预热，禁止阻塞文件夹首屏。
-- [ ] 测当前等待 FFmpeg 退出后统一发布与逐 tile 编码完成即发布两种方式。以完整图片可见时间为主，首 tile 和渐进间隔为辅。
+- [x] 现有 CLI 接入逐 tile 编码完成即发布，并移除前台通用能力探测。相同本地 HIF 的三次 release/WebView2 冷测，首 tile 中位 1033→747 ms，全部 tile 1082→843 ms；首 tile 时实测 Canvas 已可见。见[分阶段数据](../research/hif-benchmark-data/streaming-jpeg-webview.json)。常驻 worker 的 20 次交替 A/B 验收仍待完成。
 - [ ] 使用有界队列、generation、源版本和取消；当前选择优先，丢弃过期工作。worker 超时/崩溃可重建，CLI 保留回退。
 - [ ] 前台 worker 与后台编码保持独立执行通道，不能让 full 缓存编码占据前台唯一队列。
 - [ ] 保留 embedded preview 首绘；继续遵守 cold preview 800 ms、warm preview 150 ms 和目录首屏预算。

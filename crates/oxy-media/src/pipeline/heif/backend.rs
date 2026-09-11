@@ -166,7 +166,18 @@ impl BackendExecutionError {
 
 pub(crate) fn execute_backend_plan<T>(
     plan: &HeifBackendPlan,
+    cancelled: impl FnMut() -> bool,
+    execute: impl FnMut(HeifBackend) -> Result<T, MediaError>,
+) -> Result<BackendExecution<T>, BackendExecutionError> {
+    execute_backend_plan_with_fallback_policy(plan, cancelled, || true, execute)
+}
+
+/// A streaming consumer can forbid fallback once pixels have been published.
+/// Another backend may have a different tile layout or color presentation.
+pub(crate) fn execute_backend_plan_with_fallback_policy<T>(
+    plan: &HeifBackendPlan,
     mut cancelled: impl FnMut() -> bool,
+    mut allow_fallback: impl FnMut() -> bool,
     mut execute: impl FnMut(HeifBackend) -> Result<T, MediaError>,
 ) -> Result<BackendExecution<T>, BackendExecutionError> {
     let mut diagnostics = Vec::new();
@@ -213,7 +224,6 @@ pub(crate) fn execute_backend_plan<T>(
                     outcome: classify_error(&error),
                     message: error.to_string(),
                 });
-                last_error = Some(error);
                 // Cancellation terminates the plan. It must not be interpreted
                 // as permission to try a slower compatibility backend.
                 if cancelled() {
@@ -222,6 +232,10 @@ pub(crate) fn execute_backend_plan<T>(
                         diagnostics,
                     });
                 }
+                if !allow_fallback() {
+                    return Err(BackendExecutionError { error, diagnostics });
+                }
+                last_error = Some(error);
             }
         }
     }
@@ -394,22 +408,14 @@ fn production_probes(path: &Path, operation: HeifOperation) -> BackendProbes {
 }
 
 fn actual_ffmpeg_probe(path: &Path) -> BackendProbe {
-    let capability = ffmpeg_capability();
-    if capability.available {
-        support_probe(
-            HeifBackend::Ffmpeg,
-            crate::backends::ffmpeg_heif::can_decode(path),
-        )
-    } else {
-        BackendProbe {
-            backend: HeifBackend::Ffmpeg,
-            state: ProbeState::Unavailable(
-                capability
-                    .detail
-                    .unwrap_or_else(|| "FFmpeg is unavailable".into()),
-            ),
-        }
-    }
+    // This file probe validates the required ffprobe JSON contract. Keep the
+    // generic executable capability commands for explicit capability reporting;
+    // running them here adds two process launches to the first selected image.
+    // A missing/incompatible decoder still fails through the execution plan.
+    support_probe(
+        HeifBackend::Ffmpeg,
+        crate::backends::ffmpeg_heif::can_decode(path),
+    )
 }
 
 fn actual_platform_probe(path: &Path) -> BackendProbe {
@@ -733,6 +739,46 @@ mod tests {
         assert_eq!(result.value, 42);
         assert_eq!(result.backend, HeifBackend::Libheif);
         assert_eq!(result.diagnostics[0].outcome, AttemptOutcome::Io);
+    }
+
+    #[test]
+    fn streaming_failure_only_allows_fallback_before_any_tile_is_published() {
+        let plan = HeifBackendPlan {
+            candidates: vec![HeifBackend::Ffmpeg, HeifBackend::Libheif],
+            diagnostics: Vec::new(),
+        };
+        for publish_first in [false, true] {
+            let published = std::cell::Cell::new(false);
+            let mut attempted = Vec::new();
+            let result = execute_backend_plan_with_fallback_policy(
+                &plan,
+                || false,
+                || !published.get(),
+                |backend| {
+                    attempted.push(backend);
+                    if backend == HeifBackend::Ffmpeg {
+                        published.set(publish_first);
+                        Err(MediaError::Io(io::Error::other("decoder failed")))
+                    } else {
+                        Ok(42)
+                    }
+                },
+            );
+            if publish_first {
+                assert_eq!(attempted, [HeifBackend::Ffmpeg]);
+                let error = result.err().unwrap();
+                assert_eq!(error.diagnostics.len(), 1);
+                assert!(
+                    error
+                        .into_media_error()
+                        .to_string()
+                        .contains("decoder failed")
+                );
+            } else {
+                assert_eq!(attempted, [HeifBackend::Ffmpeg, HeifBackend::Libheif]);
+                assert_eq!(result.unwrap().value, 42);
+            }
+        }
     }
 
     #[test]

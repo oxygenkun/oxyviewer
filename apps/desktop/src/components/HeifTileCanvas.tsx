@@ -1,5 +1,6 @@
 import { listen } from "@tauri-apps/api/event";
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
+import { flushSync } from "react-dom";
 import {
   cancelHeifDecode,
   heifTileUrl,
@@ -137,6 +138,7 @@ export function HeifTileCanvas({
     const pendingStatuses: HeifStatusEvent[] = [];
     let progress: HeifTileProgressTracker | undefined;
     let backendComplete = false;
+    let backendFailed = false;
     let backendDiagnostics: HeifDiagnostics | undefined;
     let firstTileFetched = false;
     let firstPaintFrame: number | undefined;
@@ -154,6 +156,7 @@ export function HeifTileCanvas({
           frontendFetchWorkMs: Number(frontendFetchWorkMs.toFixed(1)),
           frontendDrawWorkMs: Number(frontendDrawWorkMs.toFixed(1)),
           slowestTileMs: Number(slowestTileMs.toFixed(1)),
+          canvasVisibility: canvasRef.current ? getComputedStyle(canvasRef.current).visibility : undefined,
           backendDiagnostics,
         })
       : undefined;
@@ -161,13 +164,14 @@ export function HeifTileCanvas({
     const maybeComplete = () => {
       if (
         disposed
+        || backendFailed
         || !backendComplete
         || !progress?.snapshot().allSettled
         || completionPaintFrame !== undefined
       ) return;
       completionPaintFrame = requestAnimationFrame(() => {
         completionPaintFrame = undefined;
-        if (disposed) return;
+        if (disposed || backendFailed) return;
         const completed = detail?.() ?? {};
         perfMark("heif:all-tiles-painted", { assetName: asset.name, ...completed });
         debug?.mark("all-tiles-painted", completed);
@@ -199,7 +203,7 @@ export function HeifTileCanvas({
         const payload = encoded
           ? await response.blob()
           : new Uint8ClampedArray(await response.arrayBuffer());
-        if (disposed) return;
+        if (disposed || backendFailed) return;
         const fetchedAt = track ? performance.now() : 0;
         if (track) frontendFetchWorkMs += fetchedAt - fetchStarted;
         if (track && !firstTileFetched) {
@@ -219,7 +223,7 @@ export function HeifTileCanvas({
           try {
             // The same canvas may now belong to a different selection. Decoding
             // is asynchronous even after the network response has completed.
-            if (disposed) return;
+            if (disposed || backendFailed) return;
             context.drawImage(bitmap, tile.x, tile.y, tile.width, tile.height);
           } finally {
             bitmap.close();
@@ -241,14 +245,18 @@ export function HeifTileCanvas({
           const canvas = canvasRef.current;
           const preview = previewSizeRef.current;
           if (canvas && (!preview || (preview.width === canvas.width && preview.height === canvas.height))) {
-            setCanvasVisible(true);
-            onImageSize({ width: canvas.width, height: canvas.height });
+            // Canvas pixels are written outside React. Commit their visibility
+            // and geometry before the next paint, even while other tiles decode.
+            flushSync(() => {
+              setCanvasVisible(true);
+              onImageSize({ width: canvas.width, height: canvas.height });
+            });
           }
         }
         if (track && settled?.firstDrawn && firstPaintFrame === undefined) {
           firstPaintFrame = requestAnimationFrame(() => {
             firstPaintFrame = undefined;
-            if (disposed) return;
+            if (disposed || backendFailed) return;
             perfMark("heif:first-tile-painted", { assetName: asset.name, ...detail?.() });
             if (__OXY_DEBUG__) debug?.mark("first-tile-painted", detail?.());
           });
@@ -275,7 +283,7 @@ export function HeifTileCanvas({
     };
 
     const pumpTileQueue = () => {
-      while (!disposed && activeTileFetches < maxConcurrentTileFetches) {
+      while (!disposed && !backendFailed && activeTileFetches < maxConcurrentTileFetches) {
         const tile = tileQueue.shift();
         if (!tile) return;
         activeTileFetches += 1;
@@ -284,6 +292,7 @@ export function HeifTileCanvas({
     };
 
     const handleTile = (tile: HeifTileReady) => {
+      if (backendFailed) return;
       const received = progress?.receive(tile);
       if (received && !received.accepted) return;
       if (received?.first) {
@@ -315,6 +324,12 @@ export function HeifTileCanvas({
         progress?.finishReceiving();
         maybeComplete();
       } else if (event.status === "failed") {
+        backendFailed = true;
+        tileQueue.length = 0;
+        tileRequests.abort();
+        setCanvasVisible(false);
+        if (firstPaintFrame !== undefined) cancelAnimationFrame(firstPaintFrame);
+        if (completionPaintFrame !== undefined) cancelAnimationFrame(completionPaintFrame);
         if (__OXY_DEBUG__) debug?.fail(event.message ?? "HEIF backend decode failed", detail?.());
       } else if (event.status === "cancelled") {
         if (__OXY_DEBUG__) debug?.cancel(detail?.());

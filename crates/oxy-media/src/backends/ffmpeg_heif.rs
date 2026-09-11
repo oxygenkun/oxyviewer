@@ -21,6 +21,14 @@ fn run_cancellable(
     command: &mut Command,
     cancelled: &impl Fn() -> bool,
 ) -> Result<std::process::Output, MediaError> {
+    run_cancellable_with_progress(command, cancelled, || Ok(()))
+}
+
+fn run_cancellable_with_progress(
+    command: &mut Command,
+    cancelled: &impl Fn() -> bool,
+    mut progress: impl FnMut() -> Result<(), MediaError>,
+) -> Result<std::process::Output, MediaError> {
     use std::io::{Read, Seek};
     if cancelled() {
         return Err(MediaError::Cancelled);
@@ -43,15 +51,27 @@ fn run_cancellable(
                 Err(native_error("FFmpeg decode timed out"))
             };
         }
-        match child.try_wait() {
-            Ok(Some(status)) => break status,
-            Ok(None) => std::thread::sleep(std::time::Duration::from_millis(10)),
+        let status = match child.try_wait() {
+            Ok(status) => status,
             Err(error) => {
                 let _ = child.kill();
                 let _ = child.wait();
                 return Err(error.into());
             }
+        };
+        // Drain the last completed files even when the process exited between
+        // polls. A failing child must not publish any further output.
+        if status.is_none_or(|status| status.success()) {
+            if let Err(error) = progress() {
+                let _ = child.kill();
+                let _ = child.wait();
+                return Err(error);
+            }
         }
+        if let Some(status) = status {
+            break status;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(10));
     };
     errors.rewind()?;
     let mut stderr = Vec::new();
@@ -117,6 +137,40 @@ pub struct EncodedTile {
     pub jpeg: Vec<u8>,
 }
 
+struct TileOutput {
+    path: PathBuf,
+    x: u32,
+    y: u32,
+    width: u32,
+    height: u32,
+    published: bool,
+}
+
+impl TileOutput {
+    fn publish_ready(
+        &mut self,
+        publish: &mut impl FnMut(EncodedTile) -> Result<(), MediaError>,
+    ) -> Result<(), MediaError> {
+        if self.published {
+            return Ok(());
+        }
+        let jpeg = match fs::read(&self.path) {
+            Ok(jpeg) => jpeg,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+            Err(error) => return Err(error.into()),
+        };
+        publish(EncodedTile {
+            x: self.x,
+            y: self.y,
+            width: self.width,
+            height: self.height,
+            jpeg,
+        })?;
+        self.published = true;
+        Ok(())
+    }
+}
+
 pub fn capability() -> Result<(), MediaError> {
     CAPABILITY.clone().map_err(native_error)
 }
@@ -149,7 +203,8 @@ pub fn decode_full_jpeg_tiles(
     display_size: ImageDimensions,
     display_sharpening: bool,
     cancelled: &impl Fn() -> bool,
-) -> Result<Vec<EncodedTile>, MediaError> {
+    mut publish: impl FnMut(EncodedTile) -> Result<(), MediaError>,
+) -> Result<(), MediaError> {
     let grid = cached_grid_cancellable(path, cancelled)?;
     filter_for_grid(&grid, display_size)?;
     let output_dir = tempfile::tempdir()?;
@@ -173,10 +228,41 @@ pub fn decode_full_jpeg_tiles(
             ])
             .args(["-vf", &filter])
             .args(["-pix_fmt", "yuvj444p", "-c:v", "mjpeg", "-q:v", "2"])
+            // image2 closes the temporary file before renaming it. Only the
+            // final name is polled, so WebView never receives a partial JPEG.
+            .args(["-atomic_writing", "1"])
             .arg(&output_path);
-        outputs.push((output_path, x, y, width, height));
+        outputs.push(TileOutput {
+            path: output_path,
+            x,
+            y,
+            width,
+            height,
+            published: false,
+        });
     }
-    let output = run_cancellable(&mut command, cancelled)?;
+    let center = (
+        display_size.width as i64 / 2,
+        display_size.height as i64 / 2,
+    );
+    // Prefer central tiles among the files ready in this poll, without holding
+    // an available outer tile until the center finishes decoding.
+    outputs.sort_by_key(|tile| {
+        let tile_center = (
+            tile.x as i64 + tile.width as i64 / 2,
+            tile.y as i64 + tile.height as i64 / 2,
+        );
+        (tile_center.0 - center.0).abs() + (tile_center.1 - center.1).abs()
+    });
+    let output = run_cancellable_with_progress(&mut command, cancelled, || {
+        for tile in &mut outputs {
+            if cancelled() {
+                return Err(MediaError::Cancelled);
+            }
+            tile.publish_ready(&mut publish)?;
+        }
+        Ok(())
+    })?;
     if !output.status.success() {
         return Err(native_error(format!(
             "JPEG tile decode failed with {}: {}",
@@ -184,30 +270,12 @@ pub fn decode_full_jpeg_tiles(
             String::from_utf8_lossy(&output.stderr).trim()
         )));
     }
-    let mut tiles = outputs
-        .into_iter()
-        .map(|(path, x, y, width, height)| {
-            Ok(EncodedTile {
-                x,
-                y,
-                width,
-                height,
-                jpeg: fs::read(path)?,
-            })
-        })
-        .collect::<Result<Vec<_>, MediaError>>()?;
-    let center = (
-        display_size.width as i64 / 2,
-        display_size.height as i64 / 2,
-    );
-    tiles.sort_by_key(|tile| {
-        let tile_center = (
-            tile.x as i64 + tile.width as i64 / 2,
-            tile.y as i64 + tile.height as i64 / 2,
-        );
-        (tile_center.0 - center.0).abs() + (tile_center.1 - center.1).abs()
-    });
-    Ok(tiles)
+    if outputs.iter().any(|tile| !tile.published) {
+        return Err(native_error(
+            "FFmpeg completed without producing every JPEG tile",
+        ));
+    }
+    Ok(())
 }
 
 pub fn decode_full_rgba8(
@@ -830,6 +898,132 @@ fn native_error(message: impl Into<String>) -> MediaError {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    #[ignore = "subprocess fixture launched by streaming test"]
+    fn streaming_child_process_fixture() {
+        let Some(directory) = std::env::var_os("OXY_TILE_TEST_DIR") else {
+            return;
+        };
+        let directory = PathBuf::from(directory);
+        let wait_for = |name: &str| {
+            let started = std::time::Instant::now();
+            while !directory.join(name).exists() {
+                assert!(started.elapsed() < std::time::Duration::from_secs(5));
+                std::thread::sleep(std::time::Duration::from_millis(5));
+            }
+        };
+        fs::write(directory.join("first.jpg.tmp"), b"complete first JPEG").unwrap();
+        wait_for("observed-temporary");
+        fs::rename(directory.join("first.jpg.tmp"), directory.join("first.jpg")).unwrap();
+        // The child cannot finish until the parent has consumed its first tile.
+        // A collector which waits for process exit would fail this handshake.
+        wait_for("consumed-first");
+        fs::write(directory.join("second.jpg"), b"complete second JPEG").unwrap();
+    }
+
+    #[test]
+    fn streams_only_committed_tiles_before_child_exit_and_drains_last_output() {
+        let directory = tempfile::tempdir().unwrap();
+        let mut command = Command::new(std::env::current_exe().unwrap());
+        command
+            .args([
+                "--exact",
+                "backends::ffmpeg_heif::tests::streaming_child_process_fixture",
+                "--ignored",
+                "--nocapture",
+            ])
+            .env("OXY_TILE_TEST_DIR", directory.path());
+        #[cfg(target_os = "windows")]
+        command.creation_flags(CREATE_NO_WINDOW);
+        let mut outputs = ["first.jpg", "second.jpg"].map(|name| TileOutput {
+            path: directory.path().join(name),
+            x: 0,
+            y: 0,
+            width: 1,
+            height: 1,
+            published: false,
+        });
+        let mut received = Vec::new();
+        let started = std::time::Instant::now();
+        let output = run_cancellable_with_progress(
+            &mut command,
+            &|| started.elapsed() > std::time::Duration::from_secs(10),
+            || {
+                if directory.path().join("first.jpg.tmp").exists() {
+                    assert!(received.is_empty());
+                    fs::write(directory.path().join("observed-temporary"), b"")?;
+                }
+                for output in &mut outputs {
+                    output.publish_ready(&mut |tile| {
+                        if received.is_empty() {
+                            assert!(!directory.path().join("second.jpg").exists());
+                            fs::write(directory.path().join("consumed-first"), b"")?;
+                        }
+                        received.push(tile.jpeg);
+                        Ok(())
+                    })?;
+                }
+                Ok(())
+            },
+        )
+        .unwrap();
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        assert_eq!(
+            received,
+            [
+                b"complete first JPEG".to_vec(),
+                b"complete second JPEG".to_vec()
+            ]
+        );
+        assert!(outputs.iter().all(|output| output.published));
+        for output in &mut outputs {
+            output
+                .publish_ready(&mut |_| panic!("duplicate tile publication"))
+                .unwrap();
+        }
+    }
+
+    #[test]
+    fn publication_error_kills_and_reaps_the_running_child() {
+        let directory = tempfile::tempdir().unwrap();
+        let ready = directory.path().join("ready");
+        let mut command = Command::new(std::env::current_exe().unwrap());
+        command
+            .args([
+                "--exact",
+                "backends::ffmpeg_heif::tests::cancellation_child_process_fixture",
+                "--ignored",
+                "--nocapture",
+            ])
+            .env("OXY_CANCEL_TEST_READY", &ready);
+        #[cfg(target_os = "windows")]
+        command.creation_flags(CREATE_NO_WINDOW);
+        let started = std::time::Instant::now();
+        let result = run_cancellable_with_progress(
+            &mut command,
+            &|| started.elapsed() > std::time::Duration::from_secs(5),
+            || {
+                if ready.exists() {
+                    Err(native_error("tile consumer failed"))
+                } else {
+                    Ok(())
+                }
+            },
+        );
+        assert!(
+            result
+                .unwrap_err()
+                .to_string()
+                .contains("tile consumer failed")
+        );
+        assert!(started.elapsed() < std::time::Duration::from_secs(5));
+        fs::remove_file(ready).unwrap();
+    }
 
     #[test]
     #[ignore = "subprocess fixture launched by cancellation test"]

@@ -76,6 +76,30 @@ async function render(selected = asset, displaySharpening = true, previewDisplay
 }
 
 describe("HEIF full presentation lifecycle", () => {
+  it("commits the first tile visibility before scheduling its paint frame", async () => {
+    mocks.start.mockResolvedValue({ delivery: "tiles", session: {
+      id: "session", width: 1024, height: 512, tileSize: 512,
+      expectedTiles: 2, status: "decoding",
+    } });
+    vi.spyOn(HTMLCanvasElement.prototype, "getContext").mockReturnValue({ drawImage: vi.fn() } as unknown as CanvasRenderingContext2D);
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue({ ok: true, blob: async () => new Blob(["jpeg"]) }));
+    vi.stubGlobal("createImageBitmap", vi.fn().mockResolvedValue({ close: vi.fn() }));
+    await render(asset, true, { width: 1024, height: 512 });
+    const visibilityAtFrameRequest: string[] = [];
+    vi.mocked(requestAnimationFrame).mockImplementation(() => {
+      visibilityAtFrameRequest.push(container.querySelector("canvas")!.style.visibility);
+      return 1;
+    });
+    const tileListener = mocks.listen.mock.calls.find(([name]) => name === "heif-tile-ready")![1];
+    await act(async () => tileListener({ payload: {
+      sessionId: "session", generation: mocks.start.mock.lastCall![1],
+      url: "tile-0", payload: "jpeg", x: 0, y: 0, width: 512, height: 512,
+    } }));
+    // No second tile or completion event has arrived, and no frame was run.
+    expect(visibilityAtFrameRequest).toEqual(["visible"]);
+    expect(imageSize).toHaveBeenCalledWith({ width: 1024, height: 512 });
+  });
+
   it("holds conflicting tile geometry until the complete canvas can replace the preview", async () => {
     mocks.start.mockResolvedValue({ delivery: "tiles", session: {
       id: "session", width: 1024, height: 512, tileSize: 512,
@@ -171,6 +195,43 @@ describe("HEIF full presentation lifecycle", () => {
     expect(drawImage).not.toHaveBeenCalled();
     expect(bitmap.close).toHaveBeenCalledTimes(1);
     expect(fetchTile.mock.calls[0][1].signal.aborted).toBe(true);
+  });
+
+  it("hides partial tiles on backend failure and rejects in-flight and late tiles", async () => {
+    const drawImage = vi.fn();
+    vi.spyOn(HTMLCanvasElement.prototype, "getContext").mockReturnValue({ drawImage } as unknown as CanvasRenderingContext2D);
+    const fetchTile = vi.fn().mockResolvedValue({ ok: true, blob: async () => new Blob(["jpeg"]) });
+    vi.stubGlobal("fetch", fetchTile);
+    let resolvePending!: (value: ImageBitmap) => void;
+    const pending = { close: vi.fn() } as unknown as ImageBitmap;
+    vi.stubGlobal("createImageBitmap", vi.fn()
+      .mockResolvedValueOnce({ close: vi.fn() })
+      .mockImplementationOnce(() => new Promise<ImageBitmap>((resolve) => { resolvePending = resolve; })));
+    await render();
+    const generation = mocks.start.mock.lastCall![1];
+    const tileListener = mocks.listen.mock.calls.find(([name]) => name === "heif-tile-ready")![1];
+    const statusListener = mocks.listen.mock.calls.find(([name]) => name === "heif-decode-status")![1];
+    const tile = (x: number) => ({ payload: {
+      sessionId: "session", generation, url: `tile-${x}`, payload: "jpeg", x, y: 0, width: 512, height: 512,
+    } });
+    await act(async () => tileListener(tile(0)));
+    expect(container.querySelector("canvas")?.style.visibility).toBe("visible");
+    await act(async () => tileListener(tile(512)));
+    await act(async () => statusListener({ payload: {
+      sessionId: "session", generation, status: "failed", message: "decoder failed after first tile",
+    } }));
+    expect(container.querySelector("canvas")?.style.visibility).toBe("hidden");
+    expect(fetchTile.mock.calls[1][1].signal.aborted).toBe(true);
+    await act(async () => resolvePending(pending));
+    await act(async () => tileListener(tile(1024)));
+    const scheduledPaint = vi.mocked(requestAnimationFrame).mock.lastCall![0];
+    await act(async () => scheduledPaint(0));
+    expect(drawImage).toHaveBeenCalledTimes(1);
+    expect(pending.close).toHaveBeenCalledTimes(1);
+    expect(fetchTile).toHaveBeenCalledTimes(2);
+    expect(mocks.mark.mock.calls.map(([name]) => name)).not.toContain("heif:all-tiles-painted");
+    expect(mocks.mark.mock.calls.map(([name]) => name)).not.toContain("heif:first-tile-painted");
+    expect(container.querySelector("canvas")?.style.visibility).toBe("hidden");
   });
 
   it("ignores a disposed session's late startup failure", async () => {

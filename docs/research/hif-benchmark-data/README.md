@@ -8,3 +8,5 @@
 2026-09-10 Display 缓存正确性基线的真实 Release WebView 记录：[首次 tiles](display-cache-cold-webview.json)、[重启后 full artifact](display-cache-warm-webview.json)。它们与上述 DCT/FFmpeg 独立原型实验分开解释，详见 [当前验证](../../tasks/hif-performance-plan.md#归档与当前验证)。
 
 DCT 接入后的生产路径：[六轮耗时/内存/缓存数据](dct-production-results.json)、[三张产物系数验证](dct-production-coefficients.json)、代表性 [cold WebView](dct-production-cold-webview.json) / [warm WebView](dct-production-warm-webview.json)。系数验证文件里的耗时和峰值属于独立验证工具；应用性能以六轮数据为准。
+
+2026-09-11 现有 CLI 的逐瓦片交付与前台探测优化：[同一真实 HIF 的优化前后三次冷缓存 release/WebView2 测量](streaming-jpeg-webview.json)。保留选中、请求、会话准备、首块、后端完成和全部绘制的分段值；新增版本还记录首块时实际 Canvas visibility。优化前该字段未采集，记录为 null。这是本地样本的顺序测量，不是常驻 worker 或 NAS 的完整 A/B 矩阵。
