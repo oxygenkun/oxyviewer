@@ -7,7 +7,7 @@ use fs2::FileExt;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::{
-    collections::{HashMap, VecDeque},
+    collections::{HashMap, HashSet},
     fs::{self, File, OpenOptions},
     io::Write,
     path::{Path, PathBuf},
@@ -243,23 +243,9 @@ pub struct DiskMediaCache {
 
 struct DiskCacheInner {
     root: PathBuf,
-    max_manifests: usize,
     operation: Mutex<()>,
-    index: Mutex<ManifestIndex>,
     leases: Arc<LeaseState>,
     lease_ttl: Duration,
-}
-
-#[derive(Default)]
-struct ManifestIndex {
-    entries: HashMap<String, CachedManifest>,
-    lru: VecDeque<String>,
-}
-
-#[derive(Clone)]
-struct CachedManifest {
-    modified: Option<SystemTime>,
-    manifest: Manifest,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -297,7 +283,7 @@ impl DiskMediaCache {
 
     fn with_lease_ttl(
         cache_parent: impl AsRef<Path>,
-        max_manifests: usize,
+        _max_manifests: usize,
         lease_ttl: Duration,
     ) -> Result<Self, MediaError> {
         fs::create_dir_all(cache_parent.as_ref())?;
@@ -316,13 +302,12 @@ impl DiskMediaCache {
             .write(true)
             .open(root.join(CACHE_LOCK_FILE))?;
         ensure_regular_control_file(&root.join(CACHE_LOCK_FILE))?;
-        cleanup_staging(&root, false, &[])?;
+        // Opening a cache is a per-request operation. Orphan staging cleanup
+        // belongs to maintenance, never a traversal in the display path.
         Ok(Self {
             inner: Arc::new(DiskCacheInner {
                 root,
-                max_manifests: max_manifests.max(1),
                 operation: Mutex::new(()),
-                index: Mutex::new(ManifestIndex::default()),
                 leases: Arc::new(LeaseState::default()),
                 lease_ttl,
             }),
@@ -334,17 +319,21 @@ impl DiskMediaCache {
     }
 
     pub fn lease_path(&self, path: &Path) -> Result<ArtifactLease, MediaError> {
+        let cache_lock = self.open_cache_lock()?;
+        FileExt::lock_shared(&cache_lock)?;
         if !path.starts_with(&self.inner.root) || !fs::symlink_metadata(path)?.file_type().is_file()
         {
             return Err(MediaError::CacheArtifact(
                 "only regular managed artifacts can hold disk leases".into(),
             ));
         }
-        self.inner.leases.acquire(
+        let lease = self.inner.leases.acquire(
             path.to_owned(),
             self.inner.lease_ttl,
             Some(&self.inner.root.join(LEASE_FOLDER)),
-        )
+        )?;
+        FileExt::unlock(&cache_lock)?;
+        Ok(lease)
     }
 
     /// Validates a restart-restored managed path against its current manifest
@@ -458,13 +447,15 @@ impl DiskMediaCache {
         mut pending: PendingStagedArtifact,
     ) -> Result<CachePublication, MediaError> {
         let (copy_path, _copy_lease) = {
-            // Clear/prune use the same operation mutex. Hold it from creation
-            // until a lease protects the complete worker-owned copy.
+            // Coordinate creation through lease publication with maintenance
+            // in other cache instances and processes as well as this instance.
             let _operation = self
                 .inner
                 .operation
                 .lock()
                 .unwrap_or_else(std::sync::PoisonError::into_inner);
+            let cache_lock = self.open_cache_lock()?;
+            FileExt::lock_shared(&cache_lock)?;
             let staging = self.inner.root.join(".backend-tmp");
             ensure_owned_directory(&staging)?;
             let copy = tempfile::Builder::new()
@@ -478,6 +469,7 @@ impl DiskMediaCache {
                 self.inner.lease_ttl,
                 Some(&self.inner.root.join(LEASE_FOLDER)),
             )?;
+            FileExt::unlock(&cache_lock)?;
             (copy_path, lease)
         };
         let _copy_cleanup = StagedPathCleanup(copy_path.clone());
@@ -563,7 +555,7 @@ impl DiskMediaCache {
             }
             return Err(MediaError::StaleSourceRevision);
         }
-        let mut manifest = self.load_manifest(&pending.source_revision, generation, false)?;
+        let mut manifest = self.load_manifest(&pending.source_revision, generation)?;
         manifest
             .artifacts
             .retain(|artifact| artifact.artifact_id != artifact_id);
@@ -578,13 +570,6 @@ impl DiskMediaCache {
             last_used_unix_ms: unix_millis(),
         });
         self.write_manifest(&source_dir, &manifest)?;
-        self.index_put(
-            pending.source_revision.revision_id.clone(),
-            fs::metadata(source_dir.join(MANIFEST_FILE))
-                .and_then(|metadata| metadata.modified())
-                .ok(),
-            manifest,
-        );
         let lease = self.inner.leases.acquire(
             destination.clone(),
             self.inner.lease_ttl,
@@ -609,14 +594,34 @@ impl DiskMediaCache {
 
     fn protected_paths(&self) -> Result<Vec<PathBuf>, MediaError> {
         let mut protected = self.inner.leases.protected_paths();
-        let mut protected_ids = Vec::new();
+        let protected_ids = self.protected_lease_ids()?;
+        for artifact in collect_artifacts(&self.inner.root)? {
+            if protected_ids.contains(&lease_marker_id(&artifact.path)) {
+                protected.push(artifact.path);
+            }
+        }
+        Ok(protected)
+    }
+
+    fn protected_lease_ids(&self) -> Result<HashSet<String>, MediaError> {
+        let mut protected_ids = self
+            .inner
+            .leases
+            .protected_paths()
+            .iter()
+            .map(|path| lease_marker_id(path))
+            .collect::<HashSet<_>>();
         let now = SystemTime::now();
         for marker in fs::read_dir(self.inner.root.join(LEASE_FOLDER))? {
             let marker = marker?;
             if !marker.file_type()?.is_file() {
                 continue;
             }
-            let metadata = marker.metadata()?;
+            let metadata = match marker.metadata() {
+                Ok(metadata) => metadata,
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => continue,
+                Err(error) => return Err(error.into()),
+            };
             let expired = metadata
                 .modified()
                 .ok()
@@ -628,26 +633,15 @@ impl DiskMediaCache {
             }
             let name = marker.file_name().to_string_lossy().into_owned();
             if let Some(lease_id) = name.get(..64) {
-                protected_ids.push(lease_id.to_owned());
+                protected_ids.insert(lease_id.to_owned());
             }
         }
-        for artifact in collect_artifacts(&self.inner.root)? {
-            if protected_ids
-                .iter()
-                .any(|protected| protected == &lease_marker_id(&artifact.path))
-            {
-                protected.push(artifact.path);
-            }
-        }
-        Ok(protected)
+        Ok(protected_ids)
     }
 
     pub fn usage(&self) -> Result<CacheUsage, MediaError> {
-        let _operation = self
-            .inner
-            .operation
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        // Readers and publishers can proceed while usage is enumerated. Clear
+        // and individual prune deletions still coordinate through this lock.
         let cache_lock = self.open_cache_lock()?;
         FileExt::lock_shared(&cache_lock)?;
         let usage = collect_artifacts(&self.inner.root)?.into_iter().fold(
@@ -674,59 +668,88 @@ impl DiskMediaCache {
         max_size_bytes: u64,
         protected_path: Option<&Path>,
     ) -> Result<CacheUsage, MediaError> {
-        let _operation = self
-            .inner
-            .operation
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
         let cache_lock = self.open_cache_lock()?;
-        FileExt::lock_exclusive(&cache_lock)?;
+        FileExt::lock_shared(&cache_lock)?;
+        let generation = self.current_generation_unlocked()?;
         let mut artifacts = collect_artifacts(&self.inner.root)?;
+        FileExt::unlock(&cache_lock)?;
         let mut total = artifacts
             .iter()
             .map(|artifact| artifact.size_bytes)
             .sum::<u64>();
-        // A completed thumbnail can request maintenance while the next one
-        // is looking up its cache. Under budget, do not hold the global
-        // exclusive lock to scan leases or rewrite/fsync every manifest.
-        if total <= max_size_bytes {
-            FileExt::unlock(&cache_lock)?;
+        let now = SystemTime::now();
+        let stale_staging = |artifact: &OwnedArtifact| {
+            artifact
+                .path
+                .parent()
+                .and_then(Path::file_name)
+                .is_some_and(|name| name == ".tmp" || name == ".backend-tmp")
+                && now
+                    .duration_since(artifact.modified)
+                    .is_ok_and(|age| age >= STAGING_MAX_AGE)
+        };
+        if total <= max_size_bytes && !artifacts.iter().any(stale_staging) {
             return Ok(CacheUsage {
                 size_bytes: total,
                 artifact_count: artifacts.len(),
             });
         }
-        let mut protected = self.protected_paths()?;
-        if let Some(path) = protected_path {
-            protected.push(path.to_owned());
-        }
         artifacts.sort_by_key(|artifact| artifact.modified);
         for artifact in &artifacts {
-            if total <= max_size_bytes {
+            if (total <= max_size_bytes && !stale_staging(artifact))
+                || protected_path == Some(artifact.path.as_path())
+            {
+                continue;
+            }
+            // Do not retain an exclusive cache lock across a whole library.
+            // Revalidate each candidate and its current leases after acquiring
+            // the deletion lock; publication and clear may have run meanwhile.
+            let _operation = self
+                .inner
+                .operation
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            FileExt::lock_exclusive(&cache_lock)?;
+            if self.current_generation_unlocked()? != generation {
+                FileExt::unlock(&cache_lock)?;
                 break;
             }
-            if protected.contains(&artifact.path) {
+            let metadata = match fs::symlink_metadata(&artifact.path) {
+                Ok(metadata) => metadata,
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                    FileExt::unlock(&cache_lock)?;
+                    continue;
+                }
+                Err(error) => return Err(error.into()),
+            };
+            if !metadata.file_type().is_file()
+                || metadata.len() != artifact.size_bytes
+                || metadata.modified().ok() != Some(artifact.modified)
+                || self
+                    .protected_lease_ids()?
+                    .contains(&lease_marker_id(&artifact.path))
+            {
+                FileExt::unlock(&cache_lock)?;
                 continue;
             }
             match fs::remove_file(&artifact.path) {
-                Ok(()) => total = total.saturating_sub(artifact.size_bytes),
+                Ok(()) => {
+                    total = total.saturating_sub(artifact.size_bytes);
+                    if let Some(source_dir) = artifact.path.parent()
+                        && source_dir
+                            .file_name()
+                            .and_then(|name| name.to_str())
+                            .is_some_and(|name| is_lower_hex(name, 64))
+                    {
+                        repair_manifest(source_dir, generation)?;
+                    }
+                }
                 Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
                 Err(error) => return Err(error.into()),
             }
+            FileExt::unlock(&cache_lock)?;
         }
-        repair_all_manifests(&self.inner.root, self.current_generation_unlocked()?)?;
-        self.inner
-            .index
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .entries
-            .clear();
-        FileExt::unlock(&cache_lock)?;
-        let remaining = collect_artifacts(&self.inner.root)?;
-        Ok(CacheUsage {
-            size_bytes: remaining.iter().map(|entry| entry.size_bytes).sum(),
-            artifact_count: remaining.len(),
-        })
+        self.usage()
     }
 
     fn source_dir(&self, source: &SourceRevision) -> PathBuf {
@@ -792,25 +815,12 @@ impl DiskMediaCache {
         &self,
         source: &SourceRevision,
         generation: u64,
-        allow_cached: bool,
     ) -> Result<Manifest, MediaError> {
         let Some(source_dir) = self.validate_existing_source_dir(source)? else {
             return Ok(empty_manifest(source.clone(), generation));
         };
         let manifest_path = source_dir.join(MANIFEST_FILE);
         reject_symlink(&manifest_path)?;
-        let modified = match fs::metadata(&manifest_path) {
-            Ok(metadata) => metadata.modified().ok(),
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => None,
-            Err(error) => return Err(error.into()),
-        };
-        if allow_cached
-            && let Some(cached) = self.index_get(&source.revision_id)
-            && cached.modified == modified
-            && cached.manifest.cache_generation == generation
-        {
-            return Ok(cached.manifest);
-        }
         let manifest = match fs::read(&manifest_path) {
             Ok(bytes) => match serde_json::from_slice::<Manifest>(&bytes) {
                 Ok(manifest)
@@ -835,40 +845,75 @@ impl DiskMediaCache {
             }
             Err(error) => return Err(error.into()),
         };
-        self.index_put(source.revision_id.clone(), modified, manifest.clone());
         Ok(manifest)
     }
 
-    fn index_get(&self, key: &str) -> Option<CachedManifest> {
-        let mut index = self
-            .inner
-            .index
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
-        let value = index.entries.get(key).cloned();
-        if value.is_some() {
-            index.lru.retain(|candidate| candidate != key);
-            index.lru.push_back(key.to_owned());
+    pub(crate) fn lookup_candidates(
+        &self,
+        request: &CacheRequest,
+        alternatives: &[CacheRequest],
+    ) -> Result<CacheLookup, MediaError> {
+        validate_source_revision(&request.source_revision)?;
+        if alternatives
+            .iter()
+            .any(|candidate| candidate.source_revision != request.source_revision)
+        {
+            return Err(MediaError::StaleSourceRevision);
         }
-        value
-    }
-
-    fn index_put(&self, key: String, modified: Option<SystemTime>, manifest: Manifest) {
-        let mut index = self
+        let _operation = self
             .inner
-            .index
+            .operation
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
-        index.lru.retain(|candidate| candidate != &key);
-        index.lru.push_back(key.clone());
-        index
-            .entries
-            .insert(key, CachedManifest { modified, manifest });
-        while index.entries.len() > self.inner.max_manifests {
-            if let Some(expired) = index.lru.pop_front() {
-                index.entries.remove(&expired);
+        let cache_lock = self.open_cache_lock()?;
+        FileExt::lock_shared(&cache_lock)?;
+        let generation = self.current_generation_unlocked()?;
+        let source_lock = self.open_source_lock(&request.source_revision)?;
+        FileExt::lock_exclusive(&source_lock)?;
+        let source_dir = self.source_dir(&request.source_revision);
+        // Always read the small per-source manifest while holding its
+        // cross-process lock. Filesystem timestamps are not a coherence token.
+        let mut manifest = self.load_manifest(&request.source_revision, generation)?;
+        let original_len = manifest.artifacts.len();
+        retain_valid_artifacts(&source_dir, &mut manifest.artifacts)?;
+        if manifest.artifacts.len() != original_len {
+            self.write_manifest(&source_dir, &manifest)?;
+        }
+        let best = std::iter::once(request)
+            .chain(alternatives)
+            .find_map(|request| {
+                manifest
+                    .artifacts
+                    .iter()
+                    .filter_map(|stored| {
+                        let artifact = stored.to_artifact(&manifest.source_revision, &source_dir);
+                        satisfies(&artifact, request).map(|satisfaction| (artifact, satisfaction))
+                    })
+                    .min_by_key(|(artifact, satisfaction)| candidate_rank(artifact, *satisfaction))
+            });
+        let lookup = match best {
+            Some((artifact, satisfaction)) => {
+                let ArtifactLocation::Managed(path) = &artifact.location else {
+                    unreachable!("v2 manifests contain only managed artifacts")
+                };
+                let lease = self.inner.leases.acquire(
+                    path.clone(),
+                    self.inner.lease_ttl,
+                    Some(&self.inner.root.join(LEASE_FOLDER)),
+                )?;
+                CacheLookup::Hit(Box::new(CacheHit {
+                    artifact,
+                    satisfaction,
+                    lease,
+                }))
             }
-        }
+            None => CacheLookup::Generate {
+                cache_generation: generation,
+            },
+        };
+        FileExt::unlock(&source_lock)?;
+        FileExt::unlock(&cache_lock)?;
+        Ok(lookup)
     }
 
     fn write_manifest(&self, source_dir: &Path, manifest: &Manifest) -> Result<(), MediaError> {
@@ -899,64 +944,7 @@ impl MediaCache for DiskMediaCache {
     }
 
     fn lookup_or_generation(&self, request: &CacheRequest) -> Result<CacheLookup, MediaError> {
-        validate_source_revision(&request.source_revision)?;
-        let _operation = self
-            .inner
-            .operation
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
-        let cache_lock = self.open_cache_lock()?;
-        FileExt::lock_shared(&cache_lock)?;
-        let generation = self.current_generation_unlocked()?;
-        let source_lock = self.open_source_lock(&request.source_revision)?;
-        FileExt::lock_exclusive(&source_lock)?;
-        let source_dir = self.source_dir(&request.source_revision);
-        // Always read the small per-source manifest while holding its
-        // cross-process lock. Filesystem timestamps are not a coherence token.
-        let mut manifest = self.load_manifest(&request.source_revision, generation, false)?;
-        let original_len = manifest.artifacts.len();
-        retain_valid_artifacts(&source_dir, &mut manifest.artifacts)?;
-        if manifest.artifacts.len() != original_len {
-            self.write_manifest(&source_dir, &manifest)?;
-        }
-        let best = manifest
-            .artifacts
-            .iter()
-            .filter_map(|stored| {
-                let artifact = stored.to_artifact(&manifest.source_revision, &source_dir);
-                satisfies(&artifact, request).map(|satisfaction| (artifact, satisfaction))
-            })
-            .min_by_key(|(artifact, satisfaction)| candidate_rank(artifact, *satisfaction));
-        self.index_put(
-            request.source_revision.revision_id.clone(),
-            fs::metadata(source_dir.join(MANIFEST_FILE))
-                .and_then(|metadata| metadata.modified())
-                .ok(),
-            manifest,
-        );
-        let lookup = match best {
-            Some((artifact, satisfaction)) => {
-                let ArtifactLocation::Managed(path) = &artifact.location else {
-                    unreachable!("v2 manifests contain only managed artifacts")
-                };
-                let lease = self.inner.leases.acquire(
-                    path.clone(),
-                    self.inner.lease_ttl,
-                    Some(&self.inner.root.join(LEASE_FOLDER)),
-                )?;
-                CacheLookup::Hit(Box::new(CacheHit {
-                    artifact,
-                    satisfaction,
-                    lease,
-                }))
-            }
-            None => CacheLookup::Generate {
-                cache_generation: generation,
-            },
-        };
-        FileExt::unlock(&source_lock)?;
-        FileExt::unlock(&cache_lock)?;
-        Ok(lookup)
+        self.lookup_candidates(request, &[])
     }
 
     fn planned_location(&self, pending: &PendingArtifact) -> Result<Option<PathBuf>, MediaError> {
@@ -1039,7 +1027,7 @@ impl MediaCache for DiskMediaCache {
         // Always merge publication with a fresh on-disk snapshot. Metadata
         // timestamps can be coarse on network filesystems, so the bounded
         // lookup index is not sufficient for a cross-process write decision.
-        let mut manifest = self.load_manifest(&pending.source_revision, generation, false)?;
+        let mut manifest = self.load_manifest(&pending.source_revision, generation)?;
         manifest
             .artifacts
             .retain(|artifact| artifact.artifact_id != artifact_id);
@@ -1054,13 +1042,6 @@ impl MediaCache for DiskMediaCache {
             last_used_unix_ms: unix_millis(),
         });
         self.write_manifest(&source_dir, &manifest)?;
-        self.index_put(
-            pending.source_revision.revision_id.clone(),
-            fs::metadata(source_dir.join(MANIFEST_FILE))
-                .and_then(|metadata| metadata.modified())
-                .ok(),
-            manifest,
-        );
         let lease = self.inner.leases.acquire(
             destination.clone(),
             self.inner.lease_ttl,
@@ -1121,11 +1102,6 @@ impl MediaCache for DiskMediaCache {
             }
             remove_owned_prefix(&entry.path(), &name, &protected)?;
         }
-        *self
-            .inner
-            .index
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner) = ManifestIndex::default();
         FileExt::unlock(&cache_lock)?;
         Ok(())
     }
@@ -1678,7 +1654,12 @@ fn collect_regular_files(
 }
 
 fn push_owned_artifact(path: &Path, artifacts: &mut Vec<OwnedArtifact>) -> Result<(), MediaError> {
-    let metadata = fs::symlink_metadata(path)?;
+    let metadata = match fs::symlink_metadata(path) {
+        Ok(metadata) => metadata,
+        // Publishers rename temporary files while a shared-lock scan runs.
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+        Err(error) => return Err(error.into()),
+    };
     artifacts.push(OwnedArtifact {
         path: path.to_owned(),
         size_bytes: metadata.len(),
@@ -1687,46 +1668,32 @@ fn push_owned_artifact(path: &Path, artifacts: &mut Vec<OwnedArtifact>) -> Resul
     Ok(())
 }
 
-fn repair_all_manifests(root: &Path, generation: u64) -> Result<(), MediaError> {
-    for prefix in fs::read_dir(root)? {
-        let prefix = prefix?;
-        let prefix_name = prefix.file_name().to_string_lossy().into_owned();
-        if !prefix.file_type()?.is_dir() || !is_lower_hex(&prefix_name, 2) {
-            continue;
-        }
-        for source in fs::read_dir(prefix.path())? {
-            let source = source?;
-            let source_name = source.file_name().to_string_lossy().into_owned();
-            if !source.file_type()?.is_dir()
-                || !is_lower_hex(&source_name, 64)
-                || !source_name.starts_with(&prefix_name)
-            {
-                continue;
-            }
-            let manifest_path = source.path().join(MANIFEST_FILE);
-            let Ok(bytes) = fs::read(&manifest_path) else {
-                continue;
-            };
-            let Ok(mut manifest) = serde_json::from_slice::<Manifest>(&bytes) else {
-                continue;
-            };
-            if manifest.cache_generation != generation {
-                continue;
-            }
-            let original_len = manifest.artifacts.len();
-            retain_valid_artifacts(&source.path(), &mut manifest.artifacts)?;
-            if manifest.artifacts.len() == original_len {
-                continue;
-            }
-            let mut temporary = NamedTempFile::new_in(source.path())?;
-            serde_json::to_writer(&mut temporary, &manifest)
-                .map_err(|error| MediaError::CacheManifest(error.to_string()))?;
-            temporary.as_file().sync_all()?;
-            temporary
-                .persist(manifest_path)
-                .map_err(|error| MediaError::Io(error.error))?;
-        }
+fn repair_manifest(source_dir: &Path, generation: u64) -> Result<(), MediaError> {
+    let manifest_path = source_dir.join(MANIFEST_FILE);
+    reject_symlink(&manifest_path)?;
+    let bytes = match fs::read(&manifest_path) {
+        Ok(bytes) => bytes,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+        Err(error) => return Err(error.into()),
+    };
+    let Ok(mut manifest) = serde_json::from_slice::<Manifest>(&bytes) else {
+        return Ok(());
+    };
+    if manifest.cache_generation != generation {
+        return Ok(());
     }
+    let original_len = manifest.artifacts.len();
+    retain_valid_artifacts(source_dir, &mut manifest.artifacts)?;
+    if manifest.artifacts.len() == original_len {
+        return Ok(());
+    }
+    let mut temporary = NamedTempFile::new_in(source_dir)?;
+    serde_json::to_writer(&mut temporary, &manifest)
+        .map_err(|error| MediaError::CacheManifest(error.to_string()))?;
+    temporary.as_file().sync_all()?;
+    temporary
+        .persist(manifest_path)
+        .map_err(|error| MediaError::Io(error.error))?;
     Ok(())
 }
 
@@ -1876,6 +1843,40 @@ mod tests {
             policy_revision: MEDIA_CACHE_POLICY_REVISION,
             allow_interim: false,
         }
+    }
+
+    #[test]
+    fn candidate_lookup_preserves_order_policy_identity_and_miss_generation() {
+        let (directory, source) = fixture();
+        let cache = DiskMediaCache::new(directory.path(), 8).unwrap();
+        let generation = cache.generation().unwrap();
+        let primary = request(&source, 512);
+        let mut embedded = pending(&source, 160, generation);
+        embedded.variant.policy_revision = 2;
+        let mut alternative = request(&source, 160);
+        alternative.policy_revision = 2;
+        cache.publish(embedded).unwrap();
+        assert!(cache.lookup(&primary).unwrap().is_none());
+        let CacheLookup::Hit(hit) = cache
+            .lookup_candidates(&primary, &[alternative.clone()])
+            .unwrap()
+        else {
+            panic!("versioned alternative must be considered");
+        };
+        assert_eq!(hit.artifact.actual_dimensions.width, 160);
+        cache.publish(pending(&source, 512, generation)).unwrap();
+        let CacheLookup::Hit(hit) = cache.lookup_candidates(&primary, &[alternative]).unwrap()
+        else {
+            panic!("primary must be considered first");
+        };
+        assert_eq!(hit.artifact.actual_dimensions.width, 512);
+        cache.clear().unwrap();
+        let CacheLookup::Generate { cache_generation } =
+            cache.lookup_candidates(&primary, &[]).unwrap()
+        else {
+            panic!("clear must invalidate all candidates");
+        };
+        assert!(cache_generation > generation);
     }
 
     #[test]
@@ -2119,6 +2120,55 @@ mod tests {
             before
         );
         assert!(cache.lookup(&request(&source, 512)).unwrap().is_some());
+    }
+
+    #[test]
+    fn under_budget_prune_does_not_block_on_cache_readers_or_publication_mutex() {
+        let (directory, source) = fixture();
+        let cache = DiskMediaCache::new(directory.path(), 8).unwrap();
+        let publication = cache
+            .publish(pending(&source, 512, cache.generation().unwrap()))
+            .unwrap();
+        let operation = cache.inner.operation.lock().unwrap();
+        let reader = cache.open_cache_lock().unwrap();
+        FileExt::lock_shared(&reader).unwrap();
+        let other = cache.clone();
+        let (sender, receiver) = std::sync::mpsc::channel();
+        let worker = thread::spawn(move || sender.send(other.prune(u64::MAX)).unwrap());
+        let result = receiver.recv_timeout(Duration::from_secs(1));
+        FileExt::unlock(&reader).unwrap();
+        drop(operation);
+        worker.join().unwrap();
+        assert_eq!(
+            result.unwrap().unwrap().size_bytes,
+            publication.artifact.byte_size
+        );
+    }
+
+    #[test]
+    fn opening_is_not_a_staging_sweep_and_maintenance_preserves_live_staging() {
+        let (directory, source) = fixture();
+        let cache = DiskMediaCache::new(directory.path(), 8).unwrap();
+        let staging = cache.ensure_source_dir(&source).unwrap().join(".tmp");
+        fs::create_dir_all(&staging).unwrap();
+        let orphan = staging.join("orphan.jpg");
+        let active = staging.join("active.jpg");
+        let old = SystemTime::now() - STAGING_MAX_AGE * 2;
+        for path in [&orphan, &active] {
+            fs::write(path, b"staged").unwrap();
+            File::options()
+                .write(true)
+                .open(path)
+                .unwrap()
+                .set_times(fs::FileTimes::new().set_modified(old))
+                .unwrap();
+        }
+        let _lease = cache.lease_path(&active).unwrap();
+        let maintenance = DiskMediaCache::new(directory.path(), 8).unwrap();
+        assert!(orphan.is_file());
+        maintenance.prune(u64::MAX).unwrap();
+        assert!(!orphan.exists());
+        assert!(active.is_file());
     }
 
     #[test]

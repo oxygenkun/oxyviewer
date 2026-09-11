@@ -130,23 +130,6 @@ const fn jpeg_contract(
     }
 }
 
-fn lookup_preview(
-    artifacts: &ArtifactCache,
-    detail: DetailRequirement,
-    allow_embedded_interim: bool,
-    level: RenderLevel,
-) -> Result<Option<PreviewResult>, MediaError> {
-    let satisfied = preview_request(artifacts, detail, false);
-    if let Some(result) = artifacts.lookup(&satisfied, level)? {
-        return Ok(Some(result));
-    }
-    if allow_embedded_interim {
-        let interim = sony_embedded_request(artifacts, detail);
-        return artifacts.lookup(&interim, level);
-    }
-    Ok(None)
-}
-
 /// Chooses the presentation boundary for HEIF full detail. The frontend does
 /// not maintain a second platform policy table.
 pub fn full_uses_artifact(
@@ -192,10 +175,6 @@ pub(crate) fn preview(
             min_long_edge: max_size.saturating_sub(1).max(1),
         }
     };
-    if let Some(result) = lookup_preview(&artifacts, detail, try_fast_jpeg && allow_interim, level)?
-    {
-        return Ok(result);
-    }
     let satisfied_request = preview_request(&artifacts, detail, false);
     let production_request = preview_request(&artifacts, detail, allow_interim);
     // Embedded Sony results have their own lookup/version above. Reuse only
@@ -203,23 +182,27 @@ pub(crate) fn preview(
     let mut decoded_interim_request = production_request.clone();
     decoded_interim_request.representation =
         RepresentationRequirement::Exact(ArtifactRepresentation::Decoded);
-    if require_native_detail
-        && allow_interim
-        && let Some(result) = artifacts.lookup(&decoded_interim_request, level)?
-    {
-        return Ok(result);
+    let mut alternatives = Vec::new();
+    if try_fast_jpeg && allow_interim {
+        alternatives.push(sony_embedded_request(&artifacts, detail));
     }
-    let generation = match artifacts.prepare(&satisfied_request, level)? {
-        ArtifactPreparation::Cached(result) => return Ok(*result),
-        ArtifactPreparation::Generate { cache_generation } => cache_generation,
-    };
+    if require_native_detail && allow_interim {
+        alternatives.push(decoded_interim_request.clone());
+    }
+    if let ArtifactPreparation::Cached(result) =
+        artifacts.prepare_candidates(&satisfied_request, &alternatives, level)?
+    {
+        return Ok(*result);
+    }
 
     if try_fast_jpeg && allow_interim {
         let fast_lock = file_lock(&artifacts.source_lock_key("heif-fast-embedded"));
         let _fast_guard = acquire_file_lock(&fast_lock, &|| cancellation.is_cancelled())?;
-        if let Some(result) = lookup_preview(&artifacts, detail, true, level)? {
-            return Ok(result);
-        }
+        let generation =
+            match artifacts.prepare_candidates(&satisfied_request, &alternatives, level)? {
+                ArtifactPreparation::Cached(result) => return Ok(*result),
+                ArtifactPreparation::Generate { cache_generation } => cache_generation,
+            };
         if let Ok(inspection) = sony::inspect(path, None)
             && let Some(image) = inspection.embedded_jpeg
         {

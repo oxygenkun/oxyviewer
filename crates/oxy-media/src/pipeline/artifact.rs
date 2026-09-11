@@ -391,16 +391,34 @@ impl ArtifactCache {
         request: &CacheRequest,
         level: RenderLevel,
     ) -> Result<ArtifactPreparation, MediaError> {
+        self.prepare_candidates(request, &[], level)
+    }
+
+    /// Inspect one manifest for ordered representations and keep the same
+    /// generation fence on a miss. Call again after acquiring a producer lock.
+    pub(crate) fn prepare_candidates(
+        &self,
+        request: &CacheRequest,
+        alternatives: &[CacheRequest],
+        level: RenderLevel,
+    ) -> Result<ArtifactPreparation, MediaError> {
         if self.async_publication
             && let Some(result) = self.lookup_active(request, level)?
         {
             return Ok(ArtifactPreparation::Cached(Box::new(result)));
         }
-        match self.cache.lookup_or_generation(request)? {
+        match self.cache.lookup_candidates(request, alternatives)? {
             crate::cache::CacheLookup::Hit(hit) => Ok(ArtifactPreparation::Cached(Box::new(
                 self.preview_from_hit(*hit, level)?,
             ))),
             crate::cache::CacheLookup::Generate { cache_generation } => {
+                if self.async_publication {
+                    for candidate in alternatives {
+                        if let Some(result) = self.lookup_active(candidate, level)? {
+                            return Ok(ArtifactPreparation::Cached(Box::new(result)));
+                        }
+                    }
+                }
                 Ok(ArtifactPreparation::Generate { cache_generation })
             }
         }
