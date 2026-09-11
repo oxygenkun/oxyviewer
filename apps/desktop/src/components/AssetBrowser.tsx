@@ -45,9 +45,9 @@ interface AssetCardProps {
   priority: "nearby" | "visible";
   rank: number;
   selected: boolean;
-  onSelect: (event: React.MouseEvent) => void;
-  onContextMenu: (event: React.MouseEvent) => void;
-  onOpen: () => void;
+  onSelect: (id: string, additive?: boolean) => void;
+  onContextMenu: (event: React.MouseEvent, asset: AssetSummary) => void;
+  onOpen: (id: string) => void;
   showMetadata: boolean;
 }
 
@@ -69,11 +69,14 @@ const AssetCard = memo(function AssetCard({
   onOpen,
   showMetadata,
 }: AssetCardProps) {
+  const handleContextMenu = useCallback((event: React.MouseEvent) => {
+    onContextMenu(event, asset);
+  }, [onContextMenu, asset]);
   return (
     <button
       className={`asset-card ${selected ? "is-selected" : ""}`}
-      onClick={onSelect}
-      onDoubleClick={onOpen}
+      onClick={(event) => onSelect(asset.id, event.metaKey || event.ctrlKey)}
+      onDoubleClick={() => onOpen(asset.id)}
       title={asset.path}
     >
       <Thumbnail
@@ -81,7 +84,7 @@ const AssetCard = memo(function AssetCard({
         enabled={resourcesEnabled}
         priority={priority}
         rank={rank}
-        onContextMenu={onContextMenu}
+        onContextMenu={handleContextMenu}
       />
       <span className="asset-card__name">{asset.name}</span>
       <span className="asset-card__meta">
@@ -253,6 +256,10 @@ function VirtualGrid({
   const selectedIds = useWorkspaceStore((state) => state.selectedIds);
   const select = useWorkspaceStore((state) => state.select);
   const setView = useWorkspaceStore((state) => state.setView);
+  const openAsset = useCallback((id: string) => {
+    select(id);
+    setView("loupe");
+  }, [select, setView]);
   const thumbnailOrientation = useWorkspaceStore((state) => state.thumbnailOrientation);
   const gridMetadataVisible = useWorkspaceStore((state) => state.gridMetadataVisible);
   const usesPortraitThumbnails = thumbnailOrientation === "portrait";
@@ -378,12 +385,9 @@ function VirtualGrid({
                     priority={priority}
                     rank={rank}
                     selected={selectedIds.includes(asset.id)}
-                    onSelect={(event) => select(asset.id, event.metaKey || event.ctrlKey)}
-                    onContextMenu={(event) => onAssetContextMenu(event, asset)}
-                    onOpen={() => {
-                      select(asset.id);
-                      setView("loupe");
-                    }}
+                    onSelect={select}
+                    onContextMenu={onAssetContextMenu}
+                    onOpen={openAsset}
                     showMetadata={gridMetadataVisible}
                     resourcesEnabled={resourcesEnabled}
                   />
