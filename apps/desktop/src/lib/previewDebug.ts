@@ -39,6 +39,13 @@ const DEBUG_STORAGE_KEY = "oxyviewer.previewDebugSnapshot.v2";
 const waiting = new Map<number, TrackedPreview>();
 const loading = new Map<number, TrackedPreview>();
 let nextId = 1;
+let snapshotTimer: ReturnType<typeof setTimeout> | undefined;
+let verboseLogging = false;
+
+/** Opt in from diagnostics when individual lifecycle logs are needed. */
+export function setPreviewDebugLoggingEnabled(enabled: boolean): void {
+  verboseLogging = enabled;
+}
 
 function now() {
   return performance.now();
@@ -57,16 +64,28 @@ function names(requests: Iterable<TrackedPreview>) {
 }
 
 function printState() {
-  const active = [...loading.values()];
-  const visible = active.filter((request) => request.priority === "visible" || request.priority === "loupe");
-  console.debug("[OxyPreview][STATE]", {
-    waiting: names(waiting.values()),
-    loading: names(active),
-    visibleLoading: names(visible),
-  });
-  if (typeof window !== "undefined") {
-    window.localStorage.setItem(DEBUG_STORAGE_KEY, JSON.stringify(getLocalSnapshot()));
-  }
+  // A grid mount starts dozens of requests in one React commit. Serializing
+  // the whole queue and synchronously writing localStorage per transition
+  // blocks scrolling. Keep the in-memory snapshot immediate and publish the
+  // cross-window mirror at the diagnostics UI's 4 Hz refresh rate.
+  if (snapshotTimer !== undefined || typeof window === "undefined") return;
+  snapshotTimer = setTimeout(() => {
+    snapshotTimer = undefined;
+    if (verboseLogging) {
+      const active = [...loading.values()];
+      const visible = active.filter((request) => request.priority === "visible" || request.priority === "loupe");
+      console.debug("[OxyPreview][STATE]", {
+        waiting: names(waiting.values()),
+        loading: names(active),
+        visibleLoading: names(visible),
+      });
+    }
+    try {
+      window.localStorage.setItem(DEBUG_STORAGE_KEY, JSON.stringify(getLocalSnapshot()));
+    } catch {
+      // Unavailable storage must never fail an image request.
+    }
+  }, 250);
 }
 
 function getLocalSnapshot(): PreviewDebugSnapshot {
@@ -79,7 +98,7 @@ function getLocalSnapshot(): PreviewDebugSnapshot {
 export function getPreviewDebugSnapshot(): PreviewDebugSnapshot {
   if (!__OXY_DEBUG__) return { waiting: [], loading: [] };
   const local = getLocalSnapshot();
-  if (local.waiting.length || local.loading.length) return local;
+  if (nextId > 1) return local;
   if (typeof window === "undefined") return local;
   try {
     const stored = window.localStorage.getItem(DEBUG_STORAGE_KEY);
@@ -147,7 +166,7 @@ export function beginPreviewDebug(request: PreviewDebugRequest): PreviewDebugHan
   };
   nextId += 1;
   waiting.set(tracked.id, tracked);
-  console.debug(`[OxyPreview][WAIT] ${label(tracked)}`);
+  if (verboseLogging) console.debug(`[OxyPreview][WAIT] ${label(tracked)}`);
   printState();
 
   const finish = (
@@ -160,7 +179,7 @@ export function beginPreviewDebug(request: PreviewDebugRequest): PreviewDebugHan
     const waitTime = elapsed(tracked.queuedAt, tracked.startedAt ?? endedAt);
     const loadTime = tracked.startedAt ? elapsed(tracked.startedAt, endedAt) : "not-started";
     const totalTime = elapsed(tracked.queuedAt, endedAt);
-    console.debug(
+    if (verboseLogging) console.debug(
       `[OxyPreview][${status}] ${label(tracked)} | wait=${waitTime} | load=${loadTime} | total=${totalTime}`,
       detail,
     );
@@ -172,13 +191,13 @@ export function beginPreviewDebug(request: PreviewDebugRequest): PreviewDebugHan
       if (!waiting.delete(tracked.id)) return;
       tracked.startedAt = now();
       loading.set(tracked.id, tracked);
-      console.debug(
+      if (verboseLogging) console.debug(
         `[OxyPreview][START] ${label(tracked)} | waited=${elapsed(tracked.queuedAt, tracked.startedAt)}`,
       );
       printState();
     },
     mark: (milestone, detail) => {
-      if (!waiting.has(tracked.id) && !loading.has(tracked.id)) return;
+      if (!verboseLogging || (!waiting.has(tracked.id) && !loading.has(tracked.id))) return;
       const markedAt = now();
       const loadTime = tracked.startedAt
         ? elapsed(tracked.startedAt, markedAt)
