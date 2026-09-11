@@ -12,9 +12,11 @@ fi
 mkdir -p "$build_dir"
 cd "$build_dir"
 platform=()
+executable_suffix=
 case "$target" in
   x86_64-pc-windows-msvc)
     platform=(--target-os=mingw32 --arch=x86_64 --cc=gcc --cxx=g++ --extra-ldflags=-static)
+    executable_suffix=.exe
     ;;
   aarch64-apple-darwin|x86_64-apple-darwin)
     export MACOSX_DEPLOYMENT_TARGET=11.0
@@ -39,4 +41,4 @@ bash "$source_dir/configure" \
   --enable-encoder=mjpeg,bmp --enable-muxer=image2,image2pipe \
   --enable-filter=buffer,buffersink,scale,format,crop,transpose,hflip,vflip,unsharp,xstack,split \
   "${platform[@]}" | tee configure-summary.txt
-make -j "${OXY_FFMPEG_JOBS:-4}" ffmpeg ffprobe
+make -j "${OXY_FFMPEG_JOBS:-4}" "ffmpeg${executable_suffix}" "ffprobe${executable_suffix}"

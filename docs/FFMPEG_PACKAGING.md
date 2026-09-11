@@ -29,6 +29,25 @@ tools. Linux uses the native compiler. Windows uses MSYS2 UCRT64 with
 `usr/bin/bash.exe` if MSYS2 is not installed at `C:/msys64`. Git Bash is not
 a substitute. CI installs these prerequisites.
 
+For a local Windows machine, install the same toolchain from PowerShell before
+the first release build:
+
+```powershell
+winget install --id MSYS2.MSYS2 --exact --source winget --location C:\msys64 --silent --accept-package-agreements --accept-source-agreements
+$env:MSYSTEM = 'UCRT64'
+$env:CHERE_INVOKING = '1'
+# Use separate shells: a core runtime update can terminate the first shell.
+& C:\msys64\usr\bin\bash.exe --login -c 'pacman --noconfirm -Syuu'
+& C:\msys64\usr\bin\bash.exe --login -c 'pacman --noconfirm -Syuu'
+& C:\msys64\usr\bin\bash.exe --login -c 'pacman --noconfirm -S --needed make diffutils nasm mingw-w64-ucrt-x86_64-gcc'
+pnpm tauri build
+```
+
+The two-stage update follows the [MSYS2 setup instructions](https://www.msys2.org/docs/ci/#other-systems).
+The build wrapper selects UCRT64 itself, so subsequent builds work from a fresh
+PowerShell without adding MSYS2 to the global PATH. `OXY_FFMPEG_DIR` only changes
+runtime discovery; it does not provide the source-build prerequisites.
+
 Supported native targets: macOS arm64/x86_64, Windows x86_64 MSVC application
 (standalone FFmpeg compiled with MinGW UCRT), Linux arm64/x86_64 GNU.
 Cross-compilation and macOS universal builds fail explicitly rather than
@@ -127,3 +146,25 @@ the external binaries via Tauri's normal signing workflow.
   two doctests passed (existing ignored fixture tests remained ignored).
 - Windows/Linux package extraction checks are configured in CI; those native
   builds and installed-app behavior have not been executed on this Mac.
+
+### Windows standard build verification, 2026-09-11
+
+- Installed and updated MSYS2 at the default location, then installed Make,
+  diffutils, NASM and the UCRT64 GCC toolchain. The local mirror priority was
+  adjusted to an accessible mirror from MSYS2's supplied list after the primary
+  servers timed out.
+- Fixed the build recipe's Windows Make targets: MinGW requires `ffmpeg.exe`
+  and `ffprobe.exe`, whereas macOS/Linux retain the suffix-free targets.
+- The unmodified command `pnpm tauri build` completed the pinned FFmpeg 8.0.1
+  source build, frontend/Release build, and both MSI and NSIS installers.
+  A subsequent `pnpm ffmpeg:prepare` reused the verified cache successfully.
+- MSI administrative extraction followed by `--verify-bundle` passed: both
+  programs run with PATH cleared, capabilities/filter smoke tests pass, and the
+  exact source archive and required license/build materials are present.
+- The application extracted from the MSI passed `cold-preview-hif`,
+  `resource-stress-hif` and `filmstrip-scroll-hif` with PATH empty and
+  `OXY_FFMPEG_DIR` unset. Cold first preview was 83.2 ms and first tile 1015 ms.
+  The stress run switched 80 paths, revisited eight full presentations, and
+  passed active-resource reads across cache maintenance. These single runs use
+  copies of a real Sony HIF fixture, not a diverse camera corpus. All test
+  application instances were closed.

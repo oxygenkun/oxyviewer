@@ -780,3 +780,35 @@ Native app peak working set was 262–264 MiB (excludes FFmpeg/WebView children)
 Three production files passed independent comparison of all 98,224,128 coefficients
 per image. Concurrent next-selection p50/p95 and cross-platform fixture matrices
 remain follow-up measurements; see the TODO for raw records and validation limits.
+
+### Independent loupe and thumbnail workers (2026-09-11)
+
+Full requests, including HEIF tile sessions, now use an independent two-worker
+loupe queue. Thumbnail extraction has its own CPU-sized queue and decode gate.
+Loupe starts full immediately and only observes an already cached thumbnail base.
+Selection epochs reject late admission; selection changes cancel pending/running
+full work. FFmpeg children are killed and reaped on cancellation, and LibRaw uses
+its progress callback. Native APIs without cancellation hooks must return before
+their cancelled result can be discarded.
+
+One local Windows Release WebView run of each HIF scenario passed with the real
+DSC00449.HIF fixture. Cold first preview was 81.2 ms (800 ms budget), embedded
+thumbnail backend work 18 ms, and first tile 1096 ms. The stress scenario switched
+80 distinct paths at 120 ms intervals, then revisited eight: every full presentation
+painted, observed at 843–1060 ms by the 100 ms polling probe. It also passed reads
+before/during/after cache clear and settled to 32 registry entries for 33 displayed
+images. Filmstrip moving-readiness checks passed. These are single-run checks with
+copies of one HIF, not a diverse-format corpus or a historical speedup comparison.
+
+The maintenance check exposed a Windows path-spelling mismatch between publishers
+and maintenance: canonical-prefix differences produced different disk-lease hashes.
+Cache roots now canonicalize consistently; the regression test and live cache-clear
+reads both pass. Frontend checks/build and all 177 tests, Rust formatting, workspace
+Clippy and workspace tests passed. No real RAW visual run was available. The local
+Release executable used a system FFmpeg override; the repository packaging wrapper
+initially could not rebuild bundled FFmpeg because MSYS2 was absent. The subsequent
+standard Windows build installed that toolchain and corrected the recipe's `.exe`
+Make targets. Both MSI and NSIS now build successfully. The MSI-extracted application
+passed all three HIF scenarios again with PATH empty and no FFmpeg override; cold
+first preview was 83.2 ms and first tile 1015 ms. See [packaging verification](FFMPEG_PACKAGING.md#windows-standard-build-verification-2026-09-11).
+All owned native test instances were closed.
