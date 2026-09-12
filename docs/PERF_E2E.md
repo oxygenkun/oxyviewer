@@ -3,6 +3,12 @@
 本文档定义 OxyViewer 的端到端（E2E）性能回归测试方案，目标是在未来重构和
 新增功能时，保证 `docs/PERFORMANCE.md` 中的核心交互预算不退化：
 
+可用 `node scripts/perf-e2e.mjs --config <scenario-json> --scenario <name>` 传入外部
+fixture 配置，避免把私人照片路径写入默认场景。Windows runner 等待测试子进程退出后再清理
+隔离状态，对短暂残留的文件句柄做有界重试；不会清理普通用户的 data/cache。
+JPEG 合成仍依赖 macOS `sips`，Windows 验证应使用 `file` fixture。真实滚轮采样另见
+[JPEG/RAW 小图验收](research/jpeg-thumbnail-scroll-2026-09-12.md)。
+
 | 交互 | 预算 | 对应场景 |
 | --- | --- | --- |
 | 10 万文件目录首屏开始渲染 | ≤ 300 ms | `folder-open-100k` |

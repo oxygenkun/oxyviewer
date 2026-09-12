@@ -16,6 +16,12 @@ end-to-end regression harness that enforces these budgets is described in
 
 Refactoring guardrails and regression checks: [Performance invariants](PERFORMANCE_INVARIANTS.md).
 
+The [2026-09-12 JPEG/RAW thumbnail qualification](research/jpeg-thumbnail-scroll-2026-09-12.md)
+records bounded native thumbnails, real NAS scrolling, process memory, full-image correctness,
+and local cold/warm previews. Scroll long tasks were eliminated in the measured runs.
+The existing 100k-file first-page target remains unmet (570 ms versus the original build's
+555 ms), and startup/GPU frame gaps plus a Sony warm-start tail sample remain visible in the report.
+
 ## Whole-directory browser thumbnails
 
 After the first ordinary browse page commits, the frontend continues fetching
@@ -30,9 +36,9 @@ subdirectories. Search and filters do not evict retained same-directory thumbnai
 
 Small encoded thumbnails are fetched into a browser-owned Blob and decoded once.
 At up to 512 pixels on the longest edge, that Blob URL and decoded image are
-retained directly; no Canvas/PNG round trip is needed. Larger originals are
-resized into a lossless PNG with scaled content geometry and their original display
-geometry. Blob URLs and decoded `Image` references belong to the whole current
+retained directly; no Canvas/PNG round trip is needed. Larger images are reduced
+by native media before delivery (bounded JPEG or alpha-preserving PNG), with
+scaled content geometry and their original display geometry. Blob URLs and decoded `Image` references belong to the whole current
 folder; they are not evicted by the generic 1,024-entry/512 MiB image LRU. Native
 resource leases are released once the independent browser copy is ready. The
 virtualized DOM still mounts only viewport/overscan images. Cached remounts use
@@ -44,9 +50,15 @@ revoke Blob URLs. Source revision changes invalidate the affected thumbnail;
 generation checks discard asynchronous copies finishing after invalidation.
 Memory use grows with directory size: decoded 120x160 thumbnails use about
 75 KiB each before Blob/browser overhead; 512x384 copies use about 768 KiB each.
-Full-size/loupe resources keep their existing bounded cache. Original JPEG/PNG/
-WebP resources are resized for browser retention; this does not add a new native
-disk-thumbnail format for them. Other formats keep their existing artifact policy.
+Full-size/loupe resources keep their existing bounded cache. JPEG thumbnail
+planning prefers a suitable associated MPF image and otherwise reduces the
+primary, with a separate native thumbnail policy. PNG/WebP also use a native
+thumbnail artifact. The browser rejects oversized thumbnail delivery instead of
+performing synchronous Canvas conversion. Preload delivery concurrency is capped
+at four; native small-image conversion has two weighted permits and a shared
+256 MiB temporary estimate, independent of existing full decoder/registry limits.
+JPEG full keeps the original image, materialized off the native UI callback and
+decoded asynchronously before becoming visible.
 
 Background pagination stops at the last page or a query error and clears pending
 timers when the directory/query changes or the view unmounts. Concurrent scroll

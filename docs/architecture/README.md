@@ -33,6 +33,10 @@
    - 多平台、多格式和厂商兼容规则的目标边界
    - 分阶段迁移、行为不变量与验收记录（进行中）
 
+8. [按源表示规划 thumbnail 与 full](08-representation-planning.md)（已实现，Windows 验收与剩余预算缺口已记录）
+   - JPEG 内嵌图选择、质量与交付上限、缓存派生及向其他格式扩展
+   - [JPEG 质量分层与滚动卡顿实施计划](../tasks/jpg-quality-and-scroll-performance.md)
+
 ## 快速查找表
 
 | 概念 | Rust 实现 | TypeScript 实现 |

@@ -7,6 +7,12 @@ Date: 2026-09-03
 Accepted. This refines the stage vocabulary and dispatcher boundary introduced
 by ADR 0005.
 
+Implemented refinement (2026-09-12; Windows measurements and remaining budget gaps documented):
+[source-representation planning](../architecture/08-representation-planning.md)
+separates JPEG thumbnail delivery from full-quality primary-image delivery,
+while preserving the semantic levels below. Its implementation and scrolling
+qualification are tracked in the [task plan](../tasks/jpg-quality-and-scroll-performance.md).
+
 ## Context
 
 The progressive UI used arrays containing concrete sizes such as `512` and
