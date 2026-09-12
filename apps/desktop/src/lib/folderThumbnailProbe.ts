@@ -5,8 +5,8 @@ import { perfMark, perfSnapshot } from "./perfProbe";
 import { useWorkspaceStore } from "../store";
 import type { AssetSummary, DebugQueueSnapshot } from "../types";
 
-/** Explicit isolated desktop scenario; uses 1,100 files through native media. */
-export async function runFolderThumbnailProbe(assets: () => AssetSummary[], signal: AbortSignal): Promise<void> {
+/** Explicit isolated desktop scenario; default retains the 1,100-file stress case. */
+export async function runFolderThumbnailProbe(assets: () => AssetSummary[], signal: AbortSignal, expectedAssets = 1100): Promise<void> {
   const wait = (ms: number) => new Promise<void>((resolve, reject) => {
     signal.throwIfAborted();
     const abort = () => { clearTimeout(timer); reject(signal.reason); };
@@ -38,7 +38,7 @@ export async function runFolderThumbnailProbe(assets: () => AssetSummary[], sign
   try {
     for (;;) {
       const files = assets();
-      if (files.length >= 1100 && files.every((asset) => getFolderThumbnail(asset))) break;
+      if (files.length >= expectedAssets && files.every((asset) => getFolderThumbnail(asset))) break;
       if (performance.now() - started > 150_000) {
         throw new Error(`Folder warming timed out: ${getFolderThumbnailStats().count}/${files.length}`);
       }

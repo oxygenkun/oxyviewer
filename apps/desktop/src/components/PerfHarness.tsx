@@ -8,6 +8,7 @@ import {
   perfSnapshot,
 } from "../lib/perfProbe";
 import { useWorkspaceStore } from "../store";
+import { getFolderThumbnailStats } from "../lib/folderThumbnailCache";
 import type { AssetSummary, FolderSession, PerfScenario } from "../types";
 
 interface PerfHarnessProps {
@@ -68,6 +69,15 @@ export function PerfHarness({
   const firstPageRef = useRef(false);
   const selectedRef = useRef(false);
   const doneRef = useRef(false);
+
+  useEffect(() => {
+    // Read-only browser probe, exposed only by an explicitly injected scenario.
+    Object.defineProperty(window, "__oxyPerfInspect", {
+      configurable: true,
+      value: () => ({ marks: perfSnapshot(), retained: getFolderThumbnailStats() }),
+    });
+    return () => { Reflect.deleteProperty(window, "__oxyPerfInspect"); };
+  }, []);
 
   useEffect(() => {
     activatePerfProbe();
@@ -135,7 +145,7 @@ export function PerfHarness({
     queueMicrotask(() => {
       if (controller.signal.aborted) return;
       stressRef.current = true;
-      void runResourceStress(scenario.resourceStress!, () => assetsRef.current, controller.signal)
+      void runResourceStress(scenario.resourceStress!, () => assetsRef.current, controller.signal, scenario.expectedAssets)
         .catch((error) => {
           if (!controller.signal.aborted) perfMark("resource:stress-failed", { message: String(error) });
         });

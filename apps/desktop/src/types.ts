@@ -408,6 +408,7 @@ export interface HeifStatusEvent {
  * `oxy-domain`; see `docs/PERF_E2E.md`.
  */
 export interface PerfScenario {
+  expectedAssets?: number;
   name: string;
   folder: string;
   selectName?: string;

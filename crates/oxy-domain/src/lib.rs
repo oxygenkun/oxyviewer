@@ -835,6 +835,8 @@ pub struct ResourceRegistryStats {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct PerfScenario {
+    #[serde(default)]
+    pub expected_assets: Option<usize>,
     pub name: String,
     pub folder: PathBuf,
     #[serde(default)]

@@ -12,8 +12,9 @@ export async function runResourceStress(
   mode: NonNullable<PerfScenario["resourceStress"]>,
   assets: () => AssetSummary[],
   signal: AbortSignal,
+  expectedAssets?: number,
 ): Promise<void> {
-  if (mode === "folder-thumbnails") return runFolderThumbnailProbe(assets, signal);
+  if (mode === "folder-thumbnails") return runFolderThumbnailProbe(assets, signal, expectedAssets);
   if (mode === "grid-scroll") return runGridScrollProbe(signal);
   if (mode === "filmstrip-scroll") return runGridScrollProbe(signal, true);
   if (mode === "navigation-cache") return runNavigationCacheProbe(assets(), signal);

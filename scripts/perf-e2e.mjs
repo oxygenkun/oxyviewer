@@ -38,6 +38,7 @@ function parseArgs(argv) {
     updateBaseline: false,
     verbose: false,
     app: undefined,
+    config: SCENARIOS_PATH,
     folder: undefined,
     selectName: undefined,
     scrollEnd: false,
@@ -52,6 +53,7 @@ function parseArgs(argv) {
     else if (arg === "--update-baseline") args.updateBaseline = true;
     else if (arg === "--verbose") args.verbose = true;
     else if (arg === "--app") args.app = argv[++index];
+    else if (arg === "--config") args.config = path.resolve(argv[++index]);
     else if (arg === "--folder") args.folder = argv[++index];
     else if (arg === "--select-name") args.selectName = argv[++index];
     else if (arg === "--scroll-end") args.scrollEnd = true;
@@ -59,7 +61,7 @@ function parseArgs(argv) {
     else if (arg === "--cold-cache") args.coldCache = true;
     else if (arg === "--await-mark") args.awaitMarks.push(argv[++index]);
     else if (arg === "--help" || arg === "-h") {
-      console.log("Usage: node scripts/perf-e2e.mjs [--scenario name]... [--runs N] [--update-baseline] [--verbose] [--app path]");
+      console.log("Usage: node scripts/perf-e2e.mjs [--config path] [--scenario name]... [--runs N] [--update-baseline] [--verbose] [--app path]");
       console.log("       node scripts/perf-e2e.mjs --folder path --select-name file [--scroll-end] [--cold-cache] [--await-mark token]");
       console.log("       node scripts/perf-e2e.mjs --folder path --grid-scroll [--cold-cache] [--runs N]");
       process.exit(0);
@@ -212,8 +214,14 @@ function hasManagedArtifact(cacheDir) {
 }
 
 function clearIsolatedState(runtime, clearData = false) {
-  fs.rmSync(runtime.cacheDir, { recursive: true, force: true });
-  if (clearData) fs.rmSync(runtime.dataDir, { recursive: true, force: true });
+  for (const directory of [runtime.cacheDir, ...(clearData ? [runtime.dataDir] : [])]) {
+    const relative = path.relative(REPORTS_DIR, directory);
+    if (!relative || relative.startsWith("..") || path.isAbsolute(relative)) {
+      throw new Error("Refusing to clear state outside the runner report directory");
+    }
+    // Windows may retain a file handle briefly after the child has exited.
+    fs.rmSync(directory, { recursive: true, force: true, maxRetries: 20, retryDelay: 50 });
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -244,7 +252,9 @@ function runScenarioOnce(
       },
       stdio: ["ignore", "pipe", "pipe"],
       detached: process.platform !== "win32",
+      windowsHide: true,
     });
+    const closed = new Promise((done) => child.once("close", done));
     let stderr = "";
     child.stderr.on("data", (chunk) => {
       stderr += chunk;
@@ -262,8 +272,9 @@ function runScenarioOnce(
     const poll = setInterval(() => {
       if (fs.existsSync(scenarioPayload.reportPath)) {
         clearInterval(poll);
-        const finish = () => {
+        const finish = async () => {
           kill();
+          await closed;
           try {
             fs.writeFileSync(`${scenarioPayload.reportPath}.stderr.log`, stderr);
             const report = JSON.parse(fs.readFileSync(scenarioPayload.reportPath, "utf8"));
@@ -273,11 +284,11 @@ function runScenarioOnce(
           }
         };
         if (settleAfterReportMs > 0) setTimeout(finish, settleAfterReportMs);
-        else finish();
+        else void finish();
       } else if (Date.now() > deadline) {
         clearInterval(poll);
         kill();
-        resolve({ ok: false, error: "runner deadline exceeded (no report written)", stderr });
+        void closed.then(() => resolve({ ok: false, error: "runner deadline exceeded (no report written)", stderr }));
       }
     }, 100);
     child.on("error", (error) => {
@@ -409,7 +420,7 @@ async function main() {
   if (args.gridScroll && (!args.folder || args.scrollEnd || args.selectName)) {
     throw new Error("--grid-scroll requires --folder and cannot be combined with --scroll-end or --select-name");
   }
-  const config = JSON.parse(fs.readFileSync(SCENARIOS_PATH, "utf8"));
+  const config = JSON.parse(fs.readFileSync(args.config, "utf8"));
   if (args.folder) {
     if (args.scrollEnd && !args.selectName) {
       throw new Error("--scroll-end requires --select-name so the painted target can be verified");
