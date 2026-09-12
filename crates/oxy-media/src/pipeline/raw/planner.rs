@@ -78,7 +78,8 @@ pub(super) const fn preview_max_size(level: RenderLevel) -> Option<u32> {
 }
 
 // Records completed embedded selection, not satisfaction of a viewing level.
-pub(super) const LARGEST_EMBEDDED_JPEG_TARGET: &str = "raw-largest-embedded-jpeg-v1";
+pub(super) const LARGEST_EMBEDDED_JPEG_TARGET: &str =
+    "raw-largest-embedded-jpeg-v2-resolved-dimensions";
 
 pub(super) struct RawFullPlan {
     pub embedded: CacheRequest,

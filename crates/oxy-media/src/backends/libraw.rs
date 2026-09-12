@@ -1,6 +1,7 @@
 use image::{
     DynamicImage, ImageDecoder, ImageFormat, ImageReader, RgbImage, RgbaImage, imageops::FilterType,
 };
+mod embedded;
 #[cfg(any(target_os = "macos", target_os = "linux"))]
 use std::ffi::CString;
 use std::{
@@ -159,6 +160,7 @@ fn embedded_preview(
 ) -> Result<(ProcessedImage, oxy_domain::DisplayDimensions), String> {
     let raw = Processor::open(path)?;
     let reference = oxy_domain::DisplayDimensions(raw.dimensions()?);
+    embedded::resolve_unknown_dimensions(path, &raw)?;
     check(unsafe { oxy_libraw_unpack_sized_thumb(raw.inner, max_size) })?;
     Ok((ProcessedImage::thumbnail(&raw)?, reference))
 }

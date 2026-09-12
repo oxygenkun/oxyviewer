@@ -2,3 +2,4 @@
 
 pub(crate) mod heif;
 pub(crate) mod jpeg;
+pub(crate) mod rw2;

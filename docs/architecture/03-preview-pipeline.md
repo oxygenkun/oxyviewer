@@ -35,6 +35,9 @@ HEVC 解码器或操作系统预览服务。即使原文件可解码，也不应
 fallback。多个等级可以指向同一产物。
 Windows RAW 的 codec 资格检查、可选扩展安装和重新显影流程见
 [Windows RAW 完整解析](../windows-raw.md)。
+最大 JPEG 选择会先补齐 LibRaw 未解析的候选尺寸（CR3 JPEG track），并补充 RW2
+`JpgFromRaw2` 标签范围。文件范围、JPEG 头与尾部填充均有界验证；内嵌大图沿用
+`Encoded` 内存发布和异步持久化，只有 WebView 负责像素解码。未知尺寸不等于没有大图。
 例如 Sony HIF 的 `preview` 是 `thumbnail` 的显式别名，而不是一个 160 px 特判。
 
 ## 3. 端到端调用链
