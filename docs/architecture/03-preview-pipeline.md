@@ -25,11 +25,11 @@ HEVC 解码器或操作系统预览服务。即使原文件可解码，也不应
 | Windows 格式 | `thumbnail` | `preview` | `full` |
 | --- | --- | --- | --- |
 | JPEG/PNG/WebP | 原文件 URL | 原文件 URL | 原文件 URL |
-| RAW | LibRaw 512 | LibRaw 4096 | 近全尺寸内嵌 JPEG；不足时 full development |
+| RAW | LibRaw 512 | LibRaw 4096 | 最大内嵌 JPEG；不足时 full development |
 | HEIF/HIF | 内嵌 160×120 JPEG | 复用同一内嵌 JPEG | 源 HEIF 直接转换的完整 JPEG |
 | TIFF | macOS ImageIO JPEG 512；Windows/Linux 暂不支持 | macOS ImageIO JPEG 512；Windows/Linux 暂不支持 | macOS ImageIO JPEG 4096；Windows/Linux 暂不支持 |
 
-交互图不随格式改变：网格/列表只进入 `thumbnail`；放大镜固定执行 `preview → full`。
+交互图不随格式改变：网格/列表只进入 `thumbnail`；放大镜请求 `full`，复用已有 thumbnail 底图。
 前端 `renderPlan(kind, surface, platform)` 把等级映射到 renderer 类；后端
 `pipeline::dispatcher` 直接按 `AssetKind + RenderLevel` 分派，再由格式 executor 选择后端与
 fallback。多个等级可以指向同一产物。
@@ -291,10 +291,15 @@ LibRaw development 回退；Windows/Linux 使用 LibRaw development。所有生�
 
 ### 8.2 full
 
-`full` 等级先检查内嵌 JPEG 是否覆盖 RAW 源尺寸的至少 90%。满足时直接复用 `preview` 缓存，提供
-接近即时的 1:1 查看，也避免后台显影抢占 CPU、拖慢缩放和平移。只有内嵌预览明显不足时，
-才对传感器数据执行完整开发、应用适度 sharpening 并生成高质量 JPEG；该 fallback 不属于冷
-预览 800 ms 预算，UI 会一直保留 4096 图。
+`full` 选择 LibRaw 列表中像素面积最大的内嵌 JPEG，不再按 4096 目标选择最小够用预览。
+缓存记录最大 JPEG 的选择来源；普通 preview 缓存不能代替这一步。相机 JPEG 保留编码像素，
+LibRaw 可补充 EXIF 方向信息。长、短边分别覆盖 RAW 显示尺寸至少 90% 时返回 `Satisfied`；
+这是沿用的分辨率近似判断，不代表 RAW 显影的动态范围或逐像素一致性。
+
+已有小图可作为 full 的 `Interim` 返回，队列保留订阅和优先级，继续禁止 Interim 的升级。
+提取锁内再次检查缓存时只接受满足要求的结果，不能因小图存在而跳过最大 JPEG 提取。
+最大的 JPEG 缺失或尺寸不足才回退完整显影；full fallback 不属于冷预览 800 ms 预算，
+UI 保留当前已显示的底图，直到后续图片完成加载。
 
 ### 8.3 Sony 拍摄对焦区域
 
@@ -369,8 +374,8 @@ source revision，避免升级后继续返回指向旧策略产物的 ready proj
 
 当请求 512 时，通用 `larger_cached_preview` 会检查是否已有同 backend tag 的 4096 缓存；若有，
 直接返回更大文件并由浏览器缩小显示。HEIF 还会显式检查自己的 full JPEG 并缩放复用。RAW 的
-512/4096 查询会复用更大的 `.embedded.jpg` 或 `.developed.jpg`；RAW full 在内嵌 JPEG 覆盖源尺寸
-至少 90% 时也直接返回该 4096 缓存。只有实际 LibRaw full development 才写入独立 cache version。
+512/4096 查询会复用更大的 embedded 或 developed artifact；RAW full 仅把带有最大 JPEG
+选择来源且覆盖源尺寸至少 90% 的相机 JPEG 作为最终结果，普通 preview 只能作为中间图。
 这些策略统称为 up-tier reuse。HEIF 快速 JPEG 与 decoded primary 使用不同 suffix，通用 HEIF
 up-tier 只查询 decoded 产物；RAW full 的相机 JPEG 替代由表示契约和 90% display-space 覆盖共同
 决定，不能把尺寸更大的 half development 当作 full development。

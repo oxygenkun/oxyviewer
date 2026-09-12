@@ -136,7 +136,10 @@ pub enum RepresentationRequirement {
     AnyDisplay,
     Exact(ArtifactRepresentation),
     RawNative { allow_camera_preview: bool },
+    LargestRawJpeg,
 }
+
+pub(crate) const LARGEST_RAW_JPEG_TARGET: &str = "raw-largest-embedded-jpeg-v1";
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -212,7 +215,7 @@ pub fn satisfies(artifact: &MediaArtifact, request: &CacheRequest) -> Option<Sat
                     request.representation,
                     RepresentationRequirement::RawNative {
                         allow_camera_preview: true
-                    }
+                    } | RepresentationRequirement::LargestRawJpeg
                 ) && artifact.variant.representation == ArtifactRepresentation::Embedded
                     && covers_percent(artifact.actual_dimensions, source, 90))
         }
@@ -231,6 +234,10 @@ fn representation_matches(
     requirement: RepresentationRequirement,
 ) -> bool {
     match requirement {
+        RepresentationRequirement::LargestRawJpeg => {
+            artifact.variant.representation == ArtifactRepresentation::Embedded
+                && artifact.variant.target == LARGEST_RAW_JPEG_TARGET
+        }
         RepresentationRequirement::AnyDisplay => true,
         RepresentationRequirement::Exact(expected) => artifact.variant.representation == expected,
         RepresentationRequirement::RawNative {
@@ -398,6 +405,41 @@ mod tests {
         request.representation = RepresentationRequirement::AnyDisplay;
         request.presentation.sharpening = SharpeningState::Display;
         assert_eq!(satisfies(&developed, &request), None);
+    }
+
+    #[test]
+    fn largest_raw_jpeg_requires_selection_proof_and_native_coverage() {
+        let mut embedded = artifact(
+            ArtifactRepresentation::Embedded,
+            DisplayDimensions {
+                width: 7008,
+                height: 4672,
+            },
+        );
+        let mut request = request(
+            &embedded,
+            DetailRequirement::Native {
+                source: DisplayDimensions {
+                    width: 4688,
+                    height: 7028,
+                },
+            },
+        );
+        request.representation = RepresentationRequirement::LargestRawJpeg;
+        assert_eq!(satisfies(&embedded, &request), None);
+        embedded.variant.target = LARGEST_RAW_JPEG_TARGET.into();
+        assert_eq!(
+            satisfies(&embedded, &request),
+            Some(Satisfaction::Satisfied)
+        );
+        embedded.actual_dimensions = DisplayDimensions {
+            width: 1616,
+            height: 1080,
+        };
+        request.allow_interim = true;
+        assert_eq!(satisfies(&embedded, &request), Some(Satisfaction::Interim));
+        request.allow_interim = false;
+        assert_eq!(satisfies(&embedded, &request), None);
     }
 
     #[test]

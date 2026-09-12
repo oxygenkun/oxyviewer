@@ -148,24 +148,29 @@ pub(crate) fn preview_with_priority(
     )
 }
 
+#[cfg(test)]
 pub(crate) fn full(
     path: &Path,
     cache_dir: &Path,
     cancellation: &CancellationToken,
 ) -> Result<PreviewResult, MediaError> {
+    full_with_interim(path, cache_dir, false, cancellation)
+}
+
+pub(crate) fn full_with_interim(
+    path: &Path,
+    cache_dir: &Path,
+    allow_interim: bool,
+    cancellation: &CancellationToken,
+) -> Result<PreviewResult, MediaError> {
     let artifacts = ArtifactCache::new(path, cache_dir)?;
     let hot_request = full_developed_request(&artifacts);
-    if let Some(result) = artifacts.lookup(&hot_request, RenderLevel::Full)? {
-        return Ok(result);
-    }
     let source_size = dimensions(path)?;
     let request = artifacts.request(
         DetailRequirement::Native {
             source: source_size.into(),
         },
-        RepresentationRequirement::RawNative {
-            allow_camera_preview: true,
-        },
+        RepresentationRequirement::LargestRawJpeg,
         display_requirement(),
         false,
     );
@@ -178,17 +183,34 @@ pub(crate) fn full(
     if let Some(result) = artifacts.lookup(&request, RenderLevel::Full)? {
         return Ok(result);
     }
+    if allow_interim {
+        let mut interim_request = request;
+        interim_request.representation = RepresentationRequirement::AnyDisplay;
+        interim_request.allow_interim = true;
+        if let Some(mut result) = artifacts.lookup(&interim_request, RenderLevel::Full)? {
+            result.satisfaction = Some(oxy_domain::MediaSatisfaction::Interim);
+            return Ok(result);
+        }
+    }
 
-    if let Ok(embedded) = produce_embedded(path, &artifacts, 4_096, RenderLevel::Full, cancellation)
-        && covers_source(
-            ImageDimensions {
-                width: embedded.width,
-                height: embedded.height,
-            },
-            source_size,
-        )
-    {
+    if let Ok(embedded) = produce_embedded_with_request(
+        path,
+        &artifacts,
+        0,
+        RenderLevel::Full,
+        &production_request,
+        cancellation,
+    ) && covers_source(
+        ImageDimensions {
+            width: embedded.width,
+            height: embedded.height,
+        },
+        source_size,
+    ) {
         return Ok(embedded);
+    }
+    if let Some(result) = artifacts.lookup(&hot_request, RenderLevel::Full)? {
+        return Ok(result);
     }
     if cancellation.is_cancelled() {
         return Err(MediaError::Cancelled);
@@ -207,7 +229,7 @@ pub(crate) fn full(
                 RenderLevel::Full,
                 None,
                 generation,
-                &production_request,
+                &hot_request,
                 cancellation,
             )
         },
@@ -221,8 +243,6 @@ fn produce_embedded(
     level: RenderLevel,
     cancellation: &CancellationToken,
 ) -> Result<PreviewResult, MediaError> {
-    let embedded_lock = file_lock(&artifacts.source_lock_key("raw-embedded-extract"));
-    let _embedded_guard = acquire_file_lock(&embedded_lock, &|| cancellation.is_cancelled())?;
     let request = artifacts.request(
         DetailRequirement::Display {
             min_long_edge: max_size,
@@ -231,12 +251,30 @@ fn produce_embedded(
         display_requirement(),
         true,
     );
-    let generation = match artifacts.prepare(&request, level)? {
+    produce_embedded_with_request(path, artifacts, max_size, level, &request, cancellation)
+}
+
+fn produce_embedded_with_request(
+    path: &Path,
+    artifacts: &ArtifactCache,
+    max_size: u32,
+    level: RenderLevel,
+    request: &crate::cache::CacheRequest,
+    cancellation: &CancellationToken,
+) -> Result<PreviewResult, MediaError> {
+    let embedded_lock = file_lock(&artifacts.source_lock_key("raw-embedded-extract"));
+    let _embedded_guard = acquire_file_lock(&embedded_lock, &|| cancellation.is_cancelled())?;
+    // Ordinary interim previews must not suppress extraction of better pixels.
+    // A LargestRawJpeg hit already proves selection is exhausted, even when the
+    // largest JPEG is too small for full; reuse it before development fallback.
+    let mut completed_request = request.clone();
+    completed_request.allow_interim = max_size == 0;
+    let generation = match artifacts.prepare(&completed_request, level)? {
         ArtifactPreparation::Cached(result) => return Ok(*result),
         ArtifactPreparation::Generate { cache_generation } => cache_generation,
     };
     let revision_id = artifacts.source_revision_id();
-    if embedded_extraction_failed(revision_id) {
+    if max_size != 0 && embedded_extraction_failed(revision_id) {
         return Err(MediaError::CacheArtifact(
             "embedded RAW extraction previously failed for this source revision".into(),
         ));
@@ -248,7 +286,9 @@ fn produce_embedded(
     let extracted = match extracted {
         Ok(extracted) => extracted,
         Err(error) => {
-            record_embedded_extraction_failure(revision_id);
+            if max_size != 0 {
+                record_embedded_extraction_failure(revision_id);
+            }
             return Err(error);
         }
     };
@@ -282,10 +322,14 @@ fn produce_embedded(
             sharpening: SharpeningState::None,
         },
         false,
-        format!("{RAW_PREVIEW}:embedded:{max_size}"),
+        if max_size == 0 {
+            crate::cache::LARGEST_RAW_JPEG_TARGET.into()
+        } else {
+            format!("{RAW_PREVIEW}:embedded:{max_size}")
+        },
         level,
         generation,
-        &request,
+        request,
     )
 }
 

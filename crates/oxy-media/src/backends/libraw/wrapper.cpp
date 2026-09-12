@@ -4,12 +4,23 @@ extern "C" int oxy_libraw_unpack_sized_thumb(libraw_data_t *raw,
                                                unsigned target_size) {
   // Prefer the cheapest preview that does not need upscaling.
   int selected = -1;
-  unsigned selected_size = 0;
+  unsigned long long selected_size = 0;
   bool selected_is_large_enough = false;
 
   for (int index = 0; index < raw->thumbs_list.thumbcount; ++index) {
     const libraw_thumbnail_item_t &thumbnail =
         raw->thumbs_list.thumblist[index];
+    // Zero requests the largest JPEG, independently of display target sizes.
+    if (target_size == 0) {
+      if (thumbnail.tformat == LIBRAW_INTERNAL_THUMBNAIL_JPEG &&
+          (selected < 0 ||
+           static_cast<unsigned long long>(thumbnail.twidth) * thumbnail.theight >
+               selected_size)) {
+        selected = index;
+        selected_size = static_cast<unsigned long long>(thumbnail.twidth) * thumbnail.theight;
+      }
+      continue;
+    }
     if (thumbnail.tformat == LIBRAW_INTERNAL_THUMBNAIL_JPEGXL) {
       continue;
     }
@@ -33,6 +44,9 @@ extern "C" int oxy_libraw_unpack_sized_thumb(libraw_data_t *raw,
     }
   }
 
+  if (target_size == 0 && selected < 0) {
+    return LIBRAW_NO_THUMBNAIL;
+  }
   return selected >= 0 ? libraw_unpack_thumb_ex(raw, selected)
                        : libraw_unpack_thumb(raw);
 }

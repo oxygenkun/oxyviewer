@@ -581,6 +581,93 @@ fn resolves_full_detail_raw_fixture() {
 }
 
 #[test]
+#[ignore = "requires OXY_RAW_FIXTURE with small and near-native embedded JPEGs"]
+fn raw_full_upgrades_thumbnail_to_largest_embedded_jpeg_fixture() {
+    use oxy_domain::MediaSatisfaction::{Interim, Satisfied};
+    let path =
+        fs::canonicalize(workspace_path(std::env::var_os("OXY_RAW_FIXTURE").unwrap())).unwrap();
+    let cache = tempfile::tempdir().unwrap();
+    let token = CancellationToken::default();
+    let thumbnail = preview_for_app(
+        &path,
+        cache.path(),
+        RenderLevel::Thumbnail,
+        PreviewPriority::Visible,
+        AssetKind::Raw,
+        &token,
+    )
+    .unwrap();
+    let started = Instant::now();
+    let interim = preview_for_app(
+        &path,
+        cache.path(),
+        RenderLevel::Full,
+        PreviewPriority::Loupe,
+        AssetKind::Raw,
+        &token,
+    )
+    .unwrap();
+    assert_eq!(interim.satisfaction, Some(Interim));
+    assert_eq!(
+        (interim.width, interim.height),
+        (thumbnail.width, thumbnail.height)
+    );
+    let upgrade = preview_for_app_upgrade(
+        &path,
+        cache.path(),
+        RenderLevel::Full,
+        PreviewPriority::Loupe,
+        AssetKind::Raw,
+        &token,
+    )
+    .unwrap();
+    let full = &upgrade.result;
+    assert_eq!(full.kind, PreviewKind::Embedded);
+    assert_eq!(full.satisfaction, Some(Satisfied));
+    assert!(full.width.max(full.height) > thumbnail.width.max(thumbnail.height));
+    let expected = match libraw::embedded(&path, 0).unwrap() {
+        libraw::Preview::EmbeddedJpeg(bytes) => bytes,
+        libraw::Preview::EmbeddedImage(_) => panic!("expected JPEG"),
+    };
+    let resource = full.resource.as_ref().unwrap();
+    let resolved = shared_resource_registry()
+        .resolve(&resource.resource_id)
+        .unwrap();
+    let bytes = match &resolved.payload {
+        ResourcePayload::Encoded(bytes) => bytes.to_vec(),
+        ResourcePayload::File(path) => fs::read(path).unwrap(),
+    };
+    assert_eq!(bytes, expected);
+    drop(resolved);
+    let warm = preview_for_app(
+        &path,
+        cache.path(),
+        RenderLevel::Full,
+        PreviewPriority::Loupe,
+        AssetKind::Raw,
+        &token,
+    )
+    .unwrap();
+    assert_eq!(warm.satisfaction, Some(Satisfied));
+    assert_eq!(warm.kind, PreviewKind::Embedded);
+    eprintln!(
+        "RAW full: interim={}x{}, satisfied={}x{}, bytes={}, elapsed={:?}",
+        interim.width,
+        interim.height,
+        full.width,
+        full.height,
+        bytes.len(),
+        started.elapsed()
+    );
+    for completion in upgrade.completions {
+        completion.recv_timeout(Duration::from_secs(30)).unwrap();
+    }
+    for result in [&thumbnail, &interim, full, &warm] {
+        shared_resource_registry().release(&result.resource.as_ref().unwrap().resource_id);
+    }
+}
+
+#[test]
 #[ignore = "requires OXY_HEIF_FIXTURE to point to a camera HEIF file"]
 fn decodes_full_resolution_heif_fixture() {
     let heif_path = fs::canonicalize(workspace_path(

@@ -125,7 +125,9 @@ fn execute(
             allow_interim,
             cancellation,
         ),
-        (AssetKind::Raw, RenderLevel::Full) => raw::full(path, cache_dir, cancellation),
+        (AssetKind::Raw, RenderLevel::Full) => {
+            raw::full_with_interim(path, cache_dir, allow_interim, cancellation)
+        }
         (AssetKind::Heif, RenderLevel::Thumbnail) => heif::preview(
             path,
             cache_dir,

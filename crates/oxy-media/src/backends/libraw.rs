@@ -87,6 +87,9 @@ pub fn embedded(path: &Path, max_size: u32) -> Result<Preview, String> {
     if image.image_type() == LIBRAW_IMAGE_JPEG {
         Ok(Preview::EmbeddedJpeg(image.data().to_vec()))
     } else {
+        if max_size == 0 {
+            return Err("largest embedded preview is not a JPEG".into());
+        }
         image
             .decode()
             .map(|image| Preview::EmbeddedImage(fit(image, max_size)))

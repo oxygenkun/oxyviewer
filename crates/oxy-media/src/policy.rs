@@ -1,7 +1,7 @@
 use oxy_domain::{AssetKind, RenderLevel};
 
 pub(crate) const RAW_PREVIEW: &str = "raw-native-v8-camera-or-developed-srgb";
-pub(crate) const RAW_FULL: &str = "raw-native-full-v4-srgb";
+pub(crate) const RAW_FULL: &str = "raw-native-full-v5-largest-jpeg";
 pub(crate) const HEIF_PREVIEW: &str = "heif-native-preview-v10-content-geometry";
 pub(crate) const HEIF_FULL: &str = "heif-source-jpeg-v2";
 pub(crate) const SYSTEM_PREVIEW: &str = "apple-image-io-preview-v3-jpeg";
