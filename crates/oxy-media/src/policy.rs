@@ -1,16 +1,16 @@
 use oxy_domain::{AssetKind, RenderLevel};
 
-pub(crate) const RAW_PREVIEW: &str = "raw-native-v8-camera-or-developed-srgb";
-pub(crate) const RAW_FULL: &str = "raw-native-full-v5-largest-jpeg";
-pub(crate) const RAW_THUMBNAIL: &str = "raw-thumbnail-v1-bounded-jpeg";
-pub(crate) const HEIF_PREVIEW: &str = "heif-native-preview-v10-content-geometry";
-pub(crate) const HEIF_FULL: &str = "heif-source-jpeg-v2";
-pub(crate) const HEIF_THUMBNAIL: &str = "heif-native-thumbnail-v11-bounded-delivery";
-pub(crate) const SYSTEM_PREVIEW: &str = "apple-image-io-preview-v3-jpeg";
-pub(crate) const COMPATIBLE_THUMBNAIL: &str = "compatible-thumbnail-v1-bounded-jpeg";
-const ORIGINAL: &str = "original-v1";
-pub(crate) const JPEG_THUMBNAIL: &str = "jpeg-thumbnail-v1-bounded-mpf";
-pub(crate) const RASTER_THUMBNAIL: &str = "raster-thumbnail-v1-bounded-png";
+pub(crate) const RAW_PREVIEW: &str = "raw-native-v8-camera-or-developed-srgb-facts-v1";
+pub(crate) const RAW_FULL: &str = "raw-native-full-v5-largest-jpeg-facts-v1";
+pub(crate) const RAW_THUMBNAIL: &str = "raw-thumbnail-v1-bounded-jpeg-facts-v1";
+pub(crate) const HEIF_PREVIEW: &str = "heif-native-preview-v10-content-geometry-facts-v1";
+pub(crate) const HEIF_FULL: &str = "heif-source-jpeg-v2-facts-v1";
+pub(crate) const HEIF_THUMBNAIL: &str = "heif-native-thumbnail-v11-bounded-delivery-facts-v1";
+pub(crate) const SYSTEM_PREVIEW: &str = "apple-image-io-preview-v3-jpeg-facts-v1";
+pub(crate) const COMPATIBLE_THUMBNAIL: &str = "compatible-thumbnail-v1-bounded-jpeg-facts-v1";
+const ORIGINAL: &str = "original-v1-facts-v1";
+pub(crate) const JPEG_THUMBNAIL: &str = "jpeg-thumbnail-v1-bounded-mpf-facts-v1";
+pub(crate) const RASTER_THUMBNAIL: &str = "raster-thumbnail-v1-bounded-png-facts-v1";
 
 /// The same policy identity is used by cache keys and persisted projections.
 /// Changing media behavior therefore cannot leave a ready projection pointing

@@ -6,8 +6,8 @@ use super::{
 use crate::{
     MediaError,
     cache::{
-        ArtifactRepresentation, ColorRequirement, DetailRequirement, OrientationRequirement,
-        PresentationRequirement, RepresentationRequirement, SharpeningState,
+        ArtifactRequirement, ColorRequirement, DetailRequirement, OrientationRequirement,
+        PresentationRequirement, SharpeningState,
     },
     decode_control::DecodePriority,
     delivery::THUMBNAIL_EDGE,
@@ -30,7 +30,44 @@ pub(crate) fn encode_cached_jpeg_thumbnail(
     } else {
         std::fs::read(&result.path)?
     };
-    encode_jpeg_thumbnail(bytes, priority, cancellation)
+
+    let mut facts = result
+        .image_facts
+        .clone()
+        .ok_or_else(|| MediaError::CacheArtifact("cached derivation has no source facts".into()))?;
+    let mut encoded = encode_jpeg_thumbnail(bytes, priority, cancellation)?;
+    if !facts.is_consistent()
+        || encoded.facts.source.encoded_dimensions != Some(facts.encoded_dimensions)
+        || encoded.facts.source.display_dimensions != facts.display_dimensions
+    {
+        return Err(MediaError::CacheArtifact(
+            "derivation payload disagrees with image facts".into(),
+        ));
+    }
+    facts.processing.push(oxy_domain::ImageOperation::Decode {
+        backend: "libjpeg".into(),
+    });
+    facts.resize(encoded.facts.display_dimensions);
+    // Normalization may apply an EXIF transform, but never changes content provenance.
+    facts.processing.extend(
+        encoded
+            .facts
+            .processing
+            .iter()
+            .filter(|step| {
+                matches!(
+                    step,
+                    oxy_domain::ImageOperation::Orient { .. }
+                        | oxy_domain::ImageOperation::Encode { .. }
+                )
+            })
+            .cloned(),
+    );
+    facts.encoded_dimensions = encoded.facts.encoded_dimensions;
+    facts.exif_orientation = 1;
+    facts.byte_integrity = oxy_domain::ByteIntegrity::Reencoded;
+    encoded.facts = facts;
+    Ok(encoded)
 }
 
 /// Preserve the qualified HEIF 160-pixel path; only normalize a larger cache
@@ -49,7 +86,7 @@ pub(crate) fn ensure_thumbnail_delivery(
     let target = crate::policy::COMPATIBLE_THUMBNAIL;
     let request = artifacts.request(
         DetailRequirement::Display { min_long_edge: 1 },
-        RepresentationRequirement::BoundedThumbnail { target },
+        ArtifactRequirement::BoundedThumbnail { target },
         PresentationRequirement {
             orientation: OrientationRequirement::DisplayCorrect,
             color: ColorRequirement::Any,
@@ -64,6 +101,7 @@ pub(crate) fn ensure_thumbnail_delivery(
         || cancellation.is_cancelled(),
         |generation| {
             let EncodedJpegThumbnail {
+                facts,
                 bytes,
                 dimensions,
                 mut presentation,
@@ -90,10 +128,8 @@ pub(crate) fn ensure_thumbnail_delivery(
             });
             artifacts.publish(
                 bytes,
-                dimensions,
-                ArtifactRepresentation::Decoded,
+                facts,
                 presentation,
-                false,
                 target.into(),
                 RenderLevel::Thumbnail,
                 generation,
@@ -101,4 +137,52 @@ pub(crate) fn ensure_thumbnail_delivery(
             )
         },
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn cached_thumbnail_retains_raw_source_and_processing_history() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("developed.jpg");
+        image::DynamicImage::new_rgb8(1200, 800)
+            .save(&path)
+            .unwrap();
+        let mut result = crate::media_source::preview_result(
+            path,
+            oxy_domain::PreviewKind::Developed,
+            RenderLevel::Full,
+        )
+        .unwrap();
+        let facts = result.image_facts.as_mut().unwrap();
+        facts.source.origin = oxy_domain::ImageOrigin::RawSensor;
+        facts.source.candidate_id = "raw-sensor".into();
+        facts.byte_integrity = oxy_domain::ByteIntegrity::Reencoded;
+        facts.processing.push(oxy_domain::ImageOperation::Develop {
+            backend: "LibRaw".into(),
+        });
+        let expected_source = facts.source.clone();
+        let encoded = encode_cached_jpeg_thumbnail(
+            &result,
+            DecodePriority::Foreground,
+            &CancellationToken::default(),
+        )
+        .unwrap();
+        assert_eq!(encoded.facts.source, expected_source);
+        assert_eq!(
+            encoded.facts.detail.reference_dimensions,
+            oxy_domain::DisplayDimensions((1200, 800).into())
+        );
+        assert!(matches!(
+            encoded.facts.processing.first(),
+            Some(oxy_domain::ImageOperation::Develop { .. })
+        ));
+        assert_eq!(
+            encoded.facts.byte_integrity,
+            oxy_domain::ByteIntegrity::Reencoded
+        );
+        assert!(!encoded.facts.native_detail());
+        assert!(encoded.facts.is_consistent());
+    }
 }

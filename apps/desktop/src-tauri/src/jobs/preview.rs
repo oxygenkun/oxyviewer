@@ -1,9 +1,9 @@
 use crate::state::cache::CacheManager;
 use oxy_domain::{
     AssetKind, DebugQueueItem, DebugQueueState, ImageProjection, MediaPersistence,
-    MediaResourceDescriptor, MediaSatisfaction, OmittedScheduleAction, PreviewKind,
-    PreviewOmittedPolicy, PreviewPriority, PreviewResult, PreviewScheduleIntent, RenderLevel,
-    ResourceLoadStatus, SchedulePlacement,
+    MediaResourceDescriptor, MediaSatisfaction, OmittedScheduleAction, PreviewOmittedPolicy,
+    PreviewPriority, PreviewResult, PreviewScheduleIntent, RenderLevel, ResourceLoadStatus,
+    SchedulePlacement,
 };
 use oxy_library::Library;
 use oxy_runtime::{
@@ -1692,6 +1692,15 @@ fn restore_projection_resource(
     let Some(result) = projection.result.as_mut() else {
         return Ok(projection);
     };
+    if result.image_facts.as_ref().is_none_or(|facts| {
+        !facts.is_consistent()
+            || facts.display_dimensions.0.width != result.width
+            || facts.display_dimensions.0.height != result.height
+            || facts.source.revision_id != expected_revision.media_revision.revision_id
+    }) {
+        projection.result = None;
+        return Ok(projection);
+    }
     if result.resource.as_ref().is_some_and(|resource| {
         oxy_media::shared_resource_registry().refresh_publication_grace(&resource.resource_id)
     }) {
@@ -1701,18 +1710,15 @@ fn restore_projection_resource(
     if !result.path.is_file() {
         return Ok(projection);
     }
-    let representation = match result.kind {
-        PreviewKind::Original => oxy_media::ArtifactRepresentation::Original,
-        PreviewKind::Embedded => oxy_media::ArtifactRepresentation::Embedded,
-        PreviewKind::Decoded => oxy_media::ArtifactRepresentation::Decoded,
-        PreviewKind::Developed => oxy_media::ArtifactRepresentation::Developed,
-        PreviewKind::System => oxy_media::ArtifactRepresentation::System,
+    let Some(facts) = result.image_facts.as_ref() else {
+        return Ok(projection);
     };
+    let origin = facts.source.origin;
     let disk_cache =
         oxy_media::DiskMediaCache::new(preview_dir, 256).map_err(|error| error.to_string())?;
     let lease = if result.path.starts_with(disk_cache.root()) {
         let Some(lease) = disk_cache
-            .validate_and_lease_path(&result.path, &expected_revision.media_revision)
+            .validate_and_lease_path(&result.path, &expected_revision.media_revision, facts)
             .map_err(|error| error.to_string())?
         else {
             return Ok(projection);
@@ -1733,11 +1739,11 @@ fn restore_projection_resource(
         .register_file_with_lease(
             &result.path,
             media_type_for(&result.path),
-            oxy_media::DisplayDimensions {
+            oxy_media::PixelDimensions {
                 width: result.width,
                 height: result.height,
             },
-            representation,
+            origin,
             lease,
         )
         .map_err(|error| error.to_string())?;
@@ -1831,6 +1837,7 @@ fn priority_from_position(position: SchedulePosition) -> PreviewPriority {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use oxy_domain::PreviewKind;
 
     fn thumbnail_work(
         directory: &std::path::Path,
@@ -2269,6 +2276,7 @@ mod tests {
             status: ResourceLoadStatus::Ready,
             level: RenderLevel::Preview,
             result: Some(PreviewResult {
+                image_facts: None,
                 geometry: None,
                 path: PathBuf::new(),
                 width: 160,
@@ -2321,6 +2329,7 @@ mod tests {
         )
         .unwrap();
         let interim = PreviewResult {
+            image_facts: None,
             geometry: None,
             path: state.path().join("interim.jpg"),
             width: 160,
@@ -2369,7 +2378,6 @@ mod tests {
             .publish(oxy_media::PendingArtifact {
                 source_revision: source,
                 variant: oxy_media::VariantIdentity {
-                    representation: oxy_media::ArtifactRepresentation::Embedded,
                     presentation: oxy_media::ArtifactPresentation {
                         geometry: None,
                         orientation: oxy_media::OrientationState::Applied,
@@ -2379,11 +2387,19 @@ mod tests {
                     policy_revision: oxy_media::MEDIA_CACHE_POLICY_REVISION,
                     target: "test".into(),
                 },
-                actual_dimensions: oxy_media::DisplayDimensions {
-                    width: 1,
-                    height: 1,
-                },
-                native_detail: false,
+                facts: serde_json::from_value(serde_json::json!({
+                    "exifOrientation": 1,
+                    "source": {
+                        "exifOrientation": 1, "revisionId": "", "candidateId": "test-preview",
+                        "origin": "embeddedPreview", "encodedDimensions": {"width": 1, "height": 1},
+                        "displayDimensions": {"width": 1, "height": 1}
+                    },
+                    "encodedDimensions": {"width": 1, "height": 1},
+                    "displayDimensions": {"width": 1, "height": 1},
+                    "detail": {"referenceDimensions": {"width": 1, "height": 1},
+                        "region": {"x": 0, "y": 0, "width": 1, "height": 1}, "sampledDimensions": {"width": 1, "height": 1}, "sampling": "native"},
+                    "processing": [], "byteIntegrity": "unverified"
+                })).unwrap(),
                 media_type: "image/png".into(),
                 extension: "png".into(),
                 bytes: Arc::from(png),
@@ -2409,6 +2425,7 @@ mod tests {
             status: ResourceLoadStatus::Ready,
             level: RenderLevel::Preview,
             result: Some(PreviewResult {
+                image_facts: Some(publication.artifact.facts),
                 geometry: None,
                 path: managed_path,
                 width: 1,
@@ -2454,6 +2471,32 @@ mod tests {
             status: ResourceLoadStatus::Ready,
             level: RenderLevel::Thumbnail,
             result: Some(PreviewResult {
+                image_facts: Some(oxy_domain::ArtifactFacts {
+                    exif_orientation: 1,
+                    source: oxy_domain::SourceImage {
+                        exif_orientation: 1,
+                        revision_id: source_revision.media_revision.revision_id.clone(),
+                        candidate_id: "primary".into(),
+                        origin: oxy_domain::ImageOrigin::PrimaryImage,
+                        encoded_dimensions: Some(oxy_domain::EncodedDimensions((8, 4).into())),
+                        display_dimensions: oxy_domain::DisplayDimensions((8, 4).into()),
+                    },
+                    encoded_dimensions: oxy_domain::EncodedDimensions((8, 4).into()),
+                    display_dimensions: oxy_domain::DisplayDimensions((8, 4).into()),
+                    detail: oxy_domain::DetailCoverage {
+                        reference_dimensions: oxy_domain::DisplayDimensions((8, 4).into()),
+                        region: oxy_domain::PreviewContentRect {
+                            x: 0,
+                            y: 0,
+                            width: 8,
+                            height: 4,
+                        },
+                        sampled_dimensions: oxy_domain::DisplayDimensions((8, 4).into()),
+                        sampling: oxy_domain::Sampling::Native,
+                    },
+                    processing: Vec::new(),
+                    byte_integrity: oxy_domain::ByteIntegrity::SourceFile,
+                }),
                 geometry: None,
                 path,
                 width: 8,
@@ -2511,11 +2554,11 @@ mod tests {
             .register_file(
                 original,
                 "image/jpeg",
-                oxy_media::DisplayDimensions {
+                oxy_media::PixelDimensions {
                     width: 8,
                     height: 4,
                 },
-                oxy_media::ArtifactRepresentation::Original,
+                oxy_media::ImageOrigin::PrimaryImage,
             )
             .unwrap();
         assert!(!registry.contains(&resource.resource_id));
@@ -2548,14 +2591,15 @@ mod tests {
             .register_file(
                 &path,
                 "image/jpeg",
-                oxy_media::DisplayDimensions {
+                oxy_media::PixelDimensions {
                     width: 8,
                     height: 4,
                 },
-                oxy_media::ArtifactRepresentation::Original,
+                oxy_media::ImageOrigin::PrimaryImage,
             )
             .unwrap();
         let mut result = PreviewResult {
+            image_facts: None,
             geometry: None,
             path: directory.path().join("pending.jpg"),
             width: 8,

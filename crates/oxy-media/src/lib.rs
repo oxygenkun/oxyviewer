@@ -15,16 +15,16 @@ mod presentation;
 mod publication;
 
 pub use cache::{
-    ArtifactLease, ArtifactLocation, ArtifactPresentation, ArtifactRepresentation, CacheColorState,
+    ArtifactLease, ArtifactLocation, ArtifactPresentation, ArtifactRequirement, CacheColorState,
     CacheHit, CacheLookup, CachePublication, CacheRequest, CacheUsage, ColorRequirement,
-    DetailRequirement, DiskMediaCache, DisplayDimensions, MEDIA_CACHE_POLICY_REVISION,
-    MediaArtifact, MediaCache, MemoryMediaCache, OrientationRequirement, OrientationState,
-    PendingArtifact, PendingStagedArtifact, PresentationRequirement, RepresentationRequirement,
-    Satisfaction, SharpeningState, SourceRevision, VariantIdentity, satisfies,
+    DetailRequirement, DiskMediaCache, ImageOrigin, MEDIA_CACHE_POLICY_REVISION, MediaArtifact,
+    MediaCache, MemoryMediaCache, OrientationRequirement, OrientationState, PendingArtifact,
+    PendingStagedArtifact, PixelDimensions, PresentationRequirement, Satisfaction, SharpeningState,
+    SourceRevision, VariantIdentity, satisfies,
 };
 pub use error::MediaError;
 pub use heif_service::{HeifDecodeService, HeifTile, HeifTileData, HeifTilePublication};
-pub use media_source::{ImageDimensions, dimensions};
+pub use media_source::{DisplayDimensions, EncodedDimensions, ImageDimensions, dimensions};
 pub use pipeline::dispatcher::{
     AppPreview, preview, preview_for_app, preview_for_app_upgrade, preview_for_app_with_completion,
 };

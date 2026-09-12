@@ -2,19 +2,19 @@
 
 mod encode;
 mod model;
-mod v2;
+mod store;
 
 pub(crate) use encode::{ensure_srgb_icc, write_jpeg_atomically};
 
+pub(crate) use model::candidate_rank;
 pub use model::{
-    ArtifactLocation, ArtifactPresentation, ArtifactRepresentation, CacheRequest, ColorRequirement,
-    ColorState as CacheColorState, DetailRequirement, DisplayDimensions,
-    MEDIA_CACHE_POLICY_REVISION, MediaArtifact, OrientationRequirement, OrientationState,
-    PresentationRequirement, RepresentationRequirement, Satisfaction, SharpeningState,
-    SourceRevision, VariantIdentity, satisfies,
+    ArtifactLocation, ArtifactPresentation, ArtifactRequirement, CacheRequest, ColorRequirement,
+    ColorState as CacheColorState, DetailRequirement, ImageOrigin, MEDIA_CACHE_POLICY_REVISION,
+    MediaArtifact, OrientationRequirement, OrientationState, PixelDimensions,
+    PresentationRequirement, Satisfaction, SharpeningState, SourceRevision, VariantIdentity,
+    satisfies,
 };
-pub(crate) use model::{LARGEST_RAW_JPEG_TARGET, candidate_rank};
-pub use v2::{
+pub use store::{
     ArtifactLease, CacheHit, CacheLookup, CachePublication, CacheUsage, DiskMediaCache, MediaCache,
     MemoryMediaCache, PendingArtifact, PendingStagedArtifact,
 };

@@ -5,10 +5,10 @@ use crate::{
     MediaError,
     backends::libheif,
     decode_control::{DecodePriority, acquire_decode, try_acquire_heif_session_cache_write},
-    pipeline::heif::backend::{
+    pipeline::heif::{
         BackendExecutionError, HeifBackend as PlannedHeifBackend, HeifBackendPlan, HeifOperation,
-        backend_plan, capabilities as backend_capabilities,
-        execute_backend_plan_with_fallback_policy, format_attempt_diagnostics,
+        capabilities as backend_capabilities, execute_backend_plan_with_fallback_policy,
+        format_attempt_diagnostics, probe_backend_plan,
     },
 };
 use image::{DynamicImage, RgbaImage};
@@ -133,7 +133,12 @@ impl HeifDecodeService {
         // A matching artifact already contains the requested sharpening.
         let apply_sharpening = display_sharpening && cached.is_none();
         let (decode_path, backend_plan) = cached.map_or_else(
-            || (path.to_owned(), backend_plan(path, HeifOperation::Session)),
+            || {
+                (
+                    path.to_owned(),
+                    probe_backend_plan(path, HeifOperation::Session),
+                )
+            },
             |result| (result.path, HeifBackendPlan::cached_artifact()),
         );
         let selected_backend = backend_plan.first();
@@ -349,18 +354,20 @@ impl HeifDecodeService {
                         cache_dir,
                         image,
                         *presentation,
+                        codec,
                     )
                 } else {
                     let mut presentation =
                         crate::pipeline::heif::artifact::backend_presentation(decoded.backend);
                     presentation.sharpening =
-                        crate::pipeline::heif::artifact::display_sharpening_state(
+                        crate::pipeline::heif::planner::display_sharpening_state(
                             display_sharpening,
                         );
                     crate::pipeline::heif::artifact::cache_full_output(
                         &source_revision,
                         cache_dir,
                         presentation,
+                        codec,
                         || cancelled.load(Ordering::Acquire),
                         |destination| {
                             if dct_cache::write_tiles(
@@ -370,7 +377,14 @@ impl HeifDecodeService {
                                 destination,
                                 &cancelled,
                             )? {
-                                return Ok(());
+                                return Ok(vec![
+                                    oxy_domain::ImageOperation::Encode {
+                                        format: "jpeg".into(),
+                                    },
+                                    oxy_domain::ImageOperation::Assemble {
+                                        mode: "jpeg-dct-tiles".into(),
+                                    },
+                                ]);
                             }
                             let image = tile_cache::assemble(
                                 session.width,
@@ -382,7 +396,26 @@ impl HeifDecodeService {
                                 &image,
                                 destination,
                                 presentation,
-                            )
+                            )?;
+                            let mut operations = Vec::new();
+                            if cache_tiles
+                                .iter()
+                                .any(|tile| matches!(tile.tile.payload, HeifTileData::Jpeg(_)))
+                            {
+                                operations.push(oxy_domain::ImageOperation::Encode {
+                                    format: "jpeg tiles".into(),
+                                });
+                                operations.push(oxy_domain::ImageOperation::Decode {
+                                    backend: "image/jpeg tiles".into(),
+                                });
+                            }
+                            operations.push(oxy_domain::ImageOperation::Assemble {
+                                mode: "pixel-tiles".into(),
+                            });
+                            operations.push(oxy_domain::ImageOperation::Encode {
+                                format: "jpeg".into(),
+                            });
+                            Ok(operations)
                         },
                     )
                 }
@@ -628,6 +661,7 @@ fn cache_session_image_if_stable(
             cache_dir,
             image,
             presentation,
+            "test decoder",
         )
     })
 }

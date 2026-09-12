@@ -191,8 +191,8 @@ preview cache 默认位于 Tauri `app_cache_dir()/previews`。用户可以在设
 
 - 删除不会损坏源照片；
 - 下次请求可重新生成；
-- source revision 包含 canonical path、文件身份、长度和高精度 mtime；variant 包含表示与显示策略；
-- `media-cache-v2/<prefix>/<source-revision>/manifest.json` 允许同图多能力 artifact 共存；
+- source revision 包含 canonical path、文件身份、长度和高精度 mtime；variant 包含目标与呈现策略，独立 ArtifactFacts 保存真实来源、尺寸、覆盖与处理过程；
+- `media-cache-v3/<prefix>/<source-revision>/manifest.json` 允许同图多能力 artifact 共存；
 - matcher 只允许兼容高清向下满足，低清只能作为显式 Interim；
 - encoded/staged resource 先供 UI，再由有界 worker 原子持久化；完成后更新 projection 并清理容量；
 - 容量上限为 1–500 GB，默认 10 GB；同一时刻最多运行一个清理任务；

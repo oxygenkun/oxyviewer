@@ -1,5 +1,5 @@
 //! Bounded header reads. Never scan the primary entropy stream for previews.
-use crate::{MediaError, cache::DisplayDimensions};
+use crate::{MediaError, media_source::PixelDimensions};
 use oxy_metadata_parser::jpeg_preview::{self, ExifPresentation, JpegRange};
 use std::io::{Read, Seek, SeekFrom};
 
@@ -40,7 +40,7 @@ impl<T: Seek> Seek for TrackedReader<T> {
 
 #[derive(Default, Debug)]
 pub(crate) struct Header {
-    pub dimensions: Option<DisplayDimensions>,
+    pub encoded_dimensions: Option<oxy_domain::EncodedDimensions>,
     pub exif: ExifPresentation,
     pub previews: Vec<JpegRange>,
     pub has_icc: bool,
@@ -119,10 +119,10 @@ pub(crate) fn probe(
             let mut payload = vec![0; length];
             reader.read_exact(&mut payload)?;
             if sof && payload.len() >= 6 {
-                header.dimensions = Some(DisplayDimensions {
+                header.encoded_dimensions = Some(oxy_domain::EncodedDimensions(PixelDimensions {
                     width: u32::from(u16::from_be_bytes([payload[3], payload[4]])),
                     height: u32::from(u16::from_be_bytes([payload[1], payload[2]])),
-                });
+                }));
             } else if marker == 0xe1 {
                 if let Some(tiff) = payload.strip_prefix(b"Exif\0\0") {
                     match jpeg_preview::exif_presentation(tiff, offset + 6) {
@@ -167,11 +167,11 @@ mod tests {
         let header = probe(&mut reader, length, || false).unwrap();
         assert!(header.complete && header.has_edit_metadata);
         assert_eq!(
-            header.dimensions,
-            Some(DisplayDimensions {
+            header.encoded_dimensions,
+            Some(oxy_domain::EncodedDimensions(PixelDimensions {
                 width: 1200,
                 height: 800
-            })
+            }))
         );
         // At most one bounded read-ahead enters entropy; no pixel stream scan.
         assert!(reader.get_ref().bytes <= (entropy_offset + HEADER_BUFFER) as u64);

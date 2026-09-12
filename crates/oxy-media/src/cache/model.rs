@@ -1,10 +1,10 @@
-use crate::{ImageDimensions, MediaError};
+use crate::MediaError;
 use oxy_fs::observe_file;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::path::PathBuf;
 
-pub const MEDIA_CACHE_POLICY_REVISION: u32 = 1;
+pub const MEDIA_CACHE_POLICY_REVISION: u32 = 3;
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -37,37 +37,9 @@ impl SourceRevision {
     }
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct DisplayDimensions {
-    pub width: u32,
-    pub height: u32,
-}
+pub use oxy_domain::PixelDimensions;
 
-impl From<(u32, u32)> for DisplayDimensions {
-    fn from((width, height): (u32, u32)) -> Self {
-        Self { width, height }
-    }
-}
-
-impl From<ImageDimensions> for DisplayDimensions {
-    fn from(value: ImageDimensions) -> Self {
-        Self {
-            width: value.width,
-            height: value.height,
-        }
-    }
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub enum ArtifactRepresentation {
-    Original,
-    Embedded,
-    Decoded,
-    Developed,
-    System,
-}
+pub use oxy_domain::ImageOrigin;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -126,31 +98,53 @@ pub enum DetailRequirement {
     },
     /// Requires a true native-detail artifact without probing source dimensions.
     NativeDetail,
-    Native {
-        source: DisplayDimensions,
+    /// Requires both display-space edges, independently of native-detail provenance.
+    MinimumDimensions {
+        min_long_edge: u32,
+        min_short_edge: u32,
     },
 }
 
+impl DetailRequirement {
+    pub(crate) fn accepts(
+        self,
+        dimensions: oxy_domain::DisplayDimensions,
+        native_detail: bool,
+    ) -> bool {
+        let dimensions = dimensions.0;
+        match self {
+            DetailRequirement::Display { min_long_edge } => {
+                native_detail || long_edge(dimensions) >= min_long_edge
+            }
+            DetailRequirement::NativeDetail => native_detail,
+            DetailRequirement::MinimumDimensions {
+                min_long_edge,
+                min_short_edge,
+            } => {
+                dimensions.width.max(dimensions.height) >= min_long_edge
+                    && dimensions.width.min(dimensions.height) >= min_short_edge
+            }
+        }
+    }
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum RepresentationRequirement {
+pub enum ArtifactRequirement {
     /// A thumbnail policy is a delivery contract, not a minimum quality rank.
     BoundedThumbnail {
         target: &'static str,
     },
     AnyDisplay,
-    Exact(ArtifactRepresentation),
-    RawNative {
-        allow_camera_preview: bool,
+    Exact(ImageOrigin),
+    ExactVariant {
+        origin: ImageOrigin,
+        target: &'static str,
     },
-    LargestRawJpeg,
 }
-
-pub(crate) const LARGEST_RAW_JPEG_TARGET: &str = "raw-largest-embedded-jpeg-v1";
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct VariantIdentity {
-    pub representation: ArtifactRepresentation,
     pub presentation: ArtifactPresentation,
     pub policy_revision: u32,
     pub target: String,
@@ -162,8 +156,7 @@ pub struct MediaArtifact {
     pub artifact_id: String,
     pub source_revision: SourceRevision,
     pub variant: VariantIdentity,
-    pub actual_dimensions: DisplayDimensions,
-    pub native_detail: bool,
+    pub facts: oxy_domain::ArtifactFacts,
     pub byte_size: u64,
     pub media_type: String,
     pub location: ArtifactLocation,
@@ -180,7 +173,7 @@ pub enum ArtifactLocation {
 pub struct CacheRequest {
     pub source_revision: SourceRevision,
     pub detail: DetailRequirement,
-    pub representation: RepresentationRequirement,
+    pub artifact: ArtifactRequirement,
     pub presentation: PresentationRequirement,
     pub policy_revision: u32,
     pub allow_interim: bool,
@@ -195,7 +188,11 @@ pub enum Satisfaction {
 /// Matches real artifact capabilities. Semantic render levels are deliberately
 /// absent: callers translate them into format-aware requirements once.
 pub fn satisfies(artifact: &MediaArtifact, request: &CacheRequest) -> Option<Satisfaction> {
-    if artifact.source_revision != request.source_revision
+    // Current preview requests cover the complete reference image, never a crop/tile.
+    if !artifact.facts.is_consistent()
+        || !artifact.facts.detail.covers_reference()
+        || artifact.facts.source.revision_id != artifact.source_revision.revision_id
+        || artifact.source_revision != request.source_revision
         || artifact.variant.policy_revision != request.policy_revision
         || (matches!(
             request.presentation.orientation,
@@ -205,27 +202,15 @@ pub fn satisfies(artifact: &MediaArtifact, request: &CacheRequest) -> Option<Sat
         || artifact.variant.presentation.sharpening != request.presentation.sharpening
         || (request.presentation.color == ColorRequirement::Srgb
             && artifact.variant.presentation.color != ColorState::Srgb)
-        || !representation_matches(artifact, request.representation)
+        || !artifact_matches(artifact, request.artifact)
     {
         return None;
     }
 
-    let detail_satisfied = match request.detail {
-        DetailRequirement::Display { min_long_edge } => {
-            artifact.native_detail || long_edge(artifact.actual_dimensions) >= min_long_edge
-        }
-        DetailRequirement::NativeDetail => artifact.native_detail,
-        DetailRequirement::Native { source } => {
-            artifact.native_detail
-                || (matches!(
-                    request.representation,
-                    RepresentationRequirement::RawNative {
-                        allow_camera_preview: true
-                    } | RepresentationRequirement::LargestRawJpeg
-                ) && artifact.variant.representation == ArtifactRepresentation::Embedded
-                    && covers_percent(artifact.actual_dimensions, source, 90))
-        }
-    };
+    let detail_satisfied = request.detail.accepts(
+        artifact.facts.detail.sampled_dimensions,
+        artifact.facts.native_detail(),
+    );
     if detail_satisfied {
         Some(Satisfaction::Satisfied)
     } else if request.allow_interim {
@@ -235,29 +220,18 @@ pub fn satisfies(artifact: &MediaArtifact, request: &CacheRequest) -> Option<Sat
     }
 }
 
-fn representation_matches(
-    artifact: &MediaArtifact,
-    requirement: RepresentationRequirement,
-) -> bool {
+fn artifact_matches(artifact: &MediaArtifact, requirement: ArtifactRequirement) -> bool {
     match requirement {
-        RepresentationRequirement::BoundedThumbnail { target } => {
+        ArtifactRequirement::BoundedThumbnail { target } => {
             artifact.variant.target == target
                 && crate::delivery::THUMBNAIL_LIMITS
-                    .accepts(artifact.actual_dimensions, artifact.byte_size)
+                    .accepts(artifact.facts.display_dimensions.0, artifact.byte_size)
         }
-        RepresentationRequirement::LargestRawJpeg => {
-            artifact.variant.representation == ArtifactRepresentation::Embedded
-                && artifact.variant.target == LARGEST_RAW_JPEG_TARGET
+        ArtifactRequirement::ExactVariant { origin, target } => {
+            artifact.facts.source.origin == origin && artifact.variant.target == target
         }
-        RepresentationRequirement::AnyDisplay => true,
-        RepresentationRequirement::Exact(expected) => artifact.variant.representation == expected,
-        RepresentationRequirement::RawNative {
-            allow_camera_preview,
-        } => {
-            artifact.variant.representation == ArtifactRepresentation::Developed
-                || (allow_camera_preview
-                    && artifact.variant.representation == ArtifactRepresentation::Embedded)
-        }
+        ArtifactRequirement::AnyDisplay => true,
+        ArtifactRequirement::Exact(expected) => artifact.facts.source.origin == expected,
     }
 }
 
@@ -269,8 +243,8 @@ pub(crate) fn candidate_rank(
         Satisfaction::Satisfied => 0,
         Satisfaction::Interim => 1,
     };
-    let pixels =
-        u64::from(artifact.actual_dimensions.width) * u64::from(artifact.actual_dimensions.height);
+    let pixels = u64::from(artifact.facts.display_dimensions.0.width)
+        * u64::from(artifact.facts.display_dimensions.0.height);
     let location_rank = match artifact.location {
         ArtifactLocation::Managed(_) => 0,
         ArtifactLocation::Original(_) => 1,
@@ -278,19 +252,8 @@ pub(crate) fn candidate_rank(
     (satisfaction_rank, pixels, location_rank)
 }
 
-fn long_edge(dimensions: DisplayDimensions) -> u32 {
+fn long_edge(dimensions: PixelDimensions) -> u32 {
     dimensions.width.max(dimensions.height)
-}
-
-fn covers_percent(candidate: DisplayDimensions, source: DisplayDimensions, percent: u64) -> bool {
-    let mut candidate_edges = [candidate.width, candidate.height];
-    let mut source_edges = [source.width, source.height];
-    candidate_edges.sort_unstable();
-    source_edges.sort_unstable();
-    candidate_edges
-        .into_iter()
-        .zip(source_edges)
-        .all(|(candidate, source)| u64::from(candidate) * 100 >= u64::from(source) * percent)
 }
 
 #[cfg(unix)]
@@ -314,19 +277,17 @@ mod tests {
     use super::*;
     use std::fs;
 
-    fn artifact(
-        representation: ArtifactRepresentation,
-        dimensions: DisplayDimensions,
-    ) -> MediaArtifact {
+    fn artifact(origin: ImageOrigin, dimensions: PixelDimensions) -> MediaArtifact {
         let source = tempfile::tempdir().unwrap();
         let path = source.path().join("source.jpg");
         fs::write(&path, b"source").unwrap();
         let source_revision = SourceRevision::observe(&path).unwrap();
+        let mut facts = crate::media_source::test_facts(origin, dimensions, false);
+        crate::media_source::bind_facts(&mut facts, &source_revision).unwrap();
         MediaArtifact {
             artifact_id: "artifact".into(),
             source_revision,
             variant: VariantIdentity {
-                representation,
                 presentation: ArtifactPresentation {
                     geometry: None,
                     orientation: OrientationState::Applied,
@@ -336,8 +297,7 @@ mod tests {
                 policy_revision: MEDIA_CACHE_POLICY_REVISION,
                 target: "test".into(),
             },
-            actual_dimensions: dimensions,
-            native_detail: false,
+            facts,
             byte_size: 1,
             media_type: "image/jpeg".into(),
             location: ArtifactLocation::Managed(PathBuf::from("artifact.jpg")),
@@ -348,7 +308,7 @@ mod tests {
         CacheRequest {
             source_revision: artifact.source_revision.clone(),
             detail,
-            representation: RepresentationRequirement::AnyDisplay,
+            artifact: ArtifactRequirement::AnyDisplay,
             presentation: PresentationRequirement {
                 orientation: OrientationRequirement::Exact(OrientationState::Applied),
                 color: ColorRequirement::Srgb,
@@ -362,15 +322,15 @@ mod tests {
     #[test]
     fn high_resolution_satisfies_lower_request_but_not_the_reverse() {
         let large = artifact(
-            ArtifactRepresentation::Decoded,
-            DisplayDimensions {
+            ImageOrigin::PrimaryImage,
+            PixelDimensions {
                 width: 4096,
                 height: 2731,
             },
         );
         let small = artifact(
-            ArtifactRepresentation::Decoded,
-            DisplayDimensions {
+            ImageOrigin::PrimaryImage,
+            PixelDimensions {
                 width: 160,
                 height: 120,
             },
@@ -399,23 +359,26 @@ mod tests {
     #[test]
     fn thumbnail_delivery_rejects_large_native_artifacts_and_old_policy() {
         let mut candidate = artifact(
-            ArtifactRepresentation::Decoded,
-            DisplayDimensions {
+            ImageOrigin::PrimaryImage,
+            PixelDimensions {
                 width: 4096,
                 height: 2731,
             },
         );
-        candidate.native_detail = true;
+        candidate.facts.detail.sampling = oxy_domain::Sampling::Native;
         let mut bounded = request(
             &candidate,
             DetailRequirement::Display { min_long_edge: 512 },
         );
-        bounded.representation = RepresentationRequirement::BoundedThumbnail { target: "test" };
+        bounded.artifact = ArtifactRequirement::BoundedThumbnail { target: "test" };
         assert_eq!(satisfies(&candidate, &bounded), None);
-        candidate.actual_dimensions = DisplayDimensions {
+        candidate.facts.display_dimensions = oxy_domain::DisplayDimensions(PixelDimensions {
             width: 512,
             height: 341,
-        };
+        });
+        candidate.facts.encoded_dimensions =
+            oxy_domain::EncodedDimensions(candidate.facts.display_dimensions.0);
+        candidate.facts.detail.sampled_dimensions = candidate.facts.display_dimensions;
         assert_eq!(
             satisfies(&candidate, &bounded),
             Some(Satisfaction::Satisfied)
@@ -425,7 +388,7 @@ mod tests {
         candidate.byte_size = 1000;
         candidate.variant.target = "old-thumbnail".into();
         assert_eq!(satisfies(&candidate, &bounded), None);
-        bounded.representation = RepresentationRequirement::AnyDisplay;
+        bounded.artifact = ArtifactRequirement::AnyDisplay;
         assert_eq!(
             satisfies(&candidate, &bounded),
             Some(Satisfaction::Satisfied)
@@ -435,92 +398,84 @@ mod tests {
     #[test]
     fn incompatible_presentation_and_representation_never_match() {
         let developed = artifact(
-            ArtifactRepresentation::Developed,
-            DisplayDimensions {
+            ImageOrigin::RawSensor,
+            PixelDimensions {
                 width: 7008,
                 height: 4672,
             },
         );
-        let mut request = request(
-            &developed,
-            DetailRequirement::Native {
-                source: developed.actual_dimensions,
-            },
-        );
-        request.representation = RepresentationRequirement::Exact(ArtifactRepresentation::Embedded);
+        let mut request = request(&developed, DetailRequirement::NativeDetail);
+        request.artifact = ArtifactRequirement::Exact(ImageOrigin::EmbeddedPreview);
         assert_eq!(satisfies(&developed, &request), None);
-        request.representation = RepresentationRequirement::AnyDisplay;
+        request.artifact = ArtifactRequirement::AnyDisplay;
         request.presentation.sharpening = SharpeningState::Display;
         assert_eq!(satisfies(&developed, &request), None);
     }
 
     #[test]
-    fn largest_raw_jpeg_requires_selection_proof_and_native_coverage() {
-        let mut embedded = artifact(
-            ArtifactRepresentation::Embedded,
-            DisplayDimensions {
-                width: 7008,
-                height: 4672,
+    fn exact_variant_and_minimum_edges_are_independent_requirements() {
+        let mut candidate = artifact(
+            ImageOrigin::EmbeddedPreview,
+            PixelDimensions {
+                width: 600,
+                height: 400,
             },
         );
         let mut request = request(
-            &embedded,
-            DetailRequirement::Native {
-                source: DisplayDimensions {
-                    width: 4688,
-                    height: 7028,
-                },
+            &candidate,
+            DetailRequirement::MinimumDimensions {
+                min_long_edge: 600,
+                min_short_edge: 400,
             },
         );
-        request.representation = RepresentationRequirement::LargestRawJpeg;
-        assert_eq!(satisfies(&embedded, &request), None);
-        embedded.variant.target = LARGEST_RAW_JPEG_TARGET.into();
+        request.artifact = ArtifactRequirement::ExactVariant {
+            origin: ImageOrigin::EmbeddedPreview,
+            target: "selected-variant",
+        };
+        assert_eq!(satisfies(&candidate, &request), None);
+        candidate.variant.target = "selected-variant".into();
         assert_eq!(
-            satisfies(&embedded, &request),
+            satisfies(&candidate, &request),
             Some(Satisfaction::Satisfied)
         );
-        embedded.actual_dimensions = DisplayDimensions {
-            width: 1616,
-            height: 1080,
-        };
-        request.allow_interim = true;
-        assert_eq!(satisfies(&embedded, &request), Some(Satisfaction::Interim));
+        candidate.facts.display_dimensions = oxy_domain::DisplayDimensions(PixelDimensions {
+            width: 400,
+            height: 600,
+        });
+        candidate.facts.encoded_dimensions =
+            oxy_domain::EncodedDimensions(candidate.facts.display_dimensions.0);
+        candidate.facts.detail.sampled_dimensions = candidate.facts.display_dimensions;
+        assert_eq!(
+            satisfies(&candidate, &request),
+            Some(Satisfaction::Satisfied)
+        );
+        candidate.facts.display_dimensions.0.width = 399;
+        candidate.facts.encoded_dimensions.0.width = 399;
+        candidate.facts.detail.sampled_dimensions.0.width = 399;
+        candidate.facts.detail.sampling = oxy_domain::Sampling::Native;
+        assert_eq!(satisfies(&candidate, &request), Some(Satisfaction::Interim));
         request.allow_interim = false;
-        assert_eq!(satisfies(&embedded, &request), None);
-    }
-
-    #[test]
-    fn raw_camera_preview_requires_explicit_policy_and_near_native_coverage() {
-        let embedded = artifact(
-            ArtifactRepresentation::Embedded,
-            DisplayDimensions {
-                width: 6192,
-                height: 4128,
-            },
-        );
-        let source = DisplayDimensions {
-            width: 6240,
-            height: 4160,
-        };
-        let mut request = request(&embedded, DetailRequirement::Native { source });
-        request.representation = RepresentationRequirement::RawNative {
-            allow_camera_preview: true,
-        };
-        assert_eq!(
-            satisfies(&embedded, &request),
-            Some(Satisfaction::Satisfied)
-        );
-        request.representation = RepresentationRequirement::RawNative {
-            allow_camera_preview: false,
-        };
-        assert_eq!(satisfies(&embedded, &request), None);
+        assert_eq!(satisfies(&candidate, &request), None);
+        candidate.facts.display_dimensions = oxy_domain::DisplayDimensions(PixelDimensions {
+            width: 400,
+            height: 599,
+        });
+        candidate.facts.encoded_dimensions =
+            oxy_domain::EncodedDimensions(candidate.facts.display_dimensions.0);
+        candidate.facts.detail.sampled_dimensions = candidate.facts.display_dimensions;
+        assert_eq!(satisfies(&candidate, &request), None);
+        candidate.facts.display_dimensions.0.height = 600;
+        candidate.facts.encoded_dimensions.0.height = 600;
+        candidate.facts.detail.sampled_dimensions.0.height = 600;
+        candidate.facts.source.origin = ImageOrigin::RawSensor;
+        assert_eq!(satisfies(&candidate, &request), None);
     }
 
     #[test]
     fn downsampled_tiff_or_heif_artifact_is_only_interim_for_full() {
         let downsample = artifact(
-            ArtifactRepresentation::System,
-            DisplayDimensions {
+            ImageOrigin::PrimaryImage,
+            PixelDimensions {
                 width: 4096,
                 height: 2731,
             },
@@ -540,13 +495,13 @@ mod tests {
     #[test]
     fn native_small_original_satisfies_large_display_without_upscaling() {
         let mut original = artifact(
-            ArtifactRepresentation::Original,
-            DisplayDimensions {
+            ImageOrigin::PrimaryImage,
+            PixelDimensions {
                 width: 800,
                 height: 600,
             },
         );
-        original.native_detail = true;
+        original.facts.detail.sampling = oxy_domain::Sampling::Native;
         assert_eq!(
             satisfies(
                 &original,
@@ -559,5 +514,13 @@ mod tests {
             ),
             Some(Satisfaction::Satisfied)
         );
+    }
+    #[test]
+    fn partial_reference_coverage_is_not_a_whole_image_preview() {
+        let mut cropped = artifact(ImageOrigin::PrimaryImage, (4096, 2731).into());
+        cropped.facts.detail.region.width /= 2;
+        let display = request(&cropped, DetailRequirement::Display { min_long_edge: 512 });
+        assert!(cropped.facts.is_consistent());
+        assert_eq!(satisfies(&cropped, &display), None);
     }
 }

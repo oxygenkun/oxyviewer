@@ -40,7 +40,7 @@ pub fn preview(
 和 LibRaw progress callback，完整调度说明见预览流水线架构文档。
 
 - `path`：源文件路径。
-- `cache_dir`：应用拥有的 preview cache 父目录；v2 在其中使用固定分层布局。
+- `cache_dir`：应用拥有的 preview cache 父目录；v3 在其中使用固定分层布局。
 - `level`：语义等级 `Thumbnail | Preview | Full`；调用者不传具体像素尺寸。
 - `priority`：domain/IPC 层的请求优先级；media 内部将其转换为 decode gate 等级。
 - `kind`：调用者已识别的 `AssetKind`。
@@ -165,6 +165,17 @@ HEIF Full 的容量错误不进入 8192px fallback，保留已显示的过渡图
 协议 materialization reservation 只覆盖 Rust 生成 `Response<Vec<u8>>` body 前的复制，不覆盖 Tauri
 接管 body 后到 WebView 消费完成的生命周期。
 
+### 图像尺寸与产物事实
+
+`oxy-domain` 定义中性 `PixelDimensions`，以及不可隐式互换的 `EncodedDimensions`、
+`DisplayDimensions`。JPEG header 与缩放解码计划使用编码坐标；产物清晰度要求使用显示坐标。
+
+`PreviewResult.image_facts` 保存 `SourceImage`、实际输出尺寸、覆盖/剩余采样、完成的操作和
+`ByteIntegrity`。`ImageOrigin` 只表达 PrimaryImage/EmbeddedPreview/RawSensor；`PreviewKind`
+是展示标签。缩略图派生保留来源与原有处理历史，放大不会恢复降采样损失。缓存匹配由
+`CacheRequest × MediaArtifact.facts` 决定，RAW full 仍由 RAW planner 判断相机 JPEG 是否合格，
+不合格时使用 full development。模型细节见[表示规划](../../docs/architecture/08-representation-planning.md)。
+
 ### Cache 管理
 
 ```rust
@@ -174,13 +185,13 @@ let usage = cache.prune(max_size_bytes)?;
 cache.clear()?;
 ```
 
-- `usage` 只统计 v2 manifest 管理的 artifact。
+- `usage` 只统计 v3 manifest 管理的 artifact。
 - `prune` 按 manifest recency 从旧到新删除，lease 和显式 protected path 会保护在用 artifact。
-- `clear` 提升 generation，并按 lease 规则清理 v2 artifact，使旧 generation 不再命中。
+- `clear` 提升 generation，并按 lease 规则清理 v3 artifact，使旧 generation 不再命中。
 - `CacheUsage` 返回 `size_bytes` 和 `artifact_count`。
 
 Cache 是可重建数据。调用者负责选择应用专属父目录；`DiskMediaCache` 只维护其中固定的
-`media-cache-v2` owned layout。
+`media-cache-v3` owned layout。旧 v2 不读取、不迁移，也不在启动时递归删除。
 
 ### 版本和错误
 
@@ -240,7 +251,7 @@ flowchart TD
 dispatcher 的跨格式 fallback 是：HEIF full artifact 失败后尝试 foreground 8192px HEIF preview，
 避免放大镜完全空白。RAW 与 HEIF 各自的 backend executor 保留有序尝试诊断。
 
-HEIF 内部 backend 顺序由 `pipeline::heif::backend` 决定，并记录 backend 尝试诊断。取消会立即终止
+HEIF 内部 backend 顺序由 `pipeline::heif::planner` 决定，`pipeline::heif` 执行并记录 backend 尝试诊断。取消会立即终止
 计划，不会被解释为“尝试更慢兼容 backend”的许可。
 
 ## HEIF session 调用流程
@@ -272,11 +283,11 @@ sequenceDiagram
 
 | 模块 | 职责 |
 | --- | --- |
-| `pipeline::dispatcher` | `AssetKind + RenderLevel` 分派和跨格式 fallback |
-| `pipeline::artifact` | 跨格式 decoded preview cache 复用和计时等小型共享机制 |
-| `pipeline::raw` | RAW embedded/developed/full 流程及 backend 顺序 |
-| `pipeline::heif` | HEIF 子管线门面，仅声明内部子模块 |
-| `pipeline::heif::backend` | HEIF backend 探测、选择、fallback 和尝试诊断 |
+| `pipeline::dispatcher` | `AssetKind + RenderLevel` 分派、应用发布入口和统一交付检查 |
+| `pipeline::artifact` | 跨格式缓存复用、生产协调、发布和计时 |
+| `pipeline::raw` | 执行 RAW embedded/developed/full 流程 |
+| `pipeline::heif` | HEIF 请求执行、backend 探测、fallback 和尝试诊断 |
+| `pipeline::{jpeg,raw,heif}::planner` | 格式请求契约、候选资格与有序规划，无 I/O |
 | `pipeline::heif::artifact` | 单一 HEIF `preview` 执行函数、full artifact 和 source-JPEG cache |
 | `pipeline::system` | 平台 system preview |
 | `backends` | ImageIO、Core Image、WIC、FFmpeg、libheif、LibRaw 适配器 |

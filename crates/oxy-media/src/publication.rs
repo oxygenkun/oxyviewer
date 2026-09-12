@@ -1,8 +1,8 @@
 use crate::{
     MediaError,
     cache::{
-        ArtifactLease, ArtifactLocation, ArtifactRepresentation, CacheRequest, DisplayDimensions,
-        MediaArtifact, MediaCache, PendingArtifact, Satisfaction, SourceRevision, VariantIdentity,
+        ArtifactLease, ArtifactLocation, CacheRequest, ImageOrigin, MediaArtifact, MediaCache,
+        PendingArtifact, PixelDimensions, Satisfaction, SourceRevision, VariantIdentity,
         candidate_rank, satisfies,
     },
 };
@@ -41,8 +41,8 @@ fn resource_process_namespace() -> &'static str {
 pub struct ResourceDescriptor {
     pub resource_id: String,
     pub url: String,
-    pub dimensions: DisplayDimensions,
-    pub representation: ArtifactRepresentation,
+    pub dimensions: PixelDimensions,
+    pub origin: ImageOrigin,
     pub media_type: String,
 }
 
@@ -90,8 +90,8 @@ pub enum ResourcePayload {
 
 pub struct ResourceReadLease {
     pub media_type: String,
-    pub dimensions: DisplayDimensions,
-    pub representation: ArtifactRepresentation,
+    pub dimensions: PixelDimensions,
+    pub origin: ImageOrigin,
     pub payload: ResourcePayload,
     file_revision: Option<SourceRevision>,
     _lease: ResourceLease,
@@ -212,8 +212,8 @@ fn registry_budget_error(
 }
 
 struct RegistryEntry {
-    dimensions: DisplayDimensions,
-    representation: ArtifactRepresentation,
+    dimensions: PixelDimensions,
+    origin: ImageOrigin,
     media_type: String,
     payload: ResourcePayload,
     memory_bytes: usize,
@@ -275,14 +275,14 @@ impl ResourceRegistry {
         &self,
         bytes: Arc<[u8]>,
         media_type: impl Into<String>,
-        dimensions: DisplayDimensions,
-        representation: ArtifactRepresentation,
+        dimensions: PixelDimensions,
+        origin: ImageOrigin,
     ) -> Result<ResourceHandle, MediaError> {
         self.register(
             ResourcePayload::Encoded(bytes),
             media_type.into(),
             dimensions,
-            representation,
+            origin,
             None,
             None,
             None,
@@ -293,18 +293,18 @@ impl ResourceRegistry {
         &self,
         path: &Path,
         media_type: impl Into<String>,
-        dimensions: DisplayDimensions,
-        representation: ArtifactRepresentation,
+        dimensions: PixelDimensions,
+        origin: ImageOrigin,
     ) -> Result<ResourceHandle, MediaError> {
-        self.register_file_with_lease(path, media_type, dimensions, representation, None)
+        self.register_file_with_lease(path, media_type, dimensions, origin, None)
     }
 
     pub fn register_file_with_lease(
         &self,
         path: &Path,
         media_type: impl Into<String>,
-        dimensions: DisplayDimensions,
-        representation: ArtifactRepresentation,
+        dimensions: PixelDimensions,
+        origin: ImageOrigin,
         artifact_lease: Option<ArtifactLease>,
     ) -> Result<ResourceHandle, MediaError> {
         let revision = SourceRevision::observe(path)?;
@@ -312,7 +312,7 @@ impl ResourceRegistry {
             ResourcePayload::File(revision.canonical_path.clone()),
             media_type.into(),
             dimensions,
-            representation,
+            origin,
             Some(revision),
             artifact_lease,
             None,
@@ -323,15 +323,15 @@ impl ResourceRegistry {
         &self,
         owner: Arc<OwnedStagedFile>,
         media_type: impl Into<String>,
-        dimensions: DisplayDimensions,
-        representation: ArtifactRepresentation,
+        dimensions: PixelDimensions,
+        origin: ImageOrigin,
     ) -> Result<ResourceHandle, MediaError> {
         let revision = SourceRevision::observe(owner.path())?;
         self.register(
             ResourcePayload::File(revision.canonical_path.clone()),
             media_type.into(),
             dimensions,
-            representation,
+            origin,
             Some(revision),
             None,
             Some(owner),
@@ -348,12 +348,12 @@ impl ResourceRegistry {
     }
 
     pub fn resolve(&self, resource_id: &str) -> Option<ResourceReadLease> {
-        let (media_type, dimensions, representation, payload, file_revision, lease) =
+        let (media_type, dimensions, origin, payload, file_revision, lease) =
             self.inner.resolve(resource_id)?;
         Some(ResourceReadLease {
             media_type,
             dimensions,
-            representation,
+            origin,
             payload,
             file_revision,
             _lease: lease,
@@ -534,8 +534,8 @@ impl ResourceRegistry {
         &self,
         payload: ResourcePayload,
         media_type: String,
-        dimensions: DisplayDimensions,
-        representation: ArtifactRepresentation,
+        dimensions: PixelDimensions,
+        origin: ImageOrigin,
         file_revision: Option<SourceRevision>,
         artifact_lease: Option<ArtifactLease>,
         staged_owner: Option<Arc<OwnedStagedFile>>,
@@ -551,7 +551,7 @@ impl ResourceRegistry {
         );
         let entry = RegistryEntry {
             dimensions,
-            representation,
+            origin,
             media_type: media_type.clone(),
             payload,
             memory_bytes,
@@ -579,7 +579,7 @@ impl ResourceRegistry {
                 resource_id: id.clone(),
                 url: format!("oxy-media://localhost/resource/{id}"),
                 dimensions,
-                representation,
+                origin,
                 media_type,
             },
             _lease: lease,
@@ -665,8 +665,8 @@ impl RegistryInner {
         id: &str,
     ) -> Option<(
         String,
-        DisplayDimensions,
-        ArtifactRepresentation,
+        PixelDimensions,
+        ImageOrigin,
         ResourcePayload,
         Option<SourceRevision>,
         ResourceLease,
@@ -692,7 +692,7 @@ impl RegistryInner {
         let resolved = (
             entry.media_type.clone(),
             entry.dimensions,
-            entry.representation,
+            entry.origin,
             entry.payload.clone(),
             entry.file_revision.clone(),
         );
@@ -798,8 +798,7 @@ fn remove_entry(state: &mut RegistryState, id: &str) {
 pub struct ProducedArtifact {
     pub source_revision: SourceRevision,
     pub variant: VariantIdentity,
-    pub actual_dimensions: DisplayDimensions,
-    pub native_detail: bool,
+    pub facts: oxy_domain::ArtifactFacts,
     pub cache_generation: u64,
     pub payload: ProducedPayload,
 }
@@ -1083,18 +1082,18 @@ impl ArtifactPublisher {
         let ProducedArtifact {
             source_revision,
             variant,
-            actual_dimensions,
-            native_detail,
+            mut facts,
             cache_generation,
             payload,
         } = artifact;
-        let representation = variant.representation;
+        crate::media_source::bind_facts(&mut facts, &source_revision)?;
+        let origin = facts.source.origin;
+        let actual_dimensions = facts.display_dimensions.0;
         let active_artifact = MediaArtifact {
             artifact_id: String::new(),
             source_revision: source_revision.clone(),
             variant: variant.clone(),
-            actual_dimensions,
-            native_detail,
+            facts: facts.clone(),
             byte_size: match &payload {
                 ProducedPayload::Encoded { bytes, .. } => bytes.len() as u64,
                 ProducedPayload::StagedFile { owner, .. } => {
@@ -1121,12 +1120,8 @@ impl ArtifactPublisher {
         };
         let (resource, pending, memory_bytes) = match payload {
             ProducedPayload::OriginalFile { path, media_type } => (
-                self.registry.register_file(
-                    &path,
-                    media_type,
-                    actual_dimensions,
-                    representation,
-                )?,
+                self.registry
+                    .register_file(&path, media_type, actual_dimensions, origin)?,
                 None,
                 0,
             ),
@@ -1139,14 +1134,13 @@ impl ArtifactPublisher {
                     Arc::clone(&bytes),
                     media_type.clone(),
                     actual_dimensions,
-                    representation,
+                    origin,
                 )?;
                 let memory_bytes = bytes.len();
                 let pending = persist.then_some(PendingPersistence::Encoded(PendingArtifact {
                     source_revision,
                     variant,
-                    actual_dimensions,
-                    native_detail,
+                    facts,
                     media_type,
                     extension,
                     bytes,
@@ -1163,14 +1157,13 @@ impl ArtifactPublisher {
                     Arc::clone(&owner),
                     media_type.clone(),
                     actual_dimensions,
-                    representation,
+                    origin,
                 )?;
                 let pending = persist.then_some(PendingPersistence::Staged {
                     pending: crate::cache::PendingStagedArtifact {
                         source_revision,
                         variant,
-                        actual_dimensions,
-                        native_detail,
+                        facts,
                         media_type,
                         extension,
                         staged_path: owner.path().to_owned(),
@@ -1434,9 +1427,9 @@ impl Drop for ArtifactPublisher {
 mod tests {
     use super::*;
     use crate::cache::{
-        ArtifactLocation, ArtifactPresentation, CacheColorState, CacheRequest, ColorRequirement,
-        DetailRequirement, DiskMediaCache, MEDIA_CACHE_POLICY_REVISION, OrientationRequirement,
-        OrientationState, PresentationRequirement, RepresentationRequirement, SharpeningState,
+        ArtifactLocation, ArtifactPresentation, ArtifactRequirement, CacheColorState, CacheRequest,
+        ColorRequirement, DetailRequirement, DiskMediaCache, MEDIA_CACHE_POLICY_REVISION,
+        OrientationRequirement, OrientationState, PresentationRequirement, SharpeningState,
     };
     use image::{DynamicImage, ImageFormat};
     use std::{
@@ -1452,9 +1445,8 @@ mod tests {
         SourceRevision::observe(&path).unwrap()
     }
 
-    fn variant(representation: ArtifactRepresentation) -> VariantIdentity {
+    fn variant(_origin: ImageOrigin) -> VariantIdentity {
         VariantIdentity {
-            representation,
             presentation: ArtifactPresentation {
                 geometry: None,
                 orientation: OrientationState::Applied,
@@ -1492,11 +1484,11 @@ mod tests {
                 .register_encoded(
                     Arc::from([1_u8]),
                     "image/jpeg",
-                    DisplayDimensions {
+                    PixelDimensions {
                         width: 1,
                         height: 1,
                     },
-                    ArtifactRepresentation::Embedded,
+                    ImageOrigin::EmbeddedPreview,
                 )
                 .unwrap()
         };
@@ -1516,11 +1508,11 @@ mod tests {
             .register_file(
                 &source.canonical_path,
                 "image/jpeg",
-                DisplayDimensions {
+                PixelDimensions {
                     width: 16,
                     height: 8,
                 },
-                ArtifactRepresentation::Original,
+                ImageOrigin::PrimaryImage,
             )
             .unwrap();
         assert!(registry.resolve("../../source.jpg").is_none());
@@ -1539,11 +1531,11 @@ mod tests {
             .register_file(
                 &source.canonical_path,
                 "image/jpeg",
-                DisplayDimensions {
+                PixelDimensions {
                     width: 16,
                     height: 8,
                 },
-                ArtifactRepresentation::Original,
+                ImageOrigin::PrimaryImage,
             )
             .unwrap();
         fs::write(&source.canonical_path, b"replacement").unwrap();
@@ -1562,12 +1554,15 @@ mod tests {
         cache
             .publish(PendingArtifact {
                 source_revision: source.clone(),
-                variant: variant(ArtifactRepresentation::Embedded),
-                actual_dimensions: DisplayDimensions {
-                    width: 16,
-                    height: 8,
-                },
-                native_detail: false,
+                variant: variant(ImageOrigin::EmbeddedPreview),
+                facts: crate::media_source::test_facts(
+                    ImageOrigin::EmbeddedPreview,
+                    PixelDimensions {
+                        width: 16,
+                        height: 8,
+                    },
+                    false,
+                ),
                 media_type: "image/jpeg".into(),
                 extension: "jpg".into(),
                 bytes,
@@ -1577,7 +1572,7 @@ mod tests {
         let request = CacheRequest {
             source_revision: source,
             detail: DetailRequirement::Display { min_long_edge: 16 },
-            representation: RepresentationRequirement::AnyDisplay,
+            artifact: ArtifactRequirement::AnyDisplay,
             presentation: PresentationRequirement {
                 orientation: OrientationRequirement::DisplayCorrect,
                 color: ColorRequirement::Srgb,
@@ -1596,8 +1591,8 @@ mod tests {
             .register_file_with_lease(
                 &path,
                 "image/jpeg",
-                hit.artifact.actual_dimensions,
-                hit.artifact.variant.representation,
+                hit.artifact.facts.display_dimensions.0,
+                hit.artifact.facts.source.origin,
                 Some(hit.lease),
             )
             .unwrap();
@@ -1623,11 +1618,11 @@ mod tests {
             .register_file(
                 &path,
                 "image/jpeg",
-                DisplayDimensions {
+                PixelDimensions {
                     width: 1,
                     height: 1,
                 },
-                ArtifactRepresentation::Original,
+                ImageOrigin::PrimaryImage,
             )
             .unwrap();
         let read = registry.resolve(&handle.descriptor.resource_id).unwrap();
@@ -1644,22 +1639,22 @@ mod tests {
             .register_encoded(
                 Arc::from([1_u8, 2, 3, 4]),
                 "image/jpeg",
-                DisplayDimensions {
+                PixelDimensions {
                     width: 1,
                     height: 1,
                 },
-                ArtifactRepresentation::Embedded,
+                ImageOrigin::EmbeddedPreview,
             )
             .unwrap();
         assert!(matches!(
             registry.register_encoded(
                 Arc::from([5_u8]),
                 "image/jpeg",
-                DisplayDimensions {
+                PixelDimensions {
                     width: 1,
                     height: 1
                 },
-                ArtifactRepresentation::Embedded,
+                ImageOrigin::EmbeddedPreview,
             ),
             Err(MediaError::ResourceBudgetExhausted { .. })
         ));
@@ -1670,11 +1665,11 @@ mod tests {
                 .register_encoded(
                     Arc::from([5_u8]),
                     "image/jpeg",
-                    DisplayDimensions {
+                    PixelDimensions {
                         width: 1,
                         height: 1
                     },
-                    ArtifactRepresentation::Embedded,
+                    ImageOrigin::EmbeddedPreview,
                 )
                 .is_ok()
         );
@@ -1766,8 +1761,7 @@ mod tests {
                     artifact_id: "missing".into(),
                     source_revision: pending.source_revision,
                     variant: pending.variant,
-                    actual_dimensions: pending.actual_dimensions,
-                    native_detail: pending.native_detail,
+                    facts: pending.facts.clone(),
                     byte_size: pending.bytes.len() as u64,
                     media_type: pending.media_type,
                     location: ArtifactLocation::Managed(PathBuf::from("missing-managed.jpg")),
@@ -1796,12 +1790,15 @@ mod tests {
             .publish(
                 ProducedArtifact {
                     source_revision: source,
-                    variant: variant(ArtifactRepresentation::Embedded),
-                    actual_dimensions: DisplayDimensions {
-                        width: 16,
-                        height: 8,
-                    },
-                    native_detail: false,
+                    variant: variant(ImageOrigin::EmbeddedPreview),
+                    facts: crate::media_source::test_facts(
+                        ImageOrigin::EmbeddedPreview,
+                        PixelDimensions {
+                            width: 16,
+                            height: 8,
+                        },
+                        false,
+                    ),
                     cache_generation: 7,
                     payload: ProducedPayload::Encoded {
                         bytes: jpeg(),
@@ -1860,11 +1857,11 @@ mod tests {
             .register_encoded(
                 Arc::from([1_u8]),
                 "image/jpeg",
-                DisplayDimensions {
+                PixelDimensions {
                     width: 1,
                     height: 1,
                 },
-                ArtifactRepresentation::Embedded,
+                ImageOrigin::EmbeddedPreview,
             )
             .unwrap();
         let cache = Arc::new(DiskMediaCache::new(directory.path(), 8).unwrap());
@@ -1890,12 +1887,15 @@ mod tests {
         let result = publisher.publish(
             ProducedArtifact {
                 source_revision: source(directory.path()),
-                variant: variant(ArtifactRepresentation::Developed),
-                actual_dimensions: DisplayDimensions {
-                    width: 16,
-                    height: 8,
-                },
-                native_detail: true,
+                variant: variant(ImageOrigin::RawSensor),
+                facts: crate::media_source::test_facts(
+                    ImageOrigin::RawSensor,
+                    PixelDimensions {
+                        width: 16,
+                        height: 8,
+                    },
+                    true,
+                ),
                 cache_generation: 0,
                 payload: ProducedPayload::StagedFile {
                     owner: Arc::clone(&owner),
@@ -1928,12 +1928,15 @@ mod tests {
             .publish(
                 ProducedArtifact {
                     source_revision: source,
-                    variant: variant(ArtifactRepresentation::Developed),
-                    actual_dimensions: DisplayDimensions {
-                        width: 16,
-                        height: 8,
-                    },
-                    native_detail: true,
+                    variant: variant(ImageOrigin::RawSensor),
+                    facts: crate::media_source::test_facts(
+                        ImageOrigin::RawSensor,
+                        PixelDimensions {
+                            width: 16,
+                            height: 8,
+                        },
+                        true,
+                    ),
                     cache_generation: 0,
                     payload: ProducedPayload::StagedFile {
                         owner: Arc::new(OwnedStagedFile::new(staged.clone())),
@@ -1987,12 +1990,15 @@ mod tests {
             .publish(
                 ProducedArtifact {
                     source_revision: source,
-                    variant: variant(ArtifactRepresentation::Developed),
-                    actual_dimensions: DisplayDimensions {
-                        width: 16,
-                        height: 8,
-                    },
-                    native_detail: true,
+                    variant: variant(ImageOrigin::RawSensor),
+                    facts: crate::media_source::test_facts(
+                        ImageOrigin::RawSensor,
+                        PixelDimensions {
+                            width: 16,
+                            height: 8,
+                        },
+                        true,
+                    ),
                     cache_generation: 7,
                     payload: ProducedPayload::StagedFile {
                         owner: Arc::new(OwnedStagedFile::new(staged.clone())),
@@ -2046,12 +2052,15 @@ mod tests {
             .publish(
                 ProducedArtifact {
                     source_revision: source.clone(),
-                    variant: variant(ArtifactRepresentation::Embedded),
-                    actual_dimensions: DisplayDimensions {
-                        width: 16,
-                        height: 8,
-                    },
-                    native_detail: false,
+                    variant: variant(ImageOrigin::EmbeddedPreview),
+                    facts: crate::media_source::test_facts(
+                        ImageOrigin::EmbeddedPreview,
+                        PixelDimensions {
+                            width: 16,
+                            height: 8,
+                        },
+                        false,
+                    ),
                     cache_generation: 7,
                     payload: ProducedPayload::Encoded {
                         bytes: jpeg(),
@@ -2065,7 +2074,7 @@ mod tests {
         let request = CacheRequest {
             source_revision: source,
             detail: DetailRequirement::Display { min_long_edge: 8 },
-            representation: RepresentationRequirement::AnyDisplay,
+            artifact: ArtifactRequirement::AnyDisplay,
             presentation: PresentationRequirement {
                 orientation: OrientationRequirement::DisplayCorrect,
                 color: ColorRequirement::Any,
@@ -2112,12 +2121,15 @@ mod tests {
             .publish(
                 ProducedArtifact {
                     source_revision: source.clone(),
-                    variant: variant(ArtifactRepresentation::Embedded),
-                    actual_dimensions: DisplayDimensions {
-                        width: 16,
-                        height: 8,
-                    },
-                    native_detail: false,
+                    variant: variant(ImageOrigin::EmbeddedPreview),
+                    facts: crate::media_source::test_facts(
+                        ImageOrigin::EmbeddedPreview,
+                        PixelDimensions {
+                            width: 16,
+                            height: 8,
+                        },
+                        false,
+                    ),
                     cache_generation: 7,
                     payload: ProducedPayload::Encoded {
                         bytes: jpeg(),
@@ -2131,7 +2143,7 @@ mod tests {
         let request = CacheRequest {
             source_revision: source,
             detail: DetailRequirement::Display { min_long_edge: 8 },
-            representation: RepresentationRequirement::AnyDisplay,
+            artifact: ArtifactRequirement::AnyDisplay,
             presentation: PresentationRequirement {
                 orientation: OrientationRequirement::DisplayCorrect,
                 color: ColorRequirement::Any,
@@ -2178,12 +2190,15 @@ mod tests {
                 .publish(
                     ProducedArtifact {
                         source_revision: source,
-                        variant: variant(ArtifactRepresentation::Embedded),
-                        actual_dimensions: DisplayDimensions {
-                            width: 16,
-                            height: 8,
-                        },
-                        native_detail: false,
+                        variant: variant(ImageOrigin::EmbeddedPreview),
+                        facts: crate::media_source::test_facts(
+                            ImageOrigin::EmbeddedPreview,
+                            PixelDimensions {
+                                width: 16,
+                                height: 8,
+                            },
+                            false,
+                        ),
                         cache_generation: 7,
                         payload: ProducedPayload::Encoded {
                             bytes: jpeg(),
@@ -2228,12 +2243,15 @@ mod tests {
             .publish(
                 ProducedArtifact {
                     source_revision: source,
-                    variant: variant(ArtifactRepresentation::Embedded),
-                    actual_dimensions: DisplayDimensions {
-                        width: 16,
-                        height: 8,
-                    },
-                    native_detail: false,
+                    variant: variant(ImageOrigin::EmbeddedPreview),
+                    facts: crate::media_source::test_facts(
+                        ImageOrigin::EmbeddedPreview,
+                        PixelDimensions {
+                            width: 16,
+                            height: 8,
+                        },
+                        false,
+                    ),
                     cache_generation: 7,
                     payload: ProducedPayload::Encoded {
                         bytes: Arc::clone(&bytes),

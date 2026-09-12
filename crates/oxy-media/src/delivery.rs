@@ -1,5 +1,5 @@
 //! Encoded-image delivery limits shared by producers and cache matching.
-use crate::cache::DisplayDimensions;
+use crate::media_source::PixelDimensions;
 
 pub(crate) const THUMBNAIL_EDGE: u32 = 512;
 pub(crate) const THUMBNAIL_BYTES: u64 = 2 * 1024 * 1024;
@@ -21,7 +21,7 @@ pub(crate) enum Delivery {
 }
 
 impl DeliveryLimits {
-    pub(crate) fn classify(self, dimensions: DisplayDimensions, bytes: u64) -> Delivery {
+    pub(crate) fn classify(self, dimensions: PixelDimensions, bytes: u64) -> Delivery {
         if dimensions.width <= self.max_edge
             && dimensions.height <= self.max_edge
             && bytes <= self.max_bytes
@@ -32,7 +32,7 @@ impl DeliveryLimits {
         }
     }
 
-    pub(crate) fn accepts(self, dimensions: DisplayDimensions, bytes: u64) -> bool {
+    pub(crate) fn accepts(self, dimensions: PixelDimensions, bytes: u64) -> bool {
         self.classify(dimensions, bytes) == Delivery::Direct
     }
 }
@@ -43,7 +43,7 @@ mod tests {
 
     #[test]
     fn delivery_checks_dimensions_and_encoded_bytes_independently() {
-        let dimensions = DisplayDimensions {
+        let dimensions = PixelDimensions {
             width: 512,
             height: 340,
         };
@@ -53,7 +53,7 @@ mod tests {
             Delivery::NeedsConversion
         );
         assert!(!THUMBNAIL_LIMITS.accepts(
-            DisplayDimensions {
+            PixelDimensions {
                 width: 513,
                 height: 340
             },

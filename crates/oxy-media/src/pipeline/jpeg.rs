@@ -1,4 +1,4 @@
-mod selection;
+mod planner;
 
 use super::{
     artifact::{ArtifactCache, register_original_resource},
@@ -6,13 +6,8 @@ use super::{
 };
 use crate::{
     MediaError,
-    cache::{
-        ArtifactPresentation, ArtifactRepresentation, ColorRequirement, DetailRequirement,
-        DisplayDimensions, OrientationRequirement, PresentationRequirement,
-        RepresentationRequirement, SharpeningState, SourceRevision,
-    },
+    cache::{ArtifactPresentation, PixelDimensions, SourceRevision},
     decode_control::{self, DecodePriority},
-    delivery::{Delivery, THUMBNAIL_EDGE, THUMBNAIL_LIMITS},
     formats::jpeg::{self, Header},
     policy::JPEG_THUMBNAIL,
 };
@@ -34,20 +29,7 @@ pub(crate) fn thumbnail(
 ) -> Result<PreviewResult, MediaError> {
     let source = SourceRevision::observe(path)?;
     let artifacts = ArtifactCache::for_source_revision(source.clone(), cache_dir)?;
-    let request = artifacts.request(
-        DetailRequirement::Display {
-            min_long_edge: THUMBNAIL_EDGE,
-        },
-        RepresentationRequirement::BoundedThumbnail {
-            target: JPEG_THUMBNAIL,
-        },
-        PresentationRequirement {
-            orientation: OrientationRequirement::DisplayCorrect,
-            color: ColorRequirement::Any,
-            sharpening: SharpeningState::None,
-        },
-        false,
-    );
+    let request = planner::thumbnail_request(&artifacts);
     if let Some(result) = artifacts.lookup(&request, level)? {
         return Ok(result);
     }
@@ -66,11 +48,10 @@ pub(crate) fn thumbnail(
             let length = reader.get_ref().inner.metadata()?.len();
             let primary = jpeg::probe(&mut reader, length, || cancellation.is_cancelled())?;
             let probe_ms = started.elapsed().as_millis() as u64;
-            let dimensions = primary.dimensions.ok_or_else(|| {
+            let dimensions = primary.encoded_dimensions.ok_or_else(|| {
                 MediaError::CacheArtifact("JPEG has no bounded SOF dimensions".into())
             })?;
-            if primary.complete && THUMBNAIL_LIMITS.classify(dimensions, length) == Delivery::Direct
-            {
+            if planner::can_deliver_original(&primary, length) {
                 check_source(path, &source, cancellation)?;
                 return register_original_resource(
                     path,
@@ -103,26 +84,12 @@ pub(crate) fn thumbnail(
                     Err(error) if candidate_failure(&error) => continue,
                     Err(error) => return Err(error),
                 };
-                if !selection::embedded_is_eligible(&primary, &candidate) {
-                    continue;
-                }
                 candidates.push((range, candidate));
             }
-            candidates.sort_by_key(|(range, candidate)| {
-                let dimensions = candidate
-                    .dimensions
-                    .expect("eligible candidate has dimensions");
-                (
-                    u64::from(dimensions.width) * u64::from(dimensions.height),
-                    range.length,
-                )
-            });
-            // Corrupt payloads cannot turn a many-picture MP index into an
-            // unbounded sequence of full materializations and decode attempts.
-            for (range, candidate) in candidates.into_iter().take(3) {
+            for (range, candidate) in planner::plan_embedded_candidates(&primary, candidates) {
                 let conversion = plan_conversion(
                     candidate
-                        .dimensions
+                        .encoded_dimensions
                         .expect("eligible candidate has dimensions"),
                     range.length,
                 )?;
@@ -149,16 +116,17 @@ pub(crate) fn thumbnail(
                     cancellation,
                 ) {
                     Ok(EncodedJpegThumbnail {
+                        mut facts,
                         bytes,
                         dimensions,
                         presentation,
                     }) => {
+                        facts.source.candidate_id =
+                            format!("mpf:{}:{}", range.offset, range.length);
                         let mut result = artifacts.publish(
                             bytes,
-                            dimensions,
-                            ArtifactRepresentation::Embedded,
+                            facts,
                             thumbnail_presentation(&primary, dimensions, presentation),
-                            false,
                             JPEG_THUMBNAIL.into(),
                             level,
                             generation,
@@ -188,16 +156,16 @@ pub(crate) fn thumbnail(
             (&mut reader).take(length).read_to_end(&mut bytes)?;
             check_source(path, &source, cancellation)?;
             let EncodedJpegThumbnail {
+                mut facts,
                 bytes,
                 dimensions: output_dimensions,
                 presentation,
             } = normalize(bytes, &primary, None, conversion.decode, cancellation)?;
+            facts.source.candidate_id = "primary".into();
             let mut result = artifacts.publish(
                 bytes,
-                output_dimensions,
-                ArtifactRepresentation::Decoded,
+                facts,
                 thumbnail_presentation(&primary, output_dimensions, presentation),
-                dimensions.width.max(dimensions.height) <= THUMBNAIL_EDGE,
                 JPEG_THUMBNAIL.into(),
                 level,
                 generation,
@@ -239,17 +207,13 @@ fn candidate_failure(error: &MediaError) -> bool {
 
 fn thumbnail_presentation(
     primary: &Header,
-    encoded: DisplayDimensions,
+    encoded: PixelDimensions,
     mut result: ArtifactPresentation,
 ) -> ArtifactPresentation {
-    if let Some(mut display) = primary.dimensions {
-        if primary
-            .exif
-            .orientation
-            .is_some_and(|orientation| orientation >= 5)
-        {
-            std::mem::swap(&mut display.width, &mut display.height);
-        }
+    if let Some(encoded_source) = primary.encoded_dimensions {
+        let display = encoded_source
+            .to_display(primary.exif.orientation.unwrap_or(1) as u8)
+            .0;
         result.geometry = Some(oxy_domain::PreviewGeometry {
             display_size: oxy_domain::PreviewDisplaySize {
                 width: display.width,
@@ -274,10 +238,10 @@ mod tests {
     #[test]
     fn thumbnail_keeps_primary_display_geometry_separate_from_rounded_mpf_pixels() {
         let header = Header {
-            dimensions: Some(DisplayDimensions {
+            encoded_dimensions: Some(oxy_domain::EncodedDimensions(PixelDimensions {
                 width: 7008,
                 height: 4672,
-            }),
+            })),
             exif: oxy_metadata_parser::jpeg_preview::ExifPresentation {
                 orientation: Some(8),
                 ..Default::default()
@@ -286,7 +250,7 @@ mod tests {
         };
         let geometry = thumbnail_presentation(
             &header,
-            DisplayDimensions {
+            PixelDimensions {
                 width: 342,
                 height: 512,
             },

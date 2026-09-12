@@ -1,6 +1,6 @@
 use super::model::{
-    ArtifactLocation, CacheRequest, DisplayDimensions, MediaArtifact, Satisfaction, SourceRevision,
-    VariantIdentity, candidate_rank, satisfies,
+    ArtifactLocation, CacheRequest, MediaArtifact, Satisfaction, SourceRevision, VariantIdentity,
+    candidate_rank, satisfies,
 };
 use crate::MediaError;
 use fs2::FileExt;
@@ -19,13 +19,13 @@ use std::{
 };
 use tempfile::NamedTempFile;
 
-const CACHE_FOLDER: &str = "media-cache-v2";
+const CACHE_FOLDER: &str = "media-cache-v3";
 const MANIFEST_FILE: &str = "manifest.json";
 const GENERATION_FILE: &str = ".generation";
 const CACHE_LOCK_FILE: &str = ".cache.lock";
 const LOCK_FOLDER: &str = ".locks";
 const LEASE_FOLDER: &str = ".leases";
-const MANIFEST_VERSION: u32 = 2;
+const MANIFEST_VERSION: u32 = 3;
 const DEFAULT_LEASE_TTL: Duration = Duration::from_secs(5 * 60);
 const STAGING_MAX_AGE: Duration = Duration::from_secs(24 * 60 * 60);
 
@@ -68,8 +68,7 @@ pub trait MediaCache: Send + Sync {
         let pending = PendingArtifact {
             source_revision: artifact.source_revision,
             variant: artifact.variant,
-            actual_dimensions: artifact.actual_dimensions,
-            native_detail: artifact.native_detail,
+            facts: artifact.facts.clone(),
             media_type: artifact.media_type,
             extension: artifact.extension,
             bytes,
@@ -92,8 +91,7 @@ pub trait MediaCache: Send + Sync {
 pub struct PendingArtifact {
     pub source_revision: SourceRevision,
     pub variant: VariantIdentity,
-    pub actual_dimensions: DisplayDimensions,
-    pub native_detail: bool,
+    pub facts: oxy_domain::ArtifactFacts,
     pub media_type: String,
     pub extension: String,
     pub bytes: Arc<[u8]>,
@@ -103,8 +101,7 @@ pub struct PendingArtifact {
 pub struct PendingStagedArtifact {
     pub source_revision: SourceRevision,
     pub variant: VariantIdentity,
-    pub actual_dimensions: DisplayDimensions,
-    pub native_detail: bool,
+    pub facts: oxy_domain::ArtifactFacts,
     pub media_type: String,
     pub extension: String,
     pub staged_path: PathBuf,
@@ -262,8 +259,7 @@ struct Manifest {
 struct ManifestArtifact {
     artifact_id: String,
     variant: VariantIdentity,
-    actual_dimensions: DisplayDimensions,
-    native_detail: bool,
+    facts: oxy_domain::ArtifactFacts,
     byte_size: u64,
     media_type: String,
     file_name: String,
@@ -343,6 +339,7 @@ impl DiskMediaCache {
         &self,
         path: &Path,
         expected_source: &SourceRevision,
+        expected_facts: &oxy_domain::ArtifactFacts,
     ) -> Result<Option<ArtifactLease>, MediaError> {
         let Some(source_dir) = path.parent() else {
             return Ok(None);
@@ -394,6 +391,9 @@ impl DiskMediaCache {
                 || manifest.cache_generation != generation
                 || manifest.source_revision.revision_id != revision_id
                 || manifest.source_revision != *expected_source
+                || manifest.artifacts.iter().any(|artifact| {
+                    artifact.facts.source.revision_id != expected_source.revision_id
+                })
                 || validate_source_revision(&manifest.source_revision).is_err()
                 || SourceRevision::observe(&manifest.source_revision.canonical_path)?
                     != manifest.source_revision
@@ -405,11 +405,9 @@ impl DiskMediaCache {
             if manifest.artifacts.len() != original_len {
                 self.write_manifest(source_dir, &manifest)?;
             }
-            if !manifest
-                .artifacts
-                .iter()
-                .any(|artifact| source_dir.join(&artifact.file_name) == path)
-            {
+            if !manifest.artifacts.iter().any(|artifact| {
+                source_dir.join(&artifact.file_name) == path && artifact.facts == *expected_facts
+            }) {
                 return Ok(None);
             }
             self.inner
@@ -479,9 +477,10 @@ impl DiskMediaCache {
 
     fn commit_staged(
         &self,
-        pending: PendingStagedArtifact,
+        mut pending: PendingStagedArtifact,
     ) -> Result<CachePublication, MediaError> {
         let _staged_cleanup = StagedPathCleanup(pending.staged_path.clone());
+        crate::media_source::bind_facts(&mut pending.facts, &pending.source_revision)?;
         validate_source_revision(&pending.source_revision)?;
         validate_extension(&pending.extension)?;
         let staging = self.inner.root.join(".backend-tmp");
@@ -528,11 +527,7 @@ impl DiskMediaCache {
             true
         };
         let dimensions = image::image_dimensions(&destination)?;
-        if !dimensions_match(
-            dimensions,
-            pending.actual_dimensions,
-            pending.variant.presentation.orientation,
-        ) {
+        if !dimensions_match(dimensions, &pending.facts) {
             if created {
                 let _ = fs::remove_file(&destination);
             }
@@ -562,8 +557,7 @@ impl DiskMediaCache {
         manifest.artifacts.push(ManifestArtifact {
             artifact_id: artifact_id.clone(),
             variant: pending.variant.clone(),
-            actual_dimensions: pending.actual_dimensions,
-            native_detail: pending.native_detail,
+            facts: pending.facts.clone(),
             byte_size,
             media_type: pending.media_type.clone(),
             file_name,
@@ -582,8 +576,7 @@ impl DiskMediaCache {
                 artifact_id,
                 source_revision: pending.source_revision,
                 variant: pending.variant,
-                actual_dimensions: pending.actual_dimensions,
-                native_detail: pending.native_detail,
+                facts: pending.facts.clone(),
                 byte_size,
                 media_type: pending.media_type,
                 location: ArtifactLocation::Managed(destination),
@@ -826,7 +819,10 @@ impl DiskMediaCache {
                 Ok(manifest)
                     if manifest.version == MANIFEST_VERSION
                         && manifest.cache_generation == generation
-                        && manifest.source_revision == *source =>
+                        && manifest.source_revision == *source
+                        && manifest.artifacts.iter().all(|artifact| {
+                            artifact.facts.source.revision_id == source.revision_id
+                        }) =>
                 {
                     manifest
                 }
@@ -951,11 +947,23 @@ impl MediaCache for DiskMediaCache {
         validate_source_revision(&pending.source_revision)?;
         validate_extension(&pending.extension)?;
         Ok(Some(self.source_dir(&pending.source_revision).join(
-            format!("{}.{}", artifact_id(pending), pending.extension),
+            format!(
+                "{}.{}",
+                {
+                    let mut facts = pending.facts.clone();
+                    crate::media_source::bind_facts(&mut facts, &pending.source_revision)?;
+                    let mut hasher =
+                        artifact_hasher(&pending.source_revision, &pending.variant, &facts);
+                    hasher.update(&pending.bytes);
+                    format!("{:x}", hasher.finalize())
+                },
+                pending.extension
+            ),
         )))
     }
 
-    fn publish(&self, pending: PendingArtifact) -> Result<CachePublication, MediaError> {
+    fn publish(&self, mut pending: PendingArtifact) -> Result<CachePublication, MediaError> {
+        crate::media_source::bind_facts(&mut pending.facts, &pending.source_revision)?;
         validate_source_revision(&pending.source_revision)?;
         validate_extension(&pending.extension)?;
         let _operation = self
@@ -996,11 +1004,7 @@ impl MediaCache for DiskMediaCache {
             true
         };
         let dimensions = image::image_dimensions(&destination)?;
-        if !dimensions_match(
-            dimensions,
-            pending.actual_dimensions,
-            pending.variant.presentation.orientation,
-        ) {
+        if !dimensions_match(dimensions, &pending.facts) {
             if created {
                 let _ = fs::remove_file(&destination);
             }
@@ -1034,8 +1038,7 @@ impl MediaCache for DiskMediaCache {
         manifest.artifacts.push(ManifestArtifact {
             artifact_id: artifact_id.clone(),
             variant: pending.variant.clone(),
-            actual_dimensions: pending.actual_dimensions,
-            native_detail: pending.native_detail,
+            facts: pending.facts.clone(),
             byte_size,
             media_type: pending.media_type.clone(),
             file_name,
@@ -1054,8 +1057,7 @@ impl MediaCache for DiskMediaCache {
                 artifact_id,
                 source_revision: pending.source_revision,
                 variant: pending.variant,
-                actual_dimensions: pending.actual_dimensions,
-                native_detail: pending.native_detail,
+                facts: pending.facts.clone(),
                 byte_size,
                 media_type: pending.media_type,
                 location: ArtifactLocation::Managed(destination),
@@ -1163,7 +1165,8 @@ impl MediaCache for MemoryMediaCache {
         Ok(None)
     }
 
-    fn publish(&self, pending: PendingArtifact) -> Result<CachePublication, MediaError> {
+    fn publish(&self, mut pending: PendingArtifact) -> Result<CachePublication, MediaError> {
+        crate::media_source::bind_facts(&mut pending.facts, &pending.source_revision)?;
         let mut state = self
             .state
             .lock()
@@ -1175,8 +1178,7 @@ impl MediaCache for MemoryMediaCache {
             artifact_id: artifact_id(&pending),
             source_revision: pending.source_revision,
             variant: pending.variant,
-            actual_dimensions: pending.actual_dimensions,
-            native_detail: pending.native_detail,
+            facts: pending.facts.clone(),
             byte_size: pending.bytes.len() as u64,
             media_type: pending.media_type,
             location: ArtifactLocation::Managed(PathBuf::from("memory")),
@@ -1216,8 +1218,7 @@ impl ManifestArtifact {
             artifact_id: self.artifact_id.clone(),
             source_revision: source.clone(),
             variant: self.variant.clone(),
-            actual_dimensions: self.actual_dimensions,
-            native_detail: self.native_detail,
+            facts: self.facts.clone(),
             byte_size: self.byte_size,
             media_type: self.media_type.clone(),
             location: ArtifactLocation::Managed(source_dir.join(&self.file_name)),
@@ -1441,38 +1442,25 @@ fn write_generation(root: &Path, generation: u64) -> Result<(), MediaError> {
 fn artifact_hasher(
     source_revision: &SourceRevision,
     variant: &VariantIdentity,
-    dimensions: DisplayDimensions,
-    native_detail: bool,
+    facts: &oxy_domain::ArtifactFacts,
 ) -> Sha256 {
     let mut hasher = Sha256::new();
-    hasher.update(b"oxy-media-artifact-v2\0");
+    hasher.update(b"oxy-media-artifact-v3\0");
     hasher.update(source_revision.revision_id.as_bytes());
-    hasher.update(serde_json::to_vec(variant).unwrap_or_default());
-    hasher.update(dimensions.width.to_le_bytes());
-    hasher.update(dimensions.height.to_le_bytes());
-    hasher.update([u8::from(native_detail)]);
+    hasher.update(serde_json::to_vec(variant).expect("variant serialization"));
+    hasher.update(serde_json::to_vec(facts).expect("facts serialization"));
     hasher
 }
 
 fn artifact_id(pending: &PendingArtifact) -> String {
-    let mut hasher = artifact_hasher(
-        &pending.source_revision,
-        &pending.variant,
-        pending.actual_dimensions,
-        pending.native_detail,
-    );
+    let mut hasher = artifact_hasher(&pending.source_revision, &pending.variant, &pending.facts);
     hasher.update(&pending.bytes);
     format!("{:x}", hasher.finalize())
 }
 
 fn artifact_id_staged(pending: &PendingStagedArtifact) -> Result<String, MediaError> {
     use std::io::Read;
-    let mut hasher = artifact_hasher(
-        &pending.source_revision,
-        &pending.variant,
-        pending.actual_dimensions,
-        pending.native_detail,
-    );
+    let mut hasher = artifact_hasher(&pending.source_revision, &pending.variant, &pending.facts);
     let mut file = File::open(&pending.staged_path)?;
     let mut buffer = [0_u8; 64 * 1024];
     loop {
@@ -1508,14 +1496,13 @@ fn validate_extension(extension: &str) -> Result<(), MediaError> {
     Ok(())
 }
 
-fn dimensions_match(
-    encoded: (u32, u32),
-    display: DisplayDimensions,
-    orientation: super::model::OrientationState,
-) -> bool {
-    encoded == (display.width, display.height)
-        || (orientation == super::model::OrientationState::Metadata
-            && encoded == (display.height, display.width))
+fn dimensions_match(encoded: (u32, u32), facts: &oxy_domain::ArtifactFacts) -> bool {
+    facts.is_consistent()
+        && encoded
+            == (
+                facts.encoded_dimensions.0.width,
+                facts.encoded_dimensions.0.height,
+            )
 }
 
 fn retain_valid_artifacts(
@@ -1559,11 +1546,7 @@ fn valid_stored_artifact(
         Err(image::ImageError::IoError(error)) => return Err(error.into()),
         Err(_) => return Ok(false),
     };
-    if !dimensions_match(
-        dimensions,
-        artifact.actual_dimensions,
-        artifact.variant.presentation.orientation,
-    ) {
+    if !dimensions_match(dimensions, &artifact.facts) {
         return Ok(false);
     }
     match validate_jpeg_completion(&path, &artifact.media_type) {
@@ -1779,11 +1762,12 @@ fn sync_directory(_path: &Path) -> Result<(), MediaError> {
 mod tests {
     use super::*;
     use crate::cache::model::{
-        ArtifactPresentation, ArtifactRepresentation, ColorRequirement, ColorState,
-        DetailRequirement, MEDIA_CACHE_POLICY_REVISION, OrientationRequirement, OrientationState,
-        PresentationRequirement, RepresentationRequirement, SharpeningState,
+        ArtifactPresentation, ArtifactRequirement, ColorRequirement, ColorState, DetailRequirement,
+        ImageOrigin, MEDIA_CACHE_POLICY_REVISION, OrientationRequirement, OrientationState,
+        PresentationRequirement, SharpeningState,
     };
     use image::{DynamicImage, ImageFormat};
+    use oxy_domain::PixelDimensions;
     use std::{io::Cursor, thread};
 
     fn fixture() -> (tempfile::TempDir, SourceRevision) {
@@ -1806,7 +1790,6 @@ mod tests {
         PendingArtifact {
             source_revision: source.clone(),
             variant: VariantIdentity {
-                representation: ArtifactRepresentation::Decoded,
                 presentation: ArtifactPresentation {
                     geometry: None,
                     orientation: OrientationState::Applied,
@@ -1816,11 +1799,14 @@ mod tests {
                 policy_revision: MEDIA_CACHE_POLICY_REVISION,
                 target: target.to_string(),
             },
-            actual_dimensions: DisplayDimensions {
-                width: target,
-                height: target / 2,
-            },
-            native_detail: false,
+            facts: crate::media_source::test_facts(
+                ImageOrigin::PrimaryImage,
+                PixelDimensions {
+                    width: target,
+                    height: target / 2,
+                },
+                false,
+            ),
             media_type: "image/jpeg".into(),
             extension: "jpg".into(),
             bytes: jpeg(target, target / 2),
@@ -1834,7 +1820,7 @@ mod tests {
             detail: DetailRequirement::Display {
                 min_long_edge: target,
             },
-            representation: RepresentationRequirement::AnyDisplay,
+            artifact: ArtifactRequirement::AnyDisplay,
             presentation: PresentationRequirement {
                 orientation: OrientationRequirement::Exact(OrientationState::Applied),
                 color: ColorRequirement::Srgb,
@@ -1843,6 +1829,88 @@ mod tests {
             policy_revision: MEDIA_CACHE_POLICY_REVISION,
             allow_interim: false,
         }
+    }
+
+    #[test]
+    fn facts_survive_disk_reopen_and_identify_the_selected_content() {
+        let (directory, source) = fixture();
+        let cache = DiskMediaCache::new(directory.path(), 8).unwrap();
+        let generation = cache.generation().unwrap();
+        let mut first = pending(&source, 512, generation);
+        first.facts.source.origin = ImageOrigin::EmbeddedPreview;
+        first.facts.source.candidate_id = "mpf:100:200".into();
+        first.facts.byte_integrity = oxy_domain::ByteIntegrity::Reencoded;
+        let mut second = first.clone();
+        second.facts.source.candidate_id = "mpf:300:200".into();
+        let planned = cache.planned_location(&first).unwrap().unwrap();
+        let first = cache.publish(first).unwrap();
+        let second = cache.publish(second).unwrap();
+        assert_ne!(first.artifact.artifact_id, second.artifact.artifact_id);
+        assert_eq!(first.artifact.location, ArtifactLocation::Managed(planned));
+        let expected = first.artifact.facts.clone();
+        drop((first, second, cache));
+        let reopened = DiskMediaCache::new(directory.path(), 8).unwrap();
+        let CacheLookup::Hit(hit) = reopened
+            .lookup_or_generation(&request(&source, 512))
+            .unwrap()
+        else {
+            panic!("expected persisted facts");
+        };
+        assert_eq!(
+            hit.artifact.facts.source.revision_id,
+            expected.source.revision_id
+        );
+        assert_eq!(hit.artifact.facts.byte_integrity, expected.byte_integrity);
+        assert_eq!(hit.artifact.facts.detail, expected.detail);
+        assert_eq!(
+            hit.artifact.facts.source.origin,
+            ImageOrigin::EmbeddedPreview
+        );
+    }
+
+    #[test]
+    fn publication_rejects_foreign_source_facts_and_swapped_encoded_extents() {
+        let (directory, source) = fixture();
+        let cache = DiskMediaCache::new(directory.path(), 8).unwrap();
+        let generation = cache.generation().unwrap();
+        let mut foreign = pending(&source, 512, generation);
+        foreign.facts.source.revision_id = "other-revision".into();
+        assert!(matches!(
+            cache.publish(foreign),
+            Err(MediaError::StaleSourceRevision)
+        ));
+        let mut swapped = pending(&source, 512, generation);
+        swapped.variant.presentation.orientation = OrientationState::Metadata;
+        swapped.facts.encoded_dimensions = oxy_domain::EncodedDimensions((256, 512).into());
+        swapped.facts.exif_orientation = 6;
+        // Internally consistent rotation, but its payload is really encoded as 512 x 256.
+        assert!(swapped.facts.is_consistent());
+        assert!(matches!(
+            cache.publish(swapped),
+            Err(MediaError::CacheArtifact(_))
+        ));
+    }
+
+    #[test]
+    fn upscaled_cache_artifact_cannot_satisfy_a_larger_detail_request() {
+        let (directory, source) = fixture();
+        let cache = DiskMediaCache::new(directory.path(), 8).unwrap();
+        let mut derived = pending(&source, 512, cache.generation().unwrap());
+        derived
+            .facts
+            .resize(oxy_domain::DisplayDimensions((128, 64).into()));
+        derived
+            .facts
+            .resize(oxy_domain::DisplayDimensions((512, 256).into()));
+        cache.publish(derived).unwrap();
+        assert!(matches!(
+            cache.lookup_or_generation(&request(&source, 512)).unwrap(),
+            CacheLookup::Generate { .. }
+        ));
+        assert!(matches!(
+            cache.lookup_or_generation(&request(&source, 128)).unwrap(),
+            CacheLookup::Hit(_)
+        ));
     }
 
     #[test]
@@ -1863,13 +1931,13 @@ mod tests {
         else {
             panic!("versioned alternative must be considered");
         };
-        assert_eq!(hit.artifact.actual_dimensions.width, 160);
+        assert_eq!(hit.artifact.facts.display_dimensions.0.width, 160);
         cache.publish(pending(&source, 512, generation)).unwrap();
         let CacheLookup::Hit(hit) = cache.lookup_candidates(&primary, &[alternative]).unwrap()
         else {
             panic!("primary must be considered first");
         };
-        assert_eq!(hit.artifact.actual_dimensions.width, 512);
+        assert_eq!(hit.artifact.facts.display_dimensions.0.width, 512);
         cache.clear().unwrap();
         let CacheLookup::Generate { cache_generation } =
             cache.lookup_candidates(&primary, &[]).unwrap()
@@ -1888,9 +1956,9 @@ mod tests {
         cache.publish(pending(&source, 4096, generation)).unwrap();
         assert_eq!(cache.usage().unwrap().artifact_count, 2);
         let hit = cache.lookup(&request(&source, 256)).unwrap().unwrap();
-        assert_eq!(hit.artifact.actual_dimensions.width, 512);
+        assert_eq!(hit.artifact.facts.display_dimensions.0.width, 512);
         let hit = cache.lookup(&request(&source, 2048)).unwrap().unwrap();
-        assert_eq!(hit.artifact.actual_dimensions.width, 4096);
+        assert_eq!(hit.artifact.facts.display_dimensions.0.width, 4096);
     }
 
     #[test]
@@ -1921,15 +1989,23 @@ mod tests {
 
         assert!(
             cache
-                .validate_and_lease_path(path, &source_b)
+                .validate_and_lease_path(path, &source_b, &publication.artifact.facts)
                 .unwrap()
                 .is_none()
         );
         assert!(
             cache
-                .validate_and_lease_path(path, &source_a)
+                .validate_and_lease_path(path, &source_a, &publication.artifact.facts)
                 .unwrap()
                 .is_some()
+        );
+        let mut wrong_facts = publication.artifact.facts.clone();
+        wrong_facts.source.candidate_id = "another-image-in-the-same-container".into();
+        assert!(
+            cache
+                .validate_and_lease_path(path, &source_a, &wrong_facts)
+                .unwrap()
+                .is_none()
         );
     }
 
@@ -1982,14 +2058,14 @@ mod tests {
 
         assert!(
             cache
-                .validate_and_lease_path(path, &source)
+                .validate_and_lease_path(path, &source, &publication.artifact.facts)
                 .unwrap()
                 .is_some()
         );
         fs::write(path, b"truncated").unwrap();
         assert!(
             cache
-                .validate_and_lease_path(path, &source)
+                .validate_and_lease_path(path, &source, &publication.artifact.facts)
                 .unwrap()
                 .is_none()
         );
@@ -2237,8 +2313,7 @@ mod tests {
             .publish_staged(PendingStagedArtifact {
                 source_revision: template.source_revision,
                 variant: template.variant,
-                actual_dimensions: template.actual_dimensions,
-                native_detail: template.native_detail,
+                facts: template.facts.clone(),
                 media_type: template.media_type,
                 extension: template.extension,
                 staged_path: staged.clone(),

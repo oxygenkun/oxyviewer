@@ -64,7 +64,7 @@ Inventory result:
 - [x] Move RAW preview/full/cache execution into `pipeline::raw`.
 - [x] Move HEIF preview/full/source-JPEG execution into
       `pipeline::heif::artifact` and backend strategy into
-      `pipeline::heif::backend`, without mixing either into decoder adapters.
+      `pipeline::heif`, without mixing either into decoder adapters.
 - [x] Move system preview execution into its own pipeline module.
 - [x] Keep platform `cfg` branches close to the execution code they control.
 

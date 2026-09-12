@@ -76,7 +76,7 @@ S4/S5 在 S2 后重复基线，分别测剩余成本，避免把 S1 的收益重
 
 ## 4. S1：JPEG 表示 planner 与执行
 
-修改范围：`oxy-metadata-parser`、`oxy-media/formats`、`delivery.rs`、`pipeline/jpeg/selection.rs`、
+修改范围：`oxy-metadata-parser`、`oxy-media/formats`、`delivery.rs`、`pipeline/jpeg/planner.rs`、
 `pipeline/jpeg.rs`、必要 backend/presentation 小函数。公共变更才进入 oxy-domain。
 
 具体工作：

@@ -123,8 +123,8 @@ struct TileGrid {
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct PreviewStream {
     index: u64,
-    width: u32,
-    height: u32,
+    encoded_dimensions: oxy_domain::EncodedDimensions,
+    exif_orientation: u8,
 }
 
 #[derive(Debug)]
@@ -525,13 +525,29 @@ fn oriented_tile(grid: &TileGrid, tile: &Tile) -> Result<(String, u32, u32, u32,
 /// addition to the primary tile grid. Decoding that single stream avoids
 /// paying for all six full-resolution tiles just to paint the first frame.
 #[cfg_attr(any(target_os = "macos", target_os = "linux"), allow(dead_code))]
-pub fn decode_scaled_preview(path: &Path, max_size: u32) -> Result<DynamicImage, MediaError> {
+pub fn decode_scaled_preview(
+    path: &Path,
+    max_size: u32,
+) -> Result<crate::media_source::DecodedImage, MediaError> {
     let grid = cached_grid(path)?;
     let stream = grid
         .previews
         .iter()
-        .filter(|stream| stream.width.max(stream.height) >= max_size)
-        .min_by_key(|stream| stream.width.max(stream.height))
+        .filter(|stream| {
+            stream
+                .encoded_dimensions
+                .0
+                .width
+                .max(stream.encoded_dimensions.0.height)
+                >= max_size
+        })
+        .min_by_key(|stream| {
+            stream
+                .encoded_dimensions
+                .0
+                .width
+                .max(stream.encoded_dimensions.0.height)
+        })
         .ok_or_else(|| native_error("HEIF has no sufficiently large independent preview stream"))?;
     let map = format!("0:{}", stream.index);
     let scale = format!("scale={max_size}:{max_size}:force_original_aspect_ratio=decrease");
@@ -563,8 +579,42 @@ pub fn decode_scaled_preview(path: &Path, max_size: u32) -> Result<DynamicImage,
             String::from_utf8_lossy(&output.stderr).trim()
         )));
     }
-    image::load_from_memory(&output.stdout)
-        .map_err(|error| native_error(format!("decode ffmpeg preview bitmap: {error}")))
+    let image = image::load_from_memory(&output.stdout)
+        .map_err(|error| native_error(format!("decode ffmpeg preview bitmap: {error}")))?;
+    let mut facts = crate::media_source::source_facts(
+        oxy_domain::ImageOrigin::EmbeddedPreview,
+        format!("ffmpeg-stream:{}", stream.index),
+        stream.encoded_dimensions,
+        stream.exif_orientation,
+        oxy_domain::EncodedDimensions((grid.width, grid.height).into()).to_display(
+            if grid.rotation.rem_euclid(180) == 90 {
+                6
+            } else {
+                1
+            },
+        ),
+    );
+    facts.processing.push(oxy_domain::ImageOperation::Decode {
+        backend: "FFmpeg".into(),
+    });
+    if stream.exif_orientation != 1 {
+        facts.processing.push(oxy_domain::ImageOperation::Orient {
+            exif: stream.exif_orientation,
+        });
+    }
+    facts.resize(oxy_domain::DisplayDimensions(
+        (image.width(), image.height()).into(),
+    ));
+    facts.encoded_dimensions = oxy_domain::EncodedDimensions(facts.display_dimensions.0);
+    facts.exif_orientation = 1;
+    facts.processing.push(oxy_domain::ImageOperation::Encode {
+        format: "jpeg".into(),
+    });
+    facts.processing.push(oxy_domain::ImageOperation::Decode {
+        backend: "image".into(),
+    });
+    facts.byte_integrity = oxy_domain::ByteIntegrity::Reencoded;
+    Ok(crate::media_source::DecodedImage { image, facts })
 }
 
 fn command_supports(
@@ -787,8 +837,15 @@ fn parse_grid(json: &[u8]) -> Result<TileGrid, MediaError> {
             let height = stream["height"].as_u64()?.try_into().ok()?;
             (!tile_indices.contains(&index)).then_some(PreviewStream {
                 index,
-                width,
-                height,
+                encoded_dimensions: oxy_domain::EncodedDimensions((width, height).into()),
+                exif_orientation: match rotation_from_side_data(stream).unwrap_or(0).rem_euclid(360)
+                {
+                    0 => 1,
+                    90 => 8,
+                    180 => 3,
+                    270 => 6,
+                    _ => return None,
+                },
             })
         })
         .collect();
@@ -1226,7 +1283,7 @@ mod tests {
             return;
         };
         let image = decode_scaled_preview(&path, 512).unwrap();
-        assert_eq!(image.width().max(image.height()), 512);
+        assert_eq!(image.image.width().max(image.image.height()), 512);
     }
 
     #[test]

@@ -16,10 +16,9 @@ const MAX_EDGE: u32 = 512;
 
 #[derive(Debug)]
 pub struct EmbeddedJpeg {
+    pub facts: oxy_domain::ArtifactFacts,
     pub geometry: Option<oxy_domain::PreviewGeometry>,
     pub bytes: Vec<u8>,
-    pub width: u32,
-    pub height: u32,
 }
 
 #[derive(Debug)]
@@ -28,7 +27,7 @@ pub struct Inspection {
 }
 
 /// Inspect only the bounded SHIF header area and retain a discovered fast
-/// representation so planning and execution do not read the source twice.
+/// origin so planning and execution do not read the source twice.
 pub fn inspect(
     path: &Path,
     display_size: Option<ImageDimensions>,
@@ -163,6 +162,14 @@ fn inspect_bytes(bytes: &[u8], display_size: Option<ImageDimensions>) -> Inspect
             (height > width) != (display_size.height > display_size.width)
         })
     };
+    use sha2::{Digest, Sha256};
+    let candidate_id = format!("sony-jpeg:{:x}", Sha256::digest(&jpeg));
+    let encoded_dimensions = oxy_domain::EncodedDimensions((width, height).into());
+    let output_orientation = if needs_orientation {
+        if orientation != 1 { orientation } else { 6 }
+    } else {
+        1
+    };
     if needs_orientation {
         // The JPEG item itself has no orientation tag. Apply the primary HEIF
         // item's irot transform so the fast thumbnail agrees with libheif's
@@ -175,12 +182,33 @@ fn inspect_bytes(bytes: &[u8], display_size: Option<ImageDimensions>) -> Inspect
             std::mem::swap(&mut width, &mut height);
         }
     }
+    let reference = geometry.map_or_else(
+        || display_size.unwrap_or(ImageDimensions { width, height }),
+        |geometry| ImageDimensions {
+            width: geometry.display_size.width,
+            height: geometry.display_size.height,
+        },
+    );
+    let mut facts = crate::media_source::source_facts(
+        oxy_domain::ImageOrigin::EmbeddedPreview,
+        candidate_id,
+        encoded_dimensions,
+        output_orientation as u8,
+        oxy_domain::DisplayDimensions(reference),
+    );
+    facts.byte_integrity = if needs_orientation {
+        facts
+            .processing
+            .push(oxy_domain::ImageOperation::MetadataEdit);
+        oxy_domain::ByteIntegrity::MetadataAdjusted
+    } else {
+        oxy_domain::ByteIntegrity::SourcePayload
+    };
     Inspection {
         embedded_jpeg: Some(EmbeddedJpeg {
+            facts,
             geometry,
             bytes: jpeg,
-            width,
-            height,
         }),
     }
 }
@@ -277,7 +305,13 @@ mod tests {
             .embedded_jpeg
             .unwrap();
         assert_eq!(reader.position(), INITIAL_SCAN_LIMIT);
-        assert_eq!((image.width, image.height), (120, 160));
+        assert_eq!(
+            (
+                image.facts.display_dimensions.0.width,
+                image.facts.display_dimensions.0.height
+            ),
+            (120, 160)
+        );
         assert_eq!(&image.bytes[30..32], &[6, 0]);
     }
 
@@ -290,7 +324,13 @@ mod tests {
                 .embedded_jpeg
                 .unwrap();
             assert_eq!(reader.position(), SCAN_LIMIT);
-            assert_eq!((image.width, image.height), (120, 160));
+            assert_eq!(
+                (
+                    image.facts.display_dimensions.0.width,
+                    image.facts.display_dimensions.0.height
+                ),
+                (120, 160)
+            );
         }
     }
 
@@ -306,7 +346,13 @@ mod tests {
             .embedded_jpeg
             .unwrap();
         assert_eq!(reader.position(), SCAN_LIMIT);
-        assert_eq!((image.width, image.height), (120, 160));
+        assert_eq!(
+            (
+                image.facts.display_dimensions.0.width,
+                image.facts.display_dimensions.0.height
+            ),
+            (120, 160)
+        );
     }
 
     #[test]
@@ -341,7 +387,13 @@ mod tests {
         )
         .embedded_jpeg
         .unwrap();
-        assert_eq!((image.width, image.height), (120, 160));
+        assert_eq!(
+            (
+                image.facts.display_dimensions.0.width,
+                image.facts.display_dimensions.0.height
+            ),
+            (120, 160)
+        );
         assert_eq!(&image.bytes[30..32], &[6, 0]);
         assert!(image.geometry.is_none());
     }
@@ -424,7 +476,13 @@ mod tests {
         .embedded_jpeg
         .unwrap();
         assert_eq!(image.bytes, full_scan.bytes);
-        assert_eq!((image.width, image.height), (120, 160));
+        assert_eq!(
+            (
+                image.facts.display_dimensions.0.width,
+                image.facts.display_dimensions.0.height
+            ),
+            (120, 160)
+        );
         assert_eq!(&image.bytes[..2], &[0xff, 0xd8]);
         assert_eq!(&image.bytes[2..4], &[0xff, 0xe1]);
         assert_eq!(&image.bytes[30..32], &[6, 0]);

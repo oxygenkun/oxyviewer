@@ -6,11 +6,11 @@ fn encoded(registry: &ResourceRegistry, len: usize) -> Result<ResourceHandle, Me
     registry.register_encoded(
         vec![1; len].into(),
         "image/jpeg",
-        DisplayDimensions {
+        PixelDimensions {
             width: 1,
             height: 1,
         },
-        ArtifactRepresentation::Embedded,
+        ImageOrigin::EmbeddedPreview,
     )
 }
 
@@ -99,11 +99,11 @@ fn protected_64_file_regression_and_512_entry_production_limit() {
                 .register_file(
                     &path,
                     "image/jpeg",
-                    DisplayDimensions {
+                    PixelDimensions {
                         width: 1,
                         height: 1,
                     },
-                    ArtifactRepresentation::Original,
+                    ImageOrigin::PrimaryImage,
                 )
                 .unwrap();
         }
@@ -112,11 +112,11 @@ fn protected_64_file_regression_and_512_entry_production_limit() {
         let result = registry.register_owned_staged_file(
             Arc::new(OwnedStagedFile::new(staged.clone())),
             "image/jpeg",
-            DisplayDimensions {
+            PixelDimensions {
                 width: 1,
                 height: 1,
             },
-            ArtifactRepresentation::Decoded,
+            ImageOrigin::PrimaryImage,
         );
         if capacity == 64 {
             assert!(matches!(
@@ -196,11 +196,11 @@ fn scrolling_600_file_publications_reclaims_released_working_set() {
             .register_file(
                 &path,
                 "image/jpeg",
-                DisplayDimensions {
+                PixelDimensions {
                     width: 1,
                     height: 1,
                 },
-                ArtifactRepresentation::Original,
+                ImageOrigin::PrimaryImage,
             )
             .unwrap();
         let id = handle.descriptor.resource_id.clone();
@@ -226,11 +226,11 @@ fn staged_read_blocks_eviction_and_managed_transition() {
         .register_owned_staged_file(
             Arc::new(OwnedStagedFile::new(staged.clone())),
             "image/jpeg",
-            DisplayDimensions {
+            PixelDimensions {
                 width: 1,
                 height: 1,
             },
-            ArtifactRepresentation::Decoded,
+            ImageOrigin::PrimaryImage,
         )
         .unwrap();
     let id = handle.descriptor.resource_id.clone();

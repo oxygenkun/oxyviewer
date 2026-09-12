@@ -69,12 +69,12 @@ sequenceDiagram
 
 当前应用发布链与图中的旧“先写 Cache 再更新 projection”不同：decoder 产出的 encoded bytes 或
 native staged file 先进入 resource registry，UI 得到 process-namespaced immutable URL；有界 worker
-随后持久化。encoded UI/cache 共享 `Arc`；native staged file 先原子移动到 publisher 持有、位于 v2
+随后持久化。encoded UI/cache 共享 `Arc`；native staged file 先原子移动到 publisher 持有、位于 v3
 cache tree 之外的进程临时目录，cache clear 不会删除这个 UI 文件，cache worker 再使用文件 copy 提交，
 均不重复 source decode。完成通知只在 state revision 仍匹配时把 Pending 改为
 Persisted，并触发 completion-time prune；若写入期间已有 prune 在运行，pending latch 会要求该 worker
 再跑一轮而不是丢失触发。SQLite 序列化前剥离 resource descriptor；重启恢复 managed path 时先通过
-v2 manifest、尺寸、长度和 JPEG 完整性校验，再注册当前进程 resource 和 lease，不能用裸 `is_file`
+v3 manifest、尺寸、长度和 JPEG 完整性校验，再注册当前进程 resource 和 lease，不能用裸 `is_file`
 绕过 cache repair。projection identity 包含媒体层 canonical path、平台文件身份和高精度 mtime 的
 `SourceRevision`，不只依赖毫秒 mtime/size。
 
@@ -188,7 +188,7 @@ Rust `DecodeGate` 位于 `crates/oxy-media/src/decode_control.rs`，与 RAW full
 HEIF session 缓存写锁和同源锁表一起管理媒体资源准入；它不替代 `oxy-runtime` 的请求调度。
 crate 根模块只负责稳定 API re-export；格式执行分别位于 `pipeline::raw`、
 `pipeline::heif::artifact` 和 `pipeline::system`，HEIF backend 策略位于
-`pipeline::heif::backend`。`DecodeGate` 有三档优先级：
+`pipeline::heif::planner`，探测与回退执行集中在 `pipeline::heif`。`DecodeGate` 有三档优先级：
 
 | IPC priority | Rust priority | 等待规则 |
 | --- | --- | --- |
@@ -291,13 +291,17 @@ LibRaw development 回退；Windows/Linux 使用 LibRaw development。所有生�
 
 ### 8.2 full
 
-`full` 选择 LibRaw 列表中像素面积最大的内嵌 JPEG，不再按 4096 目标选择最小够用预览。
-缓存记录最大 JPEG 的选择来源；普通 preview 缓存不能代替这一步。相机 JPEG 保留编码像素，
-LibRaw 可补充 EXIF 方向信息。长、短边分别覆盖 RAW 显示尺寸至少 90% 时返回 `Satisfied`；
+`full` 的合格条件由 `pipeline/raw/planner.rs` 生成：当前先尝试 LibRaw 列表中像素面积
+最大的内嵌 JPEG，尺寸不足或不可用时完整显影。缓存记录候选选择来源与真实产物能力；
+普通 preview 缓存不能代替最大 JPEG 的选择证明。相机 JPEG 保留编码像素，LibRaw 可补充
+EXIF 方向信息。planner 将长、短边分别覆盖 RAW 显示尺寸至少 90% 换算为通用最小尺寸要求，
+新产物和缓存命中统一由 `satisfies` 判断是否 `Satisfied`；
 这是沿用的分辨率近似判断，不代表 RAW 显影的动态范围或逐像素一致性。
 
-已有小图可作为 full 的 `Interim` 返回，队列保留订阅和优先级，继续禁止 Interim 的升级。
-提取锁内再次检查缓存时只接受满足要求的结果，不能因小图存在而跳过最大 JPEG 提取。
+先查询满足 planner 的相机 JPEG 和显影 full；两者均未命中时，已有小图才作为 full 的
+`Interim` 返回，队列保留订阅和优先级，继续执行禁止 Interim 的升级请求。提取锁内再次
+检查缓存：普通小图不能跳过最大 JPEG 提取，已证明完成最大 JPEG 选择的小图则可复用，
+避免在显影回退之前重复提取。
 最大的 JPEG 缺失或尺寸不足才回退完整显影；full fallback 不属于冷预览 800 ms 预算，
 UI 保留当前已显示的底图，直到后续图片完成加载。
 
@@ -387,7 +391,7 @@ Tauri `CacheManager` 为每个 preview 请求提供当前目录快照。默认�
 1–500 GB 容量上限写入 app data 配置，切换位置不迁移旧 artifact。
 
 应用启动时会删除 app-owned preview 目录第一层的 pre-v2 平铺文件，不再读取、统计或裁剪旧布局。
-v2 artifact 文件是不可变内容，不能 touch，否则会使 resource 记录的 file revision 失效；
+v3 artifact 文件是不可变内容，不能 touch，否则会使 resource 记录的 file revision 失效；
 recency/lease 位于 manifest 和 lease marker。同步 cache hit
 返回后可后台清理；异步 publication 必须在真正提交完成后清理，同一时刻最多一个维护任务。当前
 WebView resource 的磁盘 lease 会跨 cache instance 保护文件；clear 使它不再成为新 lookup 命中，但
@@ -403,7 +407,7 @@ lock，因此 generation 一致性不依赖异步持久化的文件写入速度�
 中先释放再重新持有。组件仍负责定时续租和过期后的重新请求；IPC teardown 失败由后端 TTL
 兜底，迟到且无使用者的 artifact 也走同一释放入口。
 
-启动清理只删除第一层普通文件，不遍历子目录也不跟随符号链接。v2 容量维护受 cache lock 和
+启动清理只删除第一层普通文件，不遍历子目录也不跟随符号链接。v3 容量维护受 cache lock 和
 manifest 约束；目录项消失按并发删除处理，权限及其他 IO 错误仍返回。
 扫描不再用 `exists()` 前置检查来掩盖错误，也不为此持有解码锁或阻塞缓存写入。
 

@@ -1,6 +1,9 @@
-use super::backend::{
-    BackendExecutionError, HeifBackend as PlannedHeifBackend, HeifOperation, backend_plan,
-    execute_backend_plan, format_attempt_diagnostics,
+use super::planner::{
+    full_decoded_request, full_display_request, preview_request, sony_embedded_request,
+};
+use super::{
+    BackendExecutionError, HeifBackend as PlannedHeifBackend, HeifOperation, execute_backend_plan,
+    format_attempt_diagnostics, probe_backend_plan,
 };
 #[cfg(target_os = "macos")]
 use crate::backends::apple_image_io;
@@ -13,9 +16,8 @@ use crate::{
     backends::{ffmpeg_heif, libheif},
     cache::write_jpeg_atomically,
     cache::{
-        ArtifactPresentation, ArtifactRepresentation, CacheColorState, DetailRequirement,
-        OrientationRequirement, OrientationState, PresentationRequirement,
-        RepresentationRequirement, SharpeningState,
+        ArtifactPresentation, ArtifactRequirement, CacheColorState, DetailRequirement, ImageOrigin,
+        OrientationState, SharpeningState,
     },
     decode_control::{DecodePriority, acquire_decode, acquire_file_lock, file_lock},
     formats::heif::quirks::sony,
@@ -33,71 +35,6 @@ use std::{
     sync::Arc,
     time::Instant,
 };
-
-fn display_requirement() -> PresentationRequirement {
-    PresentationRequirement {
-        orientation: OrientationRequirement::DisplayCorrect,
-        color: crate::cache::ColorRequirement::Any,
-        sharpening: SharpeningState::None,
-    }
-}
-
-pub(crate) fn preview_request(
-    artifacts: &ArtifactCache,
-    detail: DetailRequirement,
-    allow_interim: bool,
-) -> crate::cache::CacheRequest {
-    artifacts.request(
-        detail,
-        RepresentationRequirement::AnyDisplay,
-        display_requirement(),
-        allow_interim,
-    )
-}
-
-// Invalidate only the old Sony JPEG representation. Decoded previews must
-// retain the full decoder's policy identity so concurrent requests share work.
-fn sony_embedded_request(
-    artifacts: &ArtifactCache,
-    detail: DetailRequirement,
-) -> crate::cache::CacheRequest {
-    let mut request = artifacts.request(
-        detail,
-        RepresentationRequirement::Exact(ArtifactRepresentation::Embedded),
-        display_requirement(),
-        true,
-    );
-    request.policy_revision = 2;
-    request
-}
-
-pub(crate) fn full_decoded_request(artifacts: &ArtifactCache) -> crate::cache::CacheRequest {
-    full_display_request(artifacts, false)
-}
-
-pub(crate) const fn display_sharpening_state(enabled: bool) -> SharpeningState {
-    if enabled {
-        SharpeningState::Display
-    } else {
-        SharpeningState::None
-    }
-}
-
-fn full_display_request(
-    artifacts: &ArtifactCache,
-    display_sharpening: bool,
-) -> crate::cache::CacheRequest {
-    artifacts.request(
-        DetailRequirement::NativeDetail,
-        RepresentationRequirement::Exact(ArtifactRepresentation::Decoded),
-        PresentationRequirement {
-            orientation: OrientationRequirement::Exact(OrientationState::Applied),
-            color: crate::cache::ColorRequirement::Any,
-            sharpening: display_sharpening_state(display_sharpening),
-        },
-        false,
-    )
-}
 
 const fn unconverted_presentation() -> ArtifactPresentation {
     ArtifactPresentation {
@@ -180,8 +117,7 @@ pub(crate) fn preview(
     // Embedded Sony results have their own lookup/version above. Reuse only
     // decoded interim results here, never the obsolete padded JPEG policy.
     let mut decoded_interim_request = production_request.clone();
-    decoded_interim_request.representation =
-        RepresentationRequirement::Exact(ArtifactRepresentation::Decoded);
+    decoded_interim_request.artifact = ArtifactRequirement::Exact(ImageOrigin::PrimaryImage);
     let mut alternatives = Vec::new();
     if try_fast_jpeg && allow_interim {
         alternatives.push(sony_embedded_request(&artifacts, detail));
@@ -206,18 +142,17 @@ pub(crate) fn preview(
         if let Ok(inspection) = sony::inspect(path, None)
             && let Some(image) = inspection.embedded_jpeg
         {
+            let facts = image.facts;
             let decode_ms = duration_ms(total_started);
             let mut result = artifacts.publish(
                 Arc::from(image.bytes),
-                (image.width, image.height).into(),
-                ArtifactRepresentation::Embedded,
+                facts,
                 ArtifactPresentation {
                     geometry: image.geometry,
                     orientation: OrientationState::Metadata,
                     color: CacheColorState::EmbeddedOrUnknown,
                     sharpening: SharpeningState::None,
                 },
-                false,
                 format!("{HEIF_PREVIEW}:sony-embedded"),
                 level,
                 generation,
@@ -283,12 +218,25 @@ pub(crate) fn preview(
             )?;
             let encode_ms = duration_ms(encode_started);
             let dimensions = image::image_dimensions(&destination)?.into();
+            let mut facts = decoded.facts;
+            facts.encoded_dimensions = oxy_domain::EncodedDimensions(dimensions);
+            facts.exif_orientation = 1;
+            facts.byte_integrity = oxy_domain::ByteIntegrity::Reencoded;
+            facts.processing.push(oxy_domain::ImageOperation::Encode {
+                format: "jpeg".into(),
+            });
+            if decoded.presentation.color == CacheColorState::Srgb {
+                facts
+                    .processing
+                    .push(oxy_domain::ImageOperation::ColorConvert {
+                        target: "sRGB".into(),
+                    });
+            }
+
             let mut result = artifacts.publish_staged(
                 destination,
-                dimensions,
-                decoded.representation,
+                facts.clone(),
                 decoded.presentation,
-                decoded.native_detail,
                 format!("{HEIF_PREVIEW}:decoded:{max_size}"),
                 level,
                 generation,
@@ -315,28 +263,27 @@ struct PreviewDecode {
     image: DynamicImage,
     backend: &'static str,
     fallback_reason: Option<String>,
-    representation: ArtifactRepresentation,
-    native_detail: bool,
+    facts: oxy_domain::ArtifactFacts,
     presentation: ArtifactPresentation,
 }
 
-struct BackendPreviewDecode {
+#[cfg(target_os = "macos")]
+fn platform_preview(
+    path: &Path,
     image: DynamicImage,
-    representation: ArtifactRepresentation,
-    native_detail: bool,
-}
-
-impl BackendPreviewDecode {
-    fn scaled(image: DynamicImage) -> Self {
-        // A scaled/auxiliary decode does not establish the primary source
-        // dimensions. In particular, 511px for a 512px request is not full.
-        let native_detail = false;
-        Self {
-            image,
-            representation: ArtifactRepresentation::Decoded,
-            native_detail,
-        }
-    }
+) -> Result<crate::media_source::DecodedImage, MediaError> {
+    let source = oxy_domain::DisplayDimensions(libheif::dimensions(path)?);
+    let mut facts = crate::media_source::decoded_facts(
+        ImageOrigin::PrimaryImage,
+        "primary".into(),
+        source,
+        source,
+        oxy_domain::DisplayDimensions((image.width(), image.height()).into()),
+        "Apple ImageIO",
+    );
+    // Thumbnail API does not prove the primary has retained all native samples.
+    facts.detail.sampling = oxy_domain::Sampling::Reduced;
+    Ok(crate::media_source::DecodedImage { image, facts })
 }
 
 fn decode_preview(
@@ -345,35 +292,36 @@ fn decode_preview(
     allow_interim: bool,
     cancellation: &CancellationToken,
 ) -> Result<PreviewDecode, MediaError> {
-    let plan = backend_plan(path, HeifOperation::Preview);
+    let plan = probe_backend_plan(path, HeifOperation::Preview);
     let result = execute_backend_plan(
         &plan,
         || cancellation.is_cancelled(),
         |backend| match backend {
             PlannedHeifBackend::CachedArtifact => Err(MediaError::NativeDecoderUnavailable),
             #[cfg(target_os = "macos")]
-            PlannedHeifBackend::Platform(_) => {
-                apple_image_io::decode_rgba8(path, max_size).map(BackendPreviewDecode::scaled)
-            }
+            PlannedHeifBackend::Platform(_) => apple_image_io::decode_rgba8(path, max_size)
+                .and_then(|image| platform_preview(path, image)),
             #[cfg(target_os = "windows")]
             PlannedHeifBackend::Platform(_) => windows_wic::decode_full_rgba8(path)
                 .map(|image| image.thumbnail(max_size, max_size))
-                .map(BackendPreviewDecode::scaled),
+                .and_then(|image| {
+                    let source = oxy_domain::DisplayDimensions(libheif::dimensions(path)?);
+                    let facts = crate::media_source::decoded_facts(
+                        ImageOrigin::PrimaryImage,
+                        "primary".into(),
+                        source,
+                        source,
+                        oxy_domain::DisplayDimensions((image.width(), image.height()).into()),
+                        "Windows WIC",
+                    );
+                    Ok(crate::media_source::DecodedImage { image, facts })
+                }),
             #[cfg(target_os = "linux")]
             PlannedHeifBackend::Platform(_) => Err(MediaError::NativeDecoderUnavailable),
             PlannedHeifBackend::Ffmpeg | PlannedHeifBackend::FfmpegRgbaFallback => {
-                ffmpeg_heif::decode_scaled_preview(path, max_size).map(BackendPreviewDecode::scaled)
+                ffmpeg_heif::decode_scaled_preview(path, max_size)
             }
-            PlannedHeifBackend::Libheif => libheif::decode_scaled(path, max_size, allow_interim)
-                .map(|decoded| {
-                    let (representation, native_detail) =
-                        libheif_artifact_facts(decoded.provenance);
-                    BackendPreviewDecode {
-                        image: decoded.image,
-                        representation,
-                        native_detail,
-                    }
-                }),
+            PlannedHeifBackend::Libheif => libheif::decode_scaled(path, max_size, allow_interim),
         },
     )
     .map_err(BackendExecutionError::into_media_error)?;
@@ -395,21 +343,41 @@ fn decode_preview(
         image: result.value.image,
         backend,
         fallback_reason: format_attempt_diagnostics(&result.diagnostics),
-        representation: result.value.representation,
-        native_detail: result.value.native_detail,
+        facts: result.value.facts,
         presentation: backend_presentation(result.backend),
     })
 }
 
-const fn libheif_artifact_facts(
-    provenance: libheif::DecodeProvenance,
-) -> (ArtifactRepresentation, bool) {
-    match provenance {
-        libheif::DecodeProvenance::ContainerThumbnail => (ArtifactRepresentation::Embedded, false),
-        libheif::DecodeProvenance::Primary { native_detail } => {
-            (ArtifactRepresentation::Decoded, native_detail)
-        }
+fn full_output_facts(
+    path: &Path,
+    output: oxy_domain::PixelDimensions,
+    backend: &str,
+    presentation: ArtifactPresentation,
+) -> Result<oxy_domain::ArtifactFacts, MediaError> {
+    let source = oxy_domain::DisplayDimensions(libheif::dimensions(path)?);
+    let mut facts = crate::media_source::decoded_facts(
+        ImageOrigin::PrimaryImage,
+        "primary".into(),
+        source,
+        source,
+        oxy_domain::DisplayDimensions(output),
+        backend,
+    );
+    if presentation.color == CacheColorState::Srgb {
+        facts
+            .processing
+            .push(oxy_domain::ImageOperation::ColorConvert {
+                target: "sRGB".into(),
+            });
     }
+    if presentation.sharpening == SharpeningState::Display {
+        facts.processing.push(oxy_domain::ImageOperation::Sharpen);
+    }
+    facts.processing.push(oxy_domain::ImageOperation::Encode {
+        format: "jpeg".into(),
+    });
+    facts.byte_integrity = oxy_domain::ByteIntegrity::Reencoded;
+    Ok(facts)
 }
 
 pub(crate) fn full(
@@ -442,12 +410,12 @@ pub(crate) fn full(
                 return Err(MediaError::Cancelled);
             }
             let dimensions = image::image_dimensions(&destination)?.into();
+            let facts = full_output_facts(path, dimensions, backend, presentation)?;
+
             let mut result = artifacts.publish_staged(
                 destination,
-                dimensions,
-                ArtifactRepresentation::Decoded,
+                facts,
                 presentation,
-                true,
                 format!("{HEIF_FULL}:native"),
                 RenderLevel::Full,
                 generation,
@@ -511,11 +479,13 @@ pub(crate) fn cache_full_image(
     cache_dir: &Path,
     image: &DynamicImage,
     presentation: ArtifactPresentation,
+    backend: &str,
 ) -> Result<PathBuf, MediaError> {
     cache_full_image_from(
         source_revision,
         cache_dir,
         presentation,
+        backend,
         || false,
         || Ok(Cow::Borrowed(image)),
     )
@@ -527,6 +497,7 @@ pub(crate) fn cache_full_image_from<'a>(
     source_revision: &crate::cache::SourceRevision,
     cache_dir: &Path,
     presentation: ArtifactPresentation,
+    backend: &str,
     cancelled: impl Fn() -> bool,
     produce: impl FnOnce() -> Result<Cow<'a, DynamicImage>, MediaError>,
 ) -> Result<PathBuf, MediaError> {
@@ -534,13 +505,17 @@ pub(crate) fn cache_full_image_from<'a>(
         source_revision,
         cache_dir,
         presentation,
+        backend,
         &cancelled,
         |destination| {
             let image = produce()?;
             if cancelled() {
                 return Err(MediaError::Cancelled);
             }
-            write_session_jpeg(&image, destination, presentation)
+            write_session_jpeg(&image, destination, presentation)?;
+            Ok(vec![oxy_domain::ImageOperation::Encode {
+                format: "jpeg".into(),
+            }])
         },
     )
 }
@@ -567,8 +542,9 @@ pub(crate) fn cache_full_output(
     source_revision: &crate::cache::SourceRevision,
     cache_dir: &Path,
     presentation: ArtifactPresentation,
+    backend: &str,
     cancelled: impl Fn() -> bool,
-    write_output: impl FnOnce(&Path) -> Result<(), MediaError>,
+    write_output: impl FnOnce(&Path) -> Result<Vec<oxy_domain::ImageOperation>, MediaError>,
 ) -> Result<PathBuf, MediaError> {
     let path = &source_revision.canonical_path;
     if cancelled() {
@@ -578,26 +554,14 @@ pub(crate) fn cache_full_output(
         return Err(MediaError::StaleSourceRevision);
     }
     let artifacts = ArtifactCache::for_source_revision(source_revision.clone(), cache_dir)?;
-    let request = artifacts.request(
-        DetailRequirement::NativeDetail,
-        RepresentationRequirement::Exact(ArtifactRepresentation::Decoded),
-        PresentationRequirement {
-            orientation: OrientationRequirement::Exact(presentation.orientation),
-            color: match presentation.color {
-                CacheColorState::Srgb => crate::cache::ColorRequirement::Srgb,
-                CacheColorState::EmbeddedOrUnknown => crate::cache::ColorRequirement::Any,
-            },
-            sharpening: presentation.sharpening,
-        },
-        false,
-    );
+    let request = super::planner::full_output_request(&artifacts, presentation);
     let generation = match artifacts.prepare(&request, RenderLevel::Full)? {
         ArtifactPreparation::Cached(result) => return Ok(result.path),
         ArtifactPreparation::Generate { cache_generation } => cache_generation,
     };
     let destination = artifacts.temporary_output(".jpg")?;
     let encode_started = Instant::now();
-    write_output(&destination)?;
+    let output_operations = write_output(&destination)?;
     let encode_ms = encode_started.elapsed().as_secs_f64() * 1000.0;
     if cancelled() {
         return Err(MediaError::Cancelled);
@@ -612,13 +576,15 @@ pub(crate) fn cache_full_output(
     if cancelled() {
         return Err(MediaError::Cancelled);
     }
+    let mut facts = full_output_facts(path, dimensions.into(), backend, presentation)?;
+    // The session reports its actual assembly/encoding route after success.
+    facts.processing.pop();
+    facts.processing.extend(output_operations);
     let commit_started = Instant::now();
     let result = artifacts.publish_staged(
         destination,
-        dimensions.into(),
-        ArtifactRepresentation::Decoded,
+        facts,
         presentation,
-        true,
         format!("{HEIF_FULL}:native"),
         RenderLevel::Full,
         generation,
@@ -637,7 +603,7 @@ fn transcode_heif_source(
     quality: u8,
     cancelled: impl Fn() -> bool,
 ) -> Result<(&'static str, Option<String>, ArtifactPresentation), MediaError> {
-    let plan = backend_plan(source, HeifOperation::FullArtifact);
+    let plan = probe_backend_plan(source, HeifOperation::FullArtifact);
     let result = execute_backend_plan(&plan, &cancelled, |backend| {
         OpenOptions::new()
             .create(true)
@@ -684,26 +650,22 @@ mod delivery_tests {
     use super::*;
 
     #[test]
-    fn a_rounded_or_auxiliary_scaled_preview_never_claims_native_detail() {
-        for (width, height) in [(340, 511), (2730, 4095), (1080, 1616)] {
-            let decoded = BackendPreviewDecode::scaled(DynamicImage::new_rgb8(width, height));
-            assert!(!decoded.native_detail);
-            assert_eq!(decoded.representation, ArtifactRepresentation::Decoded);
+    fn embedded_or_resampled_pixels_do_not_establish_primary_native_detail() {
+        let source = oxy_domain::DisplayDimensions((6000, 4000).into());
+        for origin in [ImageOrigin::PrimaryImage, ImageOrigin::EmbeddedPreview] {
+            let facts = crate::media_source::decoded_facts(
+                origin,
+                "item".into(),
+                source,
+                source,
+                oxy_domain::DisplayDimensions((511, 341).into()),
+                "test-decoder",
+            );
+            assert!(!facts.native_detail());
+            let mut upscaled = facts;
+            upscaled.resize(source);
+            assert!(!upscaled.native_detail());
         }
-    }
-
-    #[test]
-    fn libheif_container_thumbnail_is_embedded_and_never_native_detail() {
-        assert_eq!(
-            libheif_artifact_facts(libheif::DecodeProvenance::ContainerThumbnail),
-            (ArtifactRepresentation::Embedded, false)
-        );
-        assert_eq!(
-            libheif_artifact_facts(libheif::DecodeProvenance::Primary {
-                native_detail: true,
-            }),
-            (ArtifactRepresentation::Decoded, true)
-        );
     }
 
     #[test]
@@ -755,13 +717,11 @@ mod delivery_tests {
             artifact_id: "fallback".into(),
             source_revision: source_revision.clone(),
             variant: crate::cache::VariantIdentity {
-                representation: ArtifactRepresentation::Decoded,
                 presentation,
                 policy_revision: crate::cache::MEDIA_CACHE_POLICY_REVISION,
                 target: "fallback".into(),
             },
-            actual_dimensions: (8, 4).into(),
-            native_detail: true,
+            facts: crate::media_source::test_facts(ImageOrigin::PrimaryImage, (8, 4).into(), true),
             byte_size: std::fs::metadata(&destination).unwrap().len(),
             media_type: "image/jpeg".into(),
             location: crate::cache::ArtifactLocation::Managed(destination),
@@ -769,7 +729,7 @@ mod delivery_tests {
         let srgb_request = crate::cache::CacheRequest {
             source_revision,
             detail: DetailRequirement::NativeDetail,
-            representation: RepresentationRequirement::Exact(ArtifactRepresentation::Decoded),
+            artifact: ArtifactRequirement::Exact(ImageOrigin::PrimaryImage),
             presentation: crate::pipeline::artifact::applied_srgb_requirement(),
             policy_revision: crate::cache::MEDIA_CACHE_POLICY_REVISION,
             allow_interim: false,
@@ -797,10 +757,8 @@ mod delivery_tests {
         let stored = artifacts
             .publish(
                 Arc::from(jpeg),
-                (8, 4).into(),
-                ArtifactRepresentation::Decoded,
+                crate::media_source::test_facts(ImageOrigin::PrimaryImage, (8, 4).into(), true),
                 presentation,
-                true,
                 format!("{HEIF_FULL}:native"),
                 RenderLevel::Full,
                 generation,
@@ -835,6 +793,7 @@ mod delivery_tests {
             &crate::cache::SourceRevision::observe(&source).unwrap(),
             directory.path(),
             presentation,
+            "test decoder",
             || false,
             || panic!("a cache hit must not assemble pixels"),
         )
@@ -854,6 +813,7 @@ mod delivery_tests {
             &revision,
             directory.path(),
             unconverted_presentation(),
+            "test decoder",
             || false,
             |destination| {
                 *partial.borrow_mut() = destination.to_owned();

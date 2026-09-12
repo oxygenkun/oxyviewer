@@ -1,3 +1,10 @@
+pub(crate) mod planner;
+
+use planner::preview_request;
+use planner::{
+    LARGEST_EMBEDDED_JPEG_TARGET, RawBackend, RawFullPlan, display_requirement, plan_backends,
+};
+
 #[cfg(target_os = "macos")]
 use crate::backends::{apple_core_image, apple_image_io};
 use crate::{
@@ -5,21 +12,20 @@ use crate::{
     backends::libraw,
     cache::write_jpeg_atomically,
     cache::{
-        ArtifactPresentation, ArtifactRepresentation, CacheColorState, DetailRequirement,
-        OrientationRequirement, OrientationState, PresentationRequirement,
-        RepresentationRequirement, SharpeningState,
+        ArtifactPresentation, ArtifactRequirement, CacheColorState, DetailRequirement, ImageOrigin,
+        OrientationState, SharpeningState,
     },
     decode_control::{
         DecodePriority, acquire_decode, acquire_file_lock, acquire_raw_full_decode, file_lock,
     },
     media_source::has_complete_jpeg_markers,
-    pipeline::artifact::{
-        ArtifactCache, ArtifactPreparation, applied_srgb, applied_srgb_requirement,
-    },
+    pipeline::artifact::{ArtifactCache, ArtifactPreparation, applied_srgb},
     policy::{RAW_FULL, RAW_PREVIEW, RAW_THUMBNAIL},
     presentation::{CAMERA_JPEG, RAW_DEVELOPED_JPEG},
 };
-use image::{ImageDecoder, ImageReader, metadata::Orientation};
+#[cfg(test)]
+use image::metadata::Orientation;
+use image::{ImageDecoder, ImageReader};
 use oxy_domain::{PreviewResult, RenderLevel};
 use oxy_runtime::CancellationToken;
 use std::{
@@ -32,36 +38,6 @@ use std::{
 const FAILED_EMBEDDED_CAPACITY: usize = 256;
 static FAILED_EMBEDDED_REVISIONS: OnceLock<Mutex<VecDeque<String>>> = OnceLock::new();
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum RawBackend {
-    #[cfg(target_os = "macos")]
-    AppleCoreImage,
-    #[cfg(target_os = "macos")]
-    AppleImageIo,
-    LibRawDevelopment,
-}
-
-pub(crate) fn backend_plan(level: RenderLevel) -> Vec<RawBackend> {
-    #[cfg(target_os = "macos")]
-    return match level {
-        RenderLevel::Thumbnail => vec![
-            RawBackend::AppleImageIo,
-            RawBackend::AppleCoreImage,
-            RawBackend::LibRawDevelopment,
-        ],
-        RenderLevel::Preview | RenderLevel::Full => vec![
-            RawBackend::AppleCoreImage,
-            RawBackend::AppleImageIo,
-            RawBackend::LibRawDevelopment,
-        ],
-    };
-    #[cfg(any(target_os = "windows", target_os = "linux"))]
-    {
-        let _ = level;
-        vec![RawBackend::LibRawDevelopment]
-    }
-}
-
 pub(crate) fn dimensions(path: &Path) -> Result<ImageDimensions, MediaError> {
     libraw::dimensions(path).map_err(|message| MediaError::LibRaw {
         path: path.to_owned(),
@@ -69,36 +45,26 @@ pub(crate) fn dimensions(path: &Path) -> Result<ImageDimensions, MediaError> {
     })
 }
 
-fn display_requirement() -> PresentationRequirement {
-    PresentationRequirement {
-        orientation: OrientationRequirement::DisplayCorrect,
-        color: crate::cache::ColorRequirement::Any,
-        sharpening: SharpeningState::None,
-    }
-}
-
-pub(crate) fn preview_request(
-    artifacts: &ArtifactCache,
-    max_size: u32,
+pub(crate) fn preview(
+    path: &Path,
+    cache_dir: &Path,
+    level: RenderLevel,
+    priority: DecodePriority,
     allow_interim: bool,
-) -> crate::cache::CacheRequest {
-    artifacts.request(
-        DetailRequirement::Display {
-            min_long_edge: max_size,
-        },
-        RepresentationRequirement::AnyDisplay,
-        display_requirement(),
-        allow_interim,
-    )
-}
-
-pub(crate) fn full_developed_request(artifacts: &ArtifactCache) -> crate::cache::CacheRequest {
-    artifacts.request(
-        DetailRequirement::NativeDetail,
-        RepresentationRequirement::Exact(ArtifactRepresentation::Developed),
-        applied_srgb_requirement(),
-        false,
-    )
+    cancellation: &CancellationToken,
+) -> Result<PreviewResult, MediaError> {
+    if let Some(max_size) = planner::preview_max_size(level) {
+        preview_with_priority(
+            path,
+            cache_dir,
+            max_size,
+            priority,
+            allow_interim,
+            cancellation,
+        )
+    } else {
+        full_with_interim(path, cache_dir, allow_interim, cancellation)
+    }
 }
 
 pub(crate) fn preview_with_priority(
@@ -118,7 +84,7 @@ pub(crate) fn preview_with_priority(
     let artifacts = ArtifactCache::new(path, cache_dir)?;
     let mut request = preview_request(&artifacts, max_size, allow_interim);
     if level == RenderLevel::Thumbnail {
-        request.representation = RepresentationRequirement::BoundedThumbnail {
+        request.artifact = ArtifactRequirement::BoundedThumbnail {
             target: RAW_THUMBNAIL,
         };
         request.allow_interim = false;
@@ -182,34 +148,21 @@ pub(crate) fn full_with_interim(
     cancellation: &CancellationToken,
 ) -> Result<PreviewResult, MediaError> {
     let artifacts = ArtifactCache::new(path, cache_dir)?;
-    let hot_request = full_developed_request(&artifacts);
-    let source_size = dimensions(path)?;
-    let request = artifacts.request(
-        DetailRequirement::Native {
-            source: source_size.into(),
-        },
-        RepresentationRequirement::LargestRawJpeg,
-        display_requirement(),
-        false,
-    );
-    let production_request = artifacts.request(
-        request.detail,
-        request.representation,
-        request.presentation,
-        true,
-    );
-    if let Some(result) = artifacts.lookup(&request, RenderLevel::Full)? {
+    let plan = RawFullPlan::new(&artifacts, dimensions(path)?);
+    if let ArtifactPreparation::Cached(result) = artifacts.prepare_candidates(
+        &plan.embedded,
+        std::slice::from_ref(&plan.developed),
+        RenderLevel::Full,
+    )? {
+        return Ok(*result);
+    }
+    if allow_interim
+        && let Some(mut result) = artifacts.lookup(&plan.interim(), RenderLevel::Full)?
+    {
+        result.satisfaction = Some(oxy_domain::MediaSatisfaction::Interim);
         return Ok(result);
     }
-    if allow_interim {
-        let mut interim_request = request;
-        interim_request.representation = RepresentationRequirement::AnyDisplay;
-        interim_request.allow_interim = true;
-        if let Some(mut result) = artifacts.lookup(&interim_request, RenderLevel::Full)? {
-            result.satisfaction = Some(oxy_domain::MediaSatisfaction::Interim);
-            return Ok(result);
-        }
-    }
+    let production_request = plan.embedded_production();
 
     if let Ok(embedded) = produce_embedded_with_request(
         path,
@@ -219,23 +172,18 @@ pub(crate) fn full_with_interim(
         &production_request,
         DecodePriority::Foreground,
         cancellation,
-    ) && covers_source(
-        ImageDimensions {
-            width: embedded.width,
-            height: embedded.height,
-        },
-        source_size,
-    ) {
+    ) && embedded.satisfaction == Some(oxy_domain::MediaSatisfaction::Satisfied)
+    {
         return Ok(embedded);
     }
-    if let Some(result) = artifacts.lookup(&hot_request, RenderLevel::Full)? {
+    if let Some(result) = artifacts.lookup(&plan.developed, RenderLevel::Full)? {
         return Ok(result);
     }
     if cancellation.is_cancelled() {
         return Err(MediaError::Cancelled);
     }
     artifacts.coordinate_work(
-        &hot_request,
+        &plan.developed,
         RenderLevel::Full,
         "raw-compatible-development",
         || cancellation.is_cancelled(),
@@ -248,7 +196,7 @@ pub(crate) fn full_with_interim(
                 RenderLevel::Full,
                 None,
                 generation,
-                &hot_request,
+                &plan.developed,
                 cancellation,
             )
         },
@@ -268,11 +216,11 @@ fn produce_embedded(
             min_long_edge: max_size,
         },
         if level == RenderLevel::Thumbnail {
-            RepresentationRequirement::BoundedThumbnail {
+            ArtifactRequirement::BoundedThumbnail {
                 target: RAW_THUMBNAIL,
             }
         } else {
-            RepresentationRequirement::Exact(ArtifactRepresentation::Embedded)
+            ArtifactRequirement::Exact(ImageOrigin::EmbeddedPreview)
         },
         display_requirement(),
         level != RenderLevel::Thumbnail,
@@ -301,7 +249,7 @@ fn produce_embedded_with_request(
     let embedded_lock = file_lock(&artifacts.source_lock_key("raw-embedded-extract"));
     let _embedded_guard = acquire_file_lock(&embedded_lock, &|| cancellation.is_cancelled())?;
     // Ordinary interim previews must not suppress extraction of better pixels.
-    // A LargestRawJpeg hit already proves selection is exhausted, even when the
+    // The planner target proves embedded selection is exhausted, even when the
     // largest JPEG is too small for full; reuse it before development fallback.
     let mut completed_request = request.clone();
     completed_request.allow_interim = max_size == 0;
@@ -314,21 +262,17 @@ fn produce_embedded_with_request(
         let derivation = preview_request(artifacts, max_size, false);
         if let Some(cached) = artifacts.lookup(&derivation, level)? {
             let super::jpeg_transform::EncodedJpegThumbnail {
+                facts,
                 bytes,
-                dimensions,
+                dimensions: _,
                 mut presentation,
             } = super::thumbnail::encode_cached_jpeg_thumbnail(&cached, priority, cancellation)?;
             // Preserve the existing RAW cache presentation identity.
             presentation.color = CacheColorState::EmbeddedOrUnknown;
             return artifacts.publish(
                 bytes,
-                dimensions,
-                match cached.kind {
-                    oxy_domain::PreviewKind::Developed => ArtifactRepresentation::Developed,
-                    _ => ArtifactRepresentation::Embedded,
-                },
+                facts,
                 presentation,
-                cached.width.max(cached.height) <= 512,
                 RAW_THUMBNAIL.into(),
                 level,
                 generation,
@@ -345,7 +289,7 @@ fn produce_embedded_with_request(
         path: path.to_owned(),
         message,
     });
-    let extracted = match extracted {
+    let (extracted, reference) = match extracted {
         Ok(extracted) => extracted,
         Err(error) => {
             if max_size != 0 {
@@ -354,35 +298,59 @@ fn produce_embedded_with_request(
             return Err(error);
         }
     };
-    let (bytes, dimensions) = match extracted {
-        libraw::Preview::EmbeddedJpeg(data) if level == RenderLevel::Thumbnail => {
-            let super::jpeg_transform::EncodedJpegThumbnail {
-                bytes, dimensions, ..
-            } = super::jpeg_transform::encode_jpeg_thumbnail(data, priority, cancellation)?;
-            (bytes, (dimensions.width, dimensions.height))
-        }
+    let (bytes, mut facts) = match extracted {
         libraw::Preview::EmbeddedJpeg(data) => {
-            let dimensions = {
-                let reader = ImageReader::new(Cursor::new(&data)).with_guessed_format()?;
-                let mut decoder = reader.into_decoder()?;
-                oriented_dimensions(decoder.dimensions(), decoder.orientation()?)
-            };
-            (Arc::from(data), dimensions)
+            use sha2::{Digest, Sha256};
+            let candidate_id = format!("libraw-jpeg:{:x}", Sha256::digest(&data));
+            if level == RenderLevel::Thumbnail {
+                let super::jpeg_transform::EncodedJpegThumbnail {
+                    bytes, mut facts, ..
+                } = super::jpeg_transform::encode_jpeg_thumbnail(data, priority, cancellation)?;
+                facts.source.candidate_id = candidate_id;
+                (bytes, facts)
+            } else {
+                let mut decoder = ImageReader::new(Cursor::new(&data))
+                    .with_guessed_format()?
+                    .into_decoder()?;
+                let encoded = oxy_domain::EncodedDimensions(decoder.dimensions().into());
+                let orientation = decoder.orientation()?.to_exif();
+                let facts = crate::media_source::source_facts(
+                    ImageOrigin::EmbeddedPreview,
+                    candidate_id,
+                    encoded,
+                    orientation,
+                    reference,
+                );
+                drop(decoder);
+                // LibRaw may add orientation metadata. Do not claim original payload bytes.
+                (Arc::from(data), facts)
+            }
         }
-        libraw::Preview::EmbeddedImage(image) => {
+        libraw::Preview::EmbeddedImage(decoded) => {
             let destination = artifacts.temporary_output(".jpg")?;
-            write_jpeg_atomically(&image, &destination, 90, CAMERA_JPEG)?;
-            let dimensions = image::image_dimensions(&destination)?;
-            (Arc::from(std::fs::read(&destination)?), dimensions)
+            write_jpeg_atomically(&decoded.image, &destination, 90, CAMERA_JPEG)?;
+            let mut facts = decoded.facts;
+            facts.processing.push(oxy_domain::ImageOperation::Encode {
+                format: "jpeg".into(),
+            });
+            facts.byte_integrity = oxy_domain::ByteIntegrity::Reencoded;
+            (Arc::from(std::fs::read(&destination)?), facts)
         }
+    };
+    facts.source.origin = ImageOrigin::EmbeddedPreview;
+    facts.detail.reference_dimensions = reference;
+    facts.detail.region = oxy_domain::PreviewContentRect {
+        x: 0,
+        y: 0,
+        width: reference.0.width,
+        height: reference.0.height,
     };
     if cancellation.is_cancelled() {
         return Err(MediaError::Cancelled);
     }
     artifacts.publish(
         bytes,
-        dimensions.into(),
-        ArtifactRepresentation::Embedded,
+        facts,
         ArtifactPresentation {
             geometry: None,
             orientation: if level == RenderLevel::Thumbnail {
@@ -393,11 +361,10 @@ fn produce_embedded_with_request(
             color: CacheColorState::EmbeddedOrUnknown,
             sharpening: SharpeningState::None,
         },
-        false,
         if level == RenderLevel::Thumbnail {
             RAW_THUMBNAIL.into()
         } else if max_size == 0 {
-            crate::cache::LARGEST_RAW_JPEG_TARGET.into()
+            LARGEST_EMBEDDED_JPEG_TARGET.into()
         } else {
             format!("{RAW_PREVIEW}:embedded:{max_size}")
         },
@@ -441,11 +408,12 @@ fn render_developed(
 ) -> Result<PreviewResult, MediaError> {
     let quality = if level == RenderLevel::Full { 95 } else { 90 };
     let mut errors = initial_error.into_iter().collect::<Vec<_>>();
-    for backend in backend_plan(level) {
+    for backend in plan_backends(level) {
         if cancellation.is_cancelled() {
             return Err(MediaError::Cancelled);
         }
         let destination = artifacts.temporary_output(".jpg")?;
+        let mut completed_facts = None;
         let result = match backend {
             #[cfg(target_os = "macos")]
             RawBackend::AppleCoreImage => {
@@ -460,11 +428,14 @@ fn render_developed(
                     path: path.to_owned(),
                     message,
                 })
-                .and_then(|image| {
+                .and_then(|decoded| {
+                    let image = decoded.image;
+                    let mut facts = decoded.facts;
                     if cancellation.is_cancelled() {
                         return Err(MediaError::Cancelled);
                     }
                     let image = if max_size.is_none() {
+                        facts.processing.push(oxy_domain::ImageOperation::Sharpen);
                         image.unsharpen(0.8, 2)
                     } else {
                         image
@@ -472,7 +443,13 @@ fn render_developed(
                     if cancellation.is_cancelled() {
                         return Err(MediaError::Cancelled);
                     }
-                    write_jpeg_atomically(&image, &destination, quality, RAW_DEVELOPED_JPEG)
+                    write_jpeg_atomically(&image, &destination, quality, RAW_DEVELOPED_JPEG)?;
+                    facts.processing.push(oxy_domain::ImageOperation::Encode {
+                        format: "jpeg".into(),
+                    });
+                    facts.byte_integrity = oxy_domain::ByteIntegrity::Reencoded;
+                    completed_facts = Some(facts);
+                    Ok(())
                 }),
         };
         if cancellation.is_cancelled() {
@@ -483,13 +460,45 @@ fn render_developed(
                 if cancellation.is_cancelled() {
                     return Err(MediaError::Cancelled);
                 }
-                let dimensions = image::image_dimensions(&destination)?.into();
+                let facts = if let Some(facts) = completed_facts {
+                    facts
+                } else {
+                    let dimensions = image::image_dimensions(&destination)?.into();
+                    let reference = oxy_domain::DisplayDimensions(self::dimensions(path)?);
+                    let mut facts = crate::media_source::source_facts(
+                        ImageOrigin::RawSensor,
+                        "raw-sensor".into(),
+                        oxy_domain::EncodedDimensions(reference.0),
+                        1,
+                        reference,
+                    );
+                    facts.source.encoded_dimensions = None;
+                    facts.processing.push(oxy_domain::ImageOperation::Develop {
+                        backend: format!("{backend:?}"),
+                    });
+                    facts
+                        .processing
+                        .push(oxy_domain::ImageOperation::ColorConvert {
+                            target: "sRGB".into(),
+                        });
+                    facts.resize(oxy_domain::DisplayDimensions(dimensions));
+                    if backend == RawBackend::LibRawDevelopment && max_size.is_none() {
+                        facts.processing.push(oxy_domain::ImageOperation::Sharpen);
+                    }
+                    facts.processing.push(oxy_domain::ImageOperation::Encode {
+                        format: "jpeg".into(),
+                    });
+                    facts.encoded_dimensions = oxy_domain::EncodedDimensions(dimensions);
+                    facts.exif_orientation = 1;
+                    facts.byte_integrity = oxy_domain::ByteIntegrity::Reencoded;
+
+                    facts
+                };
+
                 return artifacts.publish_staged(
                     destination,
-                    dimensions,
-                    ArtifactRepresentation::Developed,
+                    facts,
                     applied_srgb(),
-                    max_size.is_none_or(|target| dimensions.width.max(dimensions.height) < target),
                     if level == RenderLevel::Thumbnail {
                         RAW_THUMBNAIL.into()
                     } else {
@@ -518,6 +527,7 @@ fn render_developed(
     })
 }
 
+#[cfg(test)]
 fn oriented_dimensions(dimensions: (u32, u32), orientation: Orientation) -> (u32, u32) {
     if matches!(
         orientation,
@@ -532,8 +542,9 @@ fn oriented_dimensions(dimensions: (u32, u32), orientation: Orientation) -> (u32
     }
 }
 
+#[cfg(test)]
 pub(crate) fn covers_source(candidate: ImageDimensions, source: ImageDimensions) -> bool {
-    crate::presentation::camera_preview_can_satisfy_raw_full(CAMERA_JPEG, candidate, source)
+    planner::camera_preview_detail(source).accepts(oxy_domain::DisplayDimensions(candidate), false)
 }
 
 #[cfg(test)]
@@ -575,7 +586,7 @@ mod tests {
     #[cfg(target_os = "macos")]
     fn macos_thumbnail_prefers_measured_image_io_path() {
         assert_eq!(
-            backend_plan(RenderLevel::Thumbnail),
+            plan_backends(RenderLevel::Thumbnail),
             vec![
                 RawBackend::AppleImageIo,
                 RawBackend::AppleCoreImage,
@@ -589,7 +600,7 @@ mod tests {
     fn macos_detail_prefers_measured_core_image_path() {
         for level in [RenderLevel::Preview, RenderLevel::Full] {
             assert_eq!(
-                backend_plan(level),
+                plan_backends(level),
                 vec![
                     RawBackend::AppleCoreImage,
                     RawBackend::AppleImageIo,
@@ -607,7 +618,7 @@ mod tests {
             RenderLevel::Preview,
             RenderLevel::Full,
         ] {
-            assert_eq!(backend_plan(level), vec![RawBackend::LibRawDevelopment]);
+            assert_eq!(plan_backends(level), vec![RawBackend::LibRawDevelopment]);
         }
     }
 }

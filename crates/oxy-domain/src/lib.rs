@@ -480,6 +480,218 @@ pub struct MediaResourceDescriptor {
     pub media_type: String,
 }
 
+/// A neutral extent in image pixels, independent of orientation and ownership.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Hash)]
+#[serde(rename_all = "camelCase")]
+pub struct PixelDimensions {
+    pub width: u32,
+    pub height: u32,
+}
+
+impl From<(u32, u32)> for PixelDimensions {
+    fn from((width, height): (u32, u32)) -> Self {
+        Self { width, height }
+    }
+}
+
+/// Pixel storage before EXIF orientation is applied.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Hash)]
+#[serde(transparent)]
+pub struct EncodedDimensions(pub PixelDimensions);
+
+/// Image pixels in viewing orientation; never CSS/layout units.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Hash)]
+#[serde(transparent)]
+pub struct DisplayDimensions(pub PixelDimensions);
+
+impl EncodedDimensions {
+    pub fn to_display(self, exif_orientation: u8) -> DisplayDimensions {
+        let mut dimensions = self.0;
+        if (5..=8).contains(&exif_orientation) {
+            std::mem::swap(&mut dimensions.width, &mut dimensions.height);
+        }
+        DisplayDimensions(dimensions)
+    }
+}
+
+/// Content provenance, independent of decoder, cache location, or render level.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Hash)]
+#[serde(rename_all = "camelCase")]
+pub enum ImageOrigin {
+    PrimaryImage,
+    EmbeddedPreview,
+    RawSensor,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Hash)]
+#[serde(rename_all = "camelCase")]
+pub struct SourceImage {
+    pub exif_orientation: u8,
+    pub revision_id: String,
+    /// Identifies the selected container image, never its current cache path.
+    pub candidate_id: String,
+    pub origin: ImageOrigin,
+    pub encoded_dimensions: Option<EncodedDimensions>,
+    pub display_dimensions: DisplayDimensions,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Hash)]
+#[serde(rename_all = "camelCase")]
+pub enum Sampling {
+    Native,
+    Reduced,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Hash)]
+#[serde(rename_all = "camelCase")]
+pub struct DetailCoverage {
+    pub reference_dimensions: DisplayDimensions,
+    pub region: PreviewContentRect,
+    /// Finest remaining sample grid; later upscaling cannot increase it.
+    pub sampled_dimensions: DisplayDimensions,
+    pub sampling: Sampling,
+}
+
+impl DetailCoverage {
+    pub fn covers_reference(&self) -> bool {
+        let size = self.reference_dimensions.0;
+        self.region.x == 0
+            && self.region.y == 0
+            && self.region.width == size.width
+            && self.region.height == size.height
+    }
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Hash)]
+#[serde(rename_all = "camelCase")]
+pub enum ByteIntegrity {
+    SourceFile,
+    SourcePayload,
+    MetadataAdjusted,
+    Reencoded,
+    /// A backend did not provide proof of byte preservation.
+    Unverified,
+}
+
+/// Completed operations only. Planned operations must never populate this list.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Hash)]
+#[serde(
+    tag = "operation",
+    rename_all = "camelCase",
+    rename_all_fields = "camelCase"
+)]
+pub enum ImageOperation {
+    Decode {
+        backend: String,
+    },
+    Develop {
+        backend: String,
+    },
+    Resize {
+        from: DisplayDimensions,
+        to: DisplayDimensions,
+    },
+    Orient {
+        exif: u8,
+    },
+    Encode {
+        format: String,
+    },
+    ColorConvert {
+        target: String,
+    },
+    Sharpen,
+    Crop {
+        region: PreviewContentRect,
+    },
+    Pad {
+        canvas: DisplayDimensions,
+    },
+    MetadataEdit,
+    Assemble {
+        mode: String,
+    },
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Hash)]
+#[serde(rename_all = "camelCase")]
+pub struct ArtifactFacts {
+    pub exif_orientation: u8,
+    pub source: SourceImage,
+    pub encoded_dimensions: EncodedDimensions,
+    pub display_dimensions: DisplayDimensions,
+    pub detail: DetailCoverage,
+    pub processing: Vec<ImageOperation>,
+    pub byte_integrity: ByteIntegrity,
+}
+
+impl ArtifactFacts {
+    /// Checks coordinate frames and coverage independently of cache/storage policy.
+    pub fn is_consistent(&self) -> bool {
+        let nonzero = |size: PixelDimensions| size.width > 0 && size.height > 0;
+        let reference = self.detail.reference_dimensions.0;
+        let region = self.detail.region;
+        (1..=8).contains(&self.exif_orientation)
+            && (1..=8).contains(&self.source.exif_orientation)
+            && !self.source.candidate_id.is_empty()
+            && nonzero(self.encoded_dimensions.0)
+            && nonzero(self.source.display_dimensions.0)
+            && nonzero(reference)
+            && nonzero(self.detail.sampled_dimensions.0)
+            && self.encoded_dimensions.to_display(self.exif_orientation) == self.display_dimensions
+            && self.source.encoded_dimensions.is_none_or(|encoded| {
+                encoded.to_display(self.source.exif_orientation) == self.source.display_dimensions
+            })
+            && region.width > 0
+            && region.height > 0
+            && region
+                .x
+                .checked_add(region.width)
+                .is_some_and(|end| end <= reference.width)
+            && region
+                .y
+                .checked_add(region.height)
+                .is_some_and(|end| end <= reference.height)
+    }
+
+    pub fn native_detail(&self) -> bool {
+        self.source.origin != ImageOrigin::EmbeddedPreview
+            && self.detail.sampling == Sampling::Native
+            && self.detail.covers_reference()
+            && self.detail.sampled_dimensions.0.width >= self.detail.region.width
+            && self.detail.sampled_dimensions.0.height >= self.detail.region.height
+    }
+
+    /// Derivation preserves original content identity and can only lose sampling detail.
+    pub fn resize(&mut self, output: DisplayDimensions) {
+        let from = self.display_dimensions;
+        if from != output {
+            if output.0.width < from.0.width || output.0.height < from.0.height {
+                self.detail.sampling = Sampling::Reduced;
+            }
+            self.processing
+                .push(ImageOperation::Resize { from, to: output });
+        }
+        let sampled = &mut self.detail.sampled_dimensions.0;
+        sampled.width = sampled.width.min(output.0.width);
+        sampled.height = sampled.height.min(output.0.height);
+        self.display_dimensions = output;
+    }
+
+    /// Retain the legacy UI label only; no quality or cache decision uses it.
+    pub fn preview_kind(&self) -> PreviewKind {
+        match self.source.origin {
+            ImageOrigin::EmbeddedPreview => PreviewKind::Embedded,
+            ImageOrigin::RawSensor => PreviewKind::Developed,
+            ImageOrigin::PrimaryImage if self.byte_integrity == ByteIntegrity::SourceFile => {
+                PreviewKind::Original
+            }
+            ImageOrigin::PrimaryImage if self.processing.iter().any(|step| matches!(step, ImageOperation::Decode { backend } if backend.starts_with("system:"))) => PreviewKind::System,
+            ImageOrigin::PrimaryImage => PreviewKind::Decoded,
+        }
+    }
+}
+
 /// Geometry in display-oriented pixels. The content rectangle covers the whole
 /// logical display canvas; encoded padding lies outside that rectangle.
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Hash)]
@@ -508,6 +720,9 @@ pub struct PreviewContentRect {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct PreviewResult {
+    /// Actual source, geometry, and completed transformations; retained through cache recovery.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub image_facts: Option<ArtifactFacts>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub geometry: Option<PreviewGeometry>,
     pub path: PathBuf,

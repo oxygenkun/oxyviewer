@@ -260,7 +260,48 @@ export interface PreviewGeometry {
   contentRect: { x: number; y: number; width: number; height: number };
 }
 
+export interface PixelDimensions {
+  width: number;
+  height: number;
+}
+
+export type ImageOrigin = "primaryImage" | "embeddedPreview" | "rawSensor";
+export type ImageOperation =
+  | { operation: "decode" | "develop"; backend: string }
+  | { operation: "resize"; from: PixelDimensions; to: PixelDimensions }
+  | { operation: "orient"; exif: number }
+  | { operation: "encode"; format: string }
+  | { operation: "colorConvert"; target: string }
+  | { operation: "sharpen" | "metadataEdit" }
+  | { operation: "crop"; region: PreviewGeometry["contentRect"] }
+  | { operation: "pad"; canvas: PixelDimensions }
+  | { operation: "assemble"; mode: string };
+
+/** Actual content identity and completed processing, independent of render level. */
+export interface ArtifactFacts {
+  exifOrientation: number;
+  source: {
+    exifOrientation: number;
+    revisionId: string;
+    candidateId: string;
+    origin: ImageOrigin;
+    encodedDimensions: PixelDimensions | null;
+    displayDimensions: PixelDimensions;
+  };
+  encodedDimensions: PixelDimensions;
+  displayDimensions: PixelDimensions;
+  detail: {
+    referenceDimensions: PixelDimensions;
+    region: PreviewGeometry["contentRect"];
+    sampledDimensions: PixelDimensions;
+    sampling: "native" | "reduced";
+  };
+  processing: ImageOperation[];
+  byteIntegrity: "sourceFile" | "sourcePayload" | "metadataAdjusted" | "reencoded" | "unverified";
+}
+
 export interface PreviewResult {
+  imageFacts?: ArtifactFacts;
   geometry?: PreviewGeometry;
   path: string;
   url: string;

@@ -3,14 +3,15 @@
 use crate::{
     MediaError,
     cache::{
-        ArtifactPresentation, ArtifactRepresentation, CacheColorState, CacheRequest,
-        DetailRequirement, DiskMediaCache, DisplayDimensions, MEDIA_CACHE_POLICY_REVISION,
-        MediaCache, OrientationRequirement, OrientationState, PendingArtifact,
-        PresentationRequirement, RepresentationRequirement, Satisfaction, SharpeningState,
-        SourceRevision, VariantIdentity,
+        ArtifactPresentation, ArtifactRequirement, CacheColorState, CacheRequest,
+        DetailRequirement, DiskMediaCache, ImageOrigin, MEDIA_CACHE_POLICY_REVISION, MediaCache,
+        OrientationRequirement, OrientationState, PendingArtifact, PixelDimensions,
+        PresentationRequirement, Satisfaction, SharpeningState, SourceRevision, VariantIdentity,
     },
 };
-use oxy_domain::{PreviewKind, PreviewResult, RenderLevel};
+#[cfg(test)]
+use oxy_domain::PreviewKind;
+use oxy_domain::{PreviewResult, RenderLevel};
 use std::{
     cell::{Cell, RefCell},
     collections::VecDeque,
@@ -133,11 +134,11 @@ pub(crate) fn register_original_resource(
     let resource = crate::publication::shared_resource_registry().register_file(
         path,
         media_type,
-        DisplayDimensions {
+        PixelDimensions {
             width: result.width,
             height: result.height,
         },
-        ArtifactRepresentation::Original,
+        ImageOrigin::PrimaryImage,
     )?;
     result.resource = Some(oxy_domain::MediaResourceDescriptor {
         resource_id: resource.descriptor.resource_id,
@@ -375,14 +376,14 @@ impl ArtifactCache {
     pub(crate) fn request(
         &self,
         detail: DetailRequirement,
-        representation: RepresentationRequirement,
+        artifact: ArtifactRequirement,
         presentation: PresentationRequirement,
         allow_interim: bool,
     ) -> CacheRequest {
         CacheRequest {
             source_revision: self.source.clone(),
             detail,
-            representation,
+            artifact,
             presentation,
             policy_revision: MEDIA_CACHE_POLICY_REVISION,
             allow_interim,
@@ -463,11 +464,12 @@ impl ArtifactCache {
             unreachable!("active publication uses a managed or staged file fact")
         };
         Ok(Some(PreviewResult {
+            image_facts: Some(hit.artifact.facts.clone()),
             geometry: hit.artifact.variant.presentation.geometry,
             path,
-            width: hit.artifact.actual_dimensions.width,
-            height: hit.artifact.actual_dimensions.height,
-            kind: preview_kind(hit.artifact.variant.representation),
+            width: hit.artifact.facts.display_dimensions.0.width,
+            height: hit.artifact.facts.display_dimensions.0.height,
+            kind: hit.artifact.facts.preview_kind(),
             render_level: level,
             resource: Some(oxy_domain::MediaResourceDescriptor {
                 resource_id: hit.resource.resource_id,
@@ -509,11 +511,16 @@ impl ArtifactCache {
                 .register_file_with_lease(
                     &result.path,
                     "image/jpeg",
-                    DisplayDimensions {
+                    PixelDimensions {
                         width: result.width,
                         height: result.height,
                     },
-                    representation_for_kind(result.kind),
+                    result
+                        .image_facts
+                        .as_ref()
+                        .expect("cached artifact has facts")
+                        .source
+                        .origin,
                     Some(lease),
                 )?;
             result.resource = Some(oxy_domain::MediaResourceDescriptor {
@@ -529,10 +536,8 @@ impl ArtifactCache {
     pub(crate) fn publish(
         &self,
         bytes: Arc<[u8]>,
-        dimensions: DisplayDimensions,
-        representation: ArtifactRepresentation,
+        facts: oxy_domain::ArtifactFacts,
         presentation: ArtifactPresentation,
-        native_detail: bool,
         target: String,
         level: RenderLevel,
         generation: u64,
@@ -540,10 +545,8 @@ impl ArtifactCache {
     ) -> Result<PreviewResult, MediaError> {
         self.publish_encoded(
             bytes,
-            dimensions,
-            representation,
+            facts,
             presentation,
-            native_detail,
             target,
             level,
             generation,
@@ -556,16 +559,17 @@ impl ArtifactCache {
     pub(crate) fn publish_encoded(
         &self,
         bytes: Arc<[u8]>,
-        dimensions: DisplayDimensions,
-        representation: ArtifactRepresentation,
+        facts: oxy_domain::ArtifactFacts,
         presentation: ArtifactPresentation,
-        native_detail: bool,
         target: String,
         level: RenderLevel,
         generation: u64,
         request: &CacheRequest,
         encoding: ArtifactEncoding,
     ) -> Result<PreviewResult, MediaError> {
+        let mut facts = facts;
+        crate::media_source::bind_facts(&mut facts, &self.source)?;
+        let dimensions = facts.display_dimensions.0;
         let observed = SourceRevision::observe(&self.source.canonical_path)?;
         if observed != self.source {
             return Err(MediaError::StaleSourceRevision);
@@ -573,13 +577,11 @@ impl ArtifactCache {
         let pending = PendingArtifact {
             source_revision: self.source.clone(),
             variant: VariantIdentity {
-                representation,
                 presentation,
                 policy_revision: request.policy_revision,
                 target,
             },
-            actual_dimensions: dimensions,
-            native_detail,
+            facts: facts.clone(),
             media_type: encoding.media_type().into(),
             extension: encoding.extension().into(),
             bytes,
@@ -589,8 +591,7 @@ impl ArtifactCache {
             artifact_id: String::new(),
             source_revision: pending.source_revision.clone(),
             variant: pending.variant.clone(),
-            actual_dimensions: pending.actual_dimensions,
-            native_detail: pending.native_detail,
+            facts: pending.facts.clone(),
             byte_size: pending.bytes.len() as u64,
             media_type: pending.media_type.clone(),
             location: crate::cache::ArtifactLocation::Managed(std::path::PathBuf::new()),
@@ -607,8 +608,7 @@ impl ArtifactCache {
                     crate::publication::ProducedArtifact {
                         source_revision: pending.source_revision.clone(),
                         variant: pending.variant.clone(),
-                        actual_dimensions: pending.actual_dimensions,
-                        native_detail: pending.native_detail,
+                        facts: pending.facts.clone(),
                         cache_generation: pending.cache_generation,
                         payload: crate::publication::ProducedPayload::Encoded {
                             bytes: Arc::clone(&pending.bytes),
@@ -625,11 +625,12 @@ impl ArtifactCache {
             };
             record_completion(published.completion);
             return Ok(PreviewResult {
+                image_facts: Some(facts.clone()),
                 geometry: presentation.geometry,
                 path: published.managed_path.unwrap_or_default(),
                 width: dimensions.width,
                 height: dimensions.height,
-                kind: preview_kind(representation),
+                kind: facts.preview_kind(),
                 render_level: level,
                 resource: Some(resource),
                 satisfaction: Some(domain_satisfaction(satisfaction)),
@@ -658,15 +659,16 @@ impl ArtifactCache {
     pub(crate) fn publish_staged(
         &self,
         staged: BackendOutput,
-        dimensions: DisplayDimensions,
-        representation: ArtifactRepresentation,
+        facts: oxy_domain::ArtifactFacts,
         presentation: ArtifactPresentation,
-        native_detail: bool,
         target: String,
         level: RenderLevel,
         generation: u64,
         request: &CacheRequest,
     ) -> Result<PreviewResult, MediaError> {
+        let mut facts = facts;
+        crate::media_source::bind_facts(&mut facts, &self.source)?;
+        let dimensions = facts.display_dimensions.0;
         let observed = SourceRevision::observe(&self.source.canonical_path)?;
         if observed != self.source {
             return Err(MediaError::StaleSourceRevision);
@@ -676,7 +678,6 @@ impl ArtifactCache {
             crate::cache::ensure_srgb_icc(&staged)?;
         }
         let variant = VariantIdentity {
-            representation,
             presentation,
             policy_revision: request.policy_revision,
             target,
@@ -685,8 +686,7 @@ impl ArtifactCache {
             artifact_id: String::new(),
             source_revision: self.source.clone(),
             variant: variant.clone(),
-            actual_dimensions: dimensions,
-            native_detail,
+            facts: facts.clone(),
             byte_size: std::fs::metadata(&staged)?.len(),
             media_type: "image/jpeg".into(),
             location: crate::cache::ArtifactLocation::Managed(staged.to_path_buf()),
@@ -708,8 +708,7 @@ impl ArtifactCache {
                 crate::publication::ProducedArtifact {
                     source_revision: self.source.clone(),
                     variant,
-                    actual_dimensions: dimensions,
-                    native_detail,
+                    facts: facts.clone(),
                     cache_generation: generation,
                     payload: crate::publication::ProducedPayload::StagedFile {
                         owner: staged_owner,
@@ -726,11 +725,12 @@ impl ArtifactCache {
             };
             record_completion(published.completion);
             return Ok(PreviewResult {
+                image_facts: Some(facts.clone()),
                 geometry: presentation.geometry,
                 path: staged_path,
                 width: dimensions.width,
                 height: dimensions.height,
-                kind: preview_kind(representation),
+                kind: facts.preview_kind(),
                 render_level: level,
                 resource: Some(resource),
                 satisfaction: Some(domain_satisfaction(satisfaction)),
@@ -757,8 +757,7 @@ impl ArtifactCache {
             .publish_staged(crate::cache::PendingStagedArtifact {
                 source_revision: self.source.clone(),
                 variant,
-                actual_dimensions: dimensions,
-                native_detail,
+                facts,
                 media_type: "image/jpeg".into(),
                 extension: "jpg".into(),
                 staged_path,
@@ -837,22 +836,33 @@ fn running_result_is_live(result: &PreviewResult) -> bool {
 fn promised_request_satisfies(producer: &CacheRequest, waiter: &CacheRequest) -> bool {
     producer.source_revision == waiter.source_revision
         && producer.policy_revision == waiter.policy_revision
-        && representation_requirement_implies(producer.representation, waiter.representation)
+        && artifact_requirement_implies(producer.artifact, waiter.artifact)
         && presentation_requirement_implies(producer.presentation, waiter.presentation)
         && match (producer.detail, waiter.detail) {
-            (DetailRequirement::NativeDetail, _) => true,
-            (DetailRequirement::Native { source: produced }, DetailRequirement::NativeDetail) => {
-                produced.width > 0 && produced.height > 0
-            }
             (
-                DetailRequirement::Native { source: produced },
-                DetailRequirement::Native { source: requested },
-            ) => produced == requested,
+                DetailRequirement::NativeDetail,
+                DetailRequirement::NativeDetail | DetailRequirement::Display { .. },
+            ) => true,
             (
-                DetailRequirement::Native { source },
-                DetailRequirement::Display { min_long_edge },
-            ) => source.width.max(source.height) >= min_long_edge,
+                DetailRequirement::MinimumDimensions {
+                    min_long_edge: produced_long,
+                    min_short_edge: produced_short,
+                },
+                DetailRequirement::MinimumDimensions {
+                    min_long_edge: requested_long,
+                    min_short_edge: requested_short,
+                },
+            ) => produced_long >= requested_long && produced_short >= requested_short,
             (
+                DetailRequirement::MinimumDimensions {
+                    min_long_edge: produced,
+                    ..
+                },
+                DetailRequirement::Display {
+                    min_long_edge: requested,
+                },
+            )
+            | (
                 DetailRequirement::Display {
                     min_long_edge: produced,
                 },
@@ -860,43 +870,39 @@ fn promised_request_satisfies(producer: &CacheRequest, waiter: &CacheRequest) ->
                     min_long_edge: requested,
                 },
             ) => produced >= requested,
-            (DetailRequirement::Display { .. }, DetailRequirement::NativeDetail)
-            | (DetailRequirement::Display { .. }, DetailRequirement::Native { .. }) => false,
+            _ => false,
         }
 }
 
-fn representation_requirement_implies(
-    producer: RepresentationRequirement,
-    waiter: RepresentationRequirement,
+fn artifact_requirement_implies(
+    producer: ArtifactRequirement,
+    waiter: ArtifactRequirement,
 ) -> bool {
     match (producer, waiter) {
         (
-            RepresentationRequirement::BoundedThumbnail { target: produced },
-            RepresentationRequirement::BoundedThumbnail { target: requested },
+            ArtifactRequirement::BoundedThumbnail { target: produced },
+            ArtifactRequirement::BoundedThumbnail { target: requested },
         ) => produced == requested,
-        (_, RepresentationRequirement::AnyDisplay) => true,
+        (_, ArtifactRequirement::AnyDisplay) => true,
+        (ArtifactRequirement::Exact(produced), ArtifactRequirement::Exact(requested)) => {
+            produced == requested
+        }
         (
-            RepresentationRequirement::Exact(produced),
-            RepresentationRequirement::Exact(requested),
+            ArtifactRequirement::ExactVariant {
+                origin: produced, ..
+            },
+            ArtifactRequirement::Exact(requested),
         ) => produced == requested,
         (
-            RepresentationRequirement::Exact(ArtifactRepresentation::Developed),
-            RepresentationRequirement::RawNative { .. },
-        ) => true,
-        (
-            RepresentationRequirement::Exact(ArtifactRepresentation::Embedded),
-            RepresentationRequirement::RawNative {
-                allow_camera_preview: true,
+            ArtifactRequirement::ExactVariant {
+                origin: produced,
+                target: produced_target,
             },
-        ) => true,
-        (
-            RepresentationRequirement::RawNative {
-                allow_camera_preview: produced,
+            ArtifactRequirement::ExactVariant {
+                origin: requested,
+                target: requested_target,
             },
-            RepresentationRequirement::RawNative {
-                allow_camera_preview: requested,
-            },
-        ) => !produced || requested,
+        ) => produced == requested && produced_target == requested_target,
         _ => false,
     }
 }
@@ -937,26 +943,6 @@ pub(crate) const fn applied_srgb_requirement() -> PresentationRequirement {
     }
 }
 
-const fn representation_for_kind(kind: PreviewKind) -> ArtifactRepresentation {
-    match kind {
-        PreviewKind::Original => ArtifactRepresentation::Original,
-        PreviewKind::Embedded => ArtifactRepresentation::Embedded,
-        PreviewKind::Decoded => ArtifactRepresentation::Decoded,
-        PreviewKind::Developed => ArtifactRepresentation::Developed,
-        PreviewKind::System => ArtifactRepresentation::System,
-    }
-}
-
-fn preview_kind(representation: ArtifactRepresentation) -> PreviewKind {
-    match representation {
-        ArtifactRepresentation::Original => PreviewKind::Original,
-        ArtifactRepresentation::Embedded => PreviewKind::Embedded,
-        ArtifactRepresentation::Decoded => PreviewKind::Decoded,
-        ArtifactRepresentation::Developed => PreviewKind::Developed,
-        ArtifactRepresentation::System => PreviewKind::System,
-    }
-}
-
 const fn domain_satisfaction(satisfaction: Satisfaction) -> oxy_domain::MediaSatisfaction {
     match satisfaction {
         Satisfaction::Satisfied => oxy_domain::MediaSatisfaction::Satisfied,
@@ -969,15 +955,16 @@ fn preview_result(
     satisfaction: Satisfaction,
     level: RenderLevel,
 ) -> PreviewResult {
-    let kind = preview_kind(artifact.variant.representation);
+    let kind = artifact.facts.preview_kind();
     let crate::cache::ArtifactLocation::Managed(path) = artifact.location else {
         unreachable!("pipeline cache lookup contains managed artifacts")
     };
     PreviewResult {
+        image_facts: Some(artifact.facts.clone()),
         geometry: artifact.variant.presentation.geometry,
         path,
-        width: artifact.actual_dimensions.width,
-        height: artifact.actual_dimensions.height,
+        width: artifact.facts.display_dimensions.0.width,
+        height: artifact.facts.display_dimensions.0.height,
         kind,
         render_level: level,
         resource: None,
@@ -1115,6 +1102,50 @@ mod tests {
     }
 
     #[test]
+    fn dimension_promises_do_not_claim_native_detail_or_an_unselected_variant() {
+        let directory = tempfile::tempdir().unwrap();
+        let source = directory.path().join("source.jpg");
+        std::fs::write(&source, jpeg()).unwrap();
+        let artifacts = ArtifactCache::new(&source, directory.path()).unwrap();
+        let producer = artifacts.request(
+            DetailRequirement::MinimumDimensions {
+                min_long_edge: 900,
+                min_short_edge: 600,
+            },
+            ArtifactRequirement::ExactVariant {
+                origin: ImageOrigin::EmbeddedPreview,
+                target: "selected",
+            },
+            applied_srgb_requirement(),
+            false,
+        );
+        let mut waiter = producer.clone();
+        assert!(promised_request_satisfies(&producer, &waiter));
+        waiter.detail = DetailRequirement::NativeDetail;
+        assert!(!promised_request_satisfies(&producer, &waiter));
+        assert!(!promised_request_satisfies(&waiter, &producer));
+        waiter.detail = DetailRequirement::Display { min_long_edge: 900 };
+        waiter.artifact = ArtifactRequirement::Exact(ImageOrigin::EmbeddedPreview);
+        assert!(promised_request_satisfies(&producer, &waiter));
+        waiter.detail = DetailRequirement::Display { min_long_edge: 901 };
+        assert!(!promised_request_satisfies(&producer, &waiter));
+        waiter = producer.clone();
+        waiter.detail = DetailRequirement::MinimumDimensions {
+            min_long_edge: 900,
+            min_short_edge: 601,
+        };
+        assert!(!promised_request_satisfies(&producer, &waiter));
+        waiter = producer.clone();
+        waiter.artifact = ArtifactRequirement::ExactVariant {
+            origin: ImageOrigin::EmbeddedPreview,
+            target: "different-selection",
+        };
+        assert!(!promised_request_satisfies(&producer, &waiter));
+        waiter.artifact = ArtifactRequirement::Exact(ImageOrigin::EmbeddedPreview);
+        assert!(!promised_request_satisfies(&waiter, &producer));
+    }
+
+    #[test]
     fn raw_preview_waits_on_actual_running_full_request_and_reuses_its_result() {
         let directory = tempfile::tempdir().unwrap();
         let source = directory.path().join("source.jpg");
@@ -1131,12 +1162,12 @@ mod tests {
             thread::spawn(move || {
                 let artifacts = ArtifactCache::new(&source, &cache_dir).unwrap();
                 let request = if level == RenderLevel::Full {
-                    crate::pipeline::raw::full_developed_request(&artifacts)
+                    crate::pipeline::raw::planner::full_developed_request(&artifacts)
                 } else {
                     let DetailRequirement::Display { min_long_edge } = detail else {
                         panic!("RAW preview test requires display detail")
                     };
-                    crate::pipeline::raw::preview_request(&artifacts, min_long_edge, false)
+                    crate::pipeline::raw::planner::preview_request(&artifacts, min_long_edge, false)
                 };
                 artifacts
                     .coordinate_work(
@@ -1158,13 +1189,15 @@ mod tests {
                             }
                             artifacts.publish(
                                 jpeg(),
-                                DisplayDimensions {
-                                    width: 16,
-                                    height: 8,
-                                },
-                                ArtifactRepresentation::Developed,
+                                crate::media_source::test_facts(
+                                    ImageOrigin::RawSensor,
+                                    PixelDimensions {
+                                        width: 16,
+                                        height: 8,
+                                    },
+                                    matches!(detail, DetailRequirement::NativeDetail),
+                                ),
                                 applied_srgb(),
-                                matches!(detail, DetailRequirement::NativeDetail),
                                 "test-development".into(),
                                 level,
                                 generation,
@@ -1210,9 +1243,9 @@ mod tests {
             thread::spawn(move || {
                 let artifacts = ArtifactCache::new(&source, &cache_dir).unwrap();
                 let request = if level == RenderLevel::Full {
-                    crate::pipeline::heif::artifact::full_decoded_request(&artifacts)
+                    crate::pipeline::heif::planner::full_decoded_request(&artifacts)
                 } else {
-                    crate::pipeline::heif::artifact::preview_request(&artifacts, detail, false)
+                    crate::pipeline::heif::planner::preview_request(&artifacts, detail, false)
                 };
                 artifacts
                     .coordinate_work(
@@ -1234,18 +1267,20 @@ mod tests {
                             }
                             artifacts.publish(
                                 jpeg(),
-                                DisplayDimensions {
-                                    width: 16,
-                                    height: 8,
-                                },
-                                ArtifactRepresentation::Decoded,
+                                crate::media_source::test_facts(
+                                    ImageOrigin::PrimaryImage,
+                                    PixelDimensions {
+                                        width: 16,
+                                        height: 8,
+                                    },
+                                    matches!(detail, DetailRequirement::NativeDetail),
+                                ),
                                 ArtifactPresentation {
                                     geometry: None,
                                     orientation: OrientationState::Applied,
                                     color: CacheColorState::EmbeddedOrUnknown,
                                     sharpening: SharpeningState::None,
                                 },
-                                matches!(detail, DetailRequirement::NativeDetail),
                                 "test-heif-source-decode".into(),
                                 level,
                                 generation,
@@ -1289,7 +1324,7 @@ mod tests {
             let release = Arc::clone(&release);
             thread::spawn(move || {
                 let artifacts = ArtifactCache::new(&source, &cache_dir).unwrap();
-                let request = crate::pipeline::heif::artifact::full_decoded_request(&artifacts);
+                let request = crate::pipeline::heif::planner::full_decoded_request(&artifacts);
                 let _ = artifacts.coordinate_work(
                     &request,
                     RenderLevel::Full,
@@ -1314,7 +1349,7 @@ mod tests {
             let cache_dir = directory.path().to_owned();
             thread::spawn(move || {
                 let artifacts = ArtifactCache::new(&source, &cache_dir).unwrap();
-                let request = crate::pipeline::heif::artifact::preview_request(
+                let request = crate::pipeline::heif::planner::preview_request(
                     &artifacts,
                     DetailRequirement::Display { min_long_edge: 8 },
                     false,
@@ -1327,18 +1362,20 @@ mod tests {
                     |generation| {
                         artifacts.publish(
                             jpeg(),
-                            DisplayDimensions {
-                                width: 16,
-                                height: 8,
-                            },
-                            ArtifactRepresentation::Decoded,
+                            crate::media_source::test_facts(
+                                ImageOrigin::PrimaryImage,
+                                PixelDimensions {
+                                    width: 16,
+                                    height: 8,
+                                },
+                                true,
+                            ),
                             ArtifactPresentation {
                                 geometry: None,
                                 orientation: OrientationState::Applied,
                                 color: CacheColorState::EmbeddedOrUnknown,
                                 sharpening: SharpeningState::None,
                             },
-                            true,
                             "panic-heif-source-decode".into(),
                             RenderLevel::Preview,
                             generation,
@@ -1389,7 +1426,7 @@ mod tests {
                 let artifacts = ArtifactCache::new(&source, &cache_dir).unwrap();
                 let request = artifacts.request(
                     detail,
-                    RepresentationRequirement::Exact(ArtifactRepresentation::Developed),
+                    ArtifactRequirement::Exact(ImageOrigin::RawSensor),
                     applied_srgb_requirement(),
                     false,
                 );
@@ -1415,16 +1452,18 @@ mod tests {
                                 crate::publication::ProducedArtifact {
                                     source_revision: request.source_revision.clone(),
                                     variant: VariantIdentity {
-                                        representation: ArtifactRepresentation::Developed,
                                         presentation: applied_srgb(),
                                         policy_revision: MEDIA_CACHE_POLICY_REVISION,
                                         target: "backpressure-development".into(),
                                     },
-                                    actual_dimensions: DisplayDimensions {
-                                        width: 16,
-                                        height: 8,
-                                    },
-                                    native_detail: true,
+                                    facts: crate::media_source::test_facts(
+                                        ImageOrigin::RawSensor,
+                                        PixelDimensions {
+                                            width: 16,
+                                            height: 8,
+                                        },
+                                        true,
+                                    ),
                                     cache_generation: 0,
                                     payload: crate::publication::ProducedPayload::Encoded {
                                         bytes: jpeg(),
@@ -1439,6 +1478,7 @@ mod tests {
                                 crate::publication::PersistenceStatus::SkippedBackpressure
                             );
                             Ok(PreviewResult {
+                                image_facts: None,
                                 geometry: None,
                                 path: std::path::PathBuf::new(),
                                 width: 16,
@@ -1517,9 +1557,9 @@ mod tests {
                         DetailRequirement::Display { min_long_edge: 8 }
                     };
                     let request = if level == RenderLevel::Full {
-                        crate::pipeline::heif::artifact::full_decoded_request(&artifacts)
+                        crate::pipeline::heif::planner::full_decoded_request(&artifacts)
                     } else {
-                        crate::pipeline::heif::artifact::preview_request(&artifacts, detail, false)
+                        crate::pipeline::heif::planner::preview_request(&artifacts, detail, false)
                     };
                     artifacts.coordinate_work(
                         &request,
@@ -1542,18 +1582,20 @@ mod tests {
                             DynamicImage::new_rgb8(16, 8).save(&*output).unwrap();
                             artifacts.publish_staged(
                                 output,
-                                DisplayDimensions {
-                                    width: 16,
-                                    height: 8,
-                                },
-                                ArtifactRepresentation::Decoded,
+                                crate::media_source::test_facts(
+                                    ImageOrigin::PrimaryImage,
+                                    PixelDimensions {
+                                        width: 16,
+                                        height: 8,
+                                    },
+                                    true,
+                                ),
                                 ArtifactPresentation {
                                     geometry: None,
                                     orientation: OrientationState::Applied,
                                     color: CacheColorState::EmbeddedOrUnknown,
                                     sharpening: SharpeningState::None,
                                 },
-                                true,
                                 "staged-heif-source-decode".into(),
                                 level,
                                 generation,

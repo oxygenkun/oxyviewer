@@ -4,9 +4,9 @@ use super::artifact::{ArtifactCache, ArtifactEncoding, register_original_resourc
 use crate::{
     MediaError,
     cache::{
-        ArtifactPresentation, ArtifactRepresentation, CacheColorState, ColorRequirement,
-        DetailRequirement, DisplayDimensions, OrientationRequirement, OrientationState,
-        PresentationRequirement, RepresentationRequirement, SharpeningState,
+        ArtifactPresentation, ArtifactRequirement, CacheColorState, ColorRequirement,
+        DetailRequirement, ImageOrigin, OrientationRequirement, OrientationState, PixelDimensions,
+        PresentationRequirement, SharpeningState,
     },
     decode_control::{self, DecodePriority},
     delivery::{Delivery, THUMBNAIL_EDGE, THUMBNAIL_LIMITS},
@@ -29,7 +29,7 @@ pub(crate) fn thumbnail(
         DetailRequirement::Display {
             min_long_edge: THUMBNAIL_EDGE,
         },
-        RepresentationRequirement::BoundedThumbnail {
+        ArtifactRequirement::BoundedThumbnail {
             target: RASTER_THUMBNAIL,
         },
         PresentationRequirement {
@@ -88,7 +88,7 @@ pub(crate) fn thumbnail(
             if cancellation.is_cancelled() {
                 return Err(MediaError::Cancelled);
             }
-            let output = DisplayDimensions {
+            let output = PixelDimensions {
                 width: image.width(),
                 height: image.height(),
             };
@@ -106,17 +106,37 @@ pub(crate) fn thumbnail(
                 output.height,
                 image::ExtendedColorType::Rgba8,
             )?;
+            let mut facts = crate::media_source::source_facts(
+                ImageOrigin::PrimaryImage,
+                "primary".into(),
+                oxy_domain::EncodedDimensions(dimensions),
+                orientation.to_exif(),
+                oxy_domain::EncodedDimensions(dimensions).to_display(orientation.to_exif()),
+            );
+            facts.processing.push(oxy_domain::ImageOperation::Decode {
+                backend: "image".into(),
+            });
+            facts.resize(oxy_domain::DisplayDimensions(output));
+            if orientation.to_exif() != 1 {
+                facts.processing.push(oxy_domain::ImageOperation::Orient {
+                    exif: orientation.to_exif(),
+                });
+            }
+            facts.processing.push(oxy_domain::ImageOperation::Encode {
+                format: "png".into(),
+            });
+            facts.encoded_dimensions = oxy_domain::EncodedDimensions(output);
+            facts.exif_orientation = 1;
+            facts.byte_integrity = oxy_domain::ByteIntegrity::Reencoded;
             artifacts.publish_encoded(
                 bytes.into(),
-                output,
-                ArtifactRepresentation::Decoded,
+                facts.clone(),
                 ArtifactPresentation {
                     geometry: None,
                     orientation: OrientationState::Applied,
                     color: CacheColorState::EmbeddedOrUnknown,
                     sharpening: SharpeningState::None,
                 },
-                dimensions.width.max(dimensions.height) <= THUMBNAIL_EDGE,
                 RASTER_THUMBNAIL.into(),
                 level,
                 generation,

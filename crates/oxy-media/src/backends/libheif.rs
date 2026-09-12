@@ -17,22 +17,11 @@ pub fn dimensions(path: &Path) -> Result<ImageDimensions, MediaError> {
     })
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum DecodeProvenance {
-    ContainerThumbnail,
-    Primary { native_detail: bool },
-}
-
-pub struct ScaledDecode {
-    pub image: DynamicImage,
-    pub provenance: DecodeProvenance,
-}
-
 pub fn decode_scaled(
     path: &Path,
     max_size: u32,
     allow_undersized_thumbnail: bool,
-) -> Result<ScaledDecode, MediaError> {
+) -> Result<crate::media_source::DecodedImage, MediaError> {
     let context = open(path)?;
     let handle = context
         .primary_image_handle()
@@ -46,24 +35,33 @@ pub fn decode_scaled(
         handle.thumbnail_ids(&mut ids);
         let mut thumbnails = ids
             .into_iter()
-            .filter_map(|id| handle.thumbnail(id).ok())
+            .filter_map(|id| handle.thumbnail(id).ok().map(|thumbnail| (id, thumbnail)))
             .collect::<Vec<_>>();
-        thumbnails.sort_by_key(|thumbnail| thumbnail.width().max(thumbnail.height()));
+        thumbnails.sort_by_key(|(_, thumbnail)| thumbnail.width().max(thumbnail.height()));
         let thumbnail = thumbnails
             .iter()
-            .find(|thumbnail| thumbnail.width().max(thumbnail.height()) >= max_size)
+            .find(|(_, thumbnail)| thumbnail.width().max(thumbnail.height()) >= max_size)
             .or_else(|| {
                 may_use_undersized_thumbnail(allow_undersized_thumbnail)
                     .then(|| thumbnails.last())
                     .flatten()
             });
-        if let Some(thumbnail) = thumbnail
+        if let Some((id, thumbnail)) = thumbnail
             && let Ok(image) =
                 decode_preview_handle(thumbnail, path, Some(preview_thread_limit(max_size)))
         {
-            return Ok(ScaledDecode {
-                image: image.thumbnail(max_size, max_size),
-                provenance: DecodeProvenance::ContainerThumbnail,
+            let output = image.thumbnail(max_size, max_size);
+            let facts = crate::media_source::decoded_facts(
+                oxy_domain::ImageOrigin::EmbeddedPreview,
+                format!("heif-thumbnail-item:{id}"),
+                oxy_domain::DisplayDimensions((thumbnail.width(), thumbnail.height()).into()),
+                oxy_domain::DisplayDimensions((handle.width(), handle.height()).into()),
+                oxy_domain::DisplayDimensions((output.width(), output.height()).into()),
+                "libheif",
+            );
+            return Ok(crate::media_source::DecodedImage {
+                image: output,
+                facts,
             });
         }
     }
@@ -98,12 +96,17 @@ pub fn decode_scaled(
             path: path.to_owned(),
             message: "decoded image has no interleaved RGB plane".into(),
         })?;
-    Ok(ScaledDecode {
-        image: image_from_rgb8_plane(plane.data, plane.width, plane.height, plane.stride)?,
-        provenance: DecodeProvenance::Primary {
-            native_detail: max_size >= original_longest,
-        },
-    })
+    let image = image_from_rgb8_plane(plane.data, plane.width, plane.height, plane.stride)?;
+    let source = oxy_domain::DisplayDimensions((handle.width(), handle.height()).into());
+    let facts = crate::media_source::decoded_facts(
+        oxy_domain::ImageOrigin::PrimaryImage,
+        "primary".into(),
+        source,
+        source,
+        oxy_domain::DisplayDimensions((image.width(), image.height()).into()),
+        "libheif",
+    );
+    Ok(crate::media_source::DecodedImage { image, facts })
 }
 
 const fn may_use_undersized_thumbnail(allow_interim: bool) -> bool {

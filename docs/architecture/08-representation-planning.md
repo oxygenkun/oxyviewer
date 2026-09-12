@@ -8,7 +8,7 @@
 实施顺序及卡顿治理见 [任务计划](../tasks/jpg-quality-and-scroll-performance.md)。
 
 实现入口：`oxy-metadata-parser::jpeg_preview` 解析 APP1/MPF，
-`oxy-media/formats/jpeg.rs` 执行有界头部读取，`pipeline/jpeg/selection.rs` 判断内嵌候选资格，
+`oxy-media/formats/jpeg.rs` 执行有界头部读取，`pipeline/jpeg/planner.rs` 判断内嵌候选资格，
 `delivery.rs` 提供缓存和生产者共用的交付约束；`pipeline/jpeg.rs` 选择候选并执行回退。
 `pipeline/jpeg_transform.rs` 负责共享 JPEG 编码，`pipeline/thumbnail.rs` 负责缓存派生与交付兜底。JPEG 小图使用现有静态 libjpeg-turbo 的 IDCT 缩放，
 然后以质量 90 编码到最长边 512；PNG/WebP 使用保留 alpha 的小 PNG。
@@ -58,7 +58,7 @@ oxy-media dispatcher → 请求策略 → 有效缓存 / 有界源探测
   输入：请求约束、已验证候选、后端能力
   输出：直接交付 / 提取 / 转换 / 有序回退
           ↓
-executor → 显示规范化 → v2 artifact / registry → projection
+executor → 显示规范化 → v3 artifact / registry → projection
 ```
 
 - planner 不打开文件、不解码、不访问 SQLite、不创建线程、不发布结果。
@@ -66,19 +66,48 @@ executor → 显示规范化 → v2 artifact / registry → projection
 - 源探测在实际媒体请求的后台执行阶段发生，绝不进入目录首屏摘要、列表分页或 React render。
 - 当前范围不重写 HEIF 会话、RAW full lane 或现有统一队列。
 
+### 2.1 模块命名与职责
+
+- `pipeline/dispatcher.rs`：应用入口、格式分发和统一交付检查，不决定各格式的目标尺寸与后端回退。
+- `pipeline/{jpeg,raw,heif}/planner.rs`：集中请求契约、候选资格、候选顺序和等级策略。
+  planner 只消费已获得的源信息或探测结果，不执行文件探测、解码或发布。
+- `pipeline/{jpeg,raw,heif}.rs`：执行各格式的流程；HEIF 的已有 `artifact.rs` 继续负责产物生成，
+  父模块集中运行时探测、后端回退执行及尝试诊断，不再另拆 executor/probe/diagnostics 文件。
+- `backends/`：具体解码库与平台适配，不承担跨后端排序策略。
+
+JPEG 原 `selection.rs` 和 HEIF 原 `backend.rs` 分别由对应 planner 取代，文件总数不增加。
+简单的 raster/system 流程继续留在原文件中，不为目录对称强建 planner。模块名表达职责，
+`plan_*` 表示纯规划，`probe_*` 表示需要运行时探测，`execute_*` 表示执行已有方案。
+
 ## 3. 两类契约：质量与交付成本
 
 仅判断“足够清晰”不够。全分辨率图片也足够清晰，但不适合成为整目录缩略图的浏览器输入。
 
-内部设计使用下列概念，具体 Rust 字段可以在实现时收敛；不新增 IPC 请求层级：
+当前代码使用以下模型，公共序列化类型集中在 `oxy-domain/src/lib.rs`，不另拆小文件：
 
-| 内部概念 | 内容 |
+| 模型 | 含义 |
 | --- | --- |
-| `RenderRequestPolicy` | semantic level、质量条件、呈现条件、交付上限、policy identity |
-| `SourceRepresentation` | 原图/内嵌图/有效缓存；关联的主图；来源；像素尺寸；字节区间；方向、色彩、内容几何 |
-| `RepresentationOrigin` | primary、EXIF IFD1、MPF preview、RAW embedded、已有 artifact 等来源证据 |
-| `DeliveryLimits` | 允许交给浏览器的最大边、像素数、编码字节；与解码工作内存预算独立 |
-| `RepresentationPlan` | 候选 ID、操作序列、输出契约、失败时下一候选；不包含图像字节 |
+| `PixelDimensions` | 中性像素宽高；`EncodedDimensions` 和 `DisplayDimensions` 是不同 Rust 类型，通过方向显式转换 |
+| `SourceImage` | 源版本、候选 ID、`ImageOrigin`、候选的编码/显示尺寸；缓存派生保留这一身份 |
+| `ArtifactFacts` | 实际输出编码/显示尺寸、输出 EXIF 方向、覆盖与采样、完成的处理步骤、字节保真状态 |
+| `CacheRequest` | `DetailRequirement`、`ArtifactRequirement`、呈现要求和策略版本；由格式 planner 建立 |
+| `VariantIdentity` | 呈现策略、目标和策略版本；不再把来源或加工方式写成同一个表示枚举 |
+| `DeliveryLimits` | 浏览器交付的最大边和编码字节，与清晰度要求、解码内存预算分别判断 |
+
+`ImageOrigin` 只有 `PrimaryImage`、`EmbeddedPreview`、`RawSensor`。MPF 被缩小和重编码后仍来自
+`EmbeddedPreview`，但 `processing` 会记录 Decode/Resize/Orient/Encode，`byteIntegrity` 为
+`Reencoded`。Sony HIF 若仅补写 EXIF 方向，则记录 MetadataEdit/MetadataAdjusted；未改变载荷时才
+记录 SourcePayload。LibRaw 未提供原始载荷保真证据的提取结果使用 Unverified。
+
+`DetailCoverage` 记录主图参考尺寸、参考坐标中的内容覆盖、剩余采样尺寸与是否发生降采样。
+原生细节由这些事实推导，不保存独立 `native_detail` 布尔值。缩小后再放大不会增加剩余采样尺寸，
+也不能重新满足更高细节要求。LibRaw full 使用实际显影输出确定原生有效区域，避免把元数据尺寸的
+细微差异记录为一次并未发生的缩放。`PreviewGeometry.contentRect` 仍描述输出画布中的内容区域，
+与参考主图坐标中的覆盖区域各有用途。
+
+planner 的操作计划不写入 `processing`；生产者只在操作成功后记录事实。HEIF 会话记录实际解码
+后端，并区分 JPEG DCT 瓦片拼接与像素瓦片组装。`PreviewKind` 仅作为界面展示标签由事实派生，
+不用于反推来源、清晰度或缓存资格。
 
 候选 ID 绑定 `SourceRevision` 与解析规则版本；区间使用经校验的绝对 `u64` offset/length，
 不能以“第 2 张图片”或一个可复用 URL 作为跨源版本身份。
@@ -108,10 +137,22 @@ executor → 显示规范化 → v2 artifact / registry → projection
 完全相同 full 定义：
 
 - JPEG full 必须对应主图；MPF 的 Large Thumbnail 即使很大也不能标成 full Satisfied。
-- RAW full 继续沿用当前最大相机 JPEG / development 的既定策略及表示语义。
+- RAW full 表示满足 planner 的完整查看要求；当前优先接受双边覆盖源尺寸至少 90% 的
+  相机 JPEG，不满足时继续 development。最大有效 JPEG 仅是提取候选，不等于 full。
 - RAW thumbnail 接入时，内嵌 1616/1920 像素 JPEG 作为转换输入，最终交付同样受缩略图上限约束。
 - HEIF 的经识别 160 像素快速 thumbnail 属于已有独立策略。本轮不把它强制升级为 512，
   不改变 full tile/session 行为；未来接入时保留其资格规则和真实 fixture。
+
+RAW full 的要求由 `pipeline/raw/planner.rs::RawFullPlan` 生成：将当前 90% 双边覆盖
+换算为向上取整的 `MinimumDimensions`，并用 `ExactVariant` 绑定已完成候选选择的来源；
+显影候选独立要求 `NativeDetail`、`ImageOrigin::RawSensor` 和应用后的 sRGB 呈现。
+`cache/model.rs` 只检查这些通用能力，不包含 RAW 格式分支、百分比阈值或候选选择规则。
+新生成结果和磁盘命中共同使用 `satisfies`，不再在 executor 重复判断覆盖率。
+
+缓存仍保存各等级可用的真实产物：较小的最大内嵌 JPEG 可保留作 interim，无法满足 full
+时继续显影；已缓存的合格 JPEG 或显影 full 会先于 interim 复用。候选查询合并读取同源
+manifest，保留锁后复查、generation、活动发布及资源 lease。图像事实模型使用 v3 schema
+和对应策略版本；同版本下已生成的合格 JPEG 与显影 full 均可复用，旧 v2 不读取、不迁移。
 
 ### 3.3 160×120 小图的处理决定
 
@@ -158,7 +199,7 @@ MPF preview 分别为 1616×1080 与 1620×1080。全部文件的主图方向为
 | `oxy-media/src/formats/jpeg.rs` | 有界 marker/seek 读取、候选构建、容器关联验证 |
 | `oxy-media/src/formats/jpeg/quirks.rs` | 仅放有 fixture 支持的方向/色彩/padding 等格式变体规则 |
 | `oxy-media/src/delivery.rs` | 通用尺寸／编码字节约束与直接交付判断；缓存不依赖 pipeline |
-| `oxy-media/src/pipeline/jpeg/selection.rs` | JPEG 内嵌候选的质量、几何、色彩与编辑状态判定 |
+| `oxy-media/src/pipeline/jpeg/planner.rs` | JPEG 请求契约、内嵌候选资格、排序及尝试上限 |
 | `oxy-media/src/pipeline/jpeg_transform.rs` | 共享 JPEG 缩小／编码，返回字节、尺寸及呈现信息 |
 | `oxy-media/src/pipeline/thumbnail.rs` | 读取缓存派生输入、适配缩略图交付并发布结果 |
 | `oxy-media/src/backends/libjpeg.rs` 与 `backends/libjpeg/` | 参数化 IDCT 解码、系数拼接及安全 FFI；不拥有 HEIF 缓存或输出文件 |
@@ -214,7 +255,7 @@ thumbnail 与 full 仅共享不可变源事实/已完成 artifact，不强制共
 
 ### 7.1 缓存替代规则
 
-当前 `DetailRequirement::Display` 只有最小清晰度，`native_detail` 也可以满足它。
+`DetailRequirement::Display` 检查剩余采样尺寸；完整原生细节也可以满足较大的显示请求。
 保留这种“可以作为输入”的能力；新增 planner 的交付校验，区分：
 
 ```text
@@ -226,18 +267,14 @@ thumbnail 与 full 仅共享不可变源事实/已完成 artifact，不强制共
 不能让现有 `ArtifactCache::lookup` 提前注册并回复超限资源。实现使用 `BoundedThumbnail`
 约束正常 lookup，另查可派生的较大缓存，在派生完成后才发布 thumbnail。
 
-新 JPEG thumbnail 使用独立 policy revision `jpeg-thumbnail-v1-bounded-mpf`；full 保持
-原图 policy。`preview_policy_revision()` 必须区分等级，避免旧 SQLite Ready projection
-绕过新 planner 继续返回大图。RAW thumbnail 已拆为 `raw-thumbnail-v1-bounded-jpeg`，preview/full
-各自保留原策略身份。Ready 投影恢复还会检查实际尺寸和编码长度。
+所有当前 preview policy 加入 `facts-v1` 版本，缓存目录和 manifest 升为 v3，不读取或迁移旧
+artifact/projection 语义。旧 v2 目录保留但不再参与命中、容量统计或维护，避免启动时递归清理。
+`cache/store.rs` 取代带版本号的实现文件名；版本仅由 schema 与目录常量控制。
 
-沿用 v2 的 SourceRevision、VariantIdentity、manifest 与 publication。输出 target 应编码
-派生策略版本；表示来源、实际方向/色彩/contentRect 参与产物身份。现有 `Embedded` 枚举表示
-来源于内嵌图，不保证字节原样提取；本次 MPF 小图明确是重新编码产物，诊断 backend 为
-`jpeg-mpf-thumbnail`，主图派生为 `jpeg-primary-thumbnail`。小图永远不能满足 JPEG full 的主图要求。
-
-旧高清 cache 不批量清空，可以作为派生输入；源/格式不相关的缓存不受影响。
-原图不复制到 thumbnail cache；MPF 大预览首版按需提取后生成小 artifact，不强制同时永久保存两份。
+产物身份包含 `SourceRevision`、`VariantIdentity`、完整 `ArtifactFacts` 与编码内容。发布、active
+复用、manifest 恢复、SQLite projection 和缩略图派生都保留事实。发布和恢复验证源版本以及坐标
+一致性，磁盘校验精确比较实际编码宽高，不再用横竖交换的宽松匹配掩盖方向错误。原有 generation
+fence、lease、完成时复核、非阻塞发布和清单修复保持不变。
 
 ### 7.2 必须保留的生命周期
 

@@ -366,7 +366,7 @@ mod tests {
 
         assert!(!legacy.exists());
         assert_eq!(std::fs::read(nested.join("keep.txt")).unwrap(), b"keep");
-        assert!(preview_dir.join("media-cache-v2").is_dir());
+        assert!(preview_dir.join("media-cache-v3").is_dir());
     }
 
     #[test]

@@ -3,9 +3,8 @@ use crate::backends::apple_image_io;
 use crate::{
     MediaError,
     cache::{
-        ArtifactPresentation, ArtifactRepresentation, CacheColorState, DetailRequirement,
-        DisplayDimensions, OrientationRequirement, OrientationState, PresentationRequirement,
-        RepresentationRequirement, SharpeningState,
+        ArtifactPresentation, ArtifactRequirement, CacheColorState, DetailRequirement, ImageOrigin,
+        OrientationRequirement, OrientationState, PresentationRequirement, SharpeningState,
     },
     media_source::has_complete_jpeg_markers,
     pipeline::artifact::ArtifactCache,
@@ -14,7 +13,28 @@ use crate::{
 use oxy_domain::{PreviewResult, RenderLevel};
 use std::path::Path;
 
-pub fn preview(
+pub(crate) fn preview(
+    path: &Path,
+    cache_dir: &Path,
+    level: RenderLevel,
+    allow_interim: bool,
+    cancellation: &oxy_runtime::CancellationToken,
+) -> Result<PreviewResult, MediaError> {
+    let max_size = match level {
+        RenderLevel::Thumbnail | RenderLevel::Preview => 512,
+        RenderLevel::Full => 4_096,
+    };
+    preview_with_size(
+        path,
+        cache_dir,
+        max_size,
+        level,
+        allow_interim,
+        cancellation,
+    )
+}
+
+pub(crate) fn preview_with_size(
     path: &Path,
     cache_dir: &Path,
     max_size: u32,
@@ -41,7 +61,7 @@ pub fn preview(
     };
     let request = artifacts.request(
         detail,
-        RepresentationRequirement::Exact(ArtifactRepresentation::System),
+        ArtifactRequirement::Exact(ImageOrigin::PrimaryImage),
         PresentationRequirement {
             orientation: OrientationRequirement::Exact(presentation.orientation),
             color: crate::cache::ColorRequirement::Any,
@@ -51,7 +71,7 @@ pub fn preview(
     );
     let production_request = artifacts.request(
         request.detail,
-        request.representation,
+        request.artifact,
         request.presentation,
         allow_interim,
     );
@@ -84,14 +104,41 @@ pub fn preview(
                 }
                 Err(error) => return Err(error.into()),
             };
-            let native_detail =
-                sorted_dimensions((width, height)) == sorted_dimensions(source_dimensions);
+            use image::ImageDecoder;
+            let orientation = image::ImageReader::open(path)
+                .ok()
+                .and_then(|reader| reader.with_guessed_format().ok())
+                .and_then(|reader| reader.into_decoder().ok())
+                .and_then(|mut decoder| decoder.orientation().ok())
+                .map_or(1, image::metadata::Orientation::to_exif);
+            let encoded = oxy_domain::EncodedDimensions(source_dimensions.into());
+            let reference = encoded.to_display(orientation);
+            let mut facts = crate::media_source::source_facts(
+                ImageOrigin::PrimaryImage,
+                "primary".into(),
+                encoded,
+                orientation,
+                reference,
+            );
+            facts.processing.push(oxy_domain::ImageOperation::Decode {
+                backend: "system:ImageIO".into(),
+            });
+            facts.resize(oxy_domain::DisplayDimensions((width, height).into()));
+            if orientation != 1 {
+                facts
+                    .processing
+                    .push(oxy_domain::ImageOperation::Orient { exif: orientation });
+            }
+            facts.processing.push(oxy_domain::ImageOperation::Encode {
+                format: "jpeg".into(),
+            });
+            facts.encoded_dimensions = oxy_domain::EncodedDimensions((width, height).into());
+            facts.exif_orientation = 1;
+            facts.byte_integrity = oxy_domain::ByteIntegrity::Reencoded;
             artifacts.publish_staged(
                 temporary,
-                DisplayDimensions { width, height },
-                ArtifactRepresentation::System,
+                facts.clone(),
                 presentation,
-                native_detail,
                 format!("{SYSTEM_PREVIEW}:{max_size}"),
                 level,
                 generation,
@@ -110,10 +157,6 @@ fn is_heif_path(path: &Path) -> bool {
             .as_str(),
         "heif" | "heic" | "hif"
     )
-}
-
-fn sorted_dimensions((width, height): (u32, u32)) -> (u32, u32) {
-    (width.min(height), width.max(height))
 }
 
 #[cfg(target_os = "macos")]

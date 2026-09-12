@@ -3,7 +3,7 @@ use super::{HeifTileData, tile_cache::PositionedTile};
 use crate::{
     MediaError,
     backends::libjpeg::stitch::{JpegTile, StitchOutcome, stitch_coefficients},
-    cache::DisplayDimensions,
+    media_source::PixelDimensions,
 };
 use std::{
     fs::File,
@@ -42,7 +42,7 @@ pub(super) fn write_tiles(
     };
     let mut file = File::create(destination)?;
     match stitch_coefficients(
-        DisplayDimensions { width, height },
+        PixelDimensions { width, height },
         &inputs,
         256 * 1024 * 1024,
         &mut file,

@@ -3,7 +3,7 @@ use crate::{
     MediaError,
     backends::libjpeg::{self, DecodePlan},
     cache::{
-        ArtifactPresentation, CacheColorState, DisplayDimensions, OrientationState, SharpeningState,
+        ArtifactPresentation, CacheColorState, OrientationState, PixelDimensions, SharpeningState,
     },
     decode_control::{self, DecodePriority},
     delivery::{Delivery, THUMBNAIL_EDGE, THUMBNAIL_LIMITS},
@@ -19,8 +19,9 @@ use std::{io::Cursor, sync::Arc};
 
 /// Encoded pixels and their presentation travel together to the publication boundary.
 pub(crate) struct EncodedJpegThumbnail {
+    pub facts: oxy_domain::ArtifactFacts,
     pub bytes: Arc<[u8]>,
-    pub dimensions: DisplayDimensions,
+    pub dimensions: PixelDimensions,
     pub presentation: ArtifactPresentation,
 }
 
@@ -30,14 +31,15 @@ pub(super) struct ConversionPlan {
 }
 
 pub(super) fn plan_conversion(
-    dimensions: DisplayDimensions,
+    encoded_dimensions: oxy_domain::EncodedDimensions,
     bytes: u64,
 ) -> Result<ConversionPlan, MediaError> {
     // Worst-case full 4:4:4 progressive coefficients (6 bytes/pixel),
     // IDCT-reduced RGB and resampling buffers, two encoded inputs, and scratch.
     // This is temporary conversion admission, not total process memory.
-    let decode = libjpeg::plan_decode(dimensions, THUMBNAIL_EDGE);
-    let scaled = decode.output;
+    let dimensions = encoded_dimensions.0;
+    let decode = libjpeg::plan_decode(encoded_dimensions, THUMBNAIL_EDGE);
+    let scaled = decode.output.0;
     let scaled_bytes = u64::from(scaled.width) * u64::from(scaled.height) * 6;
     let cost = u64::from(dimensions.width)
         .checked_mul(u64::from(dimensions.height))
@@ -65,7 +67,7 @@ pub(crate) fn encode_jpeg_thumbnail(
         cancellation.is_cancelled()
     })?;
     let dimensions = header
-        .dimensions
+        .encoded_dimensions
         .ok_or_else(|| MediaError::CacheArtifact("camera JPEG has no dimensions".into()))?;
     let conversion = plan_conversion(dimensions, bytes.len() as u64)?;
     let _permit = decode_control::acquire_conversion(priority, conversion.cost, &|| {
@@ -124,6 +126,22 @@ pub(super) fn normalize(
     if cancellation.is_cancelled() {
         return Err(MediaError::Cancelled);
     }
+    let source_encoded = oxy_domain::EncodedDimensions(decoder.dimensions().into());
+    let reference = primary
+        .encoded_dimensions
+        .unwrap_or(source_encoded)
+        .to_display(primary.exif.orientation.unwrap_or(1) as u8);
+    let mut facts = crate::media_source::source_facts(
+        if embedded.is_some() {
+            oxy_domain::ImageOrigin::EmbeddedPreview
+        } else {
+            oxy_domain::ImageOrigin::PrimaryImage
+        },
+        "jpeg-image".into(),
+        source_encoded,
+        orientation.to_exif(),
+        reference,
+    );
     drop(decoder);
     let image = crate::backends::libjpeg::decode_scaled(&bytes, plan, cancellation)?;
     // Resize before orientation avoids a second full-size rotation allocation.
@@ -133,7 +151,7 @@ pub(super) fn normalize(
     if cancellation.is_cancelled() {
         return Err(MediaError::Cancelled);
     }
-    let dimensions = DisplayDimensions {
+    let dimensions = PixelDimensions {
         width: image.width(),
         height: image.height(),
     };
@@ -150,7 +168,23 @@ pub(super) fn normalize(
             "normalized JPEG exceeds thumbnail delivery budget".into(),
         ));
     }
+    facts.processing.push(oxy_domain::ImageOperation::Decode {
+        backend: "libjpeg".into(),
+    });
+    facts.resize(oxy_domain::DisplayDimensions(dimensions));
+    if orientation.to_exif() != 1 {
+        facts.processing.push(oxy_domain::ImageOperation::Orient {
+            exif: orientation.to_exif(),
+        });
+    }
+    facts.processing.push(oxy_domain::ImageOperation::Encode {
+        format: "jpeg".into(),
+    });
+    facts.encoded_dimensions = oxy_domain::EncodedDimensions(dimensions);
+    facts.exif_orientation = 1;
+    facts.byte_integrity = oxy_domain::ByteIntegrity::Reencoded;
     Ok(EncodedJpegThumbnail {
+        facts,
         bytes: bytes.into(),
         dimensions,
         presentation: presentation(
@@ -186,10 +220,10 @@ mod tests {
                 &primary,
                 Some(&child),
                 libjpeg::plan_decode(
-                    DisplayDimensions {
+                    oxy_domain::EncodedDimensions(PixelDimensions {
                         width: 800,
                         height: 600
-                    },
+                    }),
                     THUMBNAIL_EDGE
                 ),
                 &CancellationToken::default()
@@ -231,10 +265,10 @@ mod tests {
                 &header,
                 Some(&header),
                 libjpeg::plan_decode(
-                    DisplayDimensions {
+                    oxy_domain::EncodedDimensions(PixelDimensions {
                         width: 100,
                         height: 60,
-                    },
+                    }),
                     THUMBNAIL_EDGE,
                 ),
                 &CancellationToken::default(),

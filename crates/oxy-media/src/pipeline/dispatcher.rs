@@ -1,4 +1,4 @@
-use super::{heif::artifact as heif, raw, system};
+use super::{heif, raw, system};
 use crate::{
     MediaError, decode_control::DecodePriority, media_source::preview_result,
     pipeline::artifact::register_original_resource,
@@ -13,7 +13,7 @@ pub struct AppPreview {
 }
 
 /// Unified preview dispatcher. Callers request a semantic [`RenderLevel`];
-/// this module alone chooses the platform/format-specific decoder and size.
+/// format pipelines own request policy, backend choices, and fallback.
 pub fn preview(
     path: &Path,
     cache_dir: &Path,
@@ -120,113 +120,29 @@ fn execute(
             path,
             preview_result(path.to_owned(), PreviewKind::Original, level)?,
         ),
-        (AssetKind::Raw, RenderLevel::Thumbnail) => {
-            raw::preview_with_priority(path, cache_dir, 512, priority, allow_interim, cancellation)
-        }
-        (AssetKind::Raw, RenderLevel::Preview) => raw::preview_with_priority(
+        (AssetKind::Raw, _) => raw::preview(
             path,
             cache_dir,
-            4_096,
+            level,
             priority,
             allow_interim,
             cancellation,
         ),
-        (AssetKind::Raw, RenderLevel::Full) => {
-            raw::full_with_interim(path, cache_dir, allow_interim, cancellation)
-        }
-        (AssetKind::Heif, RenderLevel::Thumbnail) => heif::preview(
+        (AssetKind::Heif, _) => heif::preview(
             path,
             cache_dir,
-            512,
+            level,
             priority,
-            true,
-            true,
             allow_interim,
-            false,
             cancellation,
         ),
-        (AssetKind::Heif, RenderLevel::Preview) => heif::preview(
-            path,
-            cache_dir,
-            4_096,
-            priority,
-            true,
-            true,
-            allow_interim,
-            false,
-            cancellation,
-        ),
-        (AssetKind::Heif, RenderLevel::Full) => match heif::full(path, cache_dir, cancellation) {
-            result @ Ok(_) => result,
-            Err(error) if !heif_full_error_allows_fallback(&error) => Err(error),
-            Err(error) => {
-                eprintln!(
-                    "full-detail HEIF artifact attempt failed for {}: {error}",
-                    path.display()
-                );
-                heif::preview(
-                    path,
-                    cache_dir,
-                    8_192,
-                    DecodePriority::Foreground,
-                    false,
-                    true,
-                    allow_interim,
-                    true,
-                    cancellation,
-                )
-            }
-        },
-        (AssetKind::Tiff, RenderLevel::Thumbnail | RenderLevel::Preview) => {
-            system::preview(path, cache_dir, 512, level, allow_interim, cancellation)
-        }
-        (AssetKind::Tiff, RenderLevel::Full) => {
-            system::preview(path, cache_dir, 4_096, level, allow_interim, cancellation)
+        (AssetKind::Tiff, _) => {
+            system::preview(path, cache_dir, level, allow_interim, cancellation)
         }
     }?;
     if level == RenderLevel::Thumbnail && matches!(kind, AssetKind::Heif | AssetKind::Tiff) {
         super::thumbnail::ensure_thumbnail_delivery(path, cache_dir, result, priority, cancellation)
     } else {
         Ok(result)
-    }
-}
-
-fn heif_full_error_allows_fallback(error: &MediaError) -> bool {
-    if let MediaError::BackendAttempts { source, .. } = error {
-        return heif_full_error_allows_fallback(source);
-    }
-    !matches!(
-        error,
-        MediaError::Cancelled
-            | MediaError::StaleCacheGeneration
-            | MediaError::StaleSourceRevision
-            | MediaError::ResourceBudgetExhausted { .. }
-    )
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn heif_full_generation_and_source_fences_never_fallback() {
-        assert!(!heif_full_error_allows_fallback(
-            &MediaError::StaleCacheGeneration
-        ));
-        assert!(!heif_full_error_allows_fallback(
-            &MediaError::StaleSourceRevision
-        ));
-        assert!(!heif_full_error_allows_fallback(&MediaError::Cancelled));
-        assert!(!heif_full_error_allows_fallback(
-            &MediaError::ResourceBudgetExhausted {
-                budget: "entry",
-                current: 512,
-                limit: 512,
-                requested: 1,
-            }
-        ));
-        assert!(heif_full_error_allows_fallback(
-            &MediaError::NativeDecoderUnavailable
-        ));
     }
 }

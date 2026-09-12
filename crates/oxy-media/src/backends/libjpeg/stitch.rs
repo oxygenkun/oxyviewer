@@ -1,5 +1,5 @@
 //! Safe libjpeg coefficient stitching; callers own files and cache publication.
-use crate::{MediaError, cache::DisplayDimensions};
+use crate::{MediaError, media_source::PixelDimensions};
 use std::{
     ffi::{CStr, c_char, c_void},
     io::Write,
@@ -81,7 +81,7 @@ extern "C" fn write(context: *mut c_void, bytes: *const u8, length: usize) -> i3
 }
 
 pub(crate) fn stitch_coefficients(
-    dimensions: DisplayDimensions,
+    dimensions: PixelDimensions,
     tiles: &[JpegTile<'_>],
     memory_budget: u64,
     output: &mut dyn Write,
@@ -166,7 +166,7 @@ mod tests {
         image::codecs::jpeg::JpegEncoder::new_with_quality(&mut bytes, 90)
             .encode_image(&image::DynamicImage::ImageRgb8(pixels))
             .unwrap();
-        let dimensions = DisplayDimensions {
+        let dimensions = PixelDimensions {
             width: 256,
             height: 256,
         };

@@ -132,7 +132,7 @@ pub(super) fn detect(
     turn: u8,
 ) -> Option<PreviewGeometry> {
     let (width, height) = image.dimensions();
-    // The validated SHIF fast representation is a landscape 160x120 JPEG.
+    // The validated SHIF fast origin is a landscape 160x120 JPEG.
     // Other layouts stay on the existing path until real samples establish them.
     if (width, height) != (160, 120) || size.width < size.height {
         return None;

@@ -4,7 +4,7 @@ use crate::{
     backends::{apple_core_image, apple_image_io},
     cache::write_jpeg_atomically,
     media_source::preview_result,
-    pipeline::raw::RawBackend as PlannedRawBackend,
+    pipeline::raw::planner::RawBackend as PlannedRawBackend,
     presentation::RAW_DEVELOPED_JPEG,
 };
 use crate::{
@@ -15,7 +15,7 @@ use crate::{
             cache_full, cached_heif_full, full as heif_full, preview as heif_artifact_preview,
         },
         raw::{self, covers_source as covers_raw_source},
-        system::preview as system_preview,
+        system::preview_with_size as system_preview,
     },
 };
 use image::{DynamicImage, ImageDecoder, ImageFormat, ImageReader, Rgb, RgbImage};
@@ -299,8 +299,21 @@ fn heif_without_identified_fast_representation_uses_semantic_preview_size() {
     )
     .unwrap();
 
-    assert_eq!(thumbnail.kind, PreviewKind::Decoded);
+    assert_eq!(thumbnail.kind, PreviewKind::Embedded);
     assert_eq!(fit.kind, PreviewKind::Decoded);
+    assert!(
+        thumbnail
+            .image_facts
+            .as_ref()
+            .unwrap()
+            .source
+            .candidate_id
+            .starts_with("ffmpeg-stream:")
+    );
+    assert_eq!(
+        fit.image_facts.as_ref().unwrap().source.origin,
+        oxy_domain::ImageOrigin::PrimaryImage
+    );
     assert!(thumbnail.width.max(thumbnail.height) > 160);
     assert!(
         fit.width.max(fit.height) > thumbnail.width.max(thumbnail.height),
@@ -515,7 +528,7 @@ fn preserves_embedded_jpeg_for_loupe_fixture() {
     let raw_path =
         fs::canonicalize(workspace_path(std::env::var_os("OXY_RAW_FIXTURE").unwrap())).unwrap();
     let directory = tempfile::tempdir().unwrap();
-    let embedded = match libraw::embedded(&raw_path, 4_096).unwrap() {
+    let embedded = match libraw::embedded(&raw_path, 4_096).unwrap().0 {
         libraw::Preview::EmbeddedJpeg(data) => data,
         libraw::Preview::EmbeddedImage(_) => {
             panic!("fixture did not expose an embedded JPEG")
@@ -544,7 +557,7 @@ fn preserves_embedded_jpeg_for_loupe_fixture() {
 
     assert!(
         matches!(
-            libraw::embedded(&raw_path, 512).unwrap(),
+            libraw::embedded(&raw_path, 512).unwrap().0,
             libraw::Preview::EmbeddedJpeg(_)
         ),
         "thumbnail requests must preserve the selected embedded JPEG"
@@ -575,8 +588,35 @@ fn resolves_full_detail_raw_fixture() {
     );
     assert!(full.path.is_file());
     assert_eq!(
-        raw::full(&raw_path, directory.path(), &CancellationToken::default()).unwrap(),
-        full
+        full.satisfaction,
+        Some(oxy_domain::MediaSatisfaction::Satisfied)
+    );
+    let warm_started = Instant::now();
+    let warm = raw::full_with_interim(
+        &raw_path,
+        directory.path(),
+        true,
+        &CancellationToken::default(),
+    )
+    .unwrap();
+    assert_eq!(warm, full);
+    let facts = full.image_facts.as_ref().unwrap();
+    assert!(facts.is_consistent());
+    assert_eq!(facts.native_detail(), full.kind == PreviewKind::Developed);
+    if full.kind == PreviewKind::Developed {
+        assert!(
+            !facts
+                .processing
+                .iter()
+                .any(|step| matches!(step, oxy_domain::ImageOperation::Resize { .. }))
+        );
+    }
+    eprintln!(
+        "RAW full {:?} {}x{}, warm={:?}",
+        full.kind,
+        full.width,
+        full.height,
+        warm_started.elapsed()
     );
 }
 
@@ -625,7 +665,7 @@ fn raw_full_upgrades_thumbnail_to_largest_embedded_jpeg_fixture() {
     assert_eq!(full.kind, PreviewKind::Embedded);
     assert_eq!(full.satisfaction, Some(Satisfied));
     assert!(full.width.max(full.height) > thumbnail.width.max(thumbnail.height));
-    let expected = match libraw::embedded(&path, 0).unwrap() {
+    let expected = match libraw::embedded(&path, 0).unwrap().0 {
         libraw::Preview::EmbeddedJpeg(bytes) => bytes,
         libraw::Preview::EmbeddedImage(_) => panic!("expected JPEG"),
     };
@@ -650,6 +690,7 @@ fn raw_full_upgrades_thumbnail_to_largest_embedded_jpeg_fixture() {
     .unwrap();
     assert_eq!(warm.satisfaction, Some(Satisfied));
     assert_eq!(warm.kind, PreviewKind::Embedded);
+    assert_eq!(warm.image_facts, full.image_facts);
     eprintln!(
         "RAW full: interim={}x{}, satisfied={}x{}, bytes={}, elapsed={:?}",
         interim.width,
