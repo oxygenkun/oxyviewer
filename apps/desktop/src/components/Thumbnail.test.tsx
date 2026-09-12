@@ -14,6 +14,7 @@ import { Thumbnail } from "./Thumbnail";
 
 const apiMocks = vi.hoisted(() => ({
   tauri: false,
+  folderThumbnail: undefined as { url: string; width: number; height: number } | undefined,
   generatedPreview: vi.fn(),
   renewMediaResource: vi.fn((_id: string) => Promise.resolve(true)),
   releaseMediaResource: vi.fn(() => Promise.resolve()),
@@ -33,6 +34,7 @@ vi.mock("../lib/folderThumbnailCache", async (importOriginal) => ({
   ...await importOriginal<typeof import("../lib/folderThumbnailCache")>(),
   preloadFolderThumbnail: async () => undefined,
   getFolderThumbnail: () => undefined,
+  useFolderThumbnail: () => apiMocks.folderThumbnail,
 }));
 
 const asset: AssetSummary = {
@@ -79,6 +81,7 @@ async function render(priority: PreviewPriority, currentAsset = asset, enabled =
 
 beforeEach(() => {
   apiMocks.tauri = false;
+  apiMocks.folderThumbnail = undefined;
   apiMocks.generatedPreview.mockReset();
   apiMocks.renewMediaResource.mockClear();
   apiMocks.releaseMediaResource.mockClear();
@@ -104,6 +107,30 @@ afterEach(async () => {
 });
 
 describe("filmstrip thumbnail display retention", () => {
+  it("keeps the largest Interim above the folder thumbnail until final browser decode completes", async () => {
+    apiMocks.folderThumbnail = { url: "blob:retained-small", width: 341, height: 512 };
+    const raw = { ...asset, kind: "raw" as const, path: "/photos/interim.rw2" };
+    const stage = (revision: number, satisfaction: "interim" | "satisfied") => acceptImageProjection({
+      path: raw.path, sourceRevision: "source", stateRevision: revision, validAt: 1, status: "ready", level: "full",
+      result: { path: `/cache/${satisfaction}.jpg`, width: 4000, height: 6000,
+        kind: "embedded", renderLevel: "full", satisfaction },
+    });
+    stage(1, "interim");
+    await act(async () => root.render(<QueryClientProvider client={client}><Thumbnail asset={raw} large /></QueryClientProvider>));
+    const visible = () => container.querySelector("img:not(.thumbnail__pending-image)")?.getAttribute("src");
+    expect(visible()).toBe("blob:retained-small");
+    await act(async () => container.querySelector(".thumbnail__pending-image")!.dispatchEvent(new Event("load")));
+    expect(visible()).toBe("/cache/interim.jpg");
+    let finishDecode: (() => void) | undefined;
+    Object.defineProperty(HTMLImageElement.prototype, "decode", { configurable: true,
+      value: () => new Promise<void>((resolve) => { finishDecode = resolve; }) });
+    await act(async () => stage(2, "satisfied"));
+    expect(visible()).toBe("/cache/interim.jpg");
+    await act(async () => container.querySelector(".thumbnail__pending-image")!.dispatchEvent(new Event("load")));
+    expect(visible()).toBe("/cache/interim.jpg");
+    await act(async () => finishDecode!());
+    expect(visible()).toBe("/cache/satisfied.jpg");
+  });
   it("keeps the displayed RAW full image through a retry and reports an eventual failure", async () => {
     apiMocks.tauri = true;
     clearImageProjections();

@@ -81,6 +81,18 @@ pub(super) const fn preview_max_size(level: RenderLevel) -> Option<u32> {
 pub(super) const LARGEST_EMBEDDED_JPEG_TARGET: &str =
     "raw-largest-embedded-jpeg-v2-resolved-dimensions";
 
+pub(super) fn largest_preview_request(artifacts: &ArtifactCache) -> CacheRequest {
+    artifacts.request(
+        DetailRequirement::Display { min_long_edge: 1 },
+        ArtifactRequirement::ExactVariant {
+            origin: ImageOrigin::EmbeddedPreview,
+            target: LARGEST_EMBEDDED_JPEG_TARGET.into(),
+        },
+        display_requirement(),
+        false,
+    )
+}
+
 pub(super) struct RawFullPlan {
     pub embedded: CacheRequest,
     pub developed: CacheRequest,
@@ -106,14 +118,6 @@ impl RawFullPlan {
 
     pub fn embedded_production(&self) -> CacheRequest {
         CacheRequest {
-            allow_interim: true,
-            ..self.embedded.clone()
-        }
-    }
-
-    pub fn interim(&self) -> CacheRequest {
-        CacheRequest {
-            artifact: ArtifactRequirement::AnyDisplay,
             allow_interim: true,
             ..self.embedded.clone()
         }
@@ -391,5 +395,40 @@ mod tests {
                 }
             );
         }
+    }
+
+    #[test]
+    fn small_largest_camera_jpeg_satisfies_preview_but_not_full() {
+        let directory = tempfile::tempdir().unwrap();
+        let source = directory.path().join("source.raw");
+        std::fs::write(&source, b"source revision").unwrap();
+        let cache_dir = directory.path().join("cache");
+        let artifacts = ArtifactCache::new(&source, &cache_dir).unwrap();
+        let plan = RawFullPlan::new(
+            &artifacts,
+            ImageDimensions {
+                width: 100,
+                height: 60,
+            },
+        );
+        publish(&artifacts, &plan.embedded_production(), 32, 20, false);
+        assert!(
+            artifacts
+                .lookup(&plan.embedded, RenderLevel::Full)
+                .unwrap()
+                .is_none()
+        );
+        let preview = super::super::preview_with_priority(
+            &source,
+            &cache_dir,
+            4096,
+            crate::decode_control::DecodePriority::Foreground,
+            false,
+            &oxy_runtime::CancellationToken::default(),
+        )
+        .unwrap();
+        assert_eq!((preview.width, preview.height), (32, 20));
+        assert_eq!(preview.satisfaction, Some(MediaSatisfaction::Satisfied));
+        assert_eq!(preview.kind, PreviewKind::Embedded);
     }
 }

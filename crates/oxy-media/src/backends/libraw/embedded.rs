@@ -200,6 +200,47 @@ mod tests {
             );
             assert_eq!((full.width, full.height), (4000, 6000));
             assert!(full.image_facts.unwrap().processing.is_empty());
+            #[cfg(target_os = "windows")]
+            {
+                // Isolate the per-source retry marker from other fixture tests.
+                let isolated = cache.path().join(Path::new(&path).file_name().unwrap());
+                std::fs::copy(&path, &isolated).unwrap();
+                crate::request_raw_retry(&isolated).unwrap();
+                let token = oxy_runtime::CancellationToken::default();
+                let interim = crate::preview_for_app(
+                    &isolated,
+                    cache.path(),
+                    oxy_domain::RenderLevel::Full,
+                    oxy_domain::PreviewPriority::Loupe,
+                    oxy_domain::AssetKind::Raw,
+                    &token,
+                )
+                .unwrap();
+                assert_eq!(
+                    interim.satisfaction,
+                    Some(oxy_domain::MediaSatisfaction::Interim)
+                );
+                assert_eq!((interim.width, interim.height), (4000, 6000));
+                assert!(interim.image_facts.as_ref().unwrap().processing.is_empty());
+                assert!(
+                    crate::raw_decoder_status(Some(&isolated), false)
+                        .attempt
+                        .is_none()
+                );
+                token.cancel();
+                assert!(matches!(
+                    crate::preview_for_app_upgrade(
+                        &isolated,
+                        cache.path(),
+                        oxy_domain::RenderLevel::Full,
+                        oxy_domain::PreviewPriority::Loupe,
+                        oxy_domain::AssetKind::Raw,
+                        &token,
+                    ),
+                    Err(crate::MediaError::Cancelled)
+                ));
+                crate::shared_resource_registry().release(&interim.resource.unwrap().resource_id);
+            }
         }
     }
 }

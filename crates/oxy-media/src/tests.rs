@@ -623,7 +623,7 @@ fn resolves_full_detail_raw_fixture() {
 #[test]
 #[ignore = "requires OXY_RAW_FIXTURE with small and near-native embedded JPEGs"]
 fn raw_full_upgrades_thumbnail_to_largest_embedded_jpeg_fixture() {
-    use oxy_domain::MediaSatisfaction::{Interim, Satisfied};
+    use oxy_domain::MediaSatisfaction::Satisfied;
     let path =
         fs::canonicalize(workspace_path(std::env::var_os("OXY_RAW_FIXTURE").unwrap())).unwrap();
     let cache = tempfile::tempdir().unwrap();
@@ -647,11 +647,8 @@ fn raw_full_upgrades_thumbnail_to_largest_embedded_jpeg_fixture() {
         &token,
     )
     .unwrap();
-    assert_eq!(interim.satisfaction, Some(Interim));
-    assert_eq!(
-        (interim.width, interim.height),
-        (thumbnail.width, thumbnail.height)
-    );
+    assert_eq!(interim.satisfaction, Some(Satisfied));
+    assert!(interim.width.max(interim.height) > thumbnail.width.max(thumbnail.height));
     let upgrade = preview_for_app_upgrade(
         &path,
         cache.path(),

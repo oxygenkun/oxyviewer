@@ -82,6 +82,25 @@ pub(crate) fn preview_with_priority(
         RenderLevel::Preview
     };
     let artifacts = ArtifactCache::new(path, cache_dir)?;
+    if level == RenderLevel::Preview {
+        // Preview means the best camera JPEG, even when it is below 4096 px.
+        // Its exact target proves that selection is complete; a thumbnail or
+        // a merely adequate JPEG must not satisfy this request.
+        let request = planner::largest_preview_request(&artifacts);
+        match produce_embedded_with_request(
+            path,
+            &artifacts,
+            0,
+            level,
+            &request,
+            priority,
+            cancellation,
+        ) {
+            Ok(result) => return Ok(result),
+            Err(MediaError::LibRaw { .. }) => {}
+            Err(error) => return Err(error),
+        }
+    }
     let mut request = preview_request(&artifacts, max_size, allow_interim);
     if level == RenderLevel::Thumbnail {
         request.artifact = ArtifactRequirement::BoundedThumbnail {
@@ -164,16 +183,10 @@ pub(crate) fn full_with_interim(
     )? {
         return Ok(*result);
     }
-    if allow_interim
-        && let Some(mut result) = artifacts.lookup(&plan.interim(), RenderLevel::Full)?
-    {
-        result.satisfaction = Some(oxy_domain::MediaSatisfaction::Interim);
-        return Ok(result);
-    }
     let production_request = plan.embedded_production();
 
-    if !retry_development
-        && let Ok(embedded) = produce_embedded_with_request(
+    if (!retry_development || allow_interim)
+        && let Ok(mut embedded) = produce_embedded_with_request(
             path,
             &artifacts,
             0,
@@ -182,9 +195,18 @@ pub(crate) fn full_with_interim(
             DecodePriority::Foreground,
             cancellation,
         )
-        && embedded.satisfaction == Some(oxy_domain::MediaSatisfaction::Satisfied)
     {
-        return Ok(embedded);
+        if !retry_development
+            && embedded.satisfaction == Some(oxy_domain::MediaSatisfaction::Satisfied)
+        {
+            return Ok(embedded);
+        }
+        if allow_interim {
+            // Loupe already retains its thumbnail. Publish the largest camera
+            // JPEG before the queue starts WIC/LibRaw's terminal upgrade.
+            embedded.satisfaction = Some(oxy_domain::MediaSatisfaction::Interim);
+            return Ok(embedded);
+        }
     }
     if let Some(result) = artifacts.lookup(&plan.developed, RenderLevel::Full)? {
         return Ok(result);

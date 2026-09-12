@@ -52,6 +52,7 @@ interface DisplayedImage {
   source: string;
   resourceId?: string;
   size?: DisplayedPreviewSize;
+  renderLevel?: RenderLevel;
 }
 
 function hashSeed(value: string) {
@@ -179,7 +180,7 @@ export function Thumbnail({
   const nativeImage = displayedImage?.assetId === asset.id
     ? displayedImage
     : preparedSource
-      ? { assetId: asset.id, source: preparedSource, resourceId: preparedResourceId,
+      ? { assetId: asset.id, source: preparedSource, resourceId: preparedResourceId, renderLevel: preparedResult?.renderLevel,
           size: preparedSize ? { ...preparedSize, geometry: preparedGeometry } : undefined }
       : undefined;
   const retainedImage: DisplayedImage | undefined = folderThumbnail ? {
@@ -188,7 +189,10 @@ export function Thumbnail({
     size: { width: folderThumbnail.width, height: folderThumbnail.height, geometry: folderThumbnail.geometry },
   } : undefined;
   const retainingFullImage = large && ownsFullDetailStage && loaded?.assetId === asset.id && loaded.mode === "full";
-  const showingFull = large && nativeImage && (retainingFullImage || nativeImage.source === fullSource?.url || nativeImage.source === directSource);
+  // Retain the pixels' own level across projection replacement. An Interim
+  // full JPEG remains the visible preview while the final descriptor decodes.
+  const showingFull = large && nativeImage && (nativeImage.renderLevel === "preview" || nativeImage.renderLevel === "full"
+    || retainingFullImage || nativeImage.source === fullSource?.url || nativeImage.source === directSource);
   const visibleImage = showingFull ? nativeImage : retainedImage ?? nativeImage;
   const generatedSource = nextProgressiveStage(Boolean(visibleImage), [
     previewSource,
@@ -332,9 +336,9 @@ export function Thumbnail({
     // which does not reliably fire another load event to reveal it again.
     setDisplayedImage((current) => current?.assetId === asset.id
       ? current
-      : { assetId: asset.id, source: preparedSource, resourceId: preparedResourceId,
+      : { assetId: asset.id, source: preparedSource, resourceId: preparedResourceId, renderLevel: preparedResult?.renderLevel,
           size: preparedSize ? { ...preparedSize, geometry: preparedGeometry } : undefined });
-  }, [asset.id, preparedResourceId, preparedSource, preparedSize, preparedGeometry]);
+  }, [asset.id, preparedResourceId, preparedSource, preparedSize, preparedGeometry, preparedResult?.renderLevel]);
 
   useEffect(() => {
     setFullImageFailed(false);
@@ -452,7 +456,7 @@ export function Thumbnail({
       setLoaded({ assetId: asset.id, mode: result === fullSource && result?.satisfaction !== "interim" ? "full" : "preview" });
     }
     const displayedSize = { ...size, geometry: validPreviewGeometry(result?.geometry, size) };
-    if (source) setDisplayedImage({ assetId: asset.id, source, resourceId: result?.resource?.resourceId, size: displayedSize });
+    if (source) setDisplayedImage({ assetId: asset.id, source, resourceId: result?.resource?.resourceId, size: displayedSize, renderLevel: result?.renderLevel });
     onImageLoad?.(displayedSize);
   };
 
