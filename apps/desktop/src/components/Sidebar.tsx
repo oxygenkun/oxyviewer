@@ -295,6 +295,22 @@ export function Sidebar({
   const [debouncedSearch, setDebouncedSearch] = useState("");
   const searchInputRef = useRef<HTMLInputElement>(null);
   const folderTreeRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    const container = folderTreeRef.current;
+    if (!container) return;
+    let idleTimer: number | undefined;
+    const onScroll = () => {
+      container.classList.add("is-scrolling");
+      window.clearTimeout(idleTimer);
+      idleTimer = window.setTimeout(() => container.classList.remove("is-scrolling"), 800);
+    };
+    container.addEventListener("scroll", onScroll, { passive: true });
+    return () => {
+      container.removeEventListener("scroll", onScroll);
+      window.clearTimeout(idleTimer);
+      container.classList.remove("is-scrolling");
+    };
+  }, []);
   const sortMenuRef = useRef<HTMLDivElement>(null);
   const sortMenuButtonRef = useRef<HTMLButtonElement>(null);
   const sortPopoverRef = useRef<HTMLDivElement>(null);
@@ -614,7 +630,7 @@ export function Sidebar({
         <div><strong>OxyViewer</strong><small>PHOTO DESK</small></div>
       </div>
 
-      <div ref={folderTreeRef} className={`sidebar__section sidebar__section--folders ${showOnboarding ? "is-guided" : ""}`}>
+      <div className={`sidebar__section sidebar__folders ${showOnboarding ? "is-guided" : ""}`}>
         <div className="sidebar__heading">
           <span>{t("folders")}</span>
           <div className="sidebar__heading-actions">
@@ -790,193 +806,196 @@ export function Sidebar({
           </label>
         ) : null}
 
-        {folderRestoreStates.filter((state) => state.status !== "ready" &&
-          !sessions.some((session) => session.rootPath === state.rootPath)).map((state) => (
-          <div className="folder-search__state" key={state.rootPath} title={state.error ?? state.rootPath} role="status">
-            {state.status === "restoring" ? <LoaderCircle className="tree-row__loader" size={13} /> : null}
-            <span>{state.status === "restoring" ? t("restoringFolders") : t("folderRestoreFailed")}: {state.rootPath}</span>
-          </div>
-        ))}
-        {searchActive ? (
-          <div className="folder-search__results" aria-live="polite">
-            {searchLoading ? (
-              <div className="folder-search__state"><LoaderCircle className="tree-row__loader" size={13} />{t("searchingFolders")}</div>
-            ) : indexing && resultCount === 0 ? (
-              <div className="folder-search__state">{t("folderIndexing")}</div>
-            ) : resultCount === 0 ? (
-              <div className="folder-search__state">{t("noMatchingFolders")}</div>
-            ) : (
-              <>
-                {sessions.map((session, index) => {
-                  const matches = searchQueries[index]?.data ?? [];
-                  if (matches.length === 0) return null;
-                  const tree = buildDirectorySearchTree(
-                    { path: session.rootPath, name: session.displayName, hasChildren: true },
-                    matches,
-                  );
-                  return (
-                    <SearchDirectoryNode
-                      key={`${normalizedSearch}:${session.rootPath}`}
-                      session={session}
-                      node={tree}
-                      currentPath={activeSession?.rootPath === session.rootPath ? currentPath : undefined}
-                      depth={0}
-                      search={normalizedSearch}
-                      onNavigate={onNavigate}
-                      onContextMenu={showFolderContextMenu}
-                    />
-                  );
-                })}
-                {indexing ? <div className="folder-search__state">{t("folderIndexing")}</div> : null}
-              </>
-            )}
-          </div>
-        ) : displayedSessions.map((session) => {
-          const sessionIndex = sessions.findIndex((item) => item.id === session.id);
-          const tree = directoryTreeQueries[sessionIndex]?.data ?? directoryTreePlaceholder(session);
-          return (
-            <div
-              key={session.rootPath}
-              data-root-path={session.rootPath}
-              className={`folder-root ${draggedRoot === session.rootPath ? "is-dragging" : ""} ${dropTargetRoot === session.rootPath && dropPlacement ? `is-drop-${dropPlacement}` : ""}`}
-            >
-              <DirectoryNode
-                session={session}
-                node={tree.root}
-                currentPath={activeSession?.rootPath === session.rootPath ? currentPath : undefined}
-                depth={0}
-                onNavigate={onNavigate}
-                onExpandedChange={changeDirectoryExpansion}
-                onContextMenu={showFolderContextMenu}
-                onRemove={onRemove}
-                removeLabel={t("removeFolder")}
-                dragLabel={t("dragFolderToReorder")}
-                rootDraggable={folderDragEnabled && folderSort === "import"}
-                onRootPointerDown={(event) => {
-                if (event.button !== 0 || !event.isPrimary) return;
-                event.preventDefault();
-                const initialOrder = sessions.map((item) => item.rootPath);
-                const row = event.currentTarget.closest<HTMLElement>(".tree-row");
-                if (!row) return;
-                const bounds = row.getBoundingClientRect();
-                draggedRootRef.current = session.rootPath;
-                dragOrderRef.current = initialOrder;
-                dragPointerIdRef.current = event.pointerId;
-                setDraggedRoot(session.rootPath);
-                setDragOrder(initialOrder);
-                setDragPreview({
-                  left: bounds.left,
-                  top: bounds.top,
-                  width: bounds.width,
-                  height: bounds.height,
-                  pointerOffsetY: event.clientY - bounds.top,
-                  name: session.displayName,
-                });
-                }}
-              />
+        <div ref={folderTreeRef} className="sidebar__section--folders">
+          {folderRestoreStates.filter((state) => state.status !== "ready" &&
+            !sessions.some((session) => session.rootPath === state.rootPath)).map((state) => (
+            <div className="folder-search__state" key={state.rootPath} title={state.error ?? state.rootPath} role="status">
+              {state.status === "restoring" ? <LoaderCircle className="tree-row__loader" size={13} /> : null}
+              <span>{state.status === "restoring" ? t("restoringFolders") : t("folderRestoreFailed")}: {state.rootPath}</span>
             </div>
-          );
-        })}
+          ))}
+          {searchActive ? (
+            <div className="folder-search__results" aria-live="polite">
+              {searchLoading ? (
+                <div className="folder-search__state"><LoaderCircle className="tree-row__loader" size={13} />{t("searchingFolders")}</div>
+              ) : indexing && resultCount === 0 ? (
+                <div className="folder-search__state">{t("folderIndexing")}</div>
+              ) : resultCount === 0 ? (
+                <div className="folder-search__state">{t("noMatchingFolders")}</div>
+              ) : (
+                <>
+                  {sessions.map((session, index) => {
+                    const matches = searchQueries[index]?.data ?? [];
+                    if (matches.length === 0) return null;
+                    const tree = buildDirectorySearchTree(
+                      { path: session.rootPath, name: session.displayName, hasChildren: true },
+                      matches,
+                    );
+                    return (
+                      <SearchDirectoryNode
+                        key={`${normalizedSearch}:${session.rootPath}`}
+                        session={session}
+                        node={tree}
+                        currentPath={activeSession?.rootPath === session.rootPath ? currentPath : undefined}
+                        depth={0}
+                        search={normalizedSearch}
+                        onNavigate={onNavigate}
+                        onContextMenu={showFolderContextMenu}
+                      />
+                    );
+                  })}
+                  {indexing ? <div className="folder-search__state">{t("folderIndexing")}</div> : null}
+                </>
+              )}
+            </div>
+          ) : displayedSessions.map((session) => {
+            const sessionIndex = sessions.findIndex((item) => item.id === session.id);
+            const tree = directoryTreeQueries[sessionIndex]?.data ?? directoryTreePlaceholder(session);
+            return (
+              <div
+                key={session.rootPath}
+                data-root-path={session.rootPath}
+                className={`folder-root ${draggedRoot === session.rootPath ? "is-dragging" : ""} ${dropTargetRoot === session.rootPath && dropPlacement ? `is-drop-${dropPlacement}` : ""}`}
+              >
+                <DirectoryNode
+                  session={session}
+                  node={tree.root}
+                  currentPath={activeSession?.rootPath === session.rootPath ? currentPath : undefined}
+                  depth={0}
+                  onNavigate={onNavigate}
+                  onExpandedChange={changeDirectoryExpansion}
+                  onContextMenu={showFolderContextMenu}
+                  onRemove={onRemove}
+                  removeLabel={t("removeFolder")}
+                  dragLabel={t("dragFolderToReorder")}
+                  rootDraggable={folderDragEnabled && folderSort === "import"}
+                  onRootPointerDown={(event) => {
+                  if (event.button !== 0 || !event.isPrimary) return;
+                  event.preventDefault();
+                  const initialOrder = sessions.map((item) => item.rootPath);
+                  const row = event.currentTarget.closest<HTMLElement>(".tree-row");
+                  if (!row) return;
+                  const bounds = row.getBoundingClientRect();
+                  draggedRootRef.current = session.rootPath;
+                  dragOrderRef.current = initialOrder;
+                  dragPointerIdRef.current = event.pointerId;
+                  setDraggedRoot(session.rootPath);
+                  setDragOrder(initialOrder);
+                  setDragPreview({
+                    left: bounds.left,
+                    top: bounds.top,
+                    width: bounds.width,
+                    height: bounds.height,
+                    pointerOffsetY: event.clientY - bounds.top,
+                    name: session.displayName,
+                  });
+                  }}
+                />
+              </div>
+            );
+          })}
 
-        {dragPreview ? createPortal(
-          <div
-            className="folder-drag-preview"
-            style={{
-              left: dragPreview.left,
-              top: dragPreview.top,
-              width: dragPreview.width,
-              height: dragPreview.height,
-            }}
-            aria-hidden="true"
-          >
-            <GripVertical size={13} />
-            <span className="folder-drag-preview__toggle"><ChevronRight size={13} /></span>
-            <Folder size={15} />
-            <span>{dragPreview.name}</span>
-          </div>,
-          document.body,
-        ) : null}
+          {dragPreview ? createPortal(
+            <div
+              className="folder-drag-preview"
+              style={{
+                left: dragPreview.left,
+                top: dragPreview.top,
+                width: dragPreview.width,
+                height: dragPreview.height,
+              }}
+              aria-hidden="true"
+            >
+              <GripVertical size={13} />
+              <span className="folder-drag-preview__toggle"><ChevronRight size={13} /></span>
+              <Folder size={15} />
+              <span>{dragPreview.name}</span>
+            </div>,
+            document.body,
+          ) : null}
 
-        {contextMenu ? createPortal(
-          <div
-            className="folder-context-menu"
-            role="menu"
-            aria-label={contextMenu.entry.name}
-            style={{ left: contextMenu.x, top: contextMenu.y }}
-            onContextMenu={(event) => event.preventDefault()}
-            onPointerDown={(event) => event.stopPropagation()}
-          >
-            <button
-              autoFocus
-              role="menuitem"
-              onClick={() => {
-                const { session, entry } = contextMenu;
-                setContextMenu(undefined);
-                onCopyFolderPath(session, entry.path, true);
-              }}
+          {contextMenu ? createPortal(
+            <div
+              className="folder-context-menu"
+              role="menu"
+              aria-label={contextMenu.entry.name}
+              style={{ left: contextMenu.x, top: contextMenu.y }}
+              onContextMenu={(event) => event.preventDefault()}
+              onPointerDown={(event) => event.stopPropagation()}
             >
-              <Copy size={13} />
-              {t("copyRelativePath")}
-            </button>
-            <button
-              role="menuitem"
-              onClick={() => {
-                const { session, entry } = contextMenu;
-                setContextMenu(undefined);
-                onCopyFolderPath(session, entry.path, false);
-              }}
-            >
-              <Copy size={13} />
-              {t("copyAbsolutePath")}
-            </button>
-            <button
-              role="menuitem"
-              onClick={() => {
-                const { entry } = contextMenu;
-                setContextMenu(undefined);
-                onOpenInFileManager(entry.path);
-              }}
-            >
-              <FolderOpen size={13} />
-              {t(FILE_MANAGER_LABEL[platformFileManager()])}
-            </button>
-            <div className="folder-context-menu__separator" />
-            <button
-              className="folder-context-menu__danger"
-              role="menuitem"
-              onClick={() => {
-                const { session, entry } = contextMenu;
-                setContextMenu(undefined);
-                setPendingTrash({ session, entry });
-              }}
-            >
-              <Trash2 size={13} />
-              {t(contextMenu.session.deletionMode === "permanent" ? "deletePermanently" : "trashFolder")}
-            </button>
-          </div>,
-          document.body,
-        ) : null}
+              <button
+                autoFocus
+                role="menuitem"
+                onClick={() => {
+                  const { session, entry } = contextMenu;
+                  setContextMenu(undefined);
+                  onCopyFolderPath(session, entry.path, true);
+                }}
+              >
+                <Copy size={13} />
+                {t("copyRelativePath")}
+              </button>
+              <button
+                role="menuitem"
+                onClick={() => {
+                  const { session, entry } = contextMenu;
+                  setContextMenu(undefined);
+                  onCopyFolderPath(session, entry.path, false);
+                }}
+              >
+                <Copy size={13} />
+                {t("copyAbsolutePath")}
+              </button>
+              <button
+                role="menuitem"
+                onClick={() => {
+                  const { entry } = contextMenu;
+                  setContextMenu(undefined);
+                  onOpenInFileManager(entry.path);
+                }}
+              >
+                <FolderOpen size={13} />
+                {t(FILE_MANAGER_LABEL[platformFileManager()])}
+              </button>
+              <div className="folder-context-menu__separator" />
+              <button
+                className="folder-context-menu__danger"
+                role="menuitem"
+                onClick={() => {
+                  const { session, entry } = contextMenu;
+                  setContextMenu(undefined);
+                  setPendingTrash({ session, entry });
+                }}
+              >
+                <Trash2 size={13} />
+                {t(contextMenu.session.deletionMode === "permanent" ? "deletePermanently" : "trashFolder")}
+              </button>
+            </div>,
+            document.body,
+          ) : null}
 
-        {pendingTrash ? (
-          <ConfirmTrashDialog
-            deletionMode={pendingTrash.session.deletionMode}
-            itemName={pendingTrash.entry.name}
-            onCancel={() => setPendingTrash(undefined)}
-            onConfirm={() => {
-              const { session, entry } = pendingTrash;
-              setPendingTrash(undefined);
-              onTrashFolder(session, entry.path);
-            }}
-            t={t}
-          />
-        ) : null}
+          {pendingTrash ? (
+            <ConfirmTrashDialog
+              deletionMode={pendingTrash.session.deletionMode}
+              itemName={pendingTrash.entry.name}
+              onCancel={() => setPendingTrash(undefined)}
+              onConfirm={() => {
+                const { session, entry } = pendingTrash;
+                setPendingTrash(undefined);
+                onTrashFolder(session, entry.path);
+              }}
+              t={t}
+            />
+          ) : null}
 
-        {sessions.length === 0 ? (
-          <button className="sidebar__folder-prompt" onClick={onOpen}>
-            <Plus size={15} />
-            <span>{t("chooseFolderHere")}</span>
-          </button>
-        ) : null}
+          {sessions.length === 0 ? (
+            <button className="sidebar__folder-prompt" onClick={onOpen}>
+              <Plus size={15} />
+              <span>{t("chooseFolderHere")}</span>
+            </button>
+          ) : null}
+
+        </div>
 
         {showOnboarding ? (
           <div className="folder-coach" role="dialog" aria-label={t("firstRunTitle")}>

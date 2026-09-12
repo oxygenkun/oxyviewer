@@ -50,6 +50,7 @@
 }
 .sidebar__brand {
   display: flex;
+  flex-shrink: 0;
   align-items: center;
   height: 44px;
   margin: 0 3px 17px;
@@ -58,15 +59,33 @@
 .sidebar__brand strong { font-size: 0.8125rem; letter-spacing: .4px; }
 .sidebar__brand small { color: var(--faint); font-size: 0.4375rem; letter-spacing: 2.2px; }
 .sidebar__section { margin-bottom: 21px; }
+.sidebar__folders {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  min-height: 90px;
+  flex: 1;
+  overflow: hidden;
+}
 .sidebar__section--folders {
   position: relative;
-  min-height: 90px;
+  min-height: 0;
   flex: 1;
   overflow-y: auto;
   scrollbar-width: thin;
+  scrollbar-color: rgb(140 146 152 / 16%) transparent;
+  transition: scrollbar-color 180ms ease;
+
+  &.is-scrolling {
+    scrollbar-color: rgb(140 146 152 / 55%) transparent;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .sidebar__section--folders { transition: none; }
 }
 .sidebar__heading {
   display: flex;
+  flex-shrink: 0;
   align-items: center;
   justify-content: space-between;
   height: 24px;
@@ -202,6 +221,7 @@
 }
 .folder-search {
   display: flex;
+  flex-shrink: 0;
   align-items: center;
   gap: 6px;
   height: 29px;
@@ -426,7 +446,7 @@
   text-align: left;
 }
 .sidebar__folder-prompt:hover { border-color: var(--accent-dim); color: var(--accent); }
-.sidebar__section--folders.is-guided .sidebar__add-folder {
+.sidebar__folders.is-guided .sidebar__add-folder {
   border-radius: 4px;
   color: #11140d;
   background: var(--accent);
