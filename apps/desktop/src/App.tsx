@@ -590,6 +590,7 @@ export function App({ perfScenario }: { perfScenario?: PerfScenario }) {
         queryClient.invalidateQueries({ queryKey: ["assets", activeSession.id, currentPath] }),
         queryClient.invalidateQueries({ queryKey: ["preload-assets", activeSession.id, currentPath] }),
         queryClient.invalidateQueries({ queryKey: ["progressive-metadata-assets", activeSession.id, currentPath] }),
+        queryClient.invalidateQueries({ queryKey: ["directory-search", activeSession.id] }),
       ]);
     } catch (cause) {
       setError(String(cause));

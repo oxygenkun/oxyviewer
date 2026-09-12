@@ -344,12 +344,13 @@ export async function refreshDirectory(
   if (!isTauri()) {
     const snapshot = demoDirectoryTrees.get(sessionId);
     if (!snapshot) throw new Error(`Unknown folder session: ${sessionId}`);
-    const node = findDemoTreeNode(snapshot.root, directory);
-    if (node && (node.expanded || node.children !== null)) {
-      node.children = demoTreeChildren(directory, node.children ?? []);
+    const refreshNode = (node: DirectoryTreeNode) => {
+      node.children = demoTreeChildren(node.entry.path, node.children ?? []);
+      node.children.forEach(refreshNode);
       node.entry.hasChildren = node.children.length > 0;
       if (node.children.length === 0) node.expanded = false;
-    }
+    };
+    refreshNode(snapshot.root);
     snapshot.revision = ++demoTreeRevision;
     return cloneDemoTree(snapshot);
   }

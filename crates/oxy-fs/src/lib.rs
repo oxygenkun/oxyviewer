@@ -61,6 +61,8 @@ pub struct FsCatalog {
 struct DirectoryTreeState {
     snapshot: DirectoryTreeSnapshot,
     loading_directories: HashSet<PathBuf>,
+    scan_generation: u64,
+    scanned_directories: HashSet<PathBuf>,
 }
 
 /// One cheap, non-recursive filesystem batch used by the background library
@@ -117,6 +119,8 @@ impl FsCatalog {
                     },
                 },
                 loading_directories: HashSet::new(),
+                scan_generation: 0,
+                scanned_directories: HashSet::new(),
             })),
         );
 
@@ -230,33 +234,35 @@ impl FsCatalog {
     ) -> Result<DirectoryTreeSnapshot, FsError> {
         let requested_directory = directory.to_owned();
         let tree = self.directory_tree_state(session_id)?;
-        {
+        let generation = {
             let state = tree.lock();
             if !state.loading_directories.contains(&requested_directory) {
                 return Ok(state.snapshot.clone());
             }
-        }
+            state.scan_generation
+        };
         let directory = match self.resolve_session_directory(session_id, Some(directory)) {
             Ok(directory) => directory,
             Err(error) => {
-                self.fail_directory_load(session_id, &requested_directory)?;
+                self.fail_directory_load(session_id, &requested_directory, generation)?;
                 return Err(error);
             }
         };
-        let directories = match self.cached_directories(&directory) {
+        let directories = match list_directories(&directory) {
             Ok(directories) => directories,
             Err(error) => {
-                self.fail_directory_load(session_id, &directory)?;
+                self.fail_directory_load(session_id, &directory, generation)?;
                 return Err(error);
             }
         };
         let mut state = tree.lock();
-        if !state.loading_directories.remove(&directory) {
+        if state.scan_generation != generation || !state.loading_directories.remove(&directory) {
             return Ok(state.snapshot.clone());
         }
         let node = find_tree_node_mut(&mut state.snapshot.root, &directory)
             .ok_or_else(|| FsError::InvalidFolder(directory.clone()))?;
-        replace_tree_children(node, directories.as_ref());
+        replace_tree_children(node, &directories);
+        state.scanned_directories.insert(directory);
         state.snapshot.revision = self.next_tree_revision();
         Ok(state.snapshot.clone())
     }
@@ -268,26 +274,41 @@ impl FsCatalog {
         session_id: &str,
         directory: &Path,
     ) -> Result<(DirectoryTreeSnapshot, Vec<PathBuf>), FsError> {
+        self.prefetch_directory_children_with(session_id, directory, list_directories)
+    }
+
+    fn prefetch_directory_children_with(
+        &self,
+        session_id: &str,
+        directory: &Path,
+        scan: impl FnOnce(&Path) -> Result<Vec<DirectorySummary>, FsError>,
+    ) -> Result<(DirectoryTreeSnapshot, Vec<PathBuf>), FsError> {
         let tree = self.directory_tree_state(session_id)?;
-        let needs_read = {
+        let (needs_read, generation) = {
             let state = tree.lock();
-            find_tree_node(&state.snapshot.root, directory)
-                .ok_or_else(|| FsError::InvalidFolder(directory.to_owned()))?
-                .children
-                .is_none()
+            let node = find_tree_node(&state.snapshot.root, directory)
+                .ok_or_else(|| FsError::InvalidFolder(directory.to_owned()))?;
+            (
+                node.children.is_none() || !state.scanned_directories.contains(directory),
+                state.scan_generation,
+            )
         };
         if needs_read {
             let resolved = self.resolve_session_directory(session_id, Some(directory))?;
             if resolved != directory {
                 return Ok((tree.lock().snapshot.clone(), Vec::new()));
             }
-            let directories = self.cached_directories(directory)?;
+            let directories = scan(directory)?;
             let mut state = tree.lock();
+            if state.scan_generation != generation {
+                return Ok((state.snapshot.clone(), Vec::new()));
+            }
             // A foreground load or refresh may have won while IO was running.
-            if let Some(node) = find_tree_node_mut(&mut state.snapshot.root, directory)
-                && node.children.is_none()
+            if !state.scanned_directories.contains(directory)
+                && let Some(node) = find_tree_node_mut(&mut state.snapshot.root, directory)
             {
-                replace_tree_children(node, directories.as_ref());
+                replace_tree_children(node, &directories);
+                state.scanned_directories.insert(directory.to_owned());
                 state.snapshot.revision = self.next_tree_revision();
             }
         }
@@ -308,15 +329,25 @@ impl FsCatalog {
     ) -> Result<DirectoryTreeSnapshot, FsError> {
         let directory = self.resolve_session_directory(session_id, directory)?;
         let tree = self.directory_tree_state(session_id)?;
-        tree.lock().loading_directories.remove(&directory);
+        // Keep the visible tree and expansion intent while background discovery
+        // re-reads every level, including previously empty/collapsed nodes.
+        let generation = {
+            let mut state = tree.lock();
+            state.scan_generation += 1;
+            state.scanned_directories.clear();
+            state.loading_directories.clear();
+            state.scan_generation
+        };
         self.asset_cache.write().remove(&directory);
         self.directory_cache.write().remove(&directory);
-        let directories = self.cached_directories(&directory)?;
+        let directories = list_directories(&directory)?;
         let mut state = tree.lock();
-        if let Some(node) = find_tree_node_mut(&mut state.snapshot.root, &directory)
-            && (node.expanded || node.children.is_some())
-        {
-            replace_tree_children(node, directories.as_ref());
+        if state.scan_generation != generation {
+            return Ok(state.snapshot.clone());
+        }
+        if let Some(node) = find_tree_node_mut(&mut state.snapshot.root, &directory) {
+            replace_tree_children(node, &directories);
+            state.scanned_directories.insert(directory);
         }
         state.snapshot.revision = self.next_tree_revision();
         Ok(state.snapshot.clone())
@@ -411,9 +442,17 @@ impl FsCatalog {
             .ok_or_else(|| FsError::SessionNotFound(session_id.to_owned()))
     }
 
-    fn fail_directory_load(&self, session_id: &str, directory: &Path) -> Result<(), FsError> {
+    fn fail_directory_load(
+        &self,
+        session_id: &str,
+        directory: &Path,
+        generation: u64,
+    ) -> Result<(), FsError> {
         let tree = self.directory_tree_state(session_id)?;
         let mut state = tree.lock();
+        if state.scan_generation != generation {
+            return Ok(());
+        }
         state.loading_directories.remove(directory);
         if let Some(node) = find_tree_node_mut(&mut state.snapshot.root, directory) {
             node.expanded = false;
@@ -1511,6 +1550,94 @@ mod tests {
 
         assert!(!refreshed.root.entry.has_children);
         assert!(refreshed.root.children.as_ref().unwrap().is_empty());
+    }
+
+    fn discover_tree(catalog: &FsCatalog, session: &FolderSession) -> DirectoryTreeSnapshot {
+        let mut pending = vec![session.root_path.clone()];
+        while let Some(path) = pending.pop() {
+            let (_, children) = catalog
+                .prefetch_directory_children(&session.id, &path)
+                .unwrap();
+            pending.extend(children);
+        }
+        catalog.directory_tree(&session.id).unwrap()
+    }
+
+    #[test]
+    fn refresh_from_a_child_rescans_loaded_siblings_and_empty_descendants() {
+        let root = tempdir().unwrap();
+        fs::create_dir_all(root.path().join("selected/keep")).unwrap();
+        fs::create_dir_all(root.path().join("sibling/empty")).unwrap();
+        fs::create_dir_all(root.path().join("sibling/deleted")).unwrap();
+        fs::create_dir_all(root.path().join("sibling/old-name")).unwrap();
+        let catalog = FsCatalog::default();
+        let session = catalog.open_folder(root.path()).unwrap();
+        discover_tree(&catalog, &session);
+        let selected = session.root_path.join("selected");
+        catalog
+            .set_directory_expanded(&session.id, &session.root_path, true)
+            .unwrap();
+        catalog
+            .set_directory_expanded(&session.id, &selected, true)
+            .unwrap();
+        let sibling = session.root_path.join("sibling");
+        // Also populate the legacy directory-list cache: tree refresh must
+        // read the filesystem, even when another consumer has cached this level.
+        catalog
+            .list_directories(&session.id, Some(&sibling))
+            .unwrap();
+        fs::remove_dir(sibling.join("deleted")).unwrap();
+        fs::rename(sibling.join("old-name"), sibling.join("new-name")).unwrap();
+        fs::create_dir_all(sibling.join("empty/new/deep")).unwrap();
+        fs::create_dir(session.root_path.join("new-sibling")).unwrap();
+
+        catalog
+            .refresh_directory(&session.id, Some(&selected))
+            .unwrap();
+        let tree = discover_tree(&catalog, &session);
+        assert!(tree.root.expanded);
+        assert!(find_tree_node(&tree.root, &selected).unwrap().expanded);
+        assert!(!find_tree_node(&tree.root, &sibling).unwrap().expanded);
+        assert!(find_tree_node(&tree.root, &sibling.join("deleted")).is_none());
+        assert!(find_tree_node(&tree.root, &sibling.join("old-name")).is_none());
+        assert!(find_tree_node(&tree.root, &sibling.join("new-name")).is_some());
+        assert!(find_tree_node(&tree.root, &sibling.join("empty/new/deep")).is_some());
+        assert!(find_tree_node(&tree.root, &session.root_path.join("new-sibling")).is_some());
+        assert!(
+            find_tree_node(&tree.root, &sibling.join("empty"))
+                .unwrap()
+                .entry
+                .has_children
+        );
+
+        // A completed generation continues to reuse its tree without IO.
+        catalog
+            .prefetch_directory_children_with(&session.id, &sibling, |_| {
+                panic!("a completed level should not be scanned twice")
+            })
+            .unwrap();
+    }
+
+    #[test]
+    fn refresh_rejects_a_late_background_tree_scan() {
+        let root = tempdir().unwrap();
+        fs::create_dir(root.path().join("old")).unwrap();
+        let catalog = FsCatalog::default();
+        let session = catalog.open_folder(root.path()).unwrap();
+        let (tree, children) = catalog
+            .prefetch_directory_children_with(&session.id, &session.root_path, |path| {
+                let old = list_directories(path)?;
+                fs::remove_dir(path.join("old"))?;
+                fs::create_dir(path.join("new"))?;
+                catalog.refresh_directory(&session.id, None)?;
+                Ok(old)
+            })
+            .unwrap();
+        assert!(children.is_empty());
+        assert!(find_tree_node(&tree.root, &session.root_path.join("old")).is_none());
+        assert!(find_tree_node(&tree.root, &session.root_path.join("new")).is_some());
+        let final_tree = discover_tree(&catalog, &session);
+        assert!(find_tree_node(&final_tree.root, &session.root_path.join("old")).is_none());
     }
 
     #[test]

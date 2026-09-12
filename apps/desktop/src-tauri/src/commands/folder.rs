@@ -343,10 +343,10 @@ pub(crate) async fn refresh_directory(
         .library
         .invalidate_index(&root)
         .map_err(|error| error.to_string())?;
-    state.library_index_queue.schedule(app, root);
+    state.library_index_queue.schedule(app, root.clone());
     state
         .directory_tree_queue
-        .enqueue(tree.session_id.clone(), resolved_directory);
+        .enqueue(tree.session_id.clone(), root);
     Ok(tree)
 }
 
