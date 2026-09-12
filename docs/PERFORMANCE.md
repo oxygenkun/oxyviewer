@@ -16,6 +16,11 @@ end-to-end regression harness that enforces these budgets is described in
 
 Refactoring guardrails and regression checks: [Performance invariants](PERFORMANCE_INVARIANTS.md).
 
+RAW preview selects the largest embedded camera JPEG, regardless of whether it
+reaches 4096 pixels. Full publishes that JPEG before required WIC/LibRaw
+development and keeps its decoded pixels visible until the final image decodes.
+See [CR3/RW2 focus and preview validation](research/raw-focus-preview-2026-09-13.md).
+
 The [2026-09-12 JPEG/RAW thumbnail qualification](research/jpeg-thumbnail-scroll-2026-09-12.md)
 records bounded native thumbnails, real NAS scrolling, process memory, full-image correctness,
 and local cold/warm previews. Scroll long tasks were eliminated in the measured runs.
