@@ -17,6 +17,9 @@
 
 use crate::core::{FileType, MappedFile, Result};
 
+#[cfg(all(feature = "quicktime", feature = "tiff"))]
+mod cr3;
+
 // ---------------------------------------------------------------------------
 // Entry points
 // ---------------------------------------------------------------------------
@@ -731,6 +734,11 @@ impl<'a> SiftDocument<'a> {
     // that feature off there is nothing to push and `tags` goes unread.
     #[cfg_attr(not(feature = "tiff"), allow(unused_variables))]
     fn collect_exif_tags(&self, tags: &mut Vec<Tag>) {
+        #[cfg(all(feature = "quicktime", feature = "tiff"))]
+        if self.file_type == Some(FileType::Cr3) {
+            cr3::collect(self.data, tags);
+            return;
+        }
         #[cfg(feature = "tiff")]
         {
             // Try the standard path first (eXIf chunk, APP1 segment, etc.)
@@ -738,6 +746,10 @@ impl<'a> SiftDocument<'a> {
                 // Compute TIFF base offset: position of TIFF header from start of file
                 let tiff_base = tiff_data.as_ptr() as usize - self.data.as_ptr() as usize;
                 emit_exif_from_tiff(tiff_data, tiff_base, tags);
+                #[cfg(feature = "jpeg")]
+                if self.file_type == Some(FileType::Rw2) {
+                    self.collect_rw2_jpeg_exif(tags);
+                }
                 return;
             }
 
@@ -747,6 +759,46 @@ impl<'a> SiftDocument<'a> {
                 if let Some(raw_exif) = crate::png::find_raw_profile_exif(chunks) {
                     emit_exif_from_tiff(&raw_exif, 0, tags);
                 }
+            }
+        }
+    }
+
+    #[cfg(all(feature = "jpeg", feature = "tiff"))]
+    fn collect_rw2_jpeg_exif(&self, tags: &mut Vec<Tag>) {
+        // RW2 stores Panasonic MakerNotes in IFD0's JpgFromRaw (0x002e).
+        // Follow the declared byte array; never scan the sensor payload.
+        let DocumentInner::Tiff { ifds, .. } = &self.inner else {
+            return;
+        };
+        let Some(entry) = ifds.first().and_then(|ifd| ifd.entry(0x002e)) else {
+            return;
+        };
+        if entry.data_type != crate::tiff::DataType::Undefined
+            || entry.data.len() > 128 * 1024 * 1024
+        {
+            return;
+        }
+        let Ok(segments) = crate::jpeg::parse_segments(entry.data) else {
+            return;
+        };
+        let Some(tiff) = segments
+            .iter()
+            .find_map(crate::jpeg::Segment::exif_tiff_data)
+        else {
+            return;
+        };
+        let mut embedded = Vec::new();
+        emit_exif_from_tiff(
+            tiff,
+            tiff.as_ptr() as usize - self.data.as_ptr() as usize,
+            &mut embedded,
+        );
+        for tag in embedded {
+            if !tags
+                .iter()
+                .any(|existing| existing.group == tag.group && existing.name == tag.name)
+            {
+                tags.push(tag);
             }
         }
     }

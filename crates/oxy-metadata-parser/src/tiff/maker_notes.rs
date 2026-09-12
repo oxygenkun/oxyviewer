@@ -859,7 +859,9 @@ fn decode_maker_tags_impl<'a>(
                 }
             }
             Vendor::Panasonic => {
-                if name != "Unknown" {
+                if entry.tag == 0x004e {
+                    decode_panasonic_faces(entry.data, be, &mut tags);
+                } else if name != "Unknown" {
                     let val = format_panasonic_value(entry, name, be);
                     tags.push(DecodedTag {
                         name: name.to_string(),
@@ -2601,9 +2603,58 @@ fn format_fuji_value(entry: &IfdEntry<'_>, name: &str, be: bool) -> String {
     }
 }
 
+fn decode_panasonic_faces(data: &[u8], be: bool, tags: &mut Vec<DecodedTag>) {
+    // FaceDetInfo: count followed by up to five (center X/Y, width/height)
+    // int16u records. Ignore incomplete records and undocumented trailing data.
+    if data.len() < 2 {
+        return;
+    }
+    let words = read_u16_array(&data[..data.len().min(42)], be);
+    let count = usize::from(words[0]).min(5).min((words.len() - 1) / 4);
+    tags.push(DecodedTag {
+        name: "NumFacePositions".into(),
+        value: count.to_string(),
+    });
+    for index in 0..count {
+        let offset = 1 + index * 4;
+        let values = words[offset..offset + 4]
+            .iter()
+            .map(u16::to_string)
+            .collect::<Vec<_>>()
+            .join(" ");
+        tags.push(DecodedTag {
+            name: format!("Face{}Position", index + 1),
+            value: values,
+        });
+    }
+}
+
 fn format_panasonic_value(entry: &IfdEntry<'_>, name: &str, be: bool) -> String {
     let v = entry_u16(entry, be);
     match name {
+        "AFPointPosition" => {
+            if entry.data_type != crate::tiff::DataType::Rational || entry.data.len() != 16 {
+                return "n/a".into();
+            }
+            let read = |bytes: &[u8]| {
+                let bytes = bytes.try_into().unwrap();
+                if be {
+                    u32::from_be_bytes(bytes)
+                } else {
+                    u32::from_le_bytes(bytes)
+                }
+            };
+            let mut values = Vec::new();
+            for pair in entry.data.chunks_exact(8) {
+                let numerator = read(&pair[..4]);
+                let denominator = read(&pair[4..]);
+                if denominator == 0 || numerator > denominator {
+                    return "n/a".into();
+                }
+                values.push((f64::from(numerator) / f64::from(denominator)).to_string());
+            }
+            values.join(" ")
+        }
         "FirmwareVersion" => {
             if entry.data.len() >= 4 {
                 format!(
@@ -13289,7 +13340,7 @@ static FUJI_TAGS: [(u16, &str); 35] = [
 
 // -- MN6: Panasonic tag table --------------------------------------------
 
-static PANASONIC_TAGS: [(u16, &str); 89] = [
+static PANASONIC_TAGS: [(u16, &str); 91] = [
     (0x0001, "ImageQuality"),
     (0x0002, "FirmwareVersion"),
     (0x0003, "WhiteBalance"),
@@ -13332,8 +13383,10 @@ static PANASONIC_TAGS: [(u16, &str); 89] = [
     (0x0044, "ColorTempKelvin"),
     (0x0046, "WBAdjustAB"),
     (0x0047, "WBAdjustGM"),
-    (0x0048, "AFPointPosition"),
-    (0x004D, "FlashFired"),
+    (0x0048, "FlashCurtain"),
+    (0x004B, "PanasonicImageWidth"),
+    (0x004C, "PanasonicImageHeight"),
+    (0x004D, "AFPointPosition"),
     (0x0051, "LensType"),
     (0x0052, "LensSerialNumber"),
     (0x0053, "AccessoryType"),
@@ -19780,6 +19833,69 @@ mod tests {
         assert_eq!(canon_lens_name(152), Some("Canon EF 24-105mm f/4L IS USM"));
         assert_eq!(canon_lens_name(4142), Some("Canon RF 24-105mm F4 L IS USM"));
         assert_eq!(canon_lens_name(9999), None);
+    }
+
+    #[test]
+    fn panasonic_face_records_respect_endianness_count_and_truncation() {
+        for be in [false, true] {
+            let data: Vec<u8> = [2u16, 213, 76, 13, 13, 100, 50, 20, 10]
+                .into_iter()
+                .flat_map(|v| if be { v.to_be_bytes() } else { v.to_le_bytes() })
+                .collect();
+            let mut tags = Vec::new();
+            decode_panasonic_faces(&data, be, &mut tags);
+            assert_eq!(tags.len(), 3);
+            assert_eq!(tags[0].value, "2");
+            assert_eq!(tags[1].name, "Face1Position");
+            assert_eq!(tags[1].value, "213 76 13 13");
+            assert_eq!(tags[2].value, "100 50 20 10");
+            tags.clear();
+            decode_panasonic_faces(&data[..17], be, &mut tags);
+            assert_eq!(tags.len(), 2);
+            assert_eq!(tags[0].value, "1");
+            tags.clear();
+            decode_panasonic_faces(&data[..1], be, &mut tags);
+            assert!(tags.is_empty());
+            decode_panasonic_faces(&[0, 0], be, &mut tags);
+            assert_eq!(tags.len(), 1);
+            assert_eq!(tags[0].value, "0");
+        }
+    }
+
+    #[test]
+    fn panasonic_af_position_uses_the_rational_tag_and_keeps_precision() {
+        assert_eq!(maker_tag_name(0x0048, Vendor::Panasonic), "FlashCurtain");
+        assert_eq!(maker_tag_name(0x004d, Vendor::Panasonic), "AFPointPosition");
+        for be in [false, true] {
+            for (values, expected) in [
+                ([320_u32, 1024, 640, 1024], "0.3125 0.625"),
+                ([1, 0, 1, 2], "n/a"),
+                ([u32::MAX, 1024, u32::MAX, 1024], "n/a"),
+            ] {
+                let bytes: Vec<u8> = values
+                    .into_iter()
+                    .flat_map(|value| {
+                        if be {
+                            value.to_be_bytes()
+                        } else {
+                            value.to_le_bytes()
+                        }
+                    })
+                    .collect();
+                let entry = IfdEntry {
+                    tag: 0x004d,
+                    data_type: tiff::DataType::Rational,
+                    raw_type: 5,
+                    count: 2,
+                    data: &bytes,
+                    inline: false,
+                };
+                assert_eq!(
+                    format_panasonic_value(&entry, "AFPointPosition", be),
+                    expected
+                );
+            }
+        }
     }
 
     #[test]

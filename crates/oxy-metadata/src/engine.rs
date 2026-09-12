@@ -137,6 +137,13 @@ fn document_from_tags(
 }
 
 fn focus_from_tags(tags: &[Tag], display_dimensions: Option<(u32, u32)>) -> Option<FocusInfo> {
+    sony_focus_from_tags(tags, display_dimensions)
+        .or_else(|| focus::from_tags(tags, display_dimensions))
+}
+
+mod focus;
+
+fn sony_focus_from_tags(tags: &[Tag], display_dimensions: Option<(u32, u32)>) -> Option<FocusInfo> {
     let location = tags
         .iter()
         .find(|tag| tag.group == "MakerNotes" && tag.name == "FocusLocation")?;
@@ -152,12 +159,30 @@ fn focus_from_tags(tags: &[Tag], display_dimensions: Option<(u32, u32)>) -> Opti
         .iter()
         .find(|tag| tag.group == "MakerNotes" && tag.name == "FocusFrameSize")
         .and_then(parse_frame_size);
-    let orientation = tags
-        .iter()
+    let orientation = focus_orientation(tags, *width, *height, display_dimensions);
+
+    Some(crate::orient_focus_info(
+        *width,
+        *height,
+        *center_x,
+        *center_y,
+        frame_size,
+        orientation,
+    ))
+}
+
+fn focus_orientation(
+    tags: &[Tag],
+    width: u32,
+    height: u32,
+    display_dimensions: Option<(u32, u32)>,
+) -> u16 {
+    tags.iter()
         .find(|tag| tag.group == "EXIF" && tag.name == "Orientation")
         .and_then(|tag| tag.typed_value.as_ref())
         .and_then(TagValue::to_u32)
         .and_then(|value| u16::try_from(value).ok())
+        .filter(|value| (1..=8).contains(value))
         .or_else(|| {
             tags.iter()
                 .find(|tag| tag.group == "HEIF" && tag.name == "Rotation")
@@ -173,19 +198,10 @@ fn focus_from_tags(tags: &[Tag], display_dimensions: Option<(u32, u32)>) -> Opti
         .unwrap_or_else(|| {
             display_dimensions
                 .filter(|(display_width, display_height)| {
-                    (*width > *height) != (*display_width > *display_height)
+                    (width > height) != (*display_width > *display_height)
                 })
                 .map_or(1, |_| 6)
-        });
-
-    Some(crate::orient_focus_info(
-        *width,
-        *height,
-        *center_x,
-        *center_y,
-        frame_size,
-        orientation,
-    ))
+        })
 }
 
 fn unsigned_values(tag: &Tag) -> Vec<u32> {
