@@ -28,7 +28,7 @@ import { beginPreviewDebug, type PreviewDebugHandle } from "../lib/previewDebug"
 import { previewContentStyles, validPreviewGeometry, type DisplayedPreviewSize } from "../lib/previewGeometry";
 import { nextProgressiveStage } from "../lib/progressiveImage";
 import { rawPreviewStatus, type RawPreviewStatus } from "../lib/rawPreview";
-import { captureFolderThumbnail, useFolderThumbnail } from "../lib/folderThumbnailCache";
+import { getFolderThumbnail, preloadFolderThumbnail, useFolderThumbnail } from "../lib/folderThumbnailCache";
 import type {
   AssetSummary,
   PreviewPriority,
@@ -201,7 +201,11 @@ export function Thumbnail({
     ? "original"
     : generatedSource?.renderLevel ?? previewStep.level;
   const pendingSource = source !== visibleImage?.source ? source : undefined;
-  const resourceIds = [visibleImage?.resourceId, !failed && pendingSource ? resourceForSource(pendingSource) : undefined]
+  // A full result may arrive before the thumbnail has painted. Keep that
+  // descriptor leased while the lower stage loads, or advancing to full would
+  // refetch an already released original and repeat its browser decode.
+  const resourceIds = [visibleImage?.resourceId, !failed && pendingSource ? resourceForSource(pendingSource) : undefined,
+    enabled && large && !fullImageFailed ? fullSource?.resource?.resourceId : undefined]
     .filter((id): id is string => Boolean(id));
   const resourceIdentity = [...new Set(resourceIds)].sort().join("\u0000");
   const projectionResourceIdentity = [previewSource, fullSource]
@@ -217,7 +221,7 @@ export function Thumbnail({
     result: PreviewResult | undefined,
     loadedSource: string,
   ) => {
-    const loadedLevel = result && result === fullSource
+    const loadedLevel = result && result === fullSource && result.satisfaction !== "interim"
       ? fullStep?.level ?? "full"
       : previewStep.level;
     const reportKey = `${asset.id}\u0000${loadedSource}\u0000${loadedLevel}`;
@@ -345,7 +349,7 @@ export function Thumbnail({
     if (!ownsFullDetailStage || (previewSource?.url !== preparedSource && fullSource?.url !== preparedSource)) return;
     setLoaded((current) => current?.assetId === asset.id
       ? current
-      : { assetId: asset.id, mode: fullSource?.url === preparedSource ? "full" : "preview" });
+      : { assetId: asset.id, mode: fullSource?.url === preparedSource && fullSource?.satisfaction !== "interim" ? "full" : "preview" });
   }, [
     asset.id,
     asset.kind,
@@ -367,11 +371,12 @@ export function Thumbnail({
       loaded?.assetId === asset.id
       && loaded.mode === "preview"
       && fullSource?.path
+      && fullSource.satisfaction !== "interim"
       && fullSource.path === previewSource?.path
     ) {
       setLoaded({ assetId: asset.id, mode: "full" });
     }
-  }, [asset.id, fullSource?.path, loaded, previewSource?.path]);
+  }, [asset.id, fullSource?.path, fullSource?.satisfaction, loaded, previewSource?.path]);
 
   useEffect(() => {
     // Windows/Linux HEIF status is owned by the tile canvas. macOS HEIF and
@@ -424,15 +429,15 @@ export function Thumbnail({
     if (source) {
       markBrowserImageReady(source, size, image, result?.resource?.resourceId);
       if (result?.renderLevel === "thumbnail" || (!large && directSource)) {
-        void captureFolderThumbnail(asset, image, result?.geometry)
-          .then((retained) => { if (retained) discardBrowserImageResource(source); })
+        void preloadFolderThumbnail(asset, source, result?.geometry)
+          .then(() => { if (getFolderThumbnail(asset)) discardBrowserImageResource(source); })
           .catch((error) => {
             console.warn(`[OxyPreview] thumbnail retention failed for ${asset.name}`, error);
           });
       }
     }
     if (ownsFullDetailStage && large && result?.renderLevel !== "thumbnail") {
-      setLoaded({ assetId: asset.id, mode: result === fullSource ? "full" : "preview" });
+      setLoaded({ assetId: asset.id, mode: result === fullSource && result?.satisfaction !== "interim" ? "full" : "preview" });
     }
     const displayedSize = { ...size, geometry: validPreviewGeometry(result?.geometry, size) };
     if (source) setDisplayedImage({ assetId: asset.id, source, resourceId: result?.resource?.resourceId, size: displayedSize });
@@ -489,12 +494,12 @@ export function Thumbnail({
       {visibleImage ? contentStyles ? (
         <div className="thumbnail__content-host">
           <div className="thumbnail__content" style={contentStyles.frame}>
-            <img key={`${asset.id}:${visibleImage.source}`} src={visibleImage.source} crossOrigin="anonymous"
+            <img key={`${asset.id}:${visibleImage.source}`} src={visibleImage.source} crossOrigin="anonymous" decoding="async"
               style={contentStyles.image} alt="" draggable={false} />
           </div>
         </div>
       ) : (
-        <img key={`${asset.id}:${visibleImage.source}`} src={visibleImage.source} crossOrigin="anonymous"
+        <img key={`${asset.id}:${visibleImage.source}`} src={visibleImage.source} crossOrigin="anonymous" decoding="async"
           alt="" draggable={false} />
       ) : null}
       {pendingSource && !failed ? (
@@ -502,14 +507,25 @@ export function Thumbnail({
           className="thumbnail__pending-image"
           key={`${asset.id}:${pendingSource}`}
           src={pendingSource}
+          decoding="async"
           crossOrigin="anonymous"
           alt=""
           draggable={false}
           onError={() => handleError(generatedSource)}
-          onLoad={(event) => handleLoad({
-            width: event.currentTarget.naturalWidth,
-            height: event.currentTarget.naturalHeight,
-          }, generatedSource, event.currentTarget)}
+          onLoad={(event) => {
+            const image = event.currentTarget;
+            const ready = () => {
+              // Selection/source replacement unmounts this keyed pending node.
+              // A late decode must neither reveal nor retain the previous image.
+              if (!image.isConnected) return;
+              handleLoad({ width: image.naturalWidth, height: image.naturalHeight }, generatedSource, image);
+            };
+            if (large && image.decode) {
+              void image.decode().then(ready, () => {
+                if (image.isConnected) handleError(generatedSource);
+              });
+            } else ready();
+          }}
         />
       ) : null}
       {asset.kind === "raw" ? <span className="thumbnail__badge">RAW</span> : null}

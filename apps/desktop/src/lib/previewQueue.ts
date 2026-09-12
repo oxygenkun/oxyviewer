@@ -94,5 +94,5 @@ export class SerialTaskQueue {
  * Presentation-only queue for bytes that already have a Rust-owned artifact.
  * It does not decide resource validity or schedule native decode work.
  */
-export const browserImageWorkerCount = Math.max(1, globalThis.navigator?.hardwareConcurrency || 1);
+export const browserImageWorkerCount = Math.max(1, Math.min(4, globalThis.navigator?.hardwareConcurrency || 1));
 export const browserPreloadQueue = new SerialTaskQueue(browserImageWorkerCount);

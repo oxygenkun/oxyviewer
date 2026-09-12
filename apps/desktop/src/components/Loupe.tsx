@@ -1,5 +1,4 @@
 import type { DisplayedPreviewSize } from "../lib/previewGeometry";
-import { useVirtualizer } from "@tanstack/react-virtual";
 import {
   Check,
   Focus,
@@ -20,33 +19,27 @@ import {
 import {
   clampPan,
   clampZoom,
-  FILMSTRIP_GAP,
-  filmstripItemWidth,
   fitSize,
   getNavigatorViewport,
   MAX_PIXEL_ZOOM_PERCENT,
-  orderVisibleFilmstripItems,
   panByNavigatorDelta,
   pixelZoomPercent,
   resolveLoupeSourceSize,
-  shouldFetchFilmstripPage,
   zoomAtPoint,
   zoomForPixelPercent,
   type Point,
   type Size,
 } from "../lib/loupe";
 import { LAYOUT_SIZE_LIMITS } from "../lib/layoutSizing";
-import { getAssetDetails, getAssetTagAssignments, requestMetadata } from "../lib/api";
+import { getAssetDetails } from "../lib/api";
 import { mapFocusRegions } from "../lib/focusArea";
 import type { MessageKey } from "../lib/i18n";
-import { acceptMetadataProjections } from "../lib/metadataProjection";
 import type { RawPreviewStatus } from "../lib/rawPreview";
 import { renderPlan } from "../lib/preview";
-import { filmstripPreviewIntents, PreviewScheduleScope } from "../lib/previewScheduling";
 import { useWorkspaceStore } from "../store";
 import type { AssetSummary, HeifDecodeStatus, NavigatorPosition } from "../types";
 import { AssetMetadataBadges } from "./AssetMetadataBadges";
-import { FilmstripPreviewPreloader } from "./FilmstripPreviewPreloader";
+import { Filmstrip } from "./Filmstrip";
 import { HeifTileCanvas } from "./HeifTileCanvas";
 import { Thumbnail } from "./Thumbnail";
 import { ResizeHandle } from "./ResizeHandle";
@@ -100,7 +93,6 @@ export function Loupe({
   const loupeMetadataVisible = useWorkspaceStore((state) => state.loupeMetadataVisible);
   const loupeControlsAutoHide = useWorkspaceStore((state) => state.loupeControlsAutoHide);
   const filmstripHeight = useWorkspaceStore((state) => state.filmstripHeight);
-  const thumbnailOrientation = useWorkspaceStore((state) => state.thumbnailOrientation);
   const setNavigatorVisible = useWorkspaceStore((state) => state.setNavigatorVisible);
   const setNavigatorPosition = useWorkspaceStore((state) => state.setNavigatorPosition);
   const setFocusAreasVisible = useWorkspaceStore((state) => state.setFocusAreasVisible);
@@ -112,7 +104,6 @@ export function Loupe({
   const navigatorRef = useRef<HTMLDivElement>(null);
   const settingsRef = useRef<HTMLDivElement>(null);
   const settingsButtonRef = useRef<HTMLButtonElement>(null);
-  const filmstripRef = useRef<HTMLDivElement>(null);
   const loupeRef = useRef<HTMLDivElement>(null);
   const dragRef = useRef<{ pointerId: number; start: Point; offset: Point } | undefined>(undefined);
   const navigatorDragRef = useRef<{ pointerId: number; last: Point } | undefined>(undefined);
@@ -133,32 +124,6 @@ export function Loupe({
   const heifPresentationIdentity = `${active.id}:${active.modifiedAtMs}:${displaySharpening}`;
   const handleHeifArtifactDisplayed = useCallback(() => setDisplayedHeifArtifact(heifPresentationIdentity), [heifPresentationIdentity]);
   const [heifStatus, setHeifStatus] = useState<HeifDecodeStatus | "probing">("probing");
-  const [filmstripSchedule] = useState(() => new PreviewScheduleScope("loupe-filmstrip"));
-  const filmstripItemSize = filmstripItemWidth(filmstripHeight, thumbnailOrientation);
-  const filmstripVirtualizer = useVirtualizer({
-    count: total,
-    estimateSize: () => filmstripItemSize,
-    gap: FILMSTRIP_GAP,
-    getScrollElement: () => filmstripRef.current,
-    horizontal: true,
-    overscan: 12,
-  });
-  const virtualFilmstripItems = filmstripVirtualizer.getVirtualItems();
-  const filmstripViewportStart = filmstripRef.current?.scrollLeft ?? 0;
-  const filmstripViewportEnd = filmstripViewportStart + (filmstripRef.current?.clientWidth ?? 0);
-  const nextVisibleFilmstripIds = orderVisibleFilmstripItems(
-    virtualFilmstripItems.flatMap((item) => {
-      const asset = assets[item.index];
-      return asset ? [{ id: asset.id, start: item.start, end: item.end }] : [];
-    }),
-    filmstripViewportStart,
-    filmstripViewportEnd,
-  );
-  const filmstripIdsRef = useRef(nextVisibleFilmstripIds);
-  if (filmstripIdsRef.current.join("\0") !== nextVisibleFilmstripIds.join("\0")) {
-    filmstripIdsRef.current = nextVisibleFilmstripIds;
-  }
-  const visibleFilmstripIds = filmstripIdsRef.current;
   const details = useQuery({
     queryKey: ["asset-details", active.id],
     queryFn: () => getAssetDetails(active),
@@ -306,12 +271,6 @@ export function Loupe({
 
   const [navigation, setNavigation] = useState({ id: active.id, index: assets.indexOf(active), direction: 1 });
   const activeIndex = assets.indexOf(active);
-  useLayoutEffect(() => {
-    filmstripVirtualizer.measure();
-  }, [filmstripItemSize, filmstripVirtualizer]);
-  useLayoutEffect(() => {
-    if (activeIndex >= 0) filmstripVirtualizer.scrollToIndex(activeIndex, { align: "auto" });
-  }, [active.id, activeIndex, filmstripVirtualizer]);
   if (navigation.id !== active.id) {
     // Reset before committing the new renderer. An effect here would run
     // after its cache-hit layout effect and overwrite "complete" with loading.
@@ -327,68 +286,6 @@ export function Loupe({
     [0, navigation.direction, -navigation.direction, 2 * navigation.direction, -2 * navigation.direction]
       .flatMap((delta) => assets[activeIndex + delta] ?? [])
   ), [activeIndex, assets, navigation.direction]);
-  const preloadAssets = useMemo(() => [
-    ...nearbyPreviewAssets,
-    ...visibleFilmstripIds.flatMap((id) => assets.find((asset) => asset.id === id) ?? [])
-      .filter((asset) => !nearbyPreviewAssets.some((nearby) => nearby.id === asset.id)),
-  ], [assets, nearbyPreviewAssets, visibleFilmstripIds]);
-
-  const visibleFilmstripIdSet = useMemo(
-    () => new Set(visibleFilmstripIds),
-    [visibleFilmstripIds],
-  );
-  const viewportRankById = useMemo(
-    () => new Map(visibleFilmstripIds.map((id, index) => [id, index])),
-    [visibleFilmstripIds],
-  );
-  const visibleFilmstripAssets = useMemo(() => {
-    const visibleAssets = new Map(virtualFilmstripItems.flatMap((item) => {
-      const asset = assets[item.index];
-      return asset ? [[asset.id, asset] as const] : [];
-    }));
-    return [active, ...visibleFilmstripIds
-      .filter((id) => id !== active.id)
-      .flatMap((id) => visibleAssets.get(id) ?? [])];
-  }, [active, assets, virtualFilmstripItems, visibleFilmstripIds]);
-  const visibleMetadataPaths = visibleFilmstripAssets.map((asset) => asset.path);
-  const visibleMetadataSignature = visibleMetadataPaths.join("\u0000");
-  useEffect(() => {
-    if (!visibleMetadataPaths.length) return;
-    void requestMetadata(visibleMetadataPaths, "visible")
-      .then(acceptMetadataProjections)
-      .catch(() => undefined);
-  }, [visibleMetadataSignature]);
-
-  const filmstripScheduleIntents = useMemo(() => filmstripPreviewIntents(
-    virtualFilmstripItems.flatMap((item) => {
-      const asset = assets[item.index];
-      return asset ? [{
-        asset,
-        visible: visibleFilmstripIdSet.has(asset.id),
-        distance: Math.abs((item.start + item.end) / 2 - (filmstripViewportStart + filmstripViewportEnd) / 2),
-      }] : [];
-    }),
-    active,
-  ), [active, assets, virtualFilmstripItems, visibleFilmstripIdSet, filmstripViewportStart, filmstripViewportEnd]);
-  useEffect(() => {
-    filmstripSchedule.reconcile(filmstripScheduleIntents);
-  }, [filmstripSchedule, filmstripScheduleIntents]);
-
-  useEffect(() => () => {
-    filmstripSchedule.release();
-  }, [filmstripSchedule]);
-
-  useEffect(() => {
-    if (shouldFetchFilmstripPage(
-      virtualFilmstripItems.at(-1)?.index,
-      assets.length,
-      hasNextPage,
-      isFetchingNextPage,
-    )) {
-      fetchNextPage();
-    }
-  }, [assets.length, fetchNextPage, hasNextPage, isFetchingNextPage, virtualFilmstripItems]);
-
   const handleWheel = useCallback((event: React.WheelEvent<HTMLDivElement>) => {
     if ((event.target as HTMLElement).closest(".loupe__controls, .loupe__navigator, .loupe__settings")) return;
     event.preventDefault();
@@ -484,7 +381,6 @@ export function Loupe({
       ref={loupeRef}
       style={{ "--filmstrip-height": `${filmstripHeight}px` } as React.CSSProperties}
     >
-      <FilmstripPreviewPreloader assets={preloadAssets} />
       <div
         className={`loupe__stage ${zoom > 1 ? "is-zoomed" : ""} ${dragging ? "is-dragging" : ""}`}
         ref={stageRef}
@@ -717,115 +613,10 @@ export function Loupe({
         targetRef={loupeRef}
         value={filmstripHeight}
       />
-      <div
-        className={`filmstrip filmstrip--${thumbnailOrientation}`}
-        ref={filmstripRef}
-        onWheel={(event) => {
-          if (event.deltaY === 0) return;
-          event.preventDefault();
-          event.currentTarget.scrollLeft += event.deltaX + event.deltaY;
-        }}
-      >
-        <div
-          className="filmstrip__track"
-          style={{ width: filmstripVirtualizer.getTotalSize() }}
-        >
-          {virtualFilmstripItems.map((item) => {
-            const asset = assets[item.index];
-            if (!asset) {
-              return (
-                <span
-                  aria-hidden="true"
-                  className="filmstrip__placeholder"
-                  key={item.key}
-                  style={{
-                    transform: `translateX(${item.start}px)`,
-                    width: item.size,
-                  }}
-                />
-              );
-            }
-            return (
-              <FilmstripItem
-                key={asset.id}
-                active={active.id === asset.id}
-                asset={asset}
-                onClick={() => select(asset.id)}
-                onContextMenu={(event) => onAssetContextMenu(event, asset)}
-                rank={viewportRankById.get(asset.id)
-                  ?? visibleFilmstripIds.length + Math.abs(item.index - activeIndex)}
-                resourcesEnabled
-                showMetadata={loupeMetadataVisible}
-                style={{
-                  transform: `translateX(${item.start}px)`,
-                  width: item.size,
-                }}
-                visible={visibleFilmstripIdSet.has(asset.id)}
-              />
-            );
-          })}
-        </div>
-        {isFetchingNextPage ? <span className="filmstrip__loading">Loading...</span> : null}
-      </div>
+      <Filmstrip active={active} assets={assets} nearbyPreviewAssets={nearbyPreviewAssets} total={total}
+        fetchNextPage={fetchNextPage} hasNextPage={hasNextPage} isFetchingNextPage={isFetchingNextPage}
+        onAssetContextMenu={onAssetContextMenu} />
     </div>
-  );
-}
-
-interface FilmstripItemProps {
-  active: boolean;
-  asset: AssetSummary;
-  onClick: () => void;
-  onContextMenu: (event: React.MouseEvent) => void;
-  rank: number;
-  resourcesEnabled: boolean;
-  showMetadata: boolean;
-  style: React.CSSProperties;
-  visible: boolean;
-}
-
-function FilmstripItem({
-  active,
-  asset,
-  onClick,
-  onContextMenu,
-  rank,
-  resourcesEnabled,
-  showMetadata,
-  style,
-  visible,
-}: FilmstripItemProps) {
-  const tagsQuery = useQuery({
-    queryKey: ["asset-tag-assignments", [asset.path]],
-    queryFn: () => getAssetTagAssignments([asset.path]),
-    enabled: visible || active,
-    staleTime: Infinity,
-  });
-  const tags = (tagsQuery.data ?? []).filter((assignment) => assignment.assignedCount > 0);
-  return (
-    <button
-      data-filmstrip-asset-id={asset.id}
-      className={active ? "is-active" : ""}
-      onClick={onClick}
-      onContextMenu={onContextMenu}
-      style={style}
-      title={asset.name}
-    >
-      <Thumbnail
-        asset={asset}
-        enabled={active || resourcesEnabled}
-        priority={active ? "loupe" : visible ? "visible" : "nearby"}
-        rank={rank}
-      />
-      {showMetadata || tags.length > 0 ? (
-        <span className="filmstrip__metadata">
-          {showMetadata ? <AssetMetadataBadges asset={asset} /> : null}
-          <span className="filmstrip__tags" title={tags.map(({ tag }) => tag.path.replaceAll("|", " › ")).join("\n")}>
-            {tags.map(({ tag }) => <span key={tag.id}>{tag.name}</span>)}
-          </span>
-        </span>
-      ) : null}
-      <span className="filmstrip__name">{asset.name}</span>
-    </button>
   );
 }
 

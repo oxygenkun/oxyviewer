@@ -31,7 +31,8 @@ vi.mock("@tauri-apps/api/core", () => ({ convertFileSrc: (path: string) => path 
 // browser probe; these tests isolate the existing native-image lease lifecycle.
 vi.mock("../lib/folderThumbnailCache", async (importOriginal) => ({
   ...await importOriginal<typeof import("../lib/folderThumbnailCache")>(),
-  captureFolderThumbnail: async () => undefined,
+  preloadFolderThumbnail: async () => undefined,
+  getFolderThumbnail: () => undefined,
 }));
 
 const asset: AssetSummary = {
@@ -99,9 +100,90 @@ afterEach(async () => {
   clearImageProjections();
   vi.restoreAllMocks();
   vi.unstubAllGlobals();
+  delete (HTMLImageElement.prototype as Partial<HTMLImageElement>).decode;
 });
 
 describe("filmstrip thumbnail display retention", () => {
+  it("keeps a cached RAW full Interim in developing state", async () => {
+    apiMocks.tauri = true;
+    clearImageProjections();
+    const raw = { ...asset, kind: "raw" as const };
+    const status = vi.fn();
+    markBrowserImageReady(url, { width: 341, height: 512 });
+    for (const level of ["thumbnail", "full"] as const) {
+      acceptImageProjection({
+        path: raw.path, sourceRevision: "source-1", stateRevision: 1,
+        validAt: 1, status: "ready", level,
+        result: { path: url, width: 341, height: 512, kind: "embedded",
+          renderLevel: level, satisfaction: level === "full" ? "interim" : "satisfied" },
+      });
+    }
+    await act(async () => root.render(<QueryClientProvider client={client}>
+      <Thumbnail asset={raw} large onRawPreviewStatus={status} />
+    </QueryClientProvider>));
+    expect(status).toHaveBeenLastCalledWith({ state: "developingFull" });
+    expect(status.mock.calls.some(([value]) => value.state === "fullReady")).toBe(false);
+    clearBrowserImageResources();
+  });
+
+  it("retains an available full resource while the thumbnail is still loading", async () => {
+    apiMocks.tauri = true;
+    clearImageProjections();
+    const jpeg = { ...asset, kind: "jpeg" as const };
+    for (const level of ["thumbnail", "full"] as const) {
+      acceptImageProjection({
+        path: jpeg.path, sourceRevision: "source-1", stateRevision: 1,
+        validAt: 1, status: "ready", level,
+        result: {
+          path: `/cache/${level}.jpg`, width: level === "full" ? 7008 : 342,
+          height: level === "full" ? 4672 : 512, kind: "embedded", renderLevel: level,
+          resource: { resourceId: `awaiting-${level}`, url: `oxy-media://localhost/resource/awaiting-${level}`, mediaType: "image/jpeg" },
+        },
+      });
+    }
+    await act(async () => root.render(<QueryClientProvider client={client}>
+      <Thumbnail asset={jpeg} large />
+    </QueryClientProvider>));
+    expect(container.querySelector(".thumbnail__pending-image")?.getAttribute("src")).toContain("awaiting-thumbnail");
+    expect(apiMocks.releaseMediaResource).not.toHaveBeenCalledWith("awaiting-full");
+    expect(apiMocks.renewMediaResource).toHaveBeenCalledWith("awaiting-full");
+  });
+
+  it("reveals loupe only after decoding and ignores an unmounted late decode", async () => {
+    apiMocks.tauri = true;
+    clearImageProjections();
+    const ready: (() => void)[] = [];
+    Object.defineProperty(HTMLImageElement.prototype, "decode", {
+      configurable: true,
+      value: vi.fn(() => new Promise<void>((resolve) => ready.push(resolve))),
+    });
+    const loaded = vi.fn();
+    const mount = async (id: string) => act(async () => {
+      acceptImageProjection({ path: `/photos/${id}.jpg`, sourceRevision: id, stateRevision: 1,
+        validAt: 1, status: "ready", level: "full", result: {
+          path: `/photos/${id}.jpg`, width: 2400, height: 1600, kind: "original", renderLevel: "full",
+        } });
+      root.render(
+      <QueryClientProvider client={client}>
+        <Thumbnail asset={{ ...asset, id, kind: "jpeg", path: `/photos/${id}.jpg` }} large onImageLoad={loaded} />
+      </QueryClientProvider>,
+      );
+    });
+    await mount("old");
+    const old = container.querySelector(".thumbnail__pending-image")!;
+    expect(old.getAttribute("decoding")).toBe("async");
+    await act(async () => old.dispatchEvent(new Event("load")));
+    expect(loaded).not.toHaveBeenCalled();
+    await mount("new");
+    const current = container.querySelector(".thumbnail__pending-image")!;
+    await act(async () => current.dispatchEvent(new Event("load")));
+    await act(async () => ready[0]());
+    expect(loaded).not.toHaveBeenCalled();
+    await act(async () => ready[1]());
+    expect(loaded).toHaveBeenCalled();
+    expect(container.querySelector("img")?.getAttribute("src")).toBe("/photos/new.jpg");
+    delete (HTMLImageElement.prototype as Partial<HTMLImageElement>).decode;
+  });
   it("starts loupe full without a thumbnail and aborts each previous selection", async () => {
     apiMocks.tauri = true;
     clearImageProjections();

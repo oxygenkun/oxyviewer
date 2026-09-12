@@ -6,7 +6,7 @@ import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { Thumbnail } from "../components/Thumbnail";
 import type { AssetSummary } from "../types";
 import {
-  captureFolderThumbnail, clearFolderThumbnails, discardFolderThumbnail,
+  retainFolderThumbnail, clearFolderThumbnails, discardFolderThumbnail,
   getFolderThumbnail, getFolderThumbnailStats, preloadFolderThumbnail,
 } from "./folderThumbnailCache";
 import { setBrowserImageResourceScope } from "./browserImageCache";
@@ -41,8 +41,9 @@ const asset = (id: string, modifiedAtMs = 1) => ({
   id, path: `/photos/${id}.hif`, name: `${id}.hif`, extension: "hif",
   kind: "heif", sizeBytes: 1000, modifiedAtMs, hasSidecar: false,
 } as AssetSummary);
-function input(width = 4000, height = 3000) {
+function input(width = 512, height = 384) {
   const image = document.createElement("img");
+  image.src = "https://media/thumbnail";
   Object.defineProperties(image, {
     naturalWidth: { value: width }, naturalHeight: { value: height },
   });
@@ -54,6 +55,7 @@ beforeEach(() => {
   vi.stubGlobal("__OXY_DEBUG__", false);
   vi.stubGlobal("Image", DecodedImage);
   vi.stubGlobal("URL", { createObjectURL: createUrl, revokeObjectURL: revokeUrl });
+  vi.stubGlobal("fetch", vi.fn().mockResolvedValue({ ok: true, blob: async () => new Blob(["small-thumbnail"]) }));
   createUrl.mockImplementation(() => `blob:thumbnail-${serial++}`);
   revokeUrl.mockClear();
   native.request.mockClear();
@@ -72,7 +74,7 @@ afterEach(() => {
 
 it("retains the whole folder beyond both generic image-cache limits without native leases", async () => {
   const source = input();
-  for (let index = 0; index < 1100; index++) await captureFolderThumbnail(asset(`${index}`), source);
+  for (let index = 0; index < 1100; index++) await retainFolderThumbnail(asset(`${index}`), source);
   expect(getFolderThumbnailStats().count).toBe(1100);
   expect(getFolderThumbnailStats().decodedBytes).toBeGreaterThan(512 * 1024 * 1024);
   expect(getFolderThumbnail(asset("0"))?.image).toBeDefined();
@@ -103,25 +105,48 @@ it("fences an encoded response that arrives after the folder changes", async () 
   await Promise.resolve();
   clearFolderThumbnails();
   finish(new Blob(["jpeg"]));
-  await warming;
+  await expect(warming).rejects.toMatchObject({ name: "AbortError" });
   expect(getFolderThumbnail(asset("late-encoded"))).toBeUndefined();
 });
 
-it("shrinks originals and scales the content rectangle while preserving display geometry", async () => {
-  const retained = await captureFolderThumbnail(asset("geometry"), input(), {
+it("preserves the native content rectangle and display geometry without conversion", async () => {
+  const retained = await retainFolderThumbnail(asset("geometry"), input(), {
     displaySize: { width: 6000, height: 4000 },
-    contentRect: { x: 1000, y: 750, width: 2000, height: 1500 },
+    contentRect: { x: 128, y: 96, width: 256, height: 192 },
   });
   expect(retained).toMatchObject({ width: 512, height: 384, geometry: {
     displaySize: { width: 6000, height: 4000 },
     contentRect: { x: 128, y: 96, width: 256, height: 192 },
   } });
   expect(retained?.url).toMatch(/^blob:/);
+  expect(HTMLCanvasElement.prototype.toBlob).not.toHaveBeenCalled();
+});
+
+it("rejects unbounded native output without synchronous canvas conversion", async () => {
+  await expect(retainFolderThumbnail(asset("oversized"), input(6000, 4000))).rejects.toThrow("512-pixel");
+  expect(HTMLCanvasElement.prototype.toBlob).not.toHaveBeenCalled();
+  expect(getFolderThumbnail(asset("oversized"))).toBeUndefined();
+});
+
+it("shares visible and background fetches while preserving another consumer on abort", async () => {
+  let finish!: (value: Blob) => void;
+  const fetcher = vi.fn().mockResolvedValue({ ok: true, blob: () => new Promise<Blob>((resolve) => { finish = resolve; }) });
+  vi.stubGlobal("fetch", fetcher);
+  const controller = new AbortController();
+  const first = preloadFolderThumbnail(asset("shared"), "https://media/a", undefined, controller.signal);
+  const second = preloadFolderThumbnail(asset("shared"), "https://media/a");
+  await Promise.resolve();
+  controller.abort();
+  await expect(first).rejects.toMatchObject({ name: "AbortError" });
+  finish(new Blob(["jpeg"]));
+  await second;
+  expect(fetcher).toHaveBeenCalledTimes(1);
+  expect(getFolderThumbnail(asset("shared"))).toBeDefined();
 });
 
 it("reuses the same decoded thumbnail across virtual mounts without re-requesting native media", async () => {
   const file = asset("cached");
-  const retained = await captureFolderThumbnail(file, input(160, 120));
+  const retained = await retainFolderThumbnail(file, input(160, 120));
   const client = new QueryClient();
   const container = document.createElement("div");
   const mounted = createRoot(container);
@@ -141,10 +166,10 @@ it("reuses the same decoded thumbnail across virtual mounts without re-requestin
 });
 
 it("does not serve old pixels for a modified asset and revokes replaced Blob URLs", async () => {
-  const before = await captureFolderThumbnail(asset("changed"), input());
+  const before = await retainFolderThumbnail(asset("changed"), input());
   const modified = asset("changed", 2);
   expect(getFolderThumbnail(modified)).toBeUndefined();
-  const after = await captureFolderThumbnail(modified, input());
+  const after = await retainFolderThumbnail(modified, input());
   expect(getFolderThumbnail(modified)).toBe(after);
   expect(revokeUrl).toHaveBeenCalledWith(before?.url);
   discardFolderThumbnail(modified.path);
@@ -154,7 +179,7 @@ it("does not serve old pixels for a modified asset and revokes replaced Blob URL
 
 it("uses the retained HIF loupe base even after its native thumbnail descriptor expires", async () => {
   const file = asset("loupe-base");
-  const retained = await captureFolderThumbnail(file, input(120, 160));
+  const retained = await retainFolderThumbnail(file, input(120, 160));
   useImageProjectionStore.getState().accept({
     path: file.path, sourceRevision: "source", stateRevision: 1, validAt: 1,
     status: "ready", level: "thumbnail",
@@ -181,12 +206,13 @@ it("uses the retained HIF loupe base even after its native thumbnail descriptor 
 it("releases the previous folder and rejects a snapshot finishing after invalidation", async () => {
   setBrowserImageResourceScope("directory-a");
   const file = asset("late");
-  const ready = await captureFolderThumbnail(asset("ready"), input());
-  let finish: BlobCallback | undefined;
-  vi.mocked(HTMLCanvasElement.prototype.toBlob).mockImplementation((callback) => { finish = callback; });
-  const pending = captureFolderThumbnail(file, input());
+  const ready = await retainFolderThumbnail(asset("ready"), input());
+  let finish!: (value: Blob) => void;
+  vi.stubGlobal("fetch", vi.fn().mockResolvedValue({ ok: true, blob: () => new Promise<Blob>((resolve) => { finish = resolve; }) }));
+  const pending = retainFolderThumbnail(file, input());
+  await Promise.resolve();
   setBrowserImageResourceScope("directory-b");
-  finish?.(new Blob(["late"]));
+  finish(new Blob(["late"]));
   expect(await pending).toBeUndefined();
   expect(getFolderThumbnailStats().count).toBe(0);
   expect(ready?.image.src).toBe("");

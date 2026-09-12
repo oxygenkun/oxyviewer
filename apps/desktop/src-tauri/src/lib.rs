@@ -19,86 +19,107 @@ pub fn run() {
     let protocol_heif = heif.clone();
     let media_resources = oxy_media::shared_resource_registry();
     tauri::Builder::default()
-        .register_uri_scheme_protocol("oxy-media", move |context, request| {
-            let parts = request
-                .uri()
-                .path()
-                .trim_start_matches('/')
-                .split('/')
-                .collect::<Vec<_>>();
-            if parts.len() == 2 && parts[0] == "resource" {
-                let registry = &context.app_handle().state::<AppState>().media_resources;
-                let resource = registry.resolve(parts[1]);
-                return match resource {
-                    Some(resource) => {
-                        let body = registry.materialize(&resource);
-                        match body {
-                            Ok(body) => http::Response::builder()
-                                .status(http::StatusCode::OK)
-                                .header(http::header::CONTENT_TYPE, resource.media_type)
-                                .header(http::header::ACCESS_CONTROL_ALLOW_ORIGIN, "*")
-                                .body(body)
-                                .expect("valid resource protocol response"),
-                            Err(error) => {
-                                eprintln!("media protocol materialization failed: {error}");
-                                http::Response::builder()
+        .register_asynchronous_uri_scheme_protocol(
+            "oxy-media",
+            move |context, request, responder| {
+                let registry = context
+                    .app_handle()
+                    .state::<AppState>()
+                    .media_resources
+                    .clone();
+                let protocol_heif = Arc::clone(&protocol_heif);
+                tauri::async_runtime::spawn_blocking(move || {
+                    // File-backed originals may live on a slow volume. Hold the read
+                    // lease through materialization without blocking the WebView callback.
+                    let response = (|| {
+                        let parts = request
+                            .uri()
+                            .path()
+                            .trim_start_matches('/')
+                            .split('/')
+                            .collect::<Vec<_>>();
+                        if parts.len() == 2 && parts[0] == "resource" {
+                            let resource = registry.resolve(parts[1]);
+                            return match resource {
+                                Some(resource) => {
+                                    let body = registry.materialize(&resource);
+                                    match body {
+                                        Ok(body) => http::Response::builder()
+                                            .status(http::StatusCode::OK)
+                                            .header(http::header::CONTENT_TYPE, resource.media_type)
+                                            .header(http::header::ACCESS_CONTROL_ALLOW_ORIGIN, "*")
+                                            .body(body)
+                                            .expect("valid resource protocol response"),
+                                        Err(error) => {
+                                            eprintln!(
+                                                "media protocol materialization failed: {error}"
+                                            );
+                                            http::Response::builder()
+                                                .status(http::StatusCode::NOT_FOUND)
+                                                .header(
+                                                    http::header::ACCESS_CONTROL_ALLOW_ORIGIN,
+                                                    "*",
+                                                )
+                                                .body(Vec::new())
+                                                .expect("valid missing resource response")
+                                        }
+                                    }
+                                }
+                                None => http::Response::builder()
                                     .status(http::StatusCode::NOT_FOUND)
                                     .header(http::header::ACCESS_CONTROL_ALLOW_ORIGIN, "*")
                                     .body(Vec::new())
-                                    .expect("valid missing resource response")
+                                    .expect("valid missing resource response"),
+                            };
+                        }
+                        let tile = if parts.len() == 5 && parts[0] == "tile" {
+                            let generation = parts[2].parse().ok();
+                            let x = parts[3].parse().ok();
+                            let y = parts[4].parse().ok();
+                            match (generation, x, y) {
+                                (Some(generation), Some(x), Some(y)) => {
+                                    protocol_heif.tile(parts[1], generation, x, y)
+                                }
+                                _ => None,
                             }
+                        } else {
+                            None
+                        };
+                        match tile {
+                            Some(tile) => {
+                                let (content_type, stride, body) = match tile.payload {
+                                    oxy_media::HeifTileData::Jpeg(jpeg) => {
+                                        ("image/jpeg", 0, jpeg.to_vec())
+                                    }
+                                    oxy_media::HeifTileData::Rgba { stride, bytes } => {
+                                        ("application/octet-stream", stride, bytes.to_vec())
+                                    }
+                                };
+                                http::Response::builder()
+                                    .status(http::StatusCode::OK)
+                                    .header(http::header::CONTENT_TYPE, content_type)
+                                    .header(http::header::ACCESS_CONTROL_ALLOW_ORIGIN, "*")
+                                    .header("x-oxy-width", tile.width)
+                                    .header("x-oxy-height", tile.height)
+                                    .header("x-oxy-stride", stride)
+                                    .body(body)
+                                    .expect("valid tile protocol response")
+                            }
+                            None => http::Response::builder()
+                                .status(http::StatusCode::NOT_FOUND)
+                                .header(http::header::ACCESS_CONTROL_ALLOW_ORIGIN, "*")
+                                .body(Vec::new())
+                                .expect("valid missing tile response"),
                         }
-                    }
-                    None => http::Response::builder()
-                        .status(http::StatusCode::NOT_FOUND)
-                        .header(http::header::ACCESS_CONTROL_ALLOW_ORIGIN, "*")
-                        .body(Vec::new())
-                        .expect("valid missing resource response"),
-                };
-            }
-            let tile = if parts.len() == 5 && parts[0] == "tile" {
-                let generation = parts[2].parse().ok();
-                let x = parts[3].parse().ok();
-                let y = parts[4].parse().ok();
-                match (generation, x, y) {
-                    (Some(generation), Some(x), Some(y)) => {
-                        protocol_heif.tile(parts[1], generation, x, y)
-                    }
-                    _ => None,
-                }
-            } else {
-                None
-            };
-            match tile {
-                Some(tile) => {
-                    let (content_type, stride, body) = match tile.payload {
-                        oxy_media::HeifTileData::Jpeg(jpeg) => ("image/jpeg", 0, jpeg.to_vec()),
-                        oxy_media::HeifTileData::Rgba { stride, bytes } => {
-                            ("application/octet-stream", stride, bytes.to_vec())
-                        }
-                    };
-                    http::Response::builder()
-                        .status(http::StatusCode::OK)
-                        .header(http::header::CONTENT_TYPE, content_type)
-                        .header(http::header::ACCESS_CONTROL_ALLOW_ORIGIN, "*")
-                        .header("x-oxy-width", tile.width)
-                        .header("x-oxy-height", tile.height)
-                        .header("x-oxy-stride", stride)
-                        .body(body)
-                        .expect("valid tile protocol response")
-                }
-                None => http::Response::builder()
-                    .status(http::StatusCode::NOT_FOUND)
-                    .header(http::header::ACCESS_CONTROL_ALLOW_ORIGIN, "*")
-                    .body(Vec::new())
-                    .expect("valid missing tile response"),
-            }
-        })
+                    })();
+                    responder.respond(response);
+                });
+            },
+        )
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_log::Builder::new().build())
         .on_page_load(|webview, _payload| {
             let window = webview.window();
-
             // Dev reloads can occasionally leave the webview underneath the native title bar.
             // Reapplying decorations forces the native client area to be recalculated.
             let _ = window.set_decorations(true);
