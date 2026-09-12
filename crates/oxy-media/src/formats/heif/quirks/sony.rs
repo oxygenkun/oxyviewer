@@ -14,6 +14,27 @@ const SCAN_LIMIT: u64 = 2 * 1024 * 1024;
 const INITIAL_SCAN_LIMIT: u64 = 256 * 1024;
 const MAX_EDGE: u32 = 512;
 
+/// Display sharpening has only been compared against Sony's HIF decoder.
+/// Require the SHIF file-type brand, not an extension or a payload string match.
+pub(crate) fn display_sharpening(path: &Path, requested: bool) -> bool {
+    if !requested {
+        return false;
+    }
+    let read_brand = || -> std::io::Result<bool> {
+        let mut file = File::open(path)?;
+        let mut header = [0; 8];
+        file.read_exact(&mut header)?;
+        let size = u32::from_be_bytes(header[..4].try_into().unwrap()) as usize;
+        if &header[4..] != b"ftyp" || !(16..=4096).contains(&size) || size % 4 != 0 {
+            return Ok(false);
+        }
+        let mut brands = vec![0; size - 8];
+        file.read_exact(&mut brands)?;
+        Ok(&brands[..4] == b"SHIF" || brands[8..].chunks_exact(4).any(|brand| brand == b"SHIF"))
+    };
+    read_brand().unwrap_or(false)
+}
+
 #[derive(Debug)]
 pub struct EmbeddedJpeg {
     pub facts: oxy_domain::ArtifactFacts,
@@ -405,6 +426,27 @@ mod tests {
             bytes.extend_from_slice(b"irot");
             bytes.push(quarter_turns);
             assert_eq!(heif_exif_orientation(&bytes), Some(expected));
+        }
+    }
+
+    #[test]
+    fn display_sharpening_requires_a_validated_sony_file_type() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("camera.hif");
+        for bytes in [
+            b"\0\0\0\x14ftypheic\0\0\0\0mif1SHIF".as_slice(),
+            b"\0\0\0\x14ftypheicSHIFmif1".as_slice(),
+            b"\0\0\0\x14ftypheic\0\0\0\0SHI".as_slice(),
+            b"\x7f\xff\xff\xffftypSHIF".as_slice(),
+        ] {
+            std::fs::write(&path, bytes).unwrap();
+            assert!(!display_sharpening(&path, true));
+        }
+        std::fs::write(&path, b"\0\0\0\x14ftypheic\0\0\0\0SHIF").unwrap();
+        assert!(display_sharpening(&path, true));
+        assert!(!display_sharpening(&path, false));
+        if let Some(path) = crate::sony_hif_fixture() {
+            assert!(display_sharpening(&path, true));
         }
     }
 

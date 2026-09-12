@@ -10,15 +10,24 @@ Raw Image Extension 是可选加速组件，由用户通过 Microsoft Store 安�
 覆盖参考尺寸的 90% 即满足现有 full 契约。需要显影时，Windows 固定依次尝试
 WIC、内置 LibRaw。Thumbnail 和 Preview 的后端顺序不变。
 
+CR3 的 JPEG track 候选有时只给偏移与长度，宽高为零。选择前按候选范围有界读取 JPEG
+SOF，补齐真实尺寸；不先解码像素。RW2 同时识别 IFD0 `0x002e` / `0x0127`
+（`JpgFromRaw` / `JpgFromRaw2`），准确去掉 JPEG EOI 之后的对齐填充，保留方向与颜色元数据。
+最大的合格相机 JPEG 直接经本机资源协议交给 WebView；不会执行 RAW 显影、锐化或 JPEG 重编码。
+
 微软当前 RAW codec 没有 `IWICDevelopRaw`，因此使用经过实测的 Microsoft RAW
 decoder CLSID 完整帧入口。必须取得有效方向、明确的 sRGB ColorSpace 和 RGB24
 像素；若 LibRaw 可读参考尺寸，帧的两个边还须与其相差不超过约 2%。其他 codec
 必须提供 `IWICDevelopRaw`，成功设置 AsShot、BestQuality 和 sRGB，才允许进入
 完整帧解码。任一条件不满足、格式不支持或解码失败，继续 LibRaw。
 
-WIC 的完整帧经方向纠正、与 LibRaw 相同的显影锐化和带 sRGB ICC 的 JPEG 编码后，
+WIC 的完整帧经方向纠正和带 sRGB ICC 的 JPEG 编码后，
 才能发布为 `RawSensor / native / Satisfied`。颜色声明无法确认时回退；扩展已安装
 不等于每一种相机文件都能通过上述检查。两种显影的色彩、噪声和细节可能不同。
+
+RAW 保留解码器输出，不额外锐化、降噪或调整对比度。显示锐化仅限已与官方解码结果
+对比验证的 Sony HIF，不把该后处理推广到 RAW 或其他未验证格式。历史生成产物通过
+设置中的“清空缓存”统一清理，不为过去的处理问题保留专门的缓存兼容分支。
 
 ## 用户流程
 

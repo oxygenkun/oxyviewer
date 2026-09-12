@@ -1,8 +1,8 @@
 use oxy_domain::{AssetKind, RenderLevel};
 
-pub(crate) const RAW_PREVIEW: &str = "raw-native-v9-resolved-jpeg-dimensions";
-pub(crate) const RAW_FULL: &str = "raw-native-full-v8-resolved-jpeg-dimensions";
-pub(crate) const RAW_THUMBNAIL: &str = "raw-thumbnail-v1-bounded-jpeg-facts-v1";
+pub(crate) const RAW_PREVIEW: &str = "raw-native-v10-decoder-pixels";
+pub(crate) const RAW_FULL: &str = "raw-native-full-v9-decoder-pixels";
+pub(crate) const RAW_THUMBNAIL: &str = "raw-thumbnail-v2-decoder-pixels";
 pub(crate) const HEIF_PREVIEW: &str = "heif-native-preview-v10-content-geometry-facts-v1";
 pub(crate) const HEIF_FULL: &str = "heif-source-jpeg-v2-facts-v1";
 pub(crate) const HEIF_THUMBNAIL: &str = "heif-native-thumbnail-v11-bounded-delivery-facts-v1";

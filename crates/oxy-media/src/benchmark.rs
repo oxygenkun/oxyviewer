@@ -66,9 +66,7 @@ pub fn raw_backend(
             "pixelBytes": pixels_bytes, "decodeMs": decode_ms, "details": details,
         }));
     }
-    // Match the current LibRaw full presentation stage for both backends.
-    let image = image.unsharpen(0.8, 2);
-    let sharpen_ms = started.elapsed().as_secs_f64() * 1_000.0 - decode_ms;
+    // Match production: encode decoder pixels without added post-processing.
     if buffered_jpeg {
         crate::cache::write_jpeg_atomically(
             &image,
@@ -90,8 +88,8 @@ pub fn raw_backend(
         "height": height,
         "pixelBytes": pixels_bytes,
         "decodeMs": decode_ms,
-        "sharpenMs": sharpen_ms,
-        "encodeMs": total_ms - decode_ms - sharpen_ms,
+        "sharpenMs": 0.0,
+        "encodeMs": total_ms - decode_ms,
         "totalMs": total_ms,
         "jpegBytes": std::fs::metadata(output)?.len(),
         "details": details,

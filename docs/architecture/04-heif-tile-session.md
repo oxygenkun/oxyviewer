@@ -4,6 +4,10 @@ loupe 先显示语义 preview。`start_heif_full` 是完整图交付的唯一入
 artifact projection 或 full-resolution tile session。按显示锐化状态精确查询现有缓存：开启时要求
 `SharpeningState::Display`，关闭时要求 `None`；命中后直接展示完整 JPEG，不再次锐化。
 Display projection 仅返回当前显示请求，不写入通用 `(path, level)` 未锐化 projection。
+
+显示锐化仅针对已验证的 Sony HIF：原生入口检查有界 ftyp 中的 SHIF brand，其他来源
+强制使用 None。缓存查询与瓦片生成使用同一有效开关，不因文件扩展名或通用设置而
+对未验证的 HEIF 应用后处理。
 tile metadata 走 event，RGBA/JPEG bytes 走 `oxy-media://`，不进入 JSON。
 
 架构决策见 [ADR 0004](../adr/0004-heif-full-resolution-sessions.md)。

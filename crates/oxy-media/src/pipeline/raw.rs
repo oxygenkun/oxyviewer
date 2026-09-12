@@ -436,24 +436,14 @@ fn render_developed(
             }
             #[cfg(target_os = "windows")]
             RawBackend::WindowsWic => crate::raw_support::decode(path, cancellation)
-                .and_then(|decoded| {
-                    encode_developed(decoded, &destination, true, quality, cancellation)
-                })
+                .and_then(|decoded| encode_developed(decoded, &destination, quality, cancellation))
                 .map(|facts| completed_facts = Some(facts)),
             RawBackend::LibRawDevelopment => libraw::developed(path, max_size, cancellation)
                 .map_err(|message| MediaError::LibRaw {
                     path: path.to_owned(),
                     message,
                 })
-                .and_then(|decoded| {
-                    encode_developed(
-                        decoded,
-                        &destination,
-                        max_size.is_none(),
-                        quality,
-                        cancellation,
-                    )
-                })
+                .and_then(|decoded| encode_developed(decoded, &destination, quality, cancellation))
                 .map(|facts| completed_facts = Some(facts)),
         };
         if cancellation.is_cancelled() {
@@ -486,9 +476,6 @@ fn render_developed(
                             target: "sRGB".into(),
                         });
                     facts.resize(oxy_domain::DisplayDimensions(dimensions));
-                    if backend == RawBackend::LibRawDevelopment && max_size.is_none() {
-                        facts.processing.push(oxy_domain::ImageOperation::Sharpen);
-                    }
                     facts.processing.push(oxy_domain::ImageOperation::Encode {
                         format: "jpeg".into(),
                     });
@@ -541,7 +528,6 @@ fn render_developed(
 fn encode_developed(
     decoded: crate::media_source::DecodedImage,
     destination: &Path,
-    full: bool,
     quality: u8,
     cancellation: &CancellationToken,
 ) -> Result<oxy_domain::ArtifactFacts, MediaError> {
@@ -549,16 +535,8 @@ fn encode_developed(
     if cancellation.is_cancelled() {
         return Err(MediaError::Cancelled);
     }
-    let image = if full {
-        facts.processing.push(oxy_domain::ImageOperation::Sharpen);
-        decoded.image.unsharpen(0.8, 2)
-    } else {
-        decoded.image
-    };
-    if cancellation.is_cancelled() {
-        return Err(MediaError::Cancelled);
-    }
-    write_jpeg_atomically(&image, destination, quality, RAW_DEVELOPED_JPEG)?;
+    // Preserve decoder pixels. Display sharpening was validated only for Sony HIF.
+    write_jpeg_atomically(&decoded.image, destination, quality, RAW_DEVELOPED_JPEG)?;
     if cancellation.is_cancelled() {
         return Err(MediaError::Cancelled);
     }
@@ -592,6 +570,32 @@ pub(crate) fn covers_source(candidate: ImageDimensions, source: ImageDimensions)
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn developed_output_encodes_decoder_pixels_without_postprocessing() {
+        let directory = tempfile::tempdir().unwrap();
+        let image = image::DynamicImage::ImageRgb8(image::RgbImage::from_fn(32, 32, |x, y| {
+            image::Rgb([if x < 16 { 35 } else { 195 }, (y * 7) as u8, 90])
+        }));
+        let expected = directory.path().join("decoder.jpg");
+        write_jpeg_atomically(&image, &expected, 95, RAW_DEVELOPED_JPEG).unwrap();
+        let decoded = crate::media_source::DecodedImage {
+            facts: crate::media_source::test_facts(ImageOrigin::RawSensor, (32, 32).into(), true),
+            image,
+        };
+        let actual = directory.path().join("output.jpg");
+        let facts = encode_developed(decoded, &actual, 95, &CancellationToken::default()).unwrap();
+        assert_eq!(
+            std::fs::read(actual).unwrap(),
+            std::fs::read(expected).unwrap()
+        );
+        assert_eq!(
+            facts.processing,
+            vec![oxy_domain::ImageOperation::Encode {
+                format: "jpeg".into()
+            }]
+        );
+    }
 
     #[test]
     fn failed_embedded_extraction_is_not_repeated_and_metadata_is_bounded() {

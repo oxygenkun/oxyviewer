@@ -74,6 +74,7 @@ pub fn full_uses_artifact(
     cache_dir: &Path,
     display_sharpening: bool,
 ) -> Result<bool, MediaError> {
+    let display_sharpening = sony::display_sharpening(path, display_sharpening);
     if cached_heif_full_display(path, cache_dir, display_sharpening)?.is_some() {
         return Ok(true);
     }
@@ -445,6 +446,7 @@ pub(crate) fn cached_heif_full_display(
     display_sharpening: bool,
 ) -> Result<Option<PreviewResult>, MediaError> {
     let artifacts = ArtifactCache::new(path, cache_dir)?;
+    let display_sharpening = sony::display_sharpening(path, display_sharpening);
     let request = full_display_request(&artifacts, display_sharpening);
     artifacts.lookup(&request, RenderLevel::Full)
 }
@@ -741,7 +743,7 @@ mod delivery_tests {
     fn display_full_lookup_is_exact_and_does_not_rebuild_a_cached_variant() {
         let directory = tempfile::tempdir().unwrap();
         let source = directory.path().join("display.heif");
-        std::fs::write(&source, b"cache identity fixture").unwrap();
+        std::fs::write(&source, b"\0\0\0\x14ftypheic\0\0\0\0SHIF").unwrap();
         let artifacts = ArtifactCache::new(&source, directory.path()).unwrap();
         let request = full_display_request(&artifacts, true);
         let mut presentation = unconverted_presentation();
@@ -834,7 +836,7 @@ mod delivery_tests {
     fn sharpening_uses_tiles_when_no_display_variant_exists() {
         let directory = tempfile::tempdir().unwrap();
         let source = directory.path().join("source.heif");
-        std::fs::write(&source, b"cache identity").unwrap();
+        std::fs::write(&source, b"\0\0\0\x14ftypheic\0\0\0\0SHIF").unwrap();
 
         assert!(!full_uses_artifact(&source, directory.path(), true).unwrap());
     }

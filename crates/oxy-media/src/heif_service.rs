@@ -124,6 +124,8 @@ impl HeifDecodeService {
         // Capture the identity before any source probing or decode. Session
         // pixels may be persisted after a dwell, but always retain this fence.
         let source_revision = crate::cache::SourceRevision::observe(path)?;
+        let display_sharpening =
+            crate::formats::heif::quirks::sony::display_sharpening(path, display_sharpening);
         let size = libheif::dimensions(path)?;
         let cached = crate::pipeline::heif::artifact::cached_heif_full_display(
             path,
