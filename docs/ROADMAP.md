@@ -166,3 +166,25 @@ dependency passes the release fixture matrix.
 **Release gate:** all Phase 1 and Phase 2 gates pass on the declared support
 matrix, signed installers pass clean-machine smoke tests, and user-owned photos
 and sidecars remain recoverable across failure paths.
+
+## Long-term: Native Image Presentation
+
+Planned on 2026-09-13; implementation has not started. This is a future architecture
+project, not an additional blocker for the current release. See the
+[native image presentation plan](tasks/native-image-presentation-plan.md).
+
+- [ ] Rebaseline the current RAW path without added sharpening, separating decode,
+  delivery, GPU presentation, background encoding, and process/GPU memory.
+- [ ] Prototype shared WIC pixels into a WebView2 Canvas/WebGL surface, avoiding
+  JPEG encoding and decoding solely for foreground display.
+- [ ] If the shared-pixel route remains insufficient, compare a native D3D image
+  surface with WebView controls and record an adopt/stop decision in an ADR.
+- [ ] Integrate the selected route with loupe interaction, cancellation, generations,
+  resource leases, bounded background persistence, and runtime capability fallback.
+- [ ] Validate packaged builds and regression gates; evaluate other platforms
+  independently. Keep the existing camera-JPEG fast path and validated color behavior.
+
+**Proposed gate:** for 24 MP SDR on fixed baseline hardware, native decode completion
+to actual full-image presentation reaches median ≤100 ms / P95 ≤200 ms, with at
+least 50% median improvement over the remeasured delivery baseline. These are targets,
+not measured results; correctness, bounded memory, and browsing budgets must also pass.

@@ -85,6 +85,9 @@ orient、encode。该次未重测 WebView 交付延迟。新增回归验证输�
 
 ## Passthrough 与后续优化
 
+后续共享像素与原生渲染面的工作已整理为[远期项目计划](../tasks/native-image-presentation-plan.md)，
+并列入[路线图](../ROADMAP.md#long-term-native-image-presentation)。原型与架构选择均未启动。
+
 1. **相机 JPEG 直通：已实现并验证。** 编码字节经 `ProducedPayload::Encoded` 发布给 img，
    不等后台持久化。IPC 只传描述符，图像不进 JSON/base64。浏览器负责最终 JPEG 解码。
    CR3 从约 16 MB 显影 JPEG 换成约 1.7 MB 相机 JPEG；处理和传输改善均已实测。
