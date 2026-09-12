@@ -69,9 +69,16 @@ runner 汇总 N 次运行 → median/p95 → 绝对预算 + 基线回归判定 �
 | `preview:queued` / `preview:result` | api.generatedPreview | 预览请求入队 / 后端返回（含 `diagnostics`） |
 | `image:loaded` | Thumbnail.onLoad | 某一语义等级上屏（detail 含 `stage` / `renderLevel`） |
 | `image:loaded@full` | Thumbnail | HEIF/RAW 完整 JPEG 上屏 |
+| `image:source-committed` | Thumbnail | 新资源 URL 已提交给待显示的 img |
+| `image:load-event` | Thumbnail | img load；包含 Resource Timing 和原生 dispatch/materialize Server-Timing |
+| `image:decode-complete` | Thumbnail | img.decode 完成；decodeAfterLoadMs 为 load 之后的解码等待 |
 | `harness:done` | PerfHarness | 场景结束（reason: complete / timeout） |
 
 Runner 由 mark 对计算出命名指标，`scenarios.json` 的 `budgets` 引用这些名字：
+
+`Server-Timing` 与 `Timing-Allow-Origin` 仅在显式性能场景中启用；常规请求不增加计时采样。
+性能探针扩大 Resource Timing 缓冲到 8192 项，避免整目录预热后默认 250 项缓冲已满。
+`image:loaded` 是现有解码就绪/状态更新标记，不能等同于 GPU present；最终画面另做截图检查。
 
 | 指标 | 计算 |
 | --- | --- |

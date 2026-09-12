@@ -15,7 +15,7 @@ import {
   discardBrowserImageResource,
 } from "../lib/browserImageCache";
 import { previewRequestSignal, retainPreviewRequest } from "../lib/previewRequestLifetime";
-import { perfMark } from "../lib/perfProbe";
+import { isPerfActive, perfMark } from "../lib/perfProbe";
 import { retainMediaResource, releaseUnretainedMediaResource } from "../lib/mediaResourceLease";
 import { imageProjectionKey, useImageProjectionStore } from "../lib/imageProjection";
 import {
@@ -203,6 +203,11 @@ export function Thumbnail({
     ? "original"
     : generatedSource?.renderLevel ?? previewStep.level;
   const pendingSource = source !== visibleImage?.source ? source : undefined;
+  useLayoutEffect(() => {
+    if (large && pendingSource) perfMark("image:source-committed", {
+      assetName: asset.name, renderLevel: debugResourceLabel,
+    });
+  }, [asset.name, debugResourceLabel, large, pendingSource]);
   // A full result may arrive before the thumbnail has painted. Keep that
   // descriptor leased while the lower stage loads, or advancing to full would
   // refetch an already released original and repeat its browser decode.
@@ -521,10 +526,28 @@ export function Thumbnail({
           onError={() => handleError(generatedSource)}
           onLoad={(event) => {
             const image = event.currentTarget;
+            const decodeStarted = isPerfActive() ? performance.now() : undefined;
+            if (decodeStarted !== undefined && large) {
+              const resource = performance.getEntriesByName(image.src, "resource").at(-1) as PerformanceResourceTiming | undefined;
+              perfMark("image:load-event", {
+                assetName: asset.name, renderLevel: debugResourceLabel,
+                resource: resource ? {
+                  startTime: resource.startTime, requestStart: resource.requestStart,
+                  responseStart: resource.responseStart, responseEnd: resource.responseEnd,
+                  duration: resource.duration, transferSize: resource.transferSize,
+                  encodedBodySize: resource.encodedBodySize,
+                  serverTiming: resource.serverTiming?.map(({ name, duration }) => ({ name, duration })),
+                } : undefined,
+              });
+            }
             const ready = () => {
               // Selection/source replacement unmounts this keyed pending node.
               // A late decode must neither reveal nor retain the previous image.
               if (!image.isConnected) return;
+              if (decodeStarted !== undefined && large) perfMark("image:decode-complete", {
+                assetName: asset.name, renderLevel: debugResourceLabel,
+                decodeAfterLoadMs: performance.now() - decodeStarted,
+              });
               handleLoad({ width: image.naturalWidth, height: image.naturalHeight }, generatedSource, image);
             };
             if (large && image.decode) {

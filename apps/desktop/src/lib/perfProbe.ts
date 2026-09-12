@@ -12,6 +12,9 @@ const listeners = new Set<(mark: PerfMark) => void>();
 
 export function activatePerfProbe(): void {
   active = true;
+  // Whole-folder warming exceeds Chromium's default 250 resource entries.
+  // Keep later loupe delivery timings observable only in explicit perf runs.
+  performance.setResourceTimingBufferSize?.(8192);
 }
 
 export function isPerfActive(): boolean {

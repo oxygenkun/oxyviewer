@@ -14,6 +14,7 @@ CR3 的 JPEG track 候选有时只给偏移与长度，宽高为零。选择前�
 SOF，补齐真实尺寸；不先解码像素。RW2 同时识别 IFD0 `0x002e` / `0x0127`
 （`JpgFromRaw` / `JpgFromRaw2`），准确去掉 JPEG EOI 之后的对齐填充，保留方向与颜色元数据。
 最大的合格相机 JPEG 直接经本机资源协议交给 WebView；不会执行 RAW 显影、锐化或 JPEG 重编码。
+详见 [实测与传输分析](research/raw-jpeg-delivery-2026-09-13.md)。
 
 微软当前 RAW codec 没有 `IWICDevelopRaw`，因此使用经过实测的 Microsoft RAW
 decoder CLSID 完整帧入口。必须取得有效方向、明确的 sRGB ColorSpace 和 RGB24

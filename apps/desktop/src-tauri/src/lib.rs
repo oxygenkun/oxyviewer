@@ -18,10 +18,12 @@ pub fn run() {
     let heif = Arc::new(oxy_media::HeifDecodeService::default());
     let protocol_heif = heif.clone();
     let media_resources = oxy_media::shared_resource_registry();
+    let measure_media_protocol = std::env::var_os("OXY_PERF_SCENARIO").is_some();
     tauri::Builder::default()
         .register_asynchronous_uri_scheme_protocol(
             "oxy-media",
             move |context, request, responder| {
+                let dispatched = measure_media_protocol.then(std::time::Instant::now);
                 let registry = context
                     .app_handle()
                     .state::<AppState>()
@@ -29,6 +31,7 @@ pub fn run() {
                     .clone();
                 let protocol_heif = Arc::clone(&protocol_heif);
                 tauri::async_runtime::spawn_blocking(move || {
+                    let started = dispatched.map(|_| std::time::Instant::now());
                     // File-backed originals may live on a slow volume. Hold the read
                     // lease through materialization without blocking the WebView callback.
                     let response = (|| {
@@ -44,12 +47,22 @@ pub fn run() {
                                 Some(resource) => {
                                     let body = registry.materialize(&resource);
                                     match body {
-                                        Ok(body) => http::Response::builder()
-                                            .status(http::StatusCode::OK)
-                                            .header(http::header::CONTENT_TYPE, resource.media_type)
-                                            .header(http::header::ACCESS_CONTROL_ALLOW_ORIGIN, "*")
-                                            .body(body)
-                                            .expect("valid resource protocol response"),
+                                        Ok(body) => {
+                                            let mut response = http::Response::builder()
+                                                .status(http::StatusCode::OK)
+                                                .header(http::header::CONTENT_TYPE, resource.media_type)
+                                                .header(http::header::ACCESS_CONTROL_ALLOW_ORIGIN, "*");
+                                            if let (Some(dispatched), Some(started)) = (dispatched, started) {
+                                                response = response
+                                                    .header("Timing-Allow-Origin", "*")
+                                                    .header("Server-Timing", format!(
+                                                        "dispatch;dur={:.3},materialize;dur={:.3}",
+                                                        started.duration_since(dispatched).as_secs_f64() * 1000.0,
+                                                        started.elapsed().as_secs_f64() * 1000.0,
+                                                    ));
+                                            }
+                                            response.body(body).expect("valid resource protocol response")
+                                        },
                                         Err(error) => {
                                             eprintln!(
                                                 "media protocol materialization failed: {error}"
