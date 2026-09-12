@@ -109,7 +109,13 @@ fn execute(
     if cancellation.is_cancelled() {
         return Err(MediaError::Cancelled);
     }
-    match (kind, level) {
+    let result = match (kind, level) {
+        (AssetKind::Jpeg, RenderLevel::Thumbnail | RenderLevel::Preview) => {
+            super::jpeg::thumbnail(path, cache_dir, level, priority, cancellation)
+        }
+        (AssetKind::Png | AssetKind::Webp, RenderLevel::Thumbnail | RenderLevel::Preview) => {
+            super::raster::thumbnail(path, cache_dir, level, priority, cancellation)
+        }
         (AssetKind::Jpeg | AssetKind::Png | AssetKind::Webp, _) => register_original_resource(
             path,
             preview_result(path.to_owned(), PreviewKind::Original, level)?,
@@ -177,6 +183,11 @@ fn execute(
         (AssetKind::Tiff, RenderLevel::Full) => {
             system::preview(path, cache_dir, 4_096, level, allow_interim, cancellation)
         }
+    }?;
+    if level == RenderLevel::Thumbnail && matches!(kind, AssetKind::Heif | AssetKind::Tiff) {
+        super::thumbnail::ensure_thumbnail_delivery(path, cache_dir, result, priority, cancellation)
+    } else {
+        Ok(result)
     }
 }
 

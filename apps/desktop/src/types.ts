@@ -225,6 +225,9 @@ export type PreviewOmittedPolicy =
 export type PreviewKind = "embedded" | "developed" | "decoded" | "system" | "original";
 
 export interface PreviewDiagnostics {
+  sourceReadBytes?: number;
+  sourceReadCalls?: number;
+  probeMs?: number;
   backend?: string;
   queueWaitMs?: number;
   sourceWaitMs?: number;

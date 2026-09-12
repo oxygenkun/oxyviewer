@@ -17,6 +17,8 @@ static THUMBNAIL_DECODE_GATE: LazyLock<DecodeGate> =
     LazyLock::new(|| DecodeGate::with_capacity(oxy_runtime::image_worker_count()));
 static FULL_DECODE_GATE: LazyLock<DecodeGate> =
     LazyLock::new(|| DecodeGate::with_capacity(oxy_runtime::loupe_worker_count()));
+const CONVERSION_BYTES: usize = 256 * 1024 * 1024;
+static CONVERSION_GATE: DecodeGate = DecodeGate::with_budget(2, CONVERSION_BYTES);
 // A stale selection may finish writing its rebuildable JPEG without blocking
 // the foreground decode gate needed by the newly selected HEIF.
 static HEIF_SESSION_CACHE_WRITE_LOCK: Mutex<()> = Mutex::new(());
@@ -54,10 +56,12 @@ struct DecodeGate {
     state: Mutex<DecodeGateState>,
     ready: Condvar,
     capacity: usize,
+    byte_capacity: usize,
 }
 
 struct DecodeGateState {
     active: usize,
+    active_bytes: usize,
     next_ticket: u64,
     waiters: VecDeque<DecodeWaiter>,
 }
@@ -66,6 +70,7 @@ impl DecodeGateState {
     const fn new() -> Self {
         Self {
             active: 0,
+            active_bytes: 0,
             next_ticket: 0,
             waiters: VecDeque::new(),
         }
@@ -80,6 +85,7 @@ struct DecodeWaiter {
 
 pub(crate) struct DecodePermit<'a> {
     gate: &'a DecodeGate,
+    bytes: usize,
 }
 
 impl DecodeGate {
@@ -89,10 +95,15 @@ impl DecodeGate {
     }
 
     const fn with_capacity(capacity: usize) -> Self {
+        Self::with_budget(capacity, usize::MAX)
+    }
+
+    const fn with_budget(capacity: usize, byte_capacity: usize) -> Self {
         Self {
             state: Mutex::new(DecodeGateState::new()),
             ready: Condvar::new(),
             capacity,
+            byte_capacity,
         }
     }
 
@@ -101,6 +112,23 @@ impl DecodeGate {
         priority: DecodePriority,
         cancelled: &impl Fn() -> bool,
     ) -> Result<DecodePermit<'_>, crate::MediaError> {
+        self.acquire_bytes(priority, 0, cancelled)
+    }
+
+    fn acquire_bytes(
+        &self,
+        priority: DecodePriority,
+        bytes: usize,
+        cancelled: &impl Fn() -> bool,
+    ) -> Result<DecodePermit<'_>, crate::MediaError> {
+        if bytes > self.byte_capacity {
+            return Err(crate::MediaError::ResourceBudgetExhausted {
+                budget: "thumbnail conversion",
+                current: 0,
+                limit: self.byte_capacity,
+                requested: bytes,
+            });
+        }
         let mut state = self
             .state
             .lock()
@@ -119,10 +147,14 @@ impl DecodeGate {
                 return Err(crate::MediaError::Cancelled);
             }
             let selected = selected_ticket(&state.waiters);
-            if state.active < self.capacity && selected == Some(ticket) {
+            if state.active < self.capacity
+                && selected == Some(ticket)
+                && bytes <= self.byte_capacity - state.active_bytes
+            {
                 state.waiters.retain(|waiter| waiter.ticket != ticket);
                 state.active += 1;
-                return Ok(DecodePermit { gate: self });
+                state.active_bytes += bytes;
+                return Ok(DecodePermit { gate: self, bytes });
             }
             let (next, _) = self
                 .ready
@@ -162,8 +194,20 @@ impl Drop for DecodePermit<'_> {
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
         state.active -= 1;
+        state.active_bytes -= self.bytes;
         self.gate.ready.notify_all();
     }
+}
+
+/// Shared admission for thumbnail pixel conversions. Estimated temporary bytes
+/// include input, decoder working set and output; retained browser images are
+/// intentionally outside this transient budget.
+pub(crate) fn acquire_conversion(
+    priority: DecodePriority,
+    bytes: usize,
+    cancelled: &impl Fn() -> bool,
+) -> Result<DecodePermit<'static>, crate::MediaError> {
+    CONVERSION_GATE.acquire_bytes(priority, bytes, cancelled)
 }
 
 /// Acquire capacity within the requested render lane. Native decoders must
@@ -286,6 +330,36 @@ mod tests {
             DecodePriority::from(PreviewPriority::Loupe),
             DecodePriority::Foreground
         );
+    }
+
+    #[test]
+    fn conversion_budget_cancellation_and_unwind_return_capacity() {
+        let gate = DecodeGate::with_budget(2, 100);
+        assert!(matches!(
+            gate.acquire_bytes(DecodePriority::Visible, 101, &|| false),
+            Err(crate::MediaError::ResourceBudgetExhausted { .. })
+        ));
+        let first = gate
+            .acquire_bytes(DecodePriority::Visible, 80, &|| false)
+            .unwrap();
+        let began = Instant::now();
+        assert!(matches!(
+            gate.acquire_bytes(DecodePriority::Visible, 30, &|| began.elapsed()
+                > Duration::from_millis(30)),
+            Err(crate::MediaError::Cancelled)
+        ));
+        assert_eq!(gate.state.lock().unwrap().active_bytes, 80);
+        assert!(gate.state.lock().unwrap().waiters.is_empty());
+        drop(first);
+        let failure = std::panic::catch_unwind(|| {
+            let _permit = gate
+                .acquire_bytes(DecodePriority::Visible, 100, &|| false)
+                .unwrap();
+            panic!("conversion failed");
+        });
+        assert!(failure.is_err());
+        assert_eq!(gate.state.lock().unwrap().active_bytes, 0);
+        assert_eq!(gate.state.lock().unwrap().active, 0);
     }
 
     #[test]

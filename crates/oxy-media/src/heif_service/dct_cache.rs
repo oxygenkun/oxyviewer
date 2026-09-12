@@ -1,70 +1,17 @@
-//! Safe ownership boundary for the C coefficient stitcher.
+//! HEIF tile adaptation and file ownership for coefficient-cache generation.
 use super::{HeifTileData, tile_cache::PositionedTile};
-use crate::MediaError;
+use crate::{
+    MediaError,
+    backends::libjpeg::stitch::{JpegTile, StitchOutcome, stitch_coefficients},
+    cache::DisplayDimensions,
+};
 use std::{
-    ffi::{CStr, c_char, c_void},
     fs::File,
-    io::Write,
     path::Path,
     sync::atomic::{AtomicBool, Ordering},
 };
 
-#[repr(C)]
-struct InputTile {
-    data: *const u8,
-    length: usize,
-    x: u32,
-    y: u32,
-    width: u32,
-    height: u32,
-}
-#[repr(C)]
-#[derive(Default, Debug)]
-struct Stats {
-    read_ms: f64,
-    copy_ms: f64,
-    write_ms: f64,
-    coefficient_bytes: u64,
-}
-unsafe extern "C" {
-    fn oxy_jpeg_stitch(
-        tiles: *const InputTile,
-        count: usize,
-        width: u32,
-        height: u32,
-        memory_budget: u64,
-        context: *mut c_void,
-        cancelled: extern "C" fn(*mut c_void) -> i32,
-        write: extern "C" fn(*mut c_void, *const u8, usize) -> i32,
-        stats: *mut Stats,
-        message: *mut c_char,
-        message_size: usize,
-    ) -> i32;
-}
-struct Context<'a> {
-    file: File,
-    cancelled: &'a AtomicBool,
-    error: Option<std::io::Error>,
-}
-extern "C" fn cancelled(context: *mut c_void) -> i32 {
-    // SAFETY: the synchronous call retains this uniquely borrowed context until return.
-    let context = unsafe { &*(context.cast::<Context<'_>>()) };
-    i32::from(context.cancelled.load(Ordering::Acquire))
-}
-extern "C" fn write(context: *mut c_void, bytes: *const u8, length: usize) -> i32 {
-    // SAFETY: C calls synchronously with its live output buffer and exclusive context.
-    let context = unsafe { &mut *(context.cast::<Context<'_>>()) };
-    let bytes = unsafe { std::slice::from_raw_parts(bytes, length) };
-    match context.file.write_all(bytes) {
-        Ok(()) => 0,
-        Err(error) => {
-            context.error = Some(error);
-            1
-        }
-    }
-}
-/// Returns false only for unsupported inputs. Caller may use the pixel
-/// baseline; cancellation and I/O failures must propagate without fallback.
+/// Returns false only for unsupported inputs; cancellation and I/O propagate.
 pub(super) fn write_tiles(
     width: u32,
     height: u32,
@@ -81,9 +28,8 @@ pub(super) fn write_tiles(
             let HeifTileData::Jpeg(bytes) = &positioned.tile.payload else {
                 return None;
             };
-            Some(InputTile {
-                data: bytes.as_ptr(),
-                length: bytes.len(),
+            Some(JpegTile {
+                bytes,
                 x: positioned.x,
                 y: positioned.y,
                 width: positioned.tile.width,
@@ -94,48 +40,22 @@ pub(super) fn write_tiles(
     else {
         return Ok(false);
     };
-    let mut context = Context {
-        file: File::create(destination)?,
-        cancelled: cancel,
-        error: None,
-    };
-    let mut stats = Stats::default();
-    let mut message = [0 as c_char; 256];
-    // SAFETY: all pointers and Arc input buffers remain live for this synchronous
-    // call. C catches its own longjmp; callbacks return normally before C unwinds.
-    let status = unsafe {
-        oxy_jpeg_stitch(
-            inputs.as_ptr(),
-            inputs.len(),
-            width,
-            height,
-            256 * 1024 * 1024,
-            (&mut context as *mut Context<'_>).cast(),
-            cancelled,
-            write,
-            &mut stats,
-            message.as_mut_ptr(),
-            message.len(),
-        )
-    };
-    // SAFETY: zero-initialized buffer is always NUL-terminated by the C adapter.
-    let reason = unsafe { CStr::from_ptr(message.as_ptr()) }.to_string_lossy();
-    match status {
-        0 => {
+    let mut file = File::create(destination)?;
+    match stitch_coefficients(
+        DisplayDimensions { width, height },
+        &inputs,
+        256 * 1024 * 1024,
+        &mut file,
+        &|| cancel.load(Ordering::Acquire),
+    )? {
+        StitchOutcome::Stitched(stats) => {
             eprintln!("HEIF DCT cache: {stats:?}");
             Ok(true)
         }
-        1 => {
+        StitchOutcome::Unsupported(reason) => {
             eprintln!("HEIF DCT fallback: {reason}");
             Ok(false)
         }
-        2 => Err(MediaError::Cancelled),
-        _ => match context.error {
-            Some(error) => Err(error.into()),
-            None => Err(MediaError::CacheArtifact(format!(
-                "JPEG stitch failed: {reason}"
-            ))),
-        },
     }
 }
 
@@ -297,91 +217,5 @@ mod tests {
         let out = tempfile::NamedTempFile::new().unwrap();
         assert!(!write_tiles(16, 16, &[tile], out.path(), &AtomicBool::new(false)).unwrap());
         assert_eq!(out.as_file().metadata().unwrap().len(), 0);
-    }
-
-    struct Probe {
-        output: Vec<u8>,
-        polls: usize,
-        cancel_at: usize,
-        fail_write: bool,
-    }
-    extern "C" fn probe_cancel(context: *mut c_void) -> i32 {
-        // SAFETY: the probe lives for the synchronous native test call.
-        let probe = unsafe { &mut *context.cast::<Probe>() };
-        probe.polls += 1;
-        i32::from(probe.polls >= probe.cancel_at)
-    }
-    extern "C" fn probe_write(context: *mut c_void, bytes: *const u8, length: usize) -> i32 {
-        // SAFETY: C supplies a live byte slice and exclusive probe pointer.
-        let probe = unsafe { &mut *context.cast::<Probe>() };
-        if probe.fail_write {
-            return 1;
-        }
-        probe
-            .output
-            .extend_from_slice(unsafe { std::slice::from_raw_parts(bytes, length) });
-        0
-    }
-    fn probe(
-        tile: &PositionedTile,
-        budget: u64,
-        cancel_at: usize,
-        fail_write: bool,
-    ) -> (i32, Probe) {
-        let HeifTileData::Jpeg(bytes) = &tile.tile.payload else {
-            unreachable!()
-        };
-        let input = InputTile {
-            data: bytes.as_ptr(),
-            length: bytes.len(),
-            x: 0,
-            y: 0,
-            width: tile.tile.width,
-            height: tile.tile.height,
-        };
-        let mut probe = Probe {
-            output: Vec::new(),
-            polls: 0,
-            cancel_at,
-            fail_write,
-        };
-        let mut stats = Stats::default();
-        let mut message = [0 as c_char; 256];
-        // SAFETY: all inputs/output/callback state remain live through the call.
-        let status = unsafe {
-            oxy_jpeg_stitch(
-                &input,
-                1,
-                input.width,
-                input.height,
-                budget,
-                (&mut probe as *mut Probe).cast(),
-                probe_cancel,
-                probe_write,
-                &mut stats,
-                message.as_mut_ptr(),
-                message.len(),
-            )
-        };
-        (status, probe)
-    }
-    #[test]
-    fn cancellation_budget_corruption_and_io_stay_inside_native_boundary() {
-        let tile = tile(0, 0, 256, 256, 90);
-        let (status, complete) = probe(&tile, 256 * 1024 * 1024, usize::MAX, false);
-        assert_eq!(status, 0);
-        // Exercise early header, entropy/copy, and final encoding cancellation.
-        for point in [1, 10, complete.polls / 2, complete.polls - 1] {
-            assert_eq!(probe(&tile, 256 * 1024 * 1024, point, false).0, 2);
-        }
-        assert_eq!(probe(&tile, 256 * 1024 * 1024, usize::MAX, true).0, 3);
-        assert_eq!(probe(&tile, 1, usize::MAX, false).0, 1);
-        let HeifTileData::Jpeg(bytes) = &tile.tile.payload else {
-            unreachable!()
-        };
-        let payload = HeifTileData::Jpeg(Arc::from(&bytes[..bytes.len() / 2]));
-        let mut truncated = tile;
-        truncated.tile.payload = payload;
-        assert_eq!(probe(&truncated, 256 * 1024 * 1024, usize::MAX, false).0, 4);
     }
 }

@@ -233,6 +233,7 @@ pub(crate) fn preview(
                 cache_commit_ms: None,
                 total_ms: Some(duration_ms(total_started)),
                 fallback_reason: None,
+                ..Default::default()
             });
             return Ok(result);
         }
@@ -303,6 +304,7 @@ pub(crate) fn preview(
                 cache_commit_ms: None,
                 total_ms: Some(duration_ms(total_started)),
                 fallback_reason: decoded.fallback_reason,
+                ..Default::default()
             });
             Ok(result)
         },

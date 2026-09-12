@@ -423,6 +423,11 @@ pub enum PreviewKind {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
 #[serde(rename_all = "camelCase")]
 pub struct PreviewDiagnostics {
+    /// Bytes returned by source-file reads, including bounded header read-ahead.
+    /// This is not physical disk or network traffic (OS caches may satisfy it).
+    pub source_read_bytes: Option<u64>,
+    pub source_read_calls: Option<u64>,
+    pub probe_ms: Option<u64>,
     /// Human-readable backend label, e.g. `"libraw-embedded"` or
     /// `"ffmpeg-hevc-tile-grid"`.
     pub backend: Option<String>,

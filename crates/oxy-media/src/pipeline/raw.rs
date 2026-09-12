@@ -16,7 +16,7 @@ use crate::{
     pipeline::artifact::{
         ArtifactCache, ArtifactPreparation, applied_srgb, applied_srgb_requirement,
     },
-    policy::{RAW_FULL, RAW_PREVIEW},
+    policy::{RAW_FULL, RAW_PREVIEW, RAW_THUMBNAIL},
     presentation::{CAMERA_JPEG, RAW_DEVELOPED_JPEG},
 };
 use image::{ImageDecoder, ImageReader, metadata::Orientation};
@@ -116,16 +116,34 @@ pub(crate) fn preview_with_priority(
         RenderLevel::Preview
     };
     let artifacts = ArtifactCache::new(path, cache_dir)?;
-    let request = preview_request(&artifacts, max_size, allow_interim);
+    let mut request = preview_request(&artifacts, max_size, allow_interim);
+    if level == RenderLevel::Thumbnail {
+        request.representation = RepresentationRequirement::BoundedThumbnail {
+            target: RAW_THUMBNAIL,
+        };
+        request.allow_interim = false;
+    }
     if let Some(result) = artifacts.lookup(&request, level)? {
         return Ok(result);
     }
 
-    let embedded = produce_embedded(path, &artifacts, max_size, level, cancellation);
+    let embedded = produce_embedded(path, &artifacts, max_size, level, priority, cancellation);
     if let Ok(result) = &embedded
         && (allow_interim || result.satisfaction == Some(oxy_domain::MediaSatisfaction::Satisfied))
     {
         return Ok(result.clone());
+    }
+    if let Err(error) = &embedded
+        && matches!(
+            error,
+            MediaError::Cancelled
+                | MediaError::ResourceBudgetExhausted { .. }
+                | MediaError::StaleSourceRevision
+                | MediaError::StaleCacheGeneration
+                | MediaError::Io(_)
+        )
+    {
+        return embedded;
     }
     artifacts.coordinate_work(
         &request,
@@ -199,6 +217,7 @@ pub(crate) fn full_with_interim(
         0,
         RenderLevel::Full,
         &production_request,
+        DecodePriority::Foreground,
         cancellation,
     ) && covers_source(
         ImageDimensions {
@@ -241,25 +260,42 @@ fn produce_embedded(
     artifacts: &ArtifactCache,
     max_size: u32,
     level: RenderLevel,
+    priority: DecodePriority,
     cancellation: &CancellationToken,
 ) -> Result<PreviewResult, MediaError> {
     let request = artifacts.request(
         DetailRequirement::Display {
             min_long_edge: max_size,
         },
-        RepresentationRequirement::Exact(ArtifactRepresentation::Embedded),
+        if level == RenderLevel::Thumbnail {
+            RepresentationRequirement::BoundedThumbnail {
+                target: RAW_THUMBNAIL,
+            }
+        } else {
+            RepresentationRequirement::Exact(ArtifactRepresentation::Embedded)
+        },
         display_requirement(),
-        true,
+        level != RenderLevel::Thumbnail,
     );
-    produce_embedded_with_request(path, artifacts, max_size, level, &request, cancellation)
+    produce_embedded_with_request(
+        path,
+        artifacts,
+        max_size,
+        level,
+        &request,
+        priority,
+        cancellation,
+    )
 }
 
+#[allow(clippy::too_many_arguments)]
 fn produce_embedded_with_request(
     path: &Path,
     artifacts: &ArtifactCache,
     max_size: u32,
     level: RenderLevel,
     request: &crate::cache::CacheRequest,
+    priority: DecodePriority,
     cancellation: &CancellationToken,
 ) -> Result<PreviewResult, MediaError> {
     let embedded_lock = file_lock(&artifacts.source_lock_key("raw-embedded-extract"));
@@ -274,6 +310,32 @@ fn produce_embedded_with_request(
         ArtifactPreparation::Generate { cache_generation } => cache_generation,
     };
     let revision_id = artifacts.source_revision_id();
+    if level == RenderLevel::Thumbnail {
+        let derivation = preview_request(artifacts, max_size, false);
+        if let Some(cached) = artifacts.lookup(&derivation, level)? {
+            let super::jpeg_transform::EncodedJpegThumbnail {
+                bytes,
+                dimensions,
+                mut presentation,
+            } = super::thumbnail::encode_cached_jpeg_thumbnail(&cached, priority, cancellation)?;
+            // Preserve the existing RAW cache presentation identity.
+            presentation.color = CacheColorState::EmbeddedOrUnknown;
+            return artifacts.publish(
+                bytes,
+                dimensions,
+                match cached.kind {
+                    oxy_domain::PreviewKind::Developed => ArtifactRepresentation::Developed,
+                    _ => ArtifactRepresentation::Embedded,
+                },
+                presentation,
+                cached.width.max(cached.height) <= 512,
+                RAW_THUMBNAIL.into(),
+                level,
+                generation,
+                request,
+            );
+        }
+    }
     if max_size != 0 && embedded_extraction_failed(revision_id) {
         return Err(MediaError::CacheArtifact(
             "embedded RAW extraction previously failed for this source revision".into(),
@@ -293,6 +355,12 @@ fn produce_embedded_with_request(
         }
     };
     let (bytes, dimensions) = match extracted {
+        libraw::Preview::EmbeddedJpeg(data) if level == RenderLevel::Thumbnail => {
+            let super::jpeg_transform::EncodedJpegThumbnail {
+                bytes, dimensions, ..
+            } = super::jpeg_transform::encode_jpeg_thumbnail(data, priority, cancellation)?;
+            (bytes, (dimensions.width, dimensions.height))
+        }
         libraw::Preview::EmbeddedJpeg(data) => {
             let dimensions = {
                 let reader = ImageReader::new(Cursor::new(&data)).with_guessed_format()?;
@@ -317,12 +385,18 @@ fn produce_embedded_with_request(
         ArtifactRepresentation::Embedded,
         ArtifactPresentation {
             geometry: None,
-            orientation: OrientationState::Metadata,
+            orientation: if level == RenderLevel::Thumbnail {
+                OrientationState::Applied
+            } else {
+                OrientationState::Metadata
+            },
             color: CacheColorState::EmbeddedOrUnknown,
             sharpening: SharpeningState::None,
         },
         false,
-        if max_size == 0 {
+        if level == RenderLevel::Thumbnail {
+            RAW_THUMBNAIL.into()
+        } else if max_size == 0 {
             crate::cache::LARGEST_RAW_JPEG_TARGET.into()
         } else {
             format!("{RAW_PREVIEW}:embedded:{max_size}")
@@ -416,15 +490,19 @@ fn render_developed(
                     ArtifactRepresentation::Developed,
                     applied_srgb(),
                     max_size.is_none_or(|target| dimensions.width.max(dimensions.height) < target),
-                    format!(
-                        "{}:{backend:?}:{}",
-                        if max_size.is_none() {
-                            RAW_FULL
-                        } else {
-                            RAW_PREVIEW
-                        },
-                        max_size.unwrap_or_default()
-                    ),
+                    if level == RenderLevel::Thumbnail {
+                        RAW_THUMBNAIL.into()
+                    } else {
+                        format!(
+                            "{}:{backend:?}:{}",
+                            if max_size.is_none() {
+                                RAW_FULL
+                            } else {
+                                RAW_PREVIEW
+                            },
+                            max_size.unwrap_or_default()
+                        )
+                    },
                     level,
                     generation,
                     request,

@@ -4,6 +4,7 @@ compile_error!("oxy-media supports only Windows, macOS, and Linux");
 mod backends;
 mod cache;
 mod decode_control;
+mod delivery;
 mod error;
 mod formats;
 mod heif_service;

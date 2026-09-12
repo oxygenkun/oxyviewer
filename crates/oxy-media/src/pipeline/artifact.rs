@@ -186,6 +186,27 @@ pub(crate) struct ArtifactCache {
     publisher: Option<Arc<crate::publication::ArtifactPublisher>>,
 }
 
+#[derive(Clone, Copy)]
+pub(crate) enum ArtifactEncoding {
+    Jpeg,
+    Png,
+}
+
+impl ArtifactEncoding {
+    fn media_type(self) -> &'static str {
+        match self {
+            Self::Jpeg => "image/jpeg",
+            Self::Png => "image/png",
+        }
+    }
+    fn extension(self) -> &'static str {
+        match self {
+            Self::Jpeg => "jpg",
+            Self::Png => "png",
+        }
+    }
+}
+
 impl ArtifactCache {
     pub(crate) fn new(path: &Path, cache_dir: &Path) -> Result<Self, MediaError> {
         Self::for_source_revision(SourceRevision::observe(path)?, cache_dir)
@@ -517,6 +538,34 @@ impl ArtifactCache {
         generation: u64,
         request: &CacheRequest,
     ) -> Result<PreviewResult, MediaError> {
+        self.publish_encoded(
+            bytes,
+            dimensions,
+            representation,
+            presentation,
+            native_detail,
+            target,
+            level,
+            generation,
+            request,
+            ArtifactEncoding::Jpeg,
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn publish_encoded(
+        &self,
+        bytes: Arc<[u8]>,
+        dimensions: DisplayDimensions,
+        representation: ArtifactRepresentation,
+        presentation: ArtifactPresentation,
+        native_detail: bool,
+        target: String,
+        level: RenderLevel,
+        generation: u64,
+        request: &CacheRequest,
+        encoding: ArtifactEncoding,
+    ) -> Result<PreviewResult, MediaError> {
         let observed = SourceRevision::observe(&self.source.canonical_path)?;
         if observed != self.source {
             return Err(MediaError::StaleSourceRevision);
@@ -531,8 +580,8 @@ impl ArtifactCache {
             },
             actual_dimensions: dimensions,
             native_detail,
-            media_type: "image/jpeg".into(),
-            extension: "jpg".into(),
+            media_type: encoding.media_type().into(),
+            extension: encoding.extension().into(),
             bytes,
             cache_generation: generation,
         };
@@ -821,6 +870,10 @@ fn representation_requirement_implies(
     waiter: RepresentationRequirement,
 ) -> bool {
     match (producer, waiter) {
+        (
+            RepresentationRequirement::BoundedThumbnail { target: produced },
+            RepresentationRequirement::BoundedThumbnail { target: requested },
+        ) => produced == requested,
         (_, RepresentationRequirement::AnyDisplay) => true,
         (
             RepresentationRequirement::Exact(produced),

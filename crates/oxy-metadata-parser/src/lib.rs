@@ -34,6 +34,10 @@
 mod api;
 pub mod core;
 
+/// Bounded JPEG presentation and multi-picture index parsing (no file I/O).
+#[cfg(all(feature = "jpeg", feature = "tiff"))]
+pub mod jpeg_preview;
+
 // Re-export high-level API at crate root
 pub use api::{GpsCoordinates, Image, ImageData, SiftDocument, SiftFile, Tag, open, read, tags};
 

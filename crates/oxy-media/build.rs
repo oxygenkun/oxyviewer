@@ -9,7 +9,7 @@ fn main() {
     let wrapper = manifest_dir.join("src/backends/libraw/wrapper.cpp");
 
     build_apple_media(&manifest_dir);
-    build_jpeg_stitch(&manifest_dir);
+    build_libjpeg(&manifest_dir);
 
     println!("cargo:rerun-if-changed={}", wrapper.display());
     println!(
@@ -43,12 +43,14 @@ fn main() {
     build.compile("oxy_libraw");
 }
 
-fn build_jpeg_stitch(manifest_dir: &Path) {
+fn build_libjpeg(manifest_dir: &Path) {
     let archive = manifest_dir.join("../../3rdpart/libjpeg-turbo/libjpeg-turbo-3.1.3.tar.gz");
-    let wrapper = manifest_dir.join("src/heif_service/dct_cache/wrapper.c");
+    let stitch_wrapper = manifest_dir.join("src/backends/libjpeg/stitch.c");
+    let decode_wrapper = manifest_dir.join("src/backends/libjpeg/wrapper.c");
     let out = PathBuf::from(env::var_os("OUT_DIR").unwrap());
     println!("cargo:rerun-if-changed={}", archive.display());
-    println!("cargo:rerun-if-changed={}", wrapper.display());
+    println!("cargo:rerun-if-changed={}", stitch_wrapper.display());
+    println!("cargo:rerun-if-changed={}", decode_wrapper.display());
     println!("cargo:rerun-if-env-changed=NASM");
     let source = out.join("libjpeg-turbo-3.1.3");
     if !source.join("CMakeLists.txt").exists() {
@@ -85,9 +87,10 @@ fn build_jpeg_stitch(manifest_dir: &Path) {
     cc::Build::new()
         .include(source.join("src"))
         .include(built.join("build"))
-        .file(wrapper)
+        .file(stitch_wrapper)
+        .file(decode_wrapper)
         .opt_level(3)
-        .compile("oxy_jpeg_stitch");
+        .compile("oxy_libjpeg");
     println!(
         "cargo:rustc-link-lib=static={}",
         if msvc { "jpeg-static" } else { "jpeg" }

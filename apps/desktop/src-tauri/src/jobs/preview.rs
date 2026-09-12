@@ -1664,6 +1664,31 @@ fn restore_projection_resource(
     if projection.source_revision != expected_revision.token() {
         return Ok(projection);
     }
+    if projection.level == RenderLevel::Thumbnail
+        && projection.result.as_ref().is_some_and(|result| {
+            if result.width > 512 || result.height > 512 {
+                return true;
+            }
+            let resource = result.resource.as_ref().and_then(|descriptor| {
+                oxy_media::shared_resource_registry().resolve(&descriptor.resource_id)
+            });
+            let length = match resource.as_ref().map(|resource| &resource.payload) {
+                Some(oxy_media::ResourcePayload::Encoded(bytes)) => Some(bytes.len() as u64),
+                Some(oxy_media::ResourcePayload::File(path)) => {
+                    std::fs::metadata(path).ok().map(|metadata| metadata.len())
+                }
+                None => std::fs::metadata(&result.path)
+                    .ok()
+                    .map(|metadata| metadata.len()),
+            };
+            length.is_some_and(|length| length > 2 * 1024 * 1024)
+        })
+    {
+        // Even a same-policy persisted projection must satisfy delivery bounds.
+        // Dropping the descriptor causes normal admission to produce a small image.
+        projection.result = None;
+        return Ok(projection);
+    }
     let Some(result) = projection.result.as_mut() else {
         return Ok(projection);
     };
@@ -2448,6 +2473,14 @@ mod tests {
         };
         let library = Arc::new(Library::in_memory().unwrap());
         let accepted = library.accept_image_projection(projection).unwrap();
+        let mut oversized = accepted.clone();
+        oversized.result.as_mut().unwrap().width = 7008;
+        assert!(
+            restore_projection_resource(oversized, directory.path())
+                .unwrap()
+                .result
+                .is_none()
+        );
         let queue = RenderQueue {
             work: Arc::new((Mutex::new(WorkState::default()), Condvar::new())),
             lane: RenderLevel::Thumbnail,

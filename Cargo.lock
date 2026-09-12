@@ -2463,6 +2463,7 @@ dependencies = [
  "libheif-rs",
  "oxy-domain",
  "oxy-fs",
+ "oxy-metadata-parser",
  "oxy-runtime",
  "serde",
  "serde_json",

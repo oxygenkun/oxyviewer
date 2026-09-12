@@ -133,9 +133,15 @@ pub enum DetailRequirement {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum RepresentationRequirement {
+    /// A thumbnail policy is a delivery contract, not a minimum quality rank.
+    BoundedThumbnail {
+        target: &'static str,
+    },
     AnyDisplay,
     Exact(ArtifactRepresentation),
-    RawNative { allow_camera_preview: bool },
+    RawNative {
+        allow_camera_preview: bool,
+    },
     LargestRawJpeg,
 }
 
@@ -234,6 +240,11 @@ fn representation_matches(
     requirement: RepresentationRequirement,
 ) -> bool {
     match requirement {
+        RepresentationRequirement::BoundedThumbnail { target } => {
+            artifact.variant.target == target
+                && crate::delivery::THUMBNAIL_LIMITS
+                    .accepts(artifact.actual_dimensions, artifact.byte_size)
+        }
         RepresentationRequirement::LargestRawJpeg => {
             artifact.variant.representation == ArtifactRepresentation::Embedded
                 && artifact.variant.target == LARGEST_RAW_JPEG_TARGET
@@ -382,6 +393,42 @@ mod tests {
                 )
             ),
             Some(Satisfaction::Interim)
+        );
+    }
+
+    #[test]
+    fn thumbnail_delivery_rejects_large_native_artifacts_and_old_policy() {
+        let mut candidate = artifact(
+            ArtifactRepresentation::Decoded,
+            DisplayDimensions {
+                width: 4096,
+                height: 2731,
+            },
+        );
+        candidate.native_detail = true;
+        let mut bounded = request(
+            &candidate,
+            DetailRequirement::Display { min_long_edge: 512 },
+        );
+        bounded.representation = RepresentationRequirement::BoundedThumbnail { target: "test" };
+        assert_eq!(satisfies(&candidate, &bounded), None);
+        candidate.actual_dimensions = DisplayDimensions {
+            width: 512,
+            height: 341,
+        };
+        assert_eq!(
+            satisfies(&candidate, &bounded),
+            Some(Satisfaction::Satisfied)
+        );
+        candidate.byte_size = crate::delivery::THUMBNAIL_BYTES + 1;
+        assert_eq!(satisfies(&candidate, &bounded), None);
+        candidate.byte_size = 1000;
+        candidate.variant.target = "old-thumbnail".into();
+        assert_eq!(satisfies(&candidate, &bounded), None);
+        bounded.representation = RepresentationRequirement::AnyDisplay;
+        assert_eq!(
+            satisfies(&candidate, &bounded),
+            Some(Satisfaction::Satisfied)
         );
     }
 

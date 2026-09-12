@@ -133,7 +133,7 @@ static uint64_t oxy_coeff_bytes(oxy_state *s, uint32_t w, uint32_t h, int mh, in
 }
 /* Status: 0 success, 1 unsupported (safe fallback), 2 cancelled,
    3 I/O/allocation failure, 4 corrupt/incomplete input (never publish). */
-int oxy_jpeg_stitch(const oxy_tile *tiles, size_t count, uint32_t width, uint32_t height,
+int oxy_libjpeg_stitch_coefficients(const oxy_tile *tiles, size_t count, uint32_t width, uint32_t height,
                     uint64_t memory_budget, void *context, oxy_cancel cancel, oxy_write write,
                     oxy_stats *stats, char *message, size_t message_size) {
     oxy_state *s = (oxy_state *)calloc(1, sizeof(*s));

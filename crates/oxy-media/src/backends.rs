@@ -8,6 +8,7 @@ pub(crate) mod apple_core_image;
 pub(crate) mod apple_image_io;
 pub(crate) mod ffmpeg_heif;
 pub(crate) mod libheif;
+pub(crate) mod libjpeg;
 pub(crate) mod libraw;
 #[cfg(target_os = "windows")]
 pub(crate) mod windows_wic;
