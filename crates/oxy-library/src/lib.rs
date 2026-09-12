@@ -1549,8 +1549,10 @@ fn read_image_projection(
                 level,
                 result: result_json
                     .as_deref()
-                    .map(serde_json::from_str)
-                    .transpose()?,
+                    // Cached artifacts may predate the current image-facts schema.
+                    // Keep the ordering fence, but let admission rebuild an unreadable
+                    // result instead of failing every request for this image.
+                    .and_then(|json| serde_json::from_str(json).ok()),
                 error,
             })
         },
@@ -2765,6 +2767,88 @@ mod tests {
             .unwrap()
             .unwrap();
         assert_eq!(cached.result.unwrap().path, artifact);
+    }
+
+    #[test]
+    fn incompatible_image_projection_can_be_rebuilt_without_losing_ordering() {
+        let library = Library::in_memory().unwrap();
+        let directory = tempdir().unwrap();
+        let source = directory.path().join("source.HIF");
+        let artifact = directory.path().join("thumbnail.jpg");
+        std::fs::write(&artifact, b"restart-safe artifact").unwrap();
+        let valid_at = library.next_resource_revision().unwrap();
+        let projection = ImageProjection {
+            path: source.clone(),
+            source_revision: "source-revision".into(),
+            state_revision: 0,
+            valid_at,
+            status: ResourceLoadStatus::Ready,
+            level: RenderLevel::Thumbnail,
+            result: Some(oxy_domain::PreviewResult {
+                image_facts: None,
+                geometry: None,
+                path: artifact.clone(),
+                width: 160,
+                height: 120,
+                kind: oxy_domain::PreviewKind::Embedded,
+                render_level: RenderLevel::Thumbnail,
+                resource: None,
+                satisfaction: Some(oxy_domain::MediaSatisfaction::Interim),
+                persistence: Some(oxy_domain::MediaPersistence::Persisted),
+                diagnostics: None,
+            }),
+            error: None,
+        };
+        let mut obsolete = serde_json::to_value(projection.result.as_ref().unwrap()).unwrap();
+        // Reproduce the intermediate image-facts schema stored before sampledDimensions.
+        obsolete["imageFacts"] = serde_json::json!({
+            "exifOrientation": 1,
+            "source": {
+                "exifOrientation": 1, "revisionId": "source-revision",
+                "candidateId": "sony-jpeg", "origin": "embeddedPreview",
+                "encodedDimensions": {"width": 160, "height": 120},
+                "displayDimensions": {"width": 160, "height": 120}
+            },
+            "encodedDimensions": {"width": 160, "height": 120},
+            "displayDimensions": {"width": 160, "height": 120},
+            "detail": {
+                "referenceDimensions": {"width": 7008, "height": 4672},
+                "region": {"x": 0, "y": 0, "width": 7008, "height": 4672},
+                "sampling": "native"
+            },
+            "processing": [], "byteIntegrity": "sourcePayload"
+        });
+        assert!(serde_json::from_value::<oxy_domain::PreviewResult>(obsolete.clone()).is_err());
+        for incompatible in [obsolete.to_string(), "{".into()] {
+            let accepted = library.accept_image_projection(projection.clone()).unwrap();
+            library
+                .connection
+                .lock()
+                .execute(
+                    "UPDATE resource_projections SET result_json = ?1 WHERE path = ?2",
+                    params![incompatible, source.to_string_lossy()],
+                )
+                .unwrap();
+            let cached = library
+                .image_projection(&source, RenderLevel::Thumbnail, "source-revision")
+                .unwrap()
+                .unwrap();
+            assert!(cached.result.is_none());
+            assert_eq!(cached.valid_at, accepted.valid_at);
+            assert_eq!(cached.state_revision, accepted.state_revision);
+            let mut stale = projection.clone();
+            stale.valid_at = valid_at - 1;
+            let rejected = library.accept_image_projection(stale).unwrap();
+            assert_eq!(rejected.state_revision, accepted.state_revision);
+            assert!(rejected.result.is_none());
+            let rebuilt = library.accept_image_projection(projection.clone()).unwrap();
+            assert!(rebuilt.state_revision > accepted.state_revision);
+            let cached = library
+                .image_projection(&source, RenderLevel::Thumbnail, "source-revision")
+                .unwrap()
+                .unwrap();
+            assert_eq!(cached.result.unwrap().path, artifact);
+        }
     }
 
     #[test]

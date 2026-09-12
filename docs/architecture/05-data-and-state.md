@@ -77,6 +77,8 @@ Rust projection 与前端显示镜像失效。
 但 image result 序列化前会剥离 resource descriptor，Pending/Skipped 且没有稳定文件的结果不持久化。
 重启后只有有效 managed/original path 可恢复，并须重新注册当前进程 resource；旧 URL 永远不会因为
 计数器复用指向另一张图。
+图片 result JSON 若因结构变化或损坏无法解析，按缓存未命中重新生成；保留原 projection 的
+`valid_at` / `state_revision`，继续阻止过期请求覆盖较新的状态，而不让坏缓存阻断加载或写回。
 
 ## 5. SQLite 资料库
 
