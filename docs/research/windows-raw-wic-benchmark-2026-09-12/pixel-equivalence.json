@@ -1,0 +1,38 @@
+[
+  {
+    "source": "DSC01332.ARW",
+    "backend": "wic-frame",
+    "identicalDecodedPixels": true,
+    "decodedRgbSha256": [
+      "35332e389182f4151c9a3cedd8165317b2dec948e6242e87ad79c0f81bc63d65",
+      "35332e389182f4151c9a3cedd8165317b2dec948e6242e87ad79c0f81bc63d65"
+    ]
+  },
+  {
+    "source": "DSC01332.ARW",
+    "backend": "libraw",
+    "identicalDecodedPixels": true,
+    "decodedRgbSha256": [
+      "d1adceb6ce0f0af6d6ab36730aa6266f77206b6e2c6eb182d6d108cf160a2a08",
+      "d1adceb6ce0f0af6d6ab36730aa6266f77206b6e2c6eb182d6d108cf160a2a08"
+    ]
+  },
+  {
+    "source": "DSC08653.ARW",
+    "backend": "wic-frame",
+    "identicalDecodedPixels": true,
+    "decodedRgbSha256": [
+      "d3f3dab5ba0541803ebafc5165f8501f519151ac201344faa4ec03d433e7c373",
+      "d3f3dab5ba0541803ebafc5165f8501f519151ac201344faa4ec03d433e7c373"
+    ]
+  },
+  {
+    "source": "DSC08653.ARW",
+    "backend": "libraw",
+    "identicalDecodedPixels": true,
+    "decodedRgbSha256": [
+      "cd665d77f6a8102a63f224b07231c428d2952466c7d835a5f21b7e16bef9bbb4",
+      "cd665d77f6a8102a63f224b07231c428d2952466c7d835a5f21b7e16bef9bbb4"
+    ]
+  }
+]

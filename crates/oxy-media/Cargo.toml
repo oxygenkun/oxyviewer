@@ -32,6 +32,11 @@ name = "raw_display_bench"
 path = "src/bin/raw_display_bench.rs"
 required-features = ["bench-tools"]
 
+[[bin]]
+name = "raw_backend_bench"
+path = "src/bin/raw_backend_bench.rs"
+required-features = ["bench-tools"]
+
 [dependencies]
 fs2.workspace = true
 image.workspace = true
@@ -53,6 +58,8 @@ windows = { workspace = true, features = [
   "Win32_Foundation",
   "Win32_Graphics_Imaging",
   "Win32_System_Com",
+  "Win32_System_Com_StructuredStorage",
+  "Win32_System_Variant",
   "Win32_System_SystemInformation",
 ] }
 

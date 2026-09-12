@@ -1,4 +1,5 @@
 import type { DisplayedPreviewSize } from "../lib/previewGeometry";
+import { RawDecoderPanel } from "./RawDecoderPanel";
 import {
   Check,
   Focus,
@@ -395,6 +396,9 @@ export function Loupe({
           <small>{active.extension} · {formatBytes(active.sizeBytes)}</small>
           {loupeMetadataVisible ? <AssetMetadataBadges asset={active} /> : null}
         </div>
+        {active.kind === "raw" && <RawDecoderPanel key={active.id} asset={active} compact
+          pending={rawPreviewStatus.state === "loadingPreview" || rawPreviewStatus.state === "developingFull"}
+          failed={rawPreviewStatus.state === "fullFailed"} t={t} />}
         {active.kind === "raw" ? (
           <div className={`loupe__raw-status loupe__raw-status--${rawPreviewStatus.state}`}>
             <i />

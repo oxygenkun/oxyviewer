@@ -1,0 +1,382 @@
+[
+  {
+    "backend": "wic-frame",
+    "decodeMs": 1619.5027,
+    "details": {
+      "clsid": "41945702-8302-44A6-9445-AC98E8AFA086",
+      "color": "unverified",
+      "colorContextCount": 0,
+      "colorContextError": "操作不受支持。 (0x88982F81)",
+      "contextExifColorSpace": null,
+      "decoder": "Microsoft Raw Image Decoder",
+      "developRaw": false,
+      "exifColorSpace": 1,
+      "nativeFull": "unverified",
+      "nativePixelFormat": "6FDDC324-4E03-4BFE-B185-3D77768DC90D",
+      "orientation": 8
+    },
+    "height": 7028,
+    "pixelBytes": 98841792,
+    "width": 4688,
+    "source": "DSC01332.ARW",
+    "run": 1,
+    "processMs": 1745.6219,
+    "sampledPeakWorkingSetBytes": 522674176
+  },
+  {
+    "backend": "libraw",
+    "decodeMs": 5627.4134,
+    "details": {
+      "nativeFull": true
+    },
+    "height": 7028,
+    "pixelBytes": 98841792,
+    "width": 4688,
+    "source": "DSC01332.ARW",
+    "run": 1,
+    "processMs": 5711.4028,
+    "sampledPeakWorkingSetBytes": 537309184
+  },
+  {
+    "backend": "libraw",
+    "decodeMs": 5684.158100000001,
+    "details": {
+      "nativeFull": true
+    },
+    "height": 7028,
+    "pixelBytes": 98841792,
+    "width": 4688,
+    "source": "DSC01332.ARW",
+    "run": 2,
+    "processMs": 5842.2335,
+    "sampledPeakWorkingSetBytes": 537264128
+  },
+  {
+    "backend": "wic-frame",
+    "decodeMs": 1636.3832,
+    "details": {
+      "clsid": "41945702-8302-44A6-9445-AC98E8AFA086",
+      "color": "unverified",
+      "colorContextCount": 0,
+      "colorContextError": "操作不受支持。 (0x88982F81)",
+      "contextExifColorSpace": null,
+      "decoder": "Microsoft Raw Image Decoder",
+      "developRaw": false,
+      "exifColorSpace": 1,
+      "nativeFull": "unverified",
+      "nativePixelFormat": "6FDDC324-4E03-4BFE-B185-3D77768DC90D",
+      "orientation": 8
+    },
+    "height": 7028,
+    "pixelBytes": 98841792,
+    "width": 4688,
+    "source": "DSC01332.ARW",
+    "run": 2,
+    "processMs": 1832.5567,
+    "sampledPeakWorkingSetBytes": 522764288
+  },
+  {
+    "backend": "wic-frame",
+    "decodeMs": 1633.5971,
+    "details": {
+      "clsid": "41945702-8302-44A6-9445-AC98E8AFA086",
+      "color": "unverified",
+      "colorContextCount": 0,
+      "colorContextError": "操作不受支持。 (0x88982F81)",
+      "contextExifColorSpace": null,
+      "decoder": "Microsoft Raw Image Decoder",
+      "developRaw": false,
+      "exifColorSpace": 1,
+      "nativeFull": "unverified",
+      "nativePixelFormat": "6FDDC324-4E03-4BFE-B185-3D77768DC90D",
+      "orientation": 8
+    },
+    "height": 7028,
+    "pixelBytes": 98841792,
+    "width": 4688,
+    "source": "DSC01332.ARW",
+    "run": 3,
+    "processMs": 1774.904,
+    "sampledPeakWorkingSetBytes": 522792960
+  },
+  {
+    "backend": "libraw",
+    "decodeMs": 5641.947,
+    "details": {
+      "nativeFull": true
+    },
+    "height": 7028,
+    "pixelBytes": 98841792,
+    "width": 4688,
+    "source": "DSC01332.ARW",
+    "run": 3,
+    "processMs": 5758.4452,
+    "sampledPeakWorkingSetBytes": 437927936
+  },
+  {
+    "backend": "libraw",
+    "decodeMs": 5608.657,
+    "details": {
+      "nativeFull": true
+    },
+    "height": 7028,
+    "pixelBytes": 98841792,
+    "width": 4688,
+    "source": "DSC01332.ARW",
+    "run": 4,
+    "processMs": 5687.821,
+    "sampledPeakWorkingSetBytes": 447938560
+  },
+  {
+    "backend": "wic-frame",
+    "decodeMs": 1628.2573,
+    "details": {
+      "clsid": "41945702-8302-44A6-9445-AC98E8AFA086",
+      "color": "unverified",
+      "colorContextCount": 0,
+      "colorContextError": "操作不受支持。 (0x88982F81)",
+      "contextExifColorSpace": null,
+      "decoder": "Microsoft Raw Image Decoder",
+      "developRaw": false,
+      "exifColorSpace": 1,
+      "nativeFull": "unverified",
+      "nativePixelFormat": "6FDDC324-4E03-4BFE-B185-3D77768DC90D",
+      "orientation": 8
+    },
+    "height": 7028,
+    "pixelBytes": 98841792,
+    "width": 4688,
+    "source": "DSC01332.ARW",
+    "run": 4,
+    "processMs": 1708.5627,
+    "sampledPeakWorkingSetBytes": 522604544
+  },
+  {
+    "backend": "wic-frame",
+    "decodeMs": 1653.4301999999998,
+    "details": {
+      "clsid": "41945702-8302-44A6-9445-AC98E8AFA086",
+      "color": "unverified",
+      "colorContextCount": 0,
+      "colorContextError": "操作不受支持。 (0x88982F81)",
+      "contextExifColorSpace": null,
+      "decoder": "Microsoft Raw Image Decoder",
+      "developRaw": false,
+      "exifColorSpace": 1,
+      "nativeFull": "unverified",
+      "nativePixelFormat": "6FDDC324-4E03-4BFE-B185-3D77768DC90D",
+      "orientation": 8
+    },
+    "height": 7028,
+    "pixelBytes": 98841792,
+    "width": 4688,
+    "source": "DSC01332.ARW",
+    "run": 5,
+    "processMs": 1818.7866,
+    "sampledPeakWorkingSetBytes": 522739712
+  },
+  {
+    "backend": "libraw",
+    "decodeMs": 5564.5365,
+    "details": {
+      "nativeFull": true
+    },
+    "height": 7028,
+    "pixelBytes": 98841792,
+    "width": 4688,
+    "source": "DSC01332.ARW",
+    "run": 5,
+    "processMs": 5685.2994,
+    "sampledPeakWorkingSetBytes": 537276416
+  },
+  {
+    "backend": "wic-frame",
+    "decodeMs": 2569.045,
+    "details": {
+      "clsid": "41945702-8302-44A6-9445-AC98E8AFA086",
+      "color": "unverified",
+      "colorContextCount": 0,
+      "colorContextError": "操作不受支持。 (0x88982F81)",
+      "contextExifColorSpace": null,
+      "decoder": "Microsoft Raw Image Decoder",
+      "developRaw": false,
+      "exifColorSpace": 1,
+      "nativeFull": "unverified",
+      "nativePixelFormat": "6FDDC324-4E03-4BFE-B185-3D77768DC90D",
+      "orientation": 6
+    },
+    "height": 7028,
+    "pixelBytes": 98841792,
+    "width": 4688,
+    "source": "DSC08653.ARW",
+    "run": 1,
+    "processMs": 2651.3722,
+    "sampledPeakWorkingSetBytes": 508231680
+  },
+  {
+    "backend": "libraw",
+    "decodeMs": 6368.5184,
+    "details": {
+      "nativeFull": true
+    },
+    "height": 7028,
+    "pixelBytes": 98841792,
+    "width": 4688,
+    "source": "DSC08653.ARW",
+    "run": 1,
+    "processMs": 6463.2065,
+    "sampledPeakWorkingSetBytes": 544714752
+  },
+  {
+    "backend": "libraw",
+    "decodeMs": 6387.9830999999995,
+    "details": {
+      "nativeFull": true
+    },
+    "height": 7028,
+    "pixelBytes": 98841792,
+    "width": 4688,
+    "source": "DSC08653.ARW",
+    "run": 2,
+    "processMs": 6515.5559,
+    "sampledPeakWorkingSetBytes": 544677888
+  },
+  {
+    "backend": "wic-frame",
+    "decodeMs": 2555.8339,
+    "details": {
+      "clsid": "41945702-8302-44A6-9445-AC98E8AFA086",
+      "color": "unverified",
+      "colorContextCount": 0,
+      "colorContextError": "操作不受支持。 (0x88982F81)",
+      "contextExifColorSpace": null,
+      "decoder": "Microsoft Raw Image Decoder",
+      "developRaw": false,
+      "exifColorSpace": 1,
+      "nativeFull": "unverified",
+      "nativePixelFormat": "6FDDC324-4E03-4BFE-B185-3D77768DC90D",
+      "orientation": 6
+    },
+    "height": 7028,
+    "pixelBytes": 98841792,
+    "width": 4688,
+    "source": "DSC08653.ARW",
+    "run": 2,
+    "processMs": 2676.3548,
+    "sampledPeakWorkingSetBytes": 508182528
+  },
+  {
+    "backend": "wic-frame",
+    "decodeMs": 2548.9627,
+    "details": {
+      "clsid": "41945702-8302-44A6-9445-AC98E8AFA086",
+      "color": "unverified",
+      "colorContextCount": 0,
+      "colorContextError": "操作不受支持。 (0x88982F81)",
+      "contextExifColorSpace": null,
+      "decoder": "Microsoft Raw Image Decoder",
+      "developRaw": false,
+      "exifColorSpace": 1,
+      "nativeFull": "unverified",
+      "nativePixelFormat": "6FDDC324-4E03-4BFE-B185-3D77768DC90D",
+      "orientation": 6
+    },
+    "height": 7028,
+    "pixelBytes": 98841792,
+    "width": 4688,
+    "source": "DSC08653.ARW",
+    "run": 3,
+    "processMs": 2673.5528,
+    "sampledPeakWorkingSetBytes": 508080128
+  },
+  {
+    "backend": "libraw",
+    "decodeMs": 6442.0858,
+    "details": {
+      "nativeFull": true
+    },
+    "height": 7028,
+    "pixelBytes": 98841792,
+    "width": 4688,
+    "source": "DSC08653.ARW",
+    "run": 3,
+    "processMs": 6614.008,
+    "sampledPeakWorkingSetBytes": 544657408
+  },
+  {
+    "backend": "libraw",
+    "decodeMs": 6672.1274,
+    "details": {
+      "nativeFull": true
+    },
+    "height": 7028,
+    "pixelBytes": 98841792,
+    "width": 4688,
+    "source": "DSC08653.ARW",
+    "run": 4,
+    "processMs": 6748.8438,
+    "sampledPeakWorkingSetBytes": 544755712
+  },
+  {
+    "backend": "wic-frame",
+    "decodeMs": 2552.3767,
+    "details": {
+      "clsid": "41945702-8302-44A6-9445-AC98E8AFA086",
+      "color": "unverified",
+      "colorContextCount": 0,
+      "colorContextError": "操作不受支持。 (0x88982F81)",
+      "contextExifColorSpace": null,
+      "decoder": "Microsoft Raw Image Decoder",
+      "developRaw": false,
+      "exifColorSpace": 1,
+      "nativeFull": "unverified",
+      "nativePixelFormat": "6FDDC324-4E03-4BFE-B185-3D77768DC90D",
+      "orientation": 6
+    },
+    "height": 7028,
+    "pixelBytes": 98841792,
+    "width": 4688,
+    "source": "DSC08653.ARW",
+    "run": 4,
+    "processMs": 2641.5267,
+    "sampledPeakWorkingSetBytes": 508166144
+  },
+  {
+    "backend": "wic-frame",
+    "decodeMs": 2563.3547000000003,
+    "details": {
+      "clsid": "41945702-8302-44A6-9445-AC98E8AFA086",
+      "color": "unverified",
+      "colorContextCount": 0,
+      "colorContextError": "操作不受支持。 (0x88982F81)",
+      "contextExifColorSpace": null,
+      "decoder": "Microsoft Raw Image Decoder",
+      "developRaw": false,
+      "exifColorSpace": 1,
+      "nativeFull": "unverified",
+      "nativePixelFormat": "6FDDC324-4E03-4BFE-B185-3D77768DC90D",
+      "orientation": 6
+    },
+    "height": 7028,
+    "pixelBytes": 98841792,
+    "width": 4688,
+    "source": "DSC08653.ARW",
+    "run": 5,
+    "processMs": 2707.9224,
+    "sampledPeakWorkingSetBytes": 508100608
+  },
+  {
+    "backend": "libraw",
+    "decodeMs": 6473.3554,
+    "details": {
+      "nativeFull": true
+    },
+    "height": 7028,
+    "pixelBytes": 98841792,
+    "width": 4688,
+    "source": "DSC08653.ARW",
+    "run": 5,
+    "processMs": 6609.9449,
+    "sampledPeakWorkingSetBytes": 544657408
+  }
+]

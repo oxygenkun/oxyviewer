@@ -1,6 +1,9 @@
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 
+mod raw;
+pub use raw::*;
+
 pub type AssetId = String;
 pub type JobId = String;
 pub type SessionId = String;

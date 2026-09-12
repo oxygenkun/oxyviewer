@@ -6,6 +6,7 @@ import {
   clearImageProjections,
   imageProjectionKey,
   invalidateImageDirectory,
+  invalidateImageProjection,
   useImageProjectionStore,
 } from "./imageProjection";
 
@@ -22,6 +23,22 @@ const projection = (stateRevision: number): ImageProjection => ({
 });
 
 describe("image projection mirror", () => {
+  it("retires RAW full results without clearing thumbnail or decoded-image retention", () => {
+    clearImageProjections();
+    const raw = { ...projection(1), path: "C:\\photos\\a.arw", level: "full" as const };
+    acceptImageProjection(raw);
+    acceptImageProjection({ ...raw, level: "thumbnail" });
+    acceptImageProjection({ ...raw, path: "C:\\photos\\b.arw" });
+    markBrowserImageReady("retained-full.jpg", { width: 100, height: 60 });
+    invalidateImageProjection(raw.path, "full");
+    expect(useImageProjectionStore.getState().records[imageProjectionKey(raw.path, "full")]).toBeUndefined();
+    expect(useImageProjectionStore.getState().records[imageProjectionKey(raw.path, "thumbnail")]).toBeDefined();
+    expect(useImageProjectionStore.getState().records[imageProjectionKey("C:\\photos\\b.arw", "full")]).toBeDefined();
+    expect(isBrowserImageReady("retained-full.jpg")).toBe(true);
+    expect(acceptImageProjection({ ...raw, stateRevision: 2 })).toBe(false);
+    expect(acceptImageProjection({ ...raw, stateRevision: 3, sourceRevision: "retry" })).toBe(true);
+    clearImageProjections();
+  });
   it("keeps decoded immutable resources through persistence updates", () => {
     clearBrowserImageResources();
     useImageProjectionStore.setState({ records: {} });

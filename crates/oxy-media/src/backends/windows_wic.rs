@@ -1,4 +1,5 @@
 use crate::MediaError;
+pub(crate) mod raw;
 use image::{DynamicImage, ImageBuffer, Rgba};
 use std::{os::windows::ffi::OsStrExt, path::Path, ptr};
 use windows::{
@@ -70,6 +71,12 @@ pub fn decode_full_rgba8(path: &Path) -> Result<DynamicImage, MediaError> {
     let _apartment = ComApartment::enter();
     let factory = factory()?;
     let (_, converter) = open_converted_frame(&factory, path)?;
+    copy_rgba8(&converter)
+}
+
+fn copy_rgba8(
+    converter: &windows::Win32::Graphics::Imaging::IWICFormatConverter,
+) -> Result<DynamicImage, MediaError> {
     let source: IWICBitmapSource = converter
         .cast()
         .map_err(|error| wic_stage_error("cast converted frame", error))?;
@@ -94,6 +101,151 @@ pub fn decode_full_rgba8(path: &Path) -> Result<DynamicImage, MediaError> {
     let image = ImageBuffer::<Rgba<u8>, Vec<u8>>::from_vec(width, height, pixels)
         .ok_or_else(|| native_error("decoded image buffer dimensions do not match"))?;
     Ok(DynamicImage::ImageRgba8(image))
+}
+
+#[cfg(feature = "bench-tools")]
+pub(crate) fn benchmark_raw(
+    path: &Path,
+    require_develop: bool,
+) -> Result<(DynamicImage, serde_json::Value), MediaError> {
+    use windows::Win32::Graphics::Imaging::{
+        IWICDevelopRaw, WICAsShotParameterSet, WICRawRenderModeBestQuality,
+    };
+    let _apartment = ComApartment::enter();
+    let factory = factory()?;
+    let wide = wide_path(path);
+    let decoder = unsafe {
+        factory.CreateDecoderFromFilename(
+            PCWSTR(wide.as_ptr()),
+            None,
+            GENERIC_READ,
+            WICDecodeMetadataCacheOnDemand,
+        )
+    }
+    .map_err(|error| wic_stage_error("open RAW decoder", error))?;
+    let info = unsafe { decoder.GetDecoderInfo() }.map_err(wic_error)?;
+    let mut name = vec![0u16; 256];
+    let mut length = 0;
+    unsafe { info.GetFriendlyName(&mut name, &mut length) }.map_err(wic_error)?;
+    let name = String::from_utf16_lossy(&name[..length.saturating_sub(1) as usize]);
+    let clsid = unsafe { info.GetCLSID() }.map_err(wic_error)?;
+    let frame = unsafe { decoder.GetFrame(0) }.map_err(wic_error)?;
+    if !require_develop {
+        let orientation = benchmark_metadata_u32(&frame, "/ifd/{ushort=274}");
+        let color_space = benchmark_metadata_u32(&frame, "/ifd/exif/{ushort=40961}");
+        let mut contexts = [Some(
+            unsafe { factory.CreateColorContext() }.map_err(wic_error)?,
+        )];
+        let mut count = 0;
+        let context_result = unsafe { frame.GetColorContexts(&mut contexts, &mut count) };
+        let context = contexts[0].as_ref().unwrap();
+        let context_exif = if context_result.is_ok() && count > 0 {
+            unsafe { context.GetExifColorSpace() }.ok()
+        } else {
+            None
+        };
+        let converter = unsafe { factory.CreateFormatConverter() }.map_err(wic_error)?;
+        unsafe {
+            converter.Initialize(
+                &frame,
+                &GUID_WICPixelFormat32bppRGBA,
+                WICBitmapDitherTypeNone,
+                None,
+                0.0,
+                WICBitmapPaletteTypeCustom,
+            )
+        }
+        .map_err(wic_error)?;
+        let format = unsafe { frame.GetPixelFormat() }.map_err(wic_error)?;
+        let mut image = if format == windows::Win32::Graphics::Imaging::GUID_WICPixelFormat24bppRGB
+        {
+            let mut width = 0;
+            let mut height = 0;
+            unsafe { frame.GetSize(&mut width, &mut height) }.map_err(wic_error)?;
+            let stride = width
+                .checked_mul(3)
+                .ok_or_else(|| native_error("RGB stride overflow"))?;
+            let size = (stride as usize)
+                .checked_mul(height as usize)
+                .ok_or_else(|| native_error("RGB size overflow"))?;
+            let mut pixels = vec![0; size];
+            unsafe { frame.CopyPixels(ptr::null(), stride, &mut pixels) }.map_err(wic_error)?;
+            DynamicImage::ImageRgb8(
+                image::RgbImage::from_raw(width, height, pixels)
+                    .ok_or_else(|| native_error("invalid RGB size"))?,
+            )
+        } else {
+            copy_rgba8(&converter)?
+        };
+        if let Some(orientation) =
+            orientation.and_then(|value| image::metadata::Orientation::from_exif(value as u8))
+        {
+            image.apply_orientation(orientation);
+        }
+        return Ok((
+            image,
+            serde_json::json!({
+                "decoder": name, "clsid": format!("{clsid:?}"),
+                "developRaw": frame.cast::<IWICDevelopRaw>().is_ok(),
+                "nativeFull": "unverified", "color": "unverified", "orientation": orientation,
+                "exifColorSpace": color_space, "contextExifColorSpace": context_exif,
+                "colorContextCount": count, "colorContextError": context_result.err().map(|error| error.to_string()),
+                "nativePixelFormat": format!("{format:?}"),
+            }),
+        ));
+    }
+    let raw: IWICDevelopRaw = frame.cast().map_err(|error| {
+        native_error(format!(
+            "{name} ({clsid:?}) does not expose IWICDevelopRaw: {error}"
+        ))
+    })?;
+    unsafe { raw.LoadParameterSet(WICAsShotParameterSet) }
+        .map_err(|error| wic_stage_error("load as-shot RAW settings", error))?;
+    unsafe { raw.SetRenderMode(WICRawRenderModeBestQuality) }
+        .map_err(|error| wic_stage_error("request best-quality RAW rendering", error))?;
+    let srgb = unsafe { factory.CreateColorContext() }.map_err(wic_error)?;
+    unsafe { srgb.InitializeFromExifColorSpace(1) }.map_err(wic_error)?;
+    unsafe { raw.SetDestinationColorContext(&srgb) }
+        .map_err(|error| wic_stage_error("request sRGB RAW output", error))?;
+    let converter = unsafe { factory.CreateFormatConverter() }.map_err(wic_error)?;
+    unsafe {
+        converter.Initialize(
+            &raw,
+            &GUID_WICPixelFormat32bppRGBA,
+            WICBitmapDitherTypeNone,
+            None,
+            0.0,
+            WICBitmapPaletteTypeCustom,
+        )
+    }
+    .map_err(wic_error)?;
+    let image = copy_rgba8(&converter)?;
+    Ok((
+        image,
+        serde_json::json!({
+            "decoder": name, "clsid": format!("{clsid:?}"),
+            "renderMode": "BestQuality", "color": "sRGB", "parameters": "AsShot",
+        }),
+    ))
+}
+
+#[cfg(feature = "bench-tools")]
+fn benchmark_metadata_u32(
+    frame: &windows::Win32::Graphics::Imaging::IWICBitmapFrameDecode,
+    query: &str,
+) -> Option<u32> {
+    use windows::Win32::System::Com::StructuredStorage::{
+        PROPVARIANT, PropVariantClear, PropVariantToUInt32,
+    };
+    let reader = unsafe { frame.GetMetadataQueryReader() }.ok()?;
+    let query = query.encode_utf16().chain(Some(0)).collect::<Vec<_>>();
+    let mut value = PROPVARIANT::default();
+    let result = unsafe { reader.GetMetadataByName(PCWSTR(query.as_ptr()), &mut value) };
+    let number = result
+        .and_then(|()| unsafe { PropVariantToUInt32(&value) })
+        .ok();
+    let _ = unsafe { PropVariantClear(&mut value) };
+    number
 }
 
 pub fn can_decode(path: &Path) -> Result<(), MediaError> {

@@ -187,14 +187,16 @@ export function Thumbnail({
     source: folderThumbnail.url,
     size: { width: folderThumbnail.width, height: folderThumbnail.height, geometry: folderThumbnail.geometry },
   } : undefined;
-  const showingFull = large && nativeImage && (nativeImage.source === fullSource?.url || nativeImage.source === directSource);
+  const retainingFullImage = large && ownsFullDetailStage && loaded?.assetId === asset.id && loaded.mode === "full";
+  const showingFull = large && nativeImage && (retainingFullImage || nativeImage.source === fullSource?.url || nativeImage.source === directSource);
   const visibleImage = showingFull ? nativeImage : retainedImage ?? nativeImage;
   const generatedSource = nextProgressiveStage(Boolean(visibleImage), [
     previewSource,
     !fullImageFailed ? fullSource : undefined,
   ]);
   const retainedBaseIsEnough = folderThumbnail && (!large || (!directSource && generatedSource?.renderLevel !== "full" && generatedSource?.renderLevel !== "preview"));
-  const sourceCandidate = retainedBaseIsEnough ? undefined : directSource ?? generatedSource?.url;
+  const retainBetterImage = retainingFullImage && generatedSource?.satisfaction === "interim";
+  const sourceCandidate = retainedBaseIsEnough || retainBetterImage ? undefined : directSource ?? generatedSource?.url;
   // Explicitly disabled consumers can still paint retained decoded images.
   const source = browserImageSourceWhenEnabled(sourceCandidate, enabled);
   const debugResourceLabel = directSource
@@ -384,7 +386,9 @@ export function Thumbnail({
     if (!onRawPreviewStatus || !large || !ownsFullDetailStage) return;
     onRawPreviewStatus(rawPreviewStatus({
       assetId: asset.id,
-      loaded,
+      loaded: ownsFullDetailStage && loaded?.assetId === asset.id && loaded.mode === "full"
+        && (fullSource?.url !== visibleImage?.source || fullSource?.satisfaction === "interim")
+        ? { assetId: asset.id, mode: "preview" } : loaded,
       fullError: fullQuery.isError || fullProjection?.status === "error" || fullImageFailed,
       fullSize: fullSource,
     }));
@@ -393,6 +397,9 @@ export function Thumbnail({
     asset.kind,
     fullSource?.height,
     fullSource?.width,
+    fullSource?.url,
+    fullSource?.satisfaction,
+    visibleImage?.source,
     fullProjection?.status,
     fullQuery.isError,
     fullImageFailed,

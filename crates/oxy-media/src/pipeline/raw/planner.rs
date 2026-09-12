@@ -16,6 +16,8 @@ pub(crate) enum RawBackend {
     AppleCoreImage,
     #[cfg(target_os = "macos")]
     AppleImageIo,
+    #[cfg(target_os = "windows")]
+    WindowsWic,
     LibRawDevelopment,
 }
 
@@ -33,6 +35,10 @@ pub(crate) fn plan_backends(level: RenderLevel) -> Vec<RawBackend> {
             RawBackend::LibRawDevelopment,
         ],
     };
+    #[cfg(target_os = "windows")]
+    if level == RenderLevel::Full {
+        return vec![RawBackend::WindowsWic, RawBackend::LibRawDevelopment];
+    }
     #[cfg(any(target_os = "windows", target_os = "linux"))]
     {
         let _ = level;
@@ -77,16 +83,18 @@ pub(super) const LARGEST_EMBEDDED_JPEG_TARGET: &str = "raw-largest-embedded-jpeg
 pub(super) struct RawFullPlan {
     pub embedded: CacheRequest,
     pub developed: CacheRequest,
+    pub regenerate: bool,
 }
 
 impl RawFullPlan {
     pub fn new(artifacts: &ArtifactCache, source: ImageDimensions) -> Self {
         Self {
+            regenerate: crate::raw_retry_revision(artifacts.source_revision_id()).is_some(),
             embedded: artifacts.request(
                 camera_preview_detail(source),
                 ArtifactRequirement::ExactVariant {
                     origin: ImageOrigin::EmbeddedPreview,
-                    target: LARGEST_EMBEDDED_JPEG_TARGET,
+                    target: LARGEST_EMBEDDED_JPEG_TARGET.into(),
                 },
                 display_requirement(),
                 false,
@@ -111,10 +119,20 @@ impl RawFullPlan {
     }
 }
 
+pub(super) fn full_target(artifacts: &ArtifactCache) -> String {
+    match crate::raw_retry_revision(artifacts.source_revision_id()) {
+        Some(revision) => format!("{}:generation-{revision}", crate::policy::RAW_FULL),
+        None => crate::policy::RAW_FULL.into(),
+    }
+}
+
 pub(crate) fn full_developed_request(artifacts: &ArtifactCache) -> CacheRequest {
     artifacts.request(
         DetailRequirement::NativeDetail,
-        ArtifactRequirement::Exact(ImageOrigin::RawSensor),
+        ArtifactRequirement::ExactVariant {
+            origin: ImageOrigin::RawSensor,
+            target: full_target(artifacts),
+        },
         applied_srgb_requirement(),
         false,
     )
@@ -140,6 +158,18 @@ mod tests {
     use image::{DynamicImage, ImageFormat};
     use oxy_domain::{MediaSatisfaction, PreviewKind, RenderLevel};
     use std::{io::Cursor, sync::Arc};
+
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn system_raw_precedes_libraw_only_for_full_development() {
+        assert_eq!(
+            plan_backends(RenderLevel::Full),
+            vec![RawBackend::WindowsWic, RawBackend::LibRawDevelopment]
+        );
+        for level in [RenderLevel::Thumbnail, RenderLevel::Preview] {
+            assert_eq!(plan_backends(level), vec![RawBackend::LibRawDevelopment]);
+        }
+    }
 
     #[test]
     fn full_has_no_bounded_preview_target() {
@@ -231,16 +261,71 @@ mod tests {
                 ),
                 applied_srgb(),
                 if developed {
-                    "raw-developed-test"
+                    full_target(artifacts)
                 } else {
-                    LARGEST_EMBEDDED_JPEG_TARGET
-                }
-                .into(),
+                    LARGEST_EMBEDDED_JPEG_TARGET.into()
+                },
                 RenderLevel::Full,
                 cache_generation,
                 request,
             )
             .unwrap()
+    }
+
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn regeneration_requires_new_full_identity_and_preserves_existing_display_artifacts() {
+        let directory = tempfile::tempdir().unwrap();
+        let source = directory.path().join("source.raw");
+        std::fs::write(&source, b"source revision").unwrap();
+        let artifacts = ArtifactCache::new(&source, &directory.path().join("cache")).unwrap();
+        let dimensions = ImageDimensions {
+            width: 100,
+            height: 60,
+        };
+        let previous = RawFullPlan::new(&artifacts, dimensions);
+        publish(&artifacts, &previous.embedded_production(), 90, 54, false);
+        publish(&artifacts, &previous.developed, 100, 60, true);
+        assert!(!previous.regenerate);
+
+        crate::request_raw_retry(&source).unwrap();
+        let current = RawFullPlan::new(&artifacts, dimensions);
+        assert!(current.regenerate);
+        assert_ne!(current.developed.artifact, previous.developed.artifact);
+        assert!(
+            artifacts
+                .lookup(&current.developed, RenderLevel::Full)
+                .unwrap()
+                .is_none()
+        );
+        assert!(
+            artifacts
+                .lookup(&previous.developed, RenderLevel::Full)
+                .unwrap()
+                .is_some()
+        );
+        assert!(
+            artifacts
+                .lookup(&current.embedded, RenderLevel::Full)
+                .unwrap()
+                .is_some()
+        );
+        assert!(
+            artifacts
+                .lookup(
+                    &preview_request(&artifacts, 32, false),
+                    RenderLevel::Thumbnail
+                )
+                .unwrap()
+                .is_some()
+        );
+        publish(&artifacts, &current.developed, 100, 60, true);
+        assert!(
+            artifacts
+                .lookup(&current.developed, RenderLevel::Full)
+                .unwrap()
+                .is_some()
+        );
     }
 
     #[test]

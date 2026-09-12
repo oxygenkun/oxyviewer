@@ -71,7 +71,7 @@ pub(crate) fn preview_with_size(
     );
     let production_request = artifacts.request(
         request.detail,
-        request.artifact,
+        request.artifact.clone(),
         request.presentation,
         allow_interim,
     );

@@ -49,6 +49,13 @@ impl ProjectionSourceRevision {
         let policy_revision = oxy_media::preview_policy_revision(kind, level);
         let mut hasher = Sha256::new();
         hasher.update(PROJECTION_SOURCE_REVISION_VERSION.as_bytes());
+        if kind == AssetKind::Raw && level == RenderLevel::Full {
+            hasher.update(
+                oxy_media::raw_retry_revision(&media_revision.revision_id)
+                    .unwrap_or_default()
+                    .to_le_bytes(),
+            );
+        }
         update_revision_component(&mut hasher, media_revision.revision_id.as_bytes());
         update_revision_component(&mut hasher, preview_dir.to_string_lossy().as_bytes());
         update_revision_component(&mut hasher, policy_revision.as_bytes());
@@ -483,6 +490,38 @@ impl PreviewQueue {
     pub fn invalidate_directory(&self, directory: &std::path::Path) {
         self.thumbnail.invalidate_directory(directory);
         self.loupe.invalidate_directory(directory);
+    }
+
+    pub fn invalidate_preview(&self, path: &std::path::Path, requested_level: RenderLevel) {
+        let queue = self.queue(requested_level);
+        // Fence admissions already doing I/O; keep thumbnails and other decoded
+        // resources. Persisted records carry the regeneration source identity.
+        queue.request_generation.fetch_add(1, Ordering::Relaxed);
+        let matches = |candidate: &std::path::Path, level: RenderLevel| {
+            level == requested_level && path == candidate
+        };
+        {
+            let work = queue.work.0.lock().expect("preview queue lock poisoned");
+            for (key, request, _) in work.pending.entries() {
+                if matches(&key.source_revision.path, key.source_revision.level) {
+                    request.cancellation.cancel();
+                }
+            }
+            for (key, request) in &work.active {
+                if matches(&key.source_revision.path, key.source_revision.level) {
+                    request
+                        .lock()
+                        .expect("active preview request lock poisoned")
+                        .cancellation
+                        .cancel();
+                }
+            }
+        }
+        queue
+            .projections
+            .write()
+            .expect("image projection lock poisoned")
+            .retain(|(candidate, level), _| !matches(candidate, *level));
     }
 
     pub fn invalidate_all(&self) {
@@ -1894,6 +1933,50 @@ mod tests {
             ),
             request_generation: Arc::new(AtomicU64::new(0)),
         }
+    }
+
+    #[test]
+    fn raw_full_retry_cancels_only_the_selected_full_work_and_fences_admission() {
+        let directory = tempfile::tempdir().unwrap();
+        let queue = PreviewQueue {
+            thumbnail: thumbnail_queue(directory.path()),
+            loupe: thumbnail_queue(directory.path()),
+        };
+        let mut tokens = Vec::new();
+        for (name, level, active) in [
+            ("a.arw", RenderLevel::Full, false),
+            ("a.arw", RenderLevel::Full, true),
+            ("a.arw", RenderLevel::Thumbnail, false),
+            ("b.arw", RenderLevel::Full, true),
+            ("c.hif", RenderLevel::Full, false),
+        ] {
+            let (mut key, mut request) =
+                thumbnail_work(directory.path(), name, PreviewPriority::Loupe);
+            key.source_revision.level = level;
+            request.source_revision = key.source_revision.clone();
+            tokens.push(request.cancellation.clone());
+            let lane = if level == RenderLevel::Thumbnail {
+                &queue.thumbnail
+            } else {
+                &queue.loupe
+            };
+            let mut work = lane.work.0.lock().unwrap();
+            if active {
+                work.active.insert(key, Arc::new(Mutex::new(request)));
+            } else {
+                work.pending
+                    .push(key, request, schedule_position(PreviewPriority::Loupe, 0));
+            }
+        }
+        queue.invalidate_preview(&directory.path().join("a.arw"), RenderLevel::Full);
+        assert!(tokens[0].is_cancelled());
+        assert!(tokens[1].is_cancelled());
+        assert!(tokens[2..].iter().all(|token| !token.is_cancelled()));
+        assert_eq!(queue.loupe.request_generation.load(Ordering::Relaxed), 1);
+        assert_eq!(
+            queue.thumbnail.request_generation.load(Ordering::Relaxed),
+            0
+        );
     }
 
     #[test]

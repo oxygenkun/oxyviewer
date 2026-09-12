@@ -8,7 +8,7 @@ import {
   discardBrowserImageResource,
   markBrowserImageReady,
 } from "../lib/browserImageCache";
-import { acceptImageProjection, clearImageProjections } from "../lib/imageProjection";
+import { acceptImageProjection, clearImageProjections, invalidateImageProjection } from "../lib/imageProjection";
 import type { AssetSummary, PreviewPriority } from "../types";
 import { Thumbnail } from "./Thumbnail";
 
@@ -104,6 +104,29 @@ afterEach(async () => {
 });
 
 describe("filmstrip thumbnail display retention", () => {
+  it("keeps the displayed RAW full image through a retry and reports an eventual failure", async () => {
+    apiMocks.tauri = true;
+    clearImageProjections();
+    const raw = { ...asset, kind: "raw" as const, path: "/photos/retry.arw" };
+    const status = vi.fn();
+    const fullUrl = "/cache/raw-full.jpg";
+    markBrowserImageReady(fullUrl, { width: 4688, height: 7028 });
+    acceptImageProjection({ path: raw.path, sourceRevision: "original", stateRevision: 1,
+      validAt: 1, status: "ready", level: "full", result: { path: fullUrl, width: 4688, height: 7028,
+        kind: "developed", renderLevel: "full", satisfaction: "satisfied" } });
+    await act(async () => root.render(<QueryClientProvider client={client}>
+      <Thumbnail asset={raw} large onRawPreviewStatus={status} />
+    </QueryClientProvider>));
+    expect(status).toHaveBeenLastCalledWith({ state: "fullReady", width: 4688, height: 7028 });
+    await act(async () => invalidateImageProjection(raw.path, "full"));
+    expect(container.querySelector(".thumbnail__displayed-image")?.getAttribute("src")
+      ?? container.querySelector("img")?.getAttribute("src")).toBe(fullUrl);
+    expect(status).toHaveBeenLastCalledWith({ state: "developingFull" });
+    await act(async () => acceptImageProjection({ path: raw.path, sourceRevision: "retry", stateRevision: 2,
+      validAt: 2, status: "error", level: "full", error: "decode failed" }));
+    expect(status).toHaveBeenLastCalledWith({ state: "fullFailed" });
+    expect(container.querySelector("img")?.getAttribute("src")).toBe(fullUrl);
+  });
   it("keeps a cached RAW full Interim in developing state", async () => {
     apiMocks.tauri = true;
     clearImageProjections();

@@ -4,6 +4,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { open } from "@tauri-apps/plugin-dialog";
 import type {
+  RawDecoderStatus,
   AssetDetails,
   AssetDetailsResult,
   AssetKind,
@@ -1008,6 +1009,23 @@ export async function cancelHeifDecode(sessionId: string): Promise<boolean> {
 export async function getHeifCapabilities(): Promise<HeifCapabilities[]> {
   if (!isTauri()) return [];
   return invoke<HeifCapabilities[]>("get_heif_capabilities");
+}
+
+export async function getRawDecoderStatus(path?: string, refresh = false): Promise<RawDecoderStatus> {
+  if (!isTauri()) return { installAvailable: false, availability: "unsupportedPlatform", codecs: [], detail: null, attempt: null };
+  return invoke<RawDecoderStatus>("get_raw_decoder_status", { path: path ?? null, refresh });
+}
+
+export async function retryRawFull(path: string): Promise<void> {
+  if (isTauri()) await invoke("retry_raw_full", { path });
+}
+
+export async function openRawDecoderInstallPage(web = false): Promise<"store" | "web"> {
+  if (!isTauri()) {
+    window.open("https://apps.microsoft.com/detail/9nctdw2w1bh8", "_blank", "noopener,noreferrer");
+    return "web";
+  }
+  return invoke("open_raw_decoder_install_page", { web });
 }
 
 export function heifTileUrl(url: string): string {

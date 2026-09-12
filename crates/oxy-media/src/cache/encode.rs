@@ -3,7 +3,10 @@ use crate::{
     presentation::{ArtifactContract, ColorState},
 };
 use image::{DynamicImage, ImageDecoder, ImageEncoder, ImageReader, codecs::jpeg::JpegEncoder};
-use std::path::Path;
+use std::{
+    io::{BufWriter, Write},
+    path::Path,
+};
 use tempfile::NamedTempFile;
 
 pub(crate) fn cache_tempfile(
@@ -125,13 +128,19 @@ fn write_jpeg_atomically_with_icc(
     cancelled: impl Fn() -> bool,
 ) -> Result<(), MediaError> {
     let mut temporary = cache_tempfile(destination, ".jpg")?;
-    let mut encoder = JpegEncoder::new_with_quality(&mut temporary, quality);
-    if let Some(profile) = icc {
-        encoder
-            .set_icc_profile(profile)
-            .map_err(|error| MediaError::Color(error.to_string()))?;
+    {
+        // The encoder emits many small writes. Buffer them without weakening
+        // flush, durable sync, cancellation or no-clobber publication semantics.
+        let mut writer = BufWriter::with_capacity(64 * 1024, &mut temporary);
+        let mut encoder = JpegEncoder::new_with_quality(&mut writer, quality);
+        if let Some(profile) = icc {
+            encoder
+                .set_icc_profile(profile)
+                .map_err(|error| MediaError::Color(error.to_string()))?;
+        }
+        encoder.encode_image(image)?;
+        writer.flush()?;
     }
-    encoder.encode_image(image)?;
     temporary.as_file().sync_all()?;
     if cancelled() {
         return Err(MediaError::Cancelled);

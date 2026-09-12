@@ -2,6 +2,8 @@
 compile_error!("oxy-media supports only Windows, macOS, and Linux");
 
 mod backends;
+#[cfg(feature = "bench-tools")]
+pub mod benchmark;
 mod cache;
 mod decode_control;
 mod delivery;
@@ -13,6 +15,9 @@ mod pipeline;
 mod policy;
 mod presentation;
 mod publication;
+mod raw_support;
+
+pub use raw_support::{raw_decoder_status, raw_retry_revision, request_raw_retry};
 
 pub use cache::{
     ArtifactLease, ArtifactLocation, ArtifactPresentation, ArtifactRequirement, CacheColorState,

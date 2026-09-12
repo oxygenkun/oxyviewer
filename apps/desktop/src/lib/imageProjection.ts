@@ -21,6 +21,7 @@ interface ImageProjectionState {
 }
 
 export const imageProjectionKey = (path: string, level: RenderLevel) => `${path}\0${level}`;
+const retiredSources = new Map<string, string>();
 
 /** Read-only frontend mirror of image artifacts accepted by Rust. */
 function projectionResultUrl(result: Omit<PreviewResult, "url">): string {
@@ -63,6 +64,12 @@ export const useImageProjectionStore = create<ImageProjectionState>((set) => ({
 }));
 
 export function acceptImageProjection(projection: ImageProjection) {
+  const retiredKey = imageProjectionKey(projection.path, projection.level);
+  if (retiredSources.get(retiredKey) === projection.sourceRevision) {
+    const id = projection.result?.resource?.resourceId;
+    if (id) releaseUnretainedMediaResource(id);
+    return false;
+  }
   const current = useImageProjectionStore.getState().records[
     imageProjectionKey(projection.path, projection.level)
   ];
@@ -97,7 +104,23 @@ export function invalidateImageDirectory(directory: string) {
 }
 
 export function clearImageProjections() {
+  retiredSources.clear();
   sharedThumbnailRequests.invalidate();
   clearBrowserImageResources();
   useImageProjectionStore.getState().clear();
+}
+
+/** Regeneration retains other levels and the currently displayed resource lease. */
+export function invalidateImageProjection(path: string, level: RenderLevel) {
+  const records = { ...useImageProjectionStore.getState().records };
+  for (const [key, projection] of Object.entries(records)) {
+    if (projection.level !== level || projection.path !== path) continue;
+    const id = projection.result?.resource?.resourceId;
+    if (id) releaseUnretainedMediaResource(id);
+    retiredSources.delete(key);
+    retiredSources.set(key, projection.sourceRevision);
+    if (retiredSources.size > 256) retiredSources.delete(retiredSources.keys().next().value!);
+    delete records[key];
+  }
+  useImageProjectionStore.setState({ records });
 }

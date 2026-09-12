@@ -20,7 +20,7 @@ use crate::{
     },
     media_source::has_complete_jpeg_markers,
     pipeline::artifact::{ArtifactCache, ArtifactPreparation, applied_srgb},
-    policy::{RAW_FULL, RAW_PREVIEW, RAW_THUMBNAIL},
+    policy::{RAW_PREVIEW, RAW_THUMBNAIL},
     presentation::{CAMERA_JPEG, RAW_DEVELOPED_JPEG},
 };
 #[cfg(test)]
@@ -148,8 +148,16 @@ pub(crate) fn full_with_interim(
     cancellation: &CancellationToken,
 ) -> Result<PreviewResult, MediaError> {
     let artifacts = ArtifactCache::new(path, cache_dir)?;
-    let plan = RawFullPlan::new(&artifacts, dimensions(path)?);
-    if let ArtifactPreparation::Cached(result) = artifacts.prepare_candidates(
+    let source = dimensions(path);
+    #[cfg(target_os = "windows")]
+    let source = source.or_else(|_| crate::backends::windows_wic::raw::dimensions(path));
+    let plan = RawFullPlan::new(&artifacts, source?);
+    let retry_development = plan.regenerate;
+    if retry_development {
+        if let Some(result) = artifacts.lookup(&plan.developed, RenderLevel::Full)? {
+            return Ok(result);
+        }
+    } else if let ArtifactPreparation::Cached(result) = artifacts.prepare_candidates(
         &plan.embedded,
         std::slice::from_ref(&plan.developed),
         RenderLevel::Full,
@@ -164,15 +172,17 @@ pub(crate) fn full_with_interim(
     }
     let production_request = plan.embedded_production();
 
-    if let Ok(embedded) = produce_embedded_with_request(
-        path,
-        &artifacts,
-        0,
-        RenderLevel::Full,
-        &production_request,
-        DecodePriority::Foreground,
-        cancellation,
-    ) && embedded.satisfaction == Some(oxy_domain::MediaSatisfaction::Satisfied)
+    if !retry_development
+        && let Ok(embedded) = produce_embedded_with_request(
+            path,
+            &artifacts,
+            0,
+            RenderLevel::Full,
+            &production_request,
+            DecodePriority::Foreground,
+            cancellation,
+        )
+        && embedded.satisfaction == Some(oxy_domain::MediaSatisfaction::Satisfied)
     {
         return Ok(embedded);
     }
@@ -414,6 +424,7 @@ fn render_developed(
         }
         let destination = artifacts.temporary_output(".jpg")?;
         let mut completed_facts = None;
+        let started = std::time::Instant::now();
         let result = match backend {
             #[cfg(target_os = "macos")]
             RawBackend::AppleCoreImage => {
@@ -423,34 +434,27 @@ fn render_developed(
             RawBackend::AppleImageIo => {
                 apple_image_io::render_jpeg(path, &destination, max_size, quality)
             }
+            #[cfg(target_os = "windows")]
+            RawBackend::WindowsWic => crate::raw_support::decode(path, cancellation)
+                .and_then(|decoded| {
+                    encode_developed(decoded, &destination, true, quality, cancellation)
+                })
+                .map(|facts| completed_facts = Some(facts)),
             RawBackend::LibRawDevelopment => libraw::developed(path, max_size, cancellation)
                 .map_err(|message| MediaError::LibRaw {
                     path: path.to_owned(),
                     message,
                 })
                 .and_then(|decoded| {
-                    let image = decoded.image;
-                    let mut facts = decoded.facts;
-                    if cancellation.is_cancelled() {
-                        return Err(MediaError::Cancelled);
-                    }
-                    let image = if max_size.is_none() {
-                        facts.processing.push(oxy_domain::ImageOperation::Sharpen);
-                        image.unsharpen(0.8, 2)
-                    } else {
-                        image
-                    };
-                    if cancellation.is_cancelled() {
-                        return Err(MediaError::Cancelled);
-                    }
-                    write_jpeg_atomically(&image, &destination, quality, RAW_DEVELOPED_JPEG)?;
-                    facts.processing.push(oxy_domain::ImageOperation::Encode {
-                        format: "jpeg".into(),
-                    });
-                    facts.byte_integrity = oxy_domain::ByteIntegrity::Reencoded;
-                    completed_facts = Some(facts);
-                    Ok(())
-                }),
+                    encode_developed(
+                        decoded,
+                        &destination,
+                        max_size.is_none(),
+                        quality,
+                        cancellation,
+                    )
+                })
+                .map(|facts| completed_facts = Some(facts)),
         };
         if cancellation.is_cancelled() {
             return Err(MediaError::Cancelled);
@@ -495,27 +499,34 @@ fn render_developed(
                     facts
                 };
 
-                return artifacts.publish_staged(
+                let target = if level == RenderLevel::Full {
+                    let ArtifactRequirement::ExactVariant { target, .. } = &request.artifact else {
+                        return Err(MediaError::CacheArtifact(
+                            "full development requires an exact target".into(),
+                        ));
+                    };
+                    target.clone()
+                } else if level == RenderLevel::Thumbnail {
+                    RAW_THUMBNAIL.into()
+                } else {
+                    format!("{RAW_PREVIEW}:{backend:?}:{}", max_size.unwrap_or_default())
+                };
+                let mut result = artifacts.publish_staged(
                     destination,
                     facts,
                     applied_srgb(),
-                    if level == RenderLevel::Thumbnail {
-                        RAW_THUMBNAIL.into()
-                    } else {
-                        format!(
-                            "{}:{backend:?}:{}",
-                            if max_size.is_none() {
-                                RAW_FULL
-                            } else {
-                                RAW_PREVIEW
-                            },
-                            max_size.unwrap_or_default()
-                        )
-                    },
+                    target,
                     level,
                     generation,
                     request,
-                );
+                )?;
+                result.diagnostics = Some(oxy_domain::PreviewDiagnostics {
+                    backend: Some(format!("{backend:?}")),
+                    total_ms: Some(started.elapsed().as_millis() as u64),
+                    fallback_reason: (!errors.is_empty()).then(|| errors.join("; ")),
+                    ..Default::default()
+                });
+                return Ok(result);
             }
             Ok(()) => errors.push(format!("{backend:?}: produced a truncated JPEG")),
             Err(error) => errors.push(format!("{backend:?}: {error}")),
@@ -525,6 +536,37 @@ fn render_developed(
         attempts: errors.join("; "),
         source: Box::new(MediaError::NativeDecoderUnavailable),
     })
+}
+
+fn encode_developed(
+    decoded: crate::media_source::DecodedImage,
+    destination: &Path,
+    full: bool,
+    quality: u8,
+    cancellation: &CancellationToken,
+) -> Result<oxy_domain::ArtifactFacts, MediaError> {
+    let mut facts = decoded.facts;
+    if cancellation.is_cancelled() {
+        return Err(MediaError::Cancelled);
+    }
+    let image = if full {
+        facts.processing.push(oxy_domain::ImageOperation::Sharpen);
+        decoded.image.unsharpen(0.8, 2)
+    } else {
+        decoded.image
+    };
+    if cancellation.is_cancelled() {
+        return Err(MediaError::Cancelled);
+    }
+    write_jpeg_atomically(&image, destination, quality, RAW_DEVELOPED_JPEG)?;
+    if cancellation.is_cancelled() {
+        return Err(MediaError::Cancelled);
+    }
+    facts.processing.push(oxy_domain::ImageOperation::Encode {
+        format: "jpeg".into(),
+    });
+    facts.byte_integrity = oxy_domain::ByteIntegrity::Reencoded;
+    Ok(facts)
 }
 
 #[cfg(test)]
@@ -611,7 +653,7 @@ mod tests {
     }
 
     #[test]
-    #[cfg(any(target_os = "windows", target_os = "linux"))]
+    #[cfg(target_os = "linux")]
     fn portable_platforms_use_libraw_development() {
         for level in [
             RenderLevel::Thumbnail,

@@ -335,6 +335,14 @@ export interface CacheSettings {
   usedSizeBytes: number;
 }
 
+export interface RawDecoderStatus {
+  installAvailable: boolean;
+  availability: "available" | "missing" | "unavailable" | "unsupportedPlatform";
+  codecs: { name: string; decoderId: string; version: string; extensions: string }[];
+  detail: string | null;
+  attempt: { state: "ready" | "unsupportedFile" | "failed"; detail: string | null } | null;
+}
+
 export interface AssetQuery {
   search?: string;
   kind?: AssetKind;

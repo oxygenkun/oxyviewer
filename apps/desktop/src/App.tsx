@@ -836,7 +836,7 @@ export function App({ perfScenario }: { perfScenario?: PerfScenario }) {
         />
       ) : null}
       {!isTauri() ? <span className="demo-pill">{t("demoHint")}</span> : null}
-      {settingsOpen ? <SettingsPanel t={t} /> : null}
+      {settingsOpen ? <SettingsPanel t={t} activeAsset={assets.find((asset) => asset.id === activeId)} /> : null}
       {perfScenario ? (
         <PerfHarness
           scenario={perfScenario}

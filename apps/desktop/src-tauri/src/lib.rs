@@ -207,6 +207,9 @@ pub fn run() {
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
+            get_raw_decoder_status,
+            retry_raw_full,
+            open_raw_decoder_install_page,
             open_folder,
             list_assets,
             get_directory_tree,

@@ -20,9 +20,12 @@ import {
 import type { Locale, MessageKey } from "../lib/i18n";
 import { UI_FONT_SCALES } from "../lib/workspacePersistence";
 import { useWorkspaceStore } from "../store";
+import { RawDecoderPanel } from "./RawDecoderPanel";
+import type { AssetSummary } from "../types";
 
 interface SettingsPanelProps {
   t: (key: MessageKey) => string;
+  activeAsset?: AssetSummary;
 }
 
 const languages: { value: Locale; label: string }[] = [
@@ -30,7 +33,7 @@ const languages: { value: Locale; label: string }[] = [
   { value: "en", label: "English" },
 ];
 
-export function SettingsPanel({ t }: SettingsPanelProps) {
+export function SettingsPanel({ t, activeAsset }: SettingsPanelProps) {
   const queryClient = useQueryClient();
   const [limitGb, setLimitGb] = useState(10);
   const [clearArmed, setClearArmed] = useState(false);
@@ -188,6 +191,10 @@ export function SettingsPanel({ t }: SettingsPanelProps) {
             </button>
           </div>
           {cacheError ? <p className="settings-panel__error">{String(cacheError)}</p> : null}
+        </div>
+
+        <div className="settings-panel__section">
+          <RawDecoderPanel t={t} asset={activeAsset?.kind === "raw" ? activeAsset : undefined} />
         </div>
 
         <div className="settings-panel__section">

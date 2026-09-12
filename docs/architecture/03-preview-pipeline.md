@@ -25,7 +25,7 @@ HEVC 解码器或操作系统预览服务。即使原文件可解码，也不应
 | Windows 格式 | `thumbnail` | `preview` | `full` |
 | --- | --- | --- | --- |
 | JPEG/PNG/WebP | 原文件 URL | 原文件 URL | 原文件 URL |
-| RAW | LibRaw 512 | LibRaw 4096 | 最大内嵌 JPEG；不足时 full development |
+| RAW | LibRaw 512 | LibRaw 4096 | 最大内嵌 JPEG；不足时 WIC full development → LibRaw |
 | HEIF/HIF | 内嵌 160×120 JPEG | 复用同一内嵌 JPEG | 源 HEIF 直接转换的完整 JPEG |
 | TIFF | macOS ImageIO JPEG 512；Windows/Linux 暂不支持 | macOS ImageIO JPEG 512；Windows/Linux 暂不支持 | macOS ImageIO JPEG 4096；Windows/Linux 暂不支持 |
 
@@ -33,6 +33,8 @@ HEVC 解码器或操作系统预览服务。即使原文件可解码，也不应
 前端 `renderPlan(kind, surface, platform)` 把等级映射到 renderer 类；后端
 `pipeline::dispatcher` 直接按 `AssetKind + RenderLevel` 分派，再由格式 executor 选择后端与
 fallback。多个等级可以指向同一产物。
+Windows RAW 的 codec 资格检查、可选扩展安装和重新显影流程见
+[Windows RAW 完整解析](../windows-raw.md)。
 例如 Sony HIF 的 `preview` 是 `thumbnail` 的显式别名，而不是一个 160 px 特判。
 
 ## 3. 端到端调用链

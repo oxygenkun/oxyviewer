@@ -836,7 +836,7 @@ fn running_result_is_live(result: &PreviewResult) -> bool {
 fn promised_request_satisfies(producer: &CacheRequest, waiter: &CacheRequest) -> bool {
     producer.source_revision == waiter.source_revision
         && producer.policy_revision == waiter.policy_revision
-        && artifact_requirement_implies(producer.artifact, waiter.artifact)
+        && artifact_requirement_implies(&producer.artifact, &waiter.artifact)
         && presentation_requirement_implies(producer.presentation, waiter.presentation)
         && match (producer.detail, waiter.detail) {
             (
@@ -875,8 +875,8 @@ fn promised_request_satisfies(producer: &CacheRequest, waiter: &CacheRequest) ->
 }
 
 fn artifact_requirement_implies(
-    producer: ArtifactRequirement,
-    waiter: ArtifactRequirement,
+    producer: &ArtifactRequirement,
+    waiter: &ArtifactRequirement,
 ) -> bool {
     match (producer, waiter) {
         (
@@ -1114,7 +1114,7 @@ mod tests {
             },
             ArtifactRequirement::ExactVariant {
                 origin: ImageOrigin::EmbeddedPreview,
-                target: "selected",
+                target: "selected".into(),
             },
             applied_srgb_requirement(),
             false,
@@ -1138,7 +1138,7 @@ mod tests {
         waiter = producer.clone();
         waiter.artifact = ArtifactRequirement::ExactVariant {
             origin: ImageOrigin::EmbeddedPreview,
-            target: "different-selection",
+            target: "different-selection".into(),
         };
         assert!(!promised_request_satisfies(&producer, &waiter));
         waiter.artifact = ArtifactRequirement::Exact(ImageOrigin::EmbeddedPreview);
@@ -1198,7 +1198,12 @@ mod tests {
                                     matches!(detail, DetailRequirement::NativeDetail),
                                 ),
                                 applied_srgb(),
-                                "test-development".into(),
+                                match &request.artifact {
+                                    ArtifactRequirement::ExactVariant { target, .. } => {
+                                        target.clone()
+                                    }
+                                    _ => "test-development".into(),
+                                },
                                 level,
                                 generation,
                                 &request,

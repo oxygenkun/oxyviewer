@@ -2526,6 +2526,7 @@ dependencies = [
  "tauri-plugin-log",
  "tempfile",
  "ureq",
+ "windows 0.61.3",
  "zip",
 ]
 

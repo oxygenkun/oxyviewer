@@ -1,4 +1,44 @@
 /* ── Settings overlay ── */
+.raw-decoder {
+  display: grid;
+  gap: 8px;
+  color: var(--muted);
+  font-size: .6875rem;
+  line-height: 1.6;
+  & strong { color: #dcddd7; font-size: .75rem; }
+  & p { margin: 0; }
+  & label { display: grid; gap: 6px; }
+  & select, & button, & textarea {
+    border: 1px solid #3b4247;
+    border-radius: 4px;
+    padding: 6px 8px;
+    color: #dcddd7;
+    background: #20262a;
+    font: inherit;
+  }
+  & button:hover { background: #30393e; }
+  & button:disabled { opacity: .45; cursor: wait; }
+  & small { overflow-wrap: anywhere; }
+  & textarea { width: 100%; min-height: 100px; }
+  & [role="alert"] { color: #ffb1a8; overflow-wrap: anywhere; }
+}
+.raw-decoder__actions { display: flex; flex-wrap: wrap; gap: 6px; }
+.raw-decoder--compact {
+  position: absolute;
+  z-index: 5;
+  left: 18px;
+  bottom: 18px;
+  width: min(370px, calc(100% - 36px));
+  max-height: calc(100% - 100px);
+  overflow: auto;
+  padding: 12px;
+  border: 1px solid #41494e;
+  border-radius: 7px;
+  background: rgb(16 19 21 / 95%);
+  box-shadow: 0 5px 20px rgb(0 0 0 / 25%);
+}
+.raw-decoder__dismiss { justify-self: start; }
+
 .settings-overlay {
   position: fixed;
   z-index: 20;

@@ -128,7 +128,7 @@ impl DetailRequirement {
     }
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub enum ArtifactRequirement {
     /// A thumbnail policy is a delivery contract, not a minimum quality rank.
     BoundedThumbnail {
@@ -138,7 +138,7 @@ pub enum ArtifactRequirement {
     Exact(ImageOrigin),
     ExactVariant {
         origin: ImageOrigin,
-        target: &'static str,
+        target: String,
     },
 }
 
@@ -202,7 +202,7 @@ pub fn satisfies(artifact: &MediaArtifact, request: &CacheRequest) -> Option<Sat
         || artifact.variant.presentation.sharpening != request.presentation.sharpening
         || (request.presentation.color == ColorRequirement::Srgb
             && artifact.variant.presentation.color != ColorState::Srgb)
-        || !artifact_matches(artifact, request.artifact)
+        || !artifact_matches(artifact, &request.artifact)
     {
         return None;
     }
@@ -220,18 +220,18 @@ pub fn satisfies(artifact: &MediaArtifact, request: &CacheRequest) -> Option<Sat
     }
 }
 
-fn artifact_matches(artifact: &MediaArtifact, requirement: ArtifactRequirement) -> bool {
+fn artifact_matches(artifact: &MediaArtifact, requirement: &ArtifactRequirement) -> bool {
     match requirement {
         ArtifactRequirement::BoundedThumbnail { target } => {
-            artifact.variant.target == target
+            artifact.variant.target == *target
                 && crate::delivery::THUMBNAIL_LIMITS
                     .accepts(artifact.facts.display_dimensions.0, artifact.byte_size)
         }
         ArtifactRequirement::ExactVariant { origin, target } => {
-            artifact.facts.source.origin == origin && artifact.variant.target == target
+            artifact.facts.source.origin == *origin && artifact.variant.target == *target
         }
         ArtifactRequirement::AnyDisplay => true,
-        ArtifactRequirement::Exact(expected) => artifact.facts.source.origin == expected,
+        ArtifactRequirement::Exact(expected) => artifact.facts.source.origin == *expected,
     }
 }
 
@@ -430,7 +430,7 @@ mod tests {
         );
         request.artifact = ArtifactRequirement::ExactVariant {
             origin: ImageOrigin::EmbeddedPreview,
-            target: "selected-variant",
+            target: "selected-variant".into(),
         };
         assert_eq!(satisfies(&candidate, &request), None);
         candidate.variant.target = "selected-variant".into();
