@@ -219,6 +219,7 @@ pub fn run() {
             reorder_library_roots,
             list_custom_tags,
             get_asset_tag_assignments,
+            get_asset_tag_assignments_by_path,
             create_custom_tag,
             update_custom_tag,
             get_custom_tag_delete_impact,

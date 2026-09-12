@@ -1,6 +1,7 @@
 use crate::state::AppState;
 use oxy_domain::{
-    AssetTagAssignment, CustomTag, CustomTagId, MetadataPatch, TagDeleteImpact, TagSyncStatus,
+    AssetTagAssignment, AssetTagAssignmentsByPath, CustomTag, CustomTagId, MetadataPatch,
+    TagDeleteImpact, TagSyncStatus,
 };
 use oxy_fs::FsCatalog;
 use oxy_library::Library;
@@ -119,14 +120,33 @@ pub(crate) fn list_custom_tags(state: State<'_, AppState>) -> Result<Vec<CustomT
 }
 
 #[tauri::command]
-pub(crate) fn get_asset_tag_assignments(
+pub(crate) async fn get_asset_tag_assignments(
     paths: Vec<PathBuf>,
     state: State<'_, AppState>,
 ) -> Result<Vec<AssetTagAssignment>, String> {
-    state
-        .library
-        .asset_tag_assignments(&paths)
-        .map_err(|error| error.to_string())
+    let library = Arc::clone(&state.library);
+    tauri::async_runtime::spawn_blocking(move || {
+        library
+            .asset_tag_assignments(&paths)
+            .map_err(|error| error.to_string())
+    })
+    .await
+    .map_err(|error| error.to_string())?
+}
+
+#[tauri::command]
+pub(crate) async fn get_asset_tag_assignments_by_path(
+    paths: Vec<PathBuf>,
+    state: State<'_, AppState>,
+) -> Result<Vec<AssetTagAssignmentsByPath>, String> {
+    let library = Arc::clone(&state.library);
+    tauri::async_runtime::spawn_blocking(move || {
+        library
+            .asset_tag_assignments_by_path(&paths)
+            .map_err(|error| error.to_string())
+    })
+    .await
+    .map_err(|error| error.to_string())?
 }
 
 #[tauri::command]

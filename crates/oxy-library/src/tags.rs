@@ -1,5 +1,8 @@
 use crate::{Library, LibraryError};
-use oxy_domain::{AssetTagAssignment, CustomTag, CustomTagId, TagDeleteImpact, TagSyncStatus};
+use oxy_domain::{
+    AssetTagAssignment, AssetTagAssignmentsByPath, CustomTag, CustomTagId, TagDeleteImpact,
+    TagSyncStatus,
+};
 use rusqlite::{OptionalExtension, Transaction, params};
 use std::{collections::HashMap, path::Path};
 
@@ -236,6 +239,50 @@ impl Library {
                 assigned_count: assigned.get(&tag.id).copied().unwrap_or_default(),
                 asset_count: paths.len(),
                 tag,
+            })
+            .collect())
+    }
+
+    /// Read the tag tree once and batch visible paths without changing the
+    /// aggregate assignment contract used by the tag editor.
+    pub fn asset_tag_assignments_by_path(
+        &self,
+        paths: &[std::path::PathBuf],
+    ) -> Result<Vec<AssetTagAssignmentsByPath>, LibraryError> {
+        let tags = self.custom_tags()?;
+        let connection = self.read_connection();
+        let mut assigned = HashMap::<String, std::collections::HashSet<CustomTagId>>::new();
+        for chunk in paths.chunks(512) {
+            let placeholders = vec!["?"; chunk.len()].join(",");
+            let mut statement = connection.prepare(&format!(
+                "SELECT asset_path, tag_id FROM asset_tags WHERE asset_path IN ({placeholders})"
+            ))?;
+            let rows = statement.query_map(
+                rusqlite::params_from_iter(chunk.iter().map(|path| path.to_string_lossy())),
+                |row| Ok((row.get::<_, String>(0)?, row.get::<_, CustomTagId>(1)?)),
+            )?;
+            for row in rows {
+                let (path, id) = row?;
+                assigned.entry(path).or_default().insert(id);
+            }
+        }
+        Ok(paths
+            .iter()
+            .map(|path| {
+                let ids = assigned.get(path.to_string_lossy().as_ref());
+                AssetTagAssignmentsByPath {
+                    path: path.clone(),
+                    assignments: tags
+                        .iter()
+                        .filter(|tag| ids.is_some_and(|ids| ids.contains(&tag.id)))
+                        .cloned()
+                        .map(|tag| AssetTagAssignment {
+                            tag,
+                            assigned_count: 1,
+                            asset_count: 1,
+                        })
+                        .collect(),
+                }
             })
             .collect())
     }
@@ -773,5 +820,37 @@ mod tests {
             .find(|assignment| assignment.tag.id == tag.id)
             .unwrap();
         assert_eq!(assignment.assigned_count, 1);
+    }
+    #[test]
+    fn batch_assignments_preserve_paths_and_follow_tag_changes() {
+        let library = Library::in_memory().unwrap();
+        let paths = [PathBuf::from("/a.jpg"), PathBuf::from("/b.jpg")];
+        let tag = library.create_custom_tag(None, "Before").unwrap();
+        library.set_asset_tag(&paths[..1], tag.id, true).unwrap();
+        let rows = library.asset_tag_assignments_by_path(&paths).unwrap();
+        assert_eq!(rows[0].path, paths[0]);
+        assert_eq!(rows[0].assignments[0].assigned_count, 1);
+        assert!(rows[1].assignments.is_empty());
+        library.update_custom_tag(tag.id, None, "After").unwrap();
+        assert_eq!(
+            library.asset_tag_assignments_by_path(&paths).unwrap()[0].assignments[0]
+                .tag
+                .name,
+            "After"
+        );
+        library.set_asset_tag(&paths[..1], tag.id, false).unwrap();
+        assert!(
+            library
+                .asset_tag_assignments_by_path(&paths)
+                .unwrap()
+                .iter()
+                .all(|row| row.assignments.is_empty())
+        );
+        assert!(
+            library
+                .asset_tag_assignments_by_path(&[])
+                .unwrap()
+                .is_empty()
+        );
     }
 }

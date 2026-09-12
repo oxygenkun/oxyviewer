@@ -1,8 +1,10 @@
 import { Star } from "lucide-react";
 import type { AssetSummary } from "../types";
 import { PickFlagIcon } from "./PickFlagIcon";
+import { useAssetMetadata } from "../lib/metadataProjection";
 
-export function AssetMetadataBadges({ asset }: { asset: AssetSummary }) {
+export function AssetMetadataBadges({ asset: source }: { asset: AssetSummary }) {
+  const asset = useAssetMetadata(source);
   if (!asset.rating && !asset.colorLabel && !asset.pickLabel) return null;
   return (
     <span className="asset-metadata-badges">

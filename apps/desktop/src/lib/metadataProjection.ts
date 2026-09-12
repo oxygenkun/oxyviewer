@@ -1,6 +1,29 @@
 import { create } from "zustand";
 import type { AssetSummary, MetadataPatch, MetadataProjection } from "../types";
 
+const projectedAssets = new WeakMap<AssetSummary, AssetSummary>();
+const pendingNotifications = new Map<string, MetadataProjection>();
+let notificationFrame: number | undefined;
+let notificationTimer: ReturnType<typeof setTimeout> | undefined;
+
+export function queueMetadataProjection(projection: MetadataProjection): void {
+  const pending = pendingNotifications.get(projection.path);
+  if (!pending || projection.stateRevision > pending.stateRevision) pendingNotifications.set(projection.path, projection);
+  if (notificationTimer !== undefined) return;
+  notificationFrame = requestAnimationFrame(flushMetadataProjections);
+  notificationTimer = setTimeout(flushMetadataProjections, 32);
+}
+
+export function flushMetadataProjections(): void {
+  if (notificationFrame !== undefined) cancelAnimationFrame(notificationFrame);
+  if (notificationTimer !== undefined) clearTimeout(notificationTimer);
+  notificationFrame = undefined;
+  notificationTimer = undefined;
+  const projections = [...pendingNotifications.values()];
+  pendingNotifications.clear();
+  if (projections.length) acceptMetadataProjections(projections);
+}
+
 interface MetadataProjectionState {
   records: Record<string, MetadataProjection>;
   accept: (projection: MetadataProjection) => void;
@@ -72,15 +95,28 @@ export function projectAssetMetadata(
   asset: AssetSummary,
   projection?: MetadataProjection,
 ): AssetSummary {
-  if (!projection) return asset;
-  return {
+  if (!projection || (asset.rating === projection.rating && asset.colorLabel === projection.colorLabel && asset.pickLabel === projection.pickLabel)) return asset;
+  const previous = projectedAssets.get(asset);
+  if (previous && previous.rating === projection.rating && previous.colorLabel === projection.colorLabel && previous.pickLabel === projection.pickLabel) return previous;
+  const projected = {
     ...asset,
     rating: projection.rating,
     colorLabel: projection.colorLabel,
     pickLabel: projection.pickLabel,
   };
+  projectedAssets.set(asset, projected);
+  return projected;
+}
+
+/** Subscribe only to one asset's visible fields; revision-only changes are inert. */
+export function useAssetMetadata(asset: AssetSummary): AssetSummary {
+  return useMetadataProjectionStore((state) => projectAssetMetadata(asset, state.records[asset.path]));
 }
 
 export function invalidateMetadataDirectory(directory: string) {
+  const normalized = directory.replace(/[\\/]+$/, "").toLocaleLowerCase();
+  for (const path of pendingNotifications.keys()) {
+    if (path.replace(/[\\/][^\\/]+$/, "").toLocaleLowerCase() === normalized) pendingNotifications.delete(path);
+  }
   useMetadataProjectionStore.getState().invalidateDirectory(directory);
 }

@@ -86,6 +86,11 @@ export interface AssetTagAssignment {
   assetCount: number;
 }
 
+export interface AssetTagAssignmentsByPath {
+  path: string;
+  assignments: AssetTagAssignment[];
+}
+
 export interface TagDeleteImpact {
   tagCount: number;
   assetCount: number;

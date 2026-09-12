@@ -34,6 +34,7 @@ import type {
   RenderLevel,
   SchedulePlacement,
   AssetTagAssignment,
+  AssetTagAssignmentsByPath,
   CustomTag,
   DebugQueueSnapshot,
   TagDeleteImpact,
@@ -521,6 +522,17 @@ export async function getAssetTagAssignments(paths: string[]): Promise<AssetTagA
   }
   return (await invoke<AssetTagAssignment[]>("get_asset_tag_assignments", { paths }))
     .map((assignment) => ({ ...assignment, tag: normalizeCustomTag(assignment.tag) }));
+}
+
+export async function getAssetTagAssignmentsByPath(paths: string[]): Promise<AssetTagAssignmentsByPath[]> {
+  if (!isTauri()) return Promise.all(paths.map(async (path) => ({
+    path,
+    assignments: (await getAssetTagAssignments([path])).filter((assignment) => assignment.assignedCount > 0),
+  })));
+  return (await invoke<AssetTagAssignmentsByPath[]>("get_asset_tag_assignments_by_path", { paths }))
+    .map((entry) => ({ ...entry, assignments: entry.assignments.map((assignment) => ({
+      ...assignment, tag: normalizeCustomTag(assignment.tag),
+    })) }));
 }
 
 export async function createCustomTag(parentId: number | undefined, name: string): Promise<CustomTag> {

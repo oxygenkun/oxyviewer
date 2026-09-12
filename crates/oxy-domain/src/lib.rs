@@ -157,6 +157,13 @@ pub struct AssetTagAssignment {
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
+pub struct AssetTagAssignmentsByPath {
+    pub path: PathBuf,
+    pub assignments: Vec<AssetTagAssignment>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
 pub struct TagDeleteImpact {
     pub tag_count: usize,
     pub asset_count: usize,

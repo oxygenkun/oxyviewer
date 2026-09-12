@@ -41,7 +41,7 @@ import { setBrowserImageResourceScope } from "./lib/browserImageCache";
 import { acceptDirectoryTreeSnapshot } from "./lib/directoryTreeProjection";
 import { acceptImageProjection, invalidateImageDirectory } from "./lib/imageProjection";
 import {
-  acceptMetadataProjection,
+  queueMetadataProjection,
   acceptMetadataProjections,
   invalidateMetadataDirectory,
   projectAssetMetadata,
@@ -63,7 +63,9 @@ import {
   saveWorkspace,
 } from "./lib/workspacePersistence";
 import { useWorkspaceStore } from "./store";
-import type { AssetQuery, DirectoryBrowseProgress, DirectoryTreeSnapshot, FolderSession, PerfScenario } from "./types";
+import type { AssetQuery, DirectoryBrowseProgress, DirectoryTreeSnapshot, FolderSession, MetadataProjection, PerfScenario } from "./types";
+
+const NO_METADATA_RECORDS: Record<string, MetadataProjection> = {};
 
 export function App({ perfScenario }: { perfScenario?: PerfScenario }) {
   const [workspace, setWorkspace] = useState(loadWorkspace);
@@ -74,7 +76,6 @@ export function App({ perfScenario }: { perfScenario?: PerfScenario }) {
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [noticeExpanded, setNoticeExpanded] = useState(false);
   const queryClient = useQueryClient();
-  const metadataRecords = useMetadataProjectionStore((state) => state.records);
   const {
     view, thumbnailOrientation, activeId, selectedIds, inspectorOpen, leftPanelOpen, settingsOpen, locale,
     search, kind, minimumRating, colorLabels, sort, direction, clearSelection, select, setThumbnailOrientation, toggleSettings,
@@ -245,7 +246,7 @@ export function App({ perfScenario }: { perfScenario?: PerfScenario }) {
   useEffect(() => {
     let unlisten: (() => void) | undefined;
     let disposed = false;
-    void onMetadataProjectionUpdated(acceptMetadataProjection).then((dispose) => {
+    void onMetadataProjectionUpdated(queueMetadataProjection).then((dispose) => {
       if (disposed) dispose();
       else unlisten = dispose;
     });
@@ -281,6 +282,7 @@ export function App({ perfScenario }: { perfScenario?: PerfScenario }) {
   if (metadataFiltersActive && activeId) filteredFocusRef.current = activeId;
   const filteredFocusRestoreId = metadataFiltersActive ? undefined : filteredFocusRef.current;
   const progressivelyFilterMetadata = Boolean(!search && (minimumRating || colorLabels.length));
+  const metadataRecords = useMetadataProjectionStore((state) => progressivelyFilterMetadata ? state.records : NO_METADATA_RECORDS);
   const shouldPreloadFilteredAssets = Boolean(search || kind || minimumRating || colorLabels.length);
   const preloadQuery = useMemo<AssetQuery>(() => ({
     sort: "name",
@@ -343,9 +345,6 @@ export function App({ perfScenario }: { perfScenario?: PerfScenario }) {
     () => assetsQuery.data?.pages.flatMap((page) => page.items) ?? [],
     [assetsQuery.data],
   );
-  const enrichedAssets = useMemo(() => {
-    return cheapAssets.map((asset) => projectAssetMetadata(asset, metadataRecords[asset.path]));
-  }, [cheapAssets, metadataRecords]);
   const progressivelyEnrichedAssets = useMemo(
     () => progressiveMetadataQuery.data?.pages.flatMap((page) =>
       page.items.map((asset) => projectAssetMetadata(asset, metadataRecords[asset.path]))) ?? [],
@@ -358,8 +357,8 @@ export function App({ perfScenario }: { perfScenario?: PerfScenario }) {
   const assets = useMemo(
     () => progressivelyFilterMetadata
       ? filterAndSortAssets(progressivelyEnrichedAssets, query)
-      : enrichedAssets,
-    [enrichedAssets, progressivelyEnrichedAssets, progressivelyFilterMetadata, query],
+      : cheapAssets,
+    [cheapAssets, progressivelyEnrichedAssets, progressivelyFilterMetadata, query],
   );
   // Page and metadata commits are non-urgent; keep active scrolling ahead of
   // rebuilding the browser projection for a newly returned page.

@@ -1,3 +1,4 @@
+// @vitest-environment jsdom
 import { beforeEach, describe, expect, it } from "vitest";
 import type { AssetSummary, MetadataProjection } from "../types";
 import {
@@ -6,6 +7,8 @@ import {
   applyMetadataProjectionPatch,
   invalidateMetadataDirectory,
   projectAssetMetadata,
+  queueMetadataProjection,
+  flushMetadataProjections,
   useMetadataProjectionStore,
 } from "./metadataProjection";
 
@@ -32,7 +35,37 @@ const projection = (stateRevision: number, rating?: number): MetadataProjection 
 });
 
 describe("metadata projection mirror", () => {
-  beforeEach(() => useMetadataProjectionStore.setState({ records: {} }));
+  beforeEach(() => {
+    flushMetadataProjections();
+    useMetadataProjectionStore.setState({ records: {} });
+  });
+
+  it("retains asset identity for unchanged visible metadata", () => {
+    expect(projectAssetMetadata(asset, projection(1))).toBe(asset);
+    const first = projectAssetMetadata(asset, projection(2, 4));
+    expect(projectAssetMetadata(asset, projection(3, 4))).toBe(first);
+    const newSource = { ...asset, sizeBytes: 200 };
+    expect(projectAssetMetadata(newSource, projection(3, 4))).not.toBe(first);
+    expect(projectAssetMetadata(newSource, projection(3, 4)).sizeBytes).toBe(200);
+  });
+
+  it("batches notifications by newest revision and drops invalidated pending paths", () => {
+    let updates = 0;
+    const unsubscribe = useMetadataProjectionStore.subscribe(() => { updates += 1; });
+    queueMetadataProjection(projection(3, 5));
+    queueMetadataProjection(projection(2, 1));
+    queueMetadataProjection({ ...projection(1, 2), path: "C:\\other\\two.jpg" });
+    expect(updates).toBe(0);
+    flushMetadataProjections();
+    expect(updates).toBe(1);
+    expect(useMetadataProjectionStore.getState().records[asset.path].rating).toBe(5);
+    queueMetadataProjection(projection(4, 1));
+    invalidateMetadataDirectory("C:\\photos");
+    flushMetadataProjections();
+    expect(useMetadataProjectionStore.getState().records[asset.path]).toBeUndefined();
+    expect(useMetadataProjectionStore.getState().records["C:\\other\\two.jpg"]).toBeDefined();
+    unsubscribe();
+  });
 
   it("rejects a late older revision", () => {
     acceptMetadataProjection(projection(2, 5));
