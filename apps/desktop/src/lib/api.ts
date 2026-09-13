@@ -520,11 +520,18 @@ export async function onImageProjectionUpdated(
 
 export async function patchMetadata(paths: string[], patch: MetadataPatch): Promise<string> {
   if (!isTauri()) {
-    for (const asset of demoAssets.filter((asset) => paths.includes(asset.path))) {
-      if ("rating" in patch) asset.rating = patch.rating ?? undefined;
-      if ("colorLabel" in patch) asset.colorLabel = patch.colorLabel ?? undefined;
-      if ("pickLabel" in patch) asset.pickLabel = patch.pickLabel ?? undefined;
-      asset.hasSidecar = true;
+    // Replace (not mutate) entries so React Query structural sharing sees the
+    // change and re-renders, matching the fresh projections Tauri pushes.
+    for (let index = 0; index < demoAssets.length; index += 1) {
+      const asset = demoAssets[index];
+      if (!paths.includes(asset.path)) continue;
+      demoAssets[index] = {
+        ...asset,
+        ...("rating" in patch ? { rating: patch.rating ?? undefined } : {}),
+        ...("colorLabel" in patch ? { colorLabel: patch.colorLabel ?? undefined } : {}),
+        ...("pickLabel" in patch ? { pickLabel: patch.pickLabel ?? undefined } : {}),
+        hasSidecar: true,
+      };
     }
     return "demo-metadata-job";
   }
