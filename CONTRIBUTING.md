@@ -187,3 +187,20 @@ Before requesting review, inspect the diff for accidental generated files,
 secrets, local paths, and unrelated changes. CI runs formatting, Clippy, Rust
 tests, frontend checks and builds, followed by desktop builds on macOS, Windows,
 and Linux.
+
+## Contribution Licensing
+
+Except for contributions to components that explicitly state different
+license terms, by intentionally submitting a contribution for inclusion in
+OxyViewer, you represent that you have the right to license it and agree that:
+
+- the contribution may be distributed to the public as part of OxyViewer under
+  AGPL-3.0-only; and
+- you grant the OxyViewer repository owner and copyright holder a perpetual,
+  worldwide, non-exclusive, royalty-free, irrevocable right to use, reproduce,
+  modify, distribute, sublicense, and relicense the contribution as part of
+  OxyViewer, including under OxyViewer commercial licenses.
+
+If you cannot grant these rights, do not submit the contribution without first
+making a separate written arrangement with the repository owner at
+[oxygenkun.1@gmail.com](mailto:oxygenkun.1@gmail.com).

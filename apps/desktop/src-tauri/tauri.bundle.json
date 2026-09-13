@@ -2,6 +2,10 @@
   "bundle": {
     "externalBin": ["binaries/oxy-ffmpeg", "binaries/oxy-ffprobe"],
     "resources": {
+      "../../../LICENSE.md": "licenses/OxyViewer/LICENSE.md",
+      "../../../LICENSE-AGPL-3.0": "licenses/OxyViewer/LICENSE-AGPL-3.0",
+      "../../../LICENSE-COMMERCIAL.md": "licenses/OxyViewer/LICENSE-COMMERCIAL.md",
+      "../../../THIRD_PARTY_NOTICES.md": "licenses/OxyViewer/THIRD_PARTY_NOTICES.md",
       "resources/ffmpeg/": "licenses/ffmpeg/"
     }
   }

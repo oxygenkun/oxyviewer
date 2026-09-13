@@ -32,3 +32,15 @@ an interrupt hook, and release hardening remain incomplete. The measured
   commands, verification, and pull-request guidance.
 - Use [the documentation index](docs/README.md) to find current architecture,
   performance, format, packaging, task-plan, and research documents.
+
+## License
+
+OxyViewer is dual-licensed. You may use it under the
+[GNU Affero General Public License version 3](LICENSE-AGPL-3.0), or obtain a
+separate [OxyViewer Commercial License](LICENSE-COMMERCIAL.md) for proprietary
+or other uses that do not comply with the AGPL. Commercial use is permitted
+under the AGPL when all AGPL conditions are satisfied.
+
+Commercial licensing is issued by the repository owner and copyright holder;
+contact [oxygenkun.1@gmail.com](mailto:oxygenkun.1@gmail.com). Separately
+licensed and third-party components retain their own license terms.

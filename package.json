@@ -1,6 +1,7 @@
 {
   "name": "oxyviewer-workspace",
   "private": true,
+  "license": "AGPL-3.0-only OR LicenseRef-OxyViewer-Commercial",
   "packageManager": "pnpm@10.34.5",
   "scripts": {
     "ffmpeg:prepare": "node 3rdpart/ffmpeg/prepare.mjs",
