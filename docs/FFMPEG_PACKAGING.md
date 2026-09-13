@@ -12,8 +12,8 @@ Use the repository wrapper, from the repository root:
 pnpm tauri build
 # macOS DMG installer:
 pnpm tauri build --bundles app,dmg
-# Windows MSI only:
-pnpm tauri build --bundles msi
+# Windows MSI and multilingual NSIS EXE:
+pnpm tauri build --bundles msi,nsis
 ```
 
 `apps/desktop/scripts/tauri.mjs` prepares FFmpeg before `build`/`bundle` and
@@ -106,9 +106,16 @@ beside the built application.
 
 Preparation checks both versions, license flags, required capabilities and
 executes the composition/rotation/sharpening/scale pipeline to JPEG and BMP
-with PATH cleared. CI extracts MSI, DEB and AppImage packages and checks the
-macOS app inside the DMG build output directly, verifying the installed pair
-and bundled source/license payload before publishing the installers:
+with PATH cleared. CI extracts MSI, portable ZIP, DEB and AppImage packages and
+checks the macOS app inside the DMG build output directly, verifying the
+installed pair and bundled source/license payload before publishing the
+installers. The Windows portable ZIP contains the application, both FFmpeg
+programs, and the same license/source materials as the installers; CI expands
+the finished ZIP and verifies that extracted layout before upload:
+
+Extract the portable ZIP as a directory and launch `OxyViewer.exe` in place.
+Keep `oxy-ffmpeg.exe`, `oxy-ffprobe.exe`, and the `licenses` directory beside
+the application; moving only the main executable produces an incomplete build.
 
 ```sh
 node 3rdpart/ffmpeg/prepare.mjs --verify-bundle target/release/bundle/macos/OxyViewer.app

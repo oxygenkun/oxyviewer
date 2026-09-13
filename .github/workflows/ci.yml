@@ -176,10 +176,10 @@ jobs:
         if: runner.os == 'macOS'
         working-directory: apps/desktop
         run: pnpm tauri build --bundles app,dmg
-      - name: Build Tauri app (MSI)
+      - name: Build Tauri app (MSI and multilingual NSIS EXE)
         if: runner.os == 'Windows'
         working-directory: apps/desktop
-        run: pnpm tauri build --bundles msi
+        run: pnpm tauri build --bundles msi,nsis
       - name: Verify macOS app FFmpeg payload
         if: runner.os == 'macOS'
         run: node 3rdpart/ffmpeg/prepare.mjs --verify-bundle target/release/bundle/macos/OxyViewer.app
@@ -192,6 +192,10 @@ jobs:
           $process = Start-Process msiexec.exe -ArgumentList @('/a', "`"$installer`"", '/qn', "TARGETDIR=`"$destination`"") -Wait -PassThru
           if ($process.ExitCode -ne 0) { throw "MSI extraction failed: $($process.ExitCode)" }
           node 3rdpart/ffmpeg/prepare.mjs --verify-bundle "$destination"
+      - name: Build and verify Windows portable ZIP
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: ./scripts/package-windows-portable.ps1
       - name: Verify Linux package FFmpeg payloads
         if: runner.os == 'Linux'
         run: |
@@ -216,6 +220,20 @@ jobs:
           name: OxyViewer-Windows-${{ runner.arch }}-MSI
           retention-days: ${{ github.event_name == 'push' && 30 || 7 }}
           path: target/release/bundle/msi/*.msi
+      - name: Upload Windows multilingual NSIS EXE
+        if: runner.os == 'Windows'
+        uses: actions/upload-artifact@v4
+        with:
+          name: OxyViewer-Windows-${{ runner.arch }}-NSIS
+          retention-days: ${{ github.event_name == 'push' && 30 || 7 }}
+          path: target/release/bundle/nsis/*-setup.exe
+      - name: Upload Windows portable ZIP
+        if: runner.os == 'Windows'
+        uses: actions/upload-artifact@v4
+        with:
+          name: OxyViewer-Windows-${{ runner.arch }}-Portable
+          retention-days: ${{ github.event_name == 'push' && 30 || 7 }}
+          path: target/release/bundle/portable/*.zip
       - name: Upload Linux DEB
         if: runner.os == 'Linux'
         uses: actions/upload-artifact@v4
@@ -250,7 +268,7 @@ jobs:
         shell: bash
         run: |
           shopt -s nullglob
-          for extension in dmg msi deb AppImage; do
+          for extension in dmg msi exe zip deb AppImage; do
             installers=(release-assets/*."$extension")
             if [ "${#installers[@]}" -ne 1 ]; then
               echo "Expected one .$extension installer, found ${#installers[@]}" >&2
@@ -279,6 +297,7 @@ jobs:
 
           rename_installer release-assets/*.dmg macOS
           rename_installer release-assets/*.msi Windows
+          rename_installer release-assets/*.exe Windows
           rename_installer release-assets/*.deb Linux
           rename_installer release-assets/*.AppImage Linux
       - name: Create or update GitHub Release
@@ -287,7 +306,7 @@ jobs:
         shell: bash
         run: |
           shopt -s nullglob
-          assets=(release-assets/*.dmg release-assets/*.msi release-assets/*.deb release-assets/*.AppImage)
+          assets=(release-assets/*.dmg release-assets/*.msi release-assets/*.exe release-assets/*.zip release-assets/*.deb release-assets/*.AppImage)
           if gh release view "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
             gh release upload "$GITHUB_REF_NAME" "${assets[@]}" \
               --clobber \
