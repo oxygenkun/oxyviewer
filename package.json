@@ -1,10 +1,12 @@
 {
   "name": "oxyviewer-workspace",
+  "version": "0.1.0",
   "private": true,
   "license": "AGPL-3.0-only OR LicenseRef-OxyViewer-Commercial",
   "packageManager": "pnpm@10.34.5",
   "scripts": {
     "ffmpeg:prepare": "node 3rdpart/ffmpeg/prepare.mjs",
+    "release:check": "node scripts/check-release-version.mjs",
     "icons": "node scripts/generate-icons.mjs && pnpm --filter @oxyviewer/desktop exec tauri icon src-tauri/icons/icon.png",
     "dev": "pnpm --filter @oxyviewer/desktop dev",
     "build": "pnpm --filter @oxyviewer/desktop build",

@@ -3,7 +3,7 @@ name: CI
 on:
   push:
     tags:
-      - "release-*"
+      - "v[0-9]+.[0-9]+.[0-9]+"
   workflow_dispatch:
 
 permissions:
@@ -15,7 +15,7 @@ concurrency:
 
 jobs:
   lint:
-    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/release-')
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
     needs: frontend
     runs-on: ubuntu-24.04
     timeout-minutes: 30
@@ -43,7 +43,7 @@ jobs:
 
   frontend:
     name: Format and frontend checks
-    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/release-')
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     steps:
@@ -58,6 +58,8 @@ jobs:
           node-version: 22
           cache: pnpm
       - run: pnpm install --frozen-lockfile
+      - name: Verify release version
+        run: node scripts/check-release-version.mjs "$GITHUB_REF_NAME"
       - run: pnpm check
       - run: pnpm test
       - run: pnpm build
@@ -69,7 +71,7 @@ jobs:
     if: >-
       !cancelled() &&
       (github.event_name == 'workflow_dispatch' ||
-       (github.event_name == 'push' && startsWith(github.ref, 'refs/tags/release-') &&
+       (github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v') &&
         needs.lint.result == 'success' && needs.frontend.result == 'success'))
     needs: [lint, frontend]
     timeout-minutes: 75
@@ -170,10 +172,10 @@ jobs:
         if: runner.os == 'Linux'
         working-directory: apps/desktop
         run: pnpm tauri build
-      - name: Build Tauri app (App)
+      - name: Build Tauri app (DMG)
         if: runner.os == 'macOS'
         working-directory: apps/desktop
-        run: pnpm tauri build --bundles app
+        run: pnpm tauri build --bundles app,dmg
       - name: Build Tauri app (MSI)
         if: runner.os == 'Windows'
         working-directory: apps/desktop
@@ -200,13 +202,13 @@ jobs:
           cd "$RUNNER_TEMP/oxy-appimage"
           "$appimage" --appimage-extract > /dev/null
           node "$GITHUB_WORKSPACE/3rdpart/ffmpeg/prepare.mjs" --verify-bundle squashfs-root
-      - name: Upload macOS app
+      - name: Upload macOS DMG
         if: runner.os == 'macOS'
         uses: actions/upload-artifact@v4
         with:
-          name: OxyViewer-macOS-${{ runner.arch }}-App
+          name: OxyViewer-macOS-${{ runner.arch }}-DMG
           retention-days: ${{ github.event_name == 'push' && 30 || 7 }}
-          path: target/release/bundle/macos/*.app
+          path: target/release/bundle/dmg/*.dmg
       - name: Upload Windows MSI
         if: runner.os == 'Windows'
         uses: actions/upload-artifact@v4
@@ -228,3 +230,45 @@ jobs:
           name: OxyViewer-Linux-${{ runner.arch }}-AppImage
           retention-days: ${{ github.event_name == 'push' && 30 || 7 }}
           path: target/release/bundle/appimage/*.AppImage
+
+  release:
+    name: Publish GitHub Release
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
+    needs: build
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    steps:
+      - name: Download installers
+        uses: actions/download-artifact@v4
+        with:
+          pattern: OxyViewer-*
+          path: release-assets
+          merge-multiple: true
+      - name: Verify installer set
+        shell: bash
+        run: |
+          shopt -s nullglob
+          for extension in dmg msi deb AppImage; do
+            installers=(release-assets/*."$extension")
+            if [ "${#installers[@]}" -ne 1 ]; then
+              echo "Expected one .$extension installer, found ${#installers[@]}" >&2
+              exit 1
+            fi
+          done
+      - name: Create or update GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          shopt -s nullglob
+          assets=(release-assets/*.dmg release-assets/*.msi release-assets/*.deb release-assets/*.AppImage)
+          if gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
+            gh release upload "$GITHUB_REF_NAME" "${assets[@]}" --clobber
+          else
+            gh release create "$GITHUB_REF_NAME" "${assets[@]}" \
+              --verify-tag \
+              --generate-notes \
+              --title "OxyViewer $GITHUB_REF_NAME"
+          fi

@@ -186,7 +186,18 @@ In the pull request description:
 Before requesting review, inspect the diff for accidental generated files,
 secrets, local paths, and unrelated changes.
 
-## CI and build costs
+## Releases, CI, and build costs
+
+The release version is declared in the root and desktop `package.json` files,
+the Cargo workspace package metadata, and `tauri.conf.json`. Keep all four
+values identical. Run `pnpm release:check` before tagging; CI also checks that
+the tag is exactly `v<version>`.
+
+Push a semantic version tag such as `v0.1.0` to run the complete release
+pipeline. After all checks and platform builds succeed, CI creates or updates
+the matching GitHub Release and attaches the macOS DMG, Windows MSI, Linux DEB,
+and Linux AppImage installers. Re-running a completed release replaces assets
+with the newly verified packages.
 
 The `build` tag no longer triggers CI. For a Windows test package, use
 **Actions → CI → Run workflow** and select the ref to build. Manual runs build
@@ -195,17 +206,19 @@ payload verification. They skip the Linux formatting/frontend and Clippy/test
 jobs; these packages have not necessarily passed the release checks. The
 workflow must first exist on the default branch to expose manual dispatch.
 
-Pushing a `release-*` tag runs formatting and frontend checks on Linux, followed
-by Clippy and workspace Rust tests. Only after both jobs succeed do Windows,
-macOS, and Linux package builds start. Linux packaging reuses the workspace
-test result; Windows and macOS run their native media and desktop tests. All
-packages undergo FFmpeg payload verification. To retry an unchanged failed
-build, use **Re-run failed jobs** instead of re-running successful platforms.
+Pushing a `v<major>.<minor>.<patch>` tag runs formatting and frontend checks on
+Linux, followed by Clippy and workspace Rust tests. Only after both jobs succeed
+do Windows, macOS, and Linux package builds start. Linux packaging reuses the
+workspace test result; Windows and macOS run their native media and desktop
+tests. All packages undergo FFmpeg payload verification. To retry an unchanged
+failed build, use **Re-run failed jobs** instead of re-running successful
+platforms.
 
 New manual runs cancel superseded manual runs of the same ref, independently
 of release runs. Checks and builds
 have explicit timeouts. Manual build artifacts expire after 7 days; release-tag
-artifacts expire after 30 days. Download packages that need longer retention.
+Actions artifacts expire after 30 days. Published GitHub Release installers
+remain attached to the release.
 
 Windows vcpkg and Rust link caches include the runner image, vcpkg revision,
 overlay content, and core-only feature selection in their keys. This prevents
