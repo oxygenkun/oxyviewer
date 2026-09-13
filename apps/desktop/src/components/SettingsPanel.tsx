@@ -4,6 +4,7 @@ import {
   ExternalLink,
   FolderOpen,
   HardDrive,
+  Keyboard,
   LoaderCircle,
   Monitor,
   RotateCcw,
@@ -34,6 +35,7 @@ import { UI_FONT_SCALES } from "../lib/workspacePersistence";
 import { useWorkspaceStore } from "../store";
 import { RawDecoderPanel } from "./RawDecoderPanel";
 import { ExternalAppsSettings } from "./ExternalAppsSettings";
+import { ShortcutSettings } from "./ShortcutSettings";
 import type { AssetSummary } from "../types";
 
 interface SettingsPanelProps {
@@ -127,6 +129,7 @@ export function SettingsPanel({ t, activeAsset }: SettingsPanelProps) {
     { id: "display" as const, label: t("settingsDisplay"), description: t("settingsDisplayDescription"), icon: <Monitor size={16} /> },
     { id: "media" as const, label: t("settingsMedia"), description: t("settingsMediaDescription"), icon: <Database size={16} /> },
     { id: "externalApps" as const, label: t("settingsExternal"), description: t("settingsExternalDescription"), icon: <ExternalLink size={16} /> },
+    { id: "shortcuts" as const, label: t("settingsShortcuts"), description: t("settingsShortcutsDescription"), icon: <Keyboard size={16} /> },
   ];
   const activeTab = tabs.find((tab) => tab.id === settingsSection) ?? tabs[0];
 
@@ -268,6 +271,8 @@ export function SettingsPanel({ t, activeAsset }: SettingsPanelProps) {
             </> : null}
 
             {settingsSection === "externalApps" ? <ExternalAppsSettings t={t} focus /> : null}
+
+            {settingsSection === "shortcuts" ? <ShortcutSettings t={t} /> : null}
           </div>
         </div>
       </div>

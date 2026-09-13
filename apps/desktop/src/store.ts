@@ -1,6 +1,14 @@
 import { create } from "zustand";
 import type { Locale } from "./lib/i18n";
 import {
+  DEFAULT_SHORTCUTS,
+  loadShortcuts,
+  saveShortcuts,
+  type ShortcutAction,
+  type ShortcutBinding,
+  type ShortcutBindings,
+} from "./lib/shortcuts";
+import {
   loadFocusAreasVisible,
   loadLayoutSize,
   loadLoupeControlsAutoHide,
@@ -50,6 +58,9 @@ interface WorkspaceState {
   colorLabels: string[];
   sort: AssetSort;
   direction: SortDirection;
+  shortcuts: ShortcutBindings;
+  setShortcut: (action: ShortcutAction, binding: ShortcutBinding) => void;
+  resetShortcuts: () => void;
   setView: (view: ViewMode) => void;
   setThumbnailOrientation: (orientation: ThumbnailOrientation) => void;
   select: (id: string, additive?: boolean) => void;
@@ -78,7 +89,7 @@ interface WorkspaceState {
   toggleDirection: () => void;
 }
 
-export type SettingsSection = "general" | "display" | "media" | "externalApps";
+export type SettingsSection = "general" | "display" | "media" | "externalApps" | "shortcuts";
 
 export const useWorkspaceStore = create<WorkspaceState>((set) => ({
   view: "grid",
@@ -105,6 +116,18 @@ export const useWorkspaceStore = create<WorkspaceState>((set) => ({
   colorLabels: [],
   sort: "name",
   direction: "ascending",
+  shortcuts: loadShortcuts(),
+  setShortcut: (action, binding) =>
+    set((state) => {
+      const shortcuts = { ...state.shortcuts, [action]: binding };
+      saveShortcuts(shortcuts);
+      return { shortcuts };
+    }),
+  resetShortcuts: () => {
+    const shortcuts = { ...DEFAULT_SHORTCUTS };
+    saveShortcuts(shortcuts);
+    set({ shortcuts });
+  },
   setView: (view) => set({ view }),
   setThumbnailOrientation: (thumbnailOrientation) => set({ thumbnailOrientation }),
   select: (id, additive = false) =>

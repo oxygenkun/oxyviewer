@@ -32,6 +32,8 @@ import {
   type Size,
 } from "../lib/loupe";
 import { LAYOUT_SIZE_LIMITS } from "../lib/layoutSizing";
+import { matchesAction } from "../lib/shortcuts";
+import { useMarkingShortcuts } from "../lib/useMarkingShortcuts";
 import { getAssetDetails } from "../lib/api";
 import { mapFocusRegions } from "../lib/focusArea";
 import type { MessageKey } from "../lib/i18n";
@@ -52,6 +54,7 @@ interface LoupeProps {
   fetchNextPage: () => void;
   hasNextPage: boolean;
   isFetchingNextPage: boolean;
+  keyboardSuppressed?: boolean;
   onAssetContextMenu: (event: React.MouseEvent, asset: AssetSummary) => void;
   t: (key: MessageKey) => string;
 }
@@ -82,6 +85,7 @@ export function Loupe({
   fetchNextPage,
   hasNextPage,
   isFetchingNextPage,
+  keyboardSuppressed = false,
   onAssetContextMenu,
   t,
 }: LoupeProps) {
@@ -99,6 +103,7 @@ export function Loupe({
   const setFocusAreasVisible = useWorkspaceStore((state) => state.setFocusAreasVisible);
   const setLoupeControlsAutoHide = useWorkspaceStore((state) => state.setLoupeControlsAutoHide);
   const setFilmstripHeight = useWorkspaceStore((state) => state.setFilmstripHeight);
+  const shortcuts = useWorkspaceStore((state) => state.shortcuts);
   const active = assets.find((asset) => asset.id === activeId) ?? assets[0];
   const stageRef = useRef<HTMLDivElement>(null);
   const imageRef = useRef<HTMLDivElement>(null);
@@ -214,6 +219,17 @@ export function Loupe({
     return () => document.removeEventListener("pointerdown", closeSettingsOutside);
   }, [settingsOpen]);
 
+  const stepSelection = useCallback((direction: -1 | 1) => {
+    const next = assets[assets.indexOf(active) + direction];
+    if (next) {
+      select(next.id);
+    } else if (direction > 0 && hasNextPage && !isFetchingNextPage) {
+      fetchNextPage();
+    }
+  }, [active, assets, fetchNextPage, hasNextPage, isFetchingNextPage, select]);
+
+  useMarkingShortcuts(assets, keyboardSuppressed, active);
+
   useEffect(() => {
     const editableTarget = (target: EventTarget | null) => (
       target instanceof HTMLElement
@@ -224,16 +240,22 @@ export function Loupe({
         if (!event.repeat) setFocusTemporarilyInverted(true);
         return;
       }
-      if (
-        event.key.toLowerCase() === "f"
-        && !event.repeat
-        && !event.altKey
-        && !event.ctrlKey
-        && !event.metaKey
-        && !editableTarget(event.target)
-      ) {
+      if (keyboardSuppressed) return;
+      if (useWorkspaceStore.getState().settingsOpen || editableTarget(event.target)) return;
+      if (matchesAction(event, shortcuts, "loupe.toggleFocusAreas")) {
+        if (event.repeat) return;
         event.preventDefault();
         setFocusAreasVisible(!focusAreasVisible);
+        return;
+      }
+      if (matchesAction(event, shortcuts, "loupe.previousAsset")) {
+        event.preventDefault();
+        stepSelection(-1);
+        return;
+      }
+      if (matchesAction(event, shortcuts, "loupe.nextAsset")) {
+        event.preventDefault();
+        stepSelection(1);
       }
     };
     const handleKeyUp = (event: KeyboardEvent) => {
@@ -248,7 +270,7 @@ export function Loupe({
       window.removeEventListener("keyup", handleKeyUp);
       window.removeEventListener("blur", resetTemporaryState);
     };
-  }, [focusAreasVisible, setFocusAreasVisible]);
+  }, [focusAreasVisible, keyboardSuppressed, setFocusAreasVisible, shortcuts, stepSelection]);
 
   useLayoutEffect(() => {
     const stage = stageRef.current;

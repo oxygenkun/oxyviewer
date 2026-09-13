@@ -58,7 +58,7 @@ afterEach(async () => {
 });
 
 it("separates settings into tabs and renders only the selected module", async () => {
-  expect(host.querySelectorAll("[role=tab]")).toHaveLength(4);
+  expect(host.querySelectorAll("[role=tab]")).toHaveLength(5);
   expect(host.querySelector('[role=tab][aria-selected="true"]')?.textContent).toContain("常规");
   expect(host.querySelector("[role=tabpanel]")?.textContent).toContain("语言");
 
@@ -73,6 +73,9 @@ it("separates settings into tabs and renders only the selected module", async ()
 
   await clickTab("外部应用");
   expect(host.querySelector('[data-testid="external-apps"]')).not.toBeNull();
+
+  await clickTab("快捷键");
+  expect(host.querySelector("[role=tabpanel]")?.textContent).toContain("键盘快捷键");
 });
 
 it("opens directly on the external applications tab", async () => {

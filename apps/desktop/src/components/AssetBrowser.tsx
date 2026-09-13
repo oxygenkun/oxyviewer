@@ -12,6 +12,8 @@ import type { MessageKey } from "../lib/i18n";
 import { useExternalAppSettings } from "../lib/externalApps";
 import { AssetContextMenu, type AssetMenuTarget } from "./AssetContextMenu";
 import { acceptMetadataProjections } from "../lib/metadataProjection";
+import { matchesAction } from "../lib/shortcuts";
+import { useMarkingShortcuts } from "../lib/useMarkingShortcuts";
 import {
   backgroundPreviewIntents,
   PreviewScheduleScope,
@@ -124,6 +126,7 @@ export function AssetBrowser(props: AssetBrowserProps) {
         fetchNextPage={props.fetchNextPage}
         hasNextPage={props.hasNextPage}
         isFetchingNextPage={props.isFetchingNextPage}
+        keyboardSuppressed={Boolean(contextMenu) || Boolean(pendingTrash)}
         onAssetContextMenu={showContextMenu}
         t={props.t}
       />
@@ -131,7 +134,13 @@ export function AssetBrowser(props: AssetBrowserProps) {
   } else if (props.view === "list") {
     content = <VirtualList {...props} onAssetContextMenu={showContextMenu} />;
   } else {
-    content = <VirtualGrid {...props} onAssetContextMenu={showContextMenu} />;
+    content = (
+      <VirtualGrid
+        {...props}
+        keyboardSuppressed={Boolean(contextMenu) || Boolean(pendingTrash)}
+        onAssetContextMenu={showContextMenu}
+      />
+    );
   }
 
   return (
@@ -174,8 +183,10 @@ function VirtualGrid({
   hasNextPage,
   isFetchingNextPage,
   fetchNextPage,
+  keyboardSuppressed = false,
   onAssetContextMenu,
 }: AssetBrowserProps & {
+  keyboardSuppressed?: boolean;
   onAssetContextMenu: (event: React.MouseEvent, asset: AssetSummary) => void;
 }) {
   const parentRef = useRef<HTMLDivElement>(null);
@@ -184,6 +195,7 @@ function VirtualGrid({
   const selectedIds = useWorkspaceStore((state) => state.selectedIds);
   const select = useWorkspaceStore((state) => state.select);
   const setView = useWorkspaceStore((state) => state.setView);
+  const shortcuts = useWorkspaceStore((state) => state.shortcuts);
   const openAsset = useCallback((id: string) => {
     select(id);
     setView("loupe");
@@ -279,6 +291,46 @@ function VirtualGrid({
       fetchNextPage();
     }
   }, [fetchNextPage, hasNextPage, isFetchingNextPage, loadedRowCount, rows]);
+
+  useMarkingShortcuts(assets, keyboardSuppressed);
+
+  const stepSelection = useCallback((delta: number) => {
+    const currentIndex = activeAssetIndex(assets, activeId);
+    const nextIndex = currentIndex === undefined ? 0 : currentIndex + delta;
+    const next = assets[nextIndex];
+    if (next) {
+      select(next.id);
+      virtualizer.scrollToIndex(gridRowForAsset(nextIndex, columns), { align: "auto" });
+    } else if (delta > 0 && hasNextPage && !isFetchingNextPage) {
+      fetchNextPage();
+    }
+  }, [activeId, assets, columns, fetchNextPage, hasNextPage, isFetchingNextPage, select, virtualizer]);
+
+  useEffect(() => {
+    if (keyboardSuppressed) return;
+    const editableTarget = (target: EventTarget | null) => (
+      target instanceof HTMLElement
+      && Boolean(target.closest("input, textarea, select, [contenteditable='true']"))
+    );
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (useWorkspaceStore.getState().settingsOpen || editableTarget(event.target)) return;
+      if (matchesAction(event, shortcuts, "grid.moveLeft")) {
+        event.preventDefault();
+        stepSelection(-1);
+      } else if (matchesAction(event, shortcuts, "grid.moveRight")) {
+        event.preventDefault();
+        stepSelection(1);
+      } else if (matchesAction(event, shortcuts, "grid.moveUp")) {
+        event.preventDefault();
+        stepSelection(-columns);
+      } else if (matchesAction(event, shortcuts, "grid.moveDown")) {
+        event.preventDefault();
+        stepSelection(columns);
+      }
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [columns, keyboardSuppressed, shortcuts, stepSelection]);
 
   return (
     <div

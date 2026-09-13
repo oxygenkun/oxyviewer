@@ -414,6 +414,32 @@
 .external-apps-settings__editor { display: grid; gap: 10px; min-width: 0; margin-top: 10px; padding: 12px; border: 1px solid var(--line-strong); border-radius: 5px; }
 .external-apps-settings__editor label { display: grid; gap: 5px; font-size: 0.6875rem; }
 .external-apps-settings__editor input { min-width: 0; width: 100%; padding: 6px 8px; border: 1px solid var(--line-strong); border-radius: 4px; color: var(--text); background: #20262a; }
+.shortcut-settings {
+  & .settings-panel__section-heading { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+  & button { padding: 5px 8px; border-radius: 4px; background: var(--surface-hover); color: var(--text); font-size: 0.6875rem; }
+  & button:disabled { opacity: 0.4; cursor: default; }
+  & button:focus-visible { outline: 1px solid var(--text); outline-offset: 2px; }
+}
+.shortcut-settings__group { margin-bottom: 6px; }
+.shortcut-settings__group-title { margin: 14px 0 8px; color: var(--muted); font-size: 0.625rem; font-weight: 600; letter-spacing: 0.04em; text-transform: uppercase; }
+.shortcut-settings__row { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; padding: 10px 0; border-top: 1px solid var(--line-strong); }
+.shortcut-settings__action { flex: 1; min-width: 120px; font-size: 0.75rem; color: var(--text); }
+.shortcut-settings__keys {
+  min-width: 72px;
+  padding: 4px 10px;
+  border: 1px solid var(--line-strong);
+  border-bottom-width: 2px;
+  border-radius: 4px;
+  color: var(--text);
+  background: #20262a;
+  font: 0.625rem ui-monospace, "SFMono-Regular", Consolas, monospace;
+  text-align: center;
+
+  &.is-listening { border-color: var(--accent); color: var(--accent); }
+
+  &--alias { opacity: 0.65; }
+}
+.shortcut-settings__actions { display: flex; flex-wrap: wrap; gap: 4px; }
 
 @media (max-width: 700px) {
   .settings-overlay { padding: 10px; }
