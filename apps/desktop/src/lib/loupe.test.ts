@@ -6,6 +6,7 @@ import {
   fitSize,
   getNavigatorViewport,
   MAX_PIXEL_ZOOM_PERCENT,
+  nextCycleZoom,
   orderVisibleFilmstripItems,
   panByNavigatorDelta,
   panFromNavigatorPoint,
@@ -77,6 +78,36 @@ describe("loupe geometry", () => {
     expect(zoomForPixelPercent(fitted, source, 125)).toBe(7.5);
     expect(clampZoom(zoomForPixelPercent(fitted, source, 500), maxZoom)).toBe(24);
     expect(clampZoom(2, 0.5)).toBe(1);
+  });
+
+  it("cycles fit → 20% → 100% → fit", () => {
+    const fitted = { width: 1_000, height: 667 };
+    const source = { width: 6_000, height: 4_000 };
+    const maxZoom = zoomForPixelPercent(fitted, source, MAX_PIXEL_ZOOM_PERCENT);
+
+    const twenty = zoomForPixelPercent(fitted, source, 20);
+    const hundred = zoomForPixelPercent(fitted, source, 100);
+    expect(nextCycleZoom(1, fitted, source, maxZoom)).toBe(twenty);
+    expect(nextCycleZoom(twenty, fitted, source, maxZoom)).toBe(hundred);
+    expect(nextCycleZoom(hundred, fitted, source, maxZoom)).toBe(1);
+  });
+
+  it("resumes the cycle from a manual zoom level", () => {
+    const fitted = { width: 1_000, height: 667 };
+    const source = { width: 6_000, height: 4_000 };
+    const maxZoom = zoomForPixelPercent(fitted, source, MAX_PIXEL_ZOOM_PERCENT);
+
+    expect(nextCycleZoom(3, fitted, source, maxZoom))
+      .toBe(zoomForPixelPercent(fitted, source, 100));
+    expect(nextCycleZoom(maxZoom, fitted, source, maxZoom)).toBe(1);
+  });
+
+  it("skips cycle steps that would not magnify a small source", () => {
+    const fitted = { width: 1_000, height: 667 };
+    const source = { width: 900, height: 600 };
+    const maxZoom = zoomForPixelPercent(fitted, source, MAX_PIXEL_ZOOM_PERCENT);
+
+    expect(nextCycleZoom(1, fitted, source, maxZoom)).toBe(1);
   });
 
   it("clamps panning to the visible image bounds", () => {

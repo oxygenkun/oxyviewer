@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { inferPreviewCrop, mapFocusRegions, resolvePreviewCoordinateRect } from "./focusArea";
+import { focusRegionAnchor, inferPreviewCrop, mapFocusRegions, resolvePreviewCoordinateRect } from "./focusArea";
 import type { FocusInfo } from "../types";
 
 const focus = (centerX: number, centerY: number): FocusInfo => ({
@@ -72,6 +72,14 @@ describe("focus area mapping", () => {
     expect(region.left + region.width / 2).toBeCloseTo(2_327 / 4_672);
     expect(region.top + region.height / 2).toBeCloseTo(1_489 / 7_008);
     expect(region.syntheticFrame).toBe(false);
+  });
+
+  it("anchors the zoom on the primary focus region center", () => {
+    expect(focusRegionAnchor([
+      { left: 0.2, top: 0.3, width: 0.1, height: 0.2, syntheticFrame: false },
+      { left: 0.7, top: 0.7, width: 0.1, height: 0.1, syntheticFrame: true },
+    ])).toEqual({ x: 0.25, y: 0.4 });
+    expect(focusRegionAnchor([])).toBeUndefined();
   });
 
 });

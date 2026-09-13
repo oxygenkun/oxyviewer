@@ -1,5 +1,5 @@
 import type { FocusInfo } from "../types";
-import type { Size } from "./loupe";
+import type { Point, Size } from "./loupe";
 
 export interface MappedFocusRegion {
   left: number;
@@ -7,6 +7,14 @@ export interface MappedFocusRegion {
   width: number;
   height: number;
   syntheticFrame: boolean;
+}
+
+/** Center of the primary focus region, used as the zoom anchor when present. */
+export function focusRegionAnchor(regions: readonly MappedFocusRegion[]): Point | undefined {
+  const region = regions[0];
+  return region
+    ? { x: region.left + region.width / 2, y: region.top + region.height / 2 }
+    : undefined;
 }
 
 interface CropRect {

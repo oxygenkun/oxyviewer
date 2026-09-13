@@ -108,6 +108,26 @@ export function zoomForPixelPercent(fitted: Size, source: Size, percent: number)
   return (percent / 100) * (source.width / fitted.width);
 }
 
+export const ZOOM_CYCLE_PERCENTS = [20, 100] as const;
+const ZOOM_EPSILON = 0.001;
+
+/**
+ * Cycles fit → 20% → 100% → fit. Steps that would not magnify beyond the
+ * fitted view (small sources) are skipped so the cycle never gets stuck.
+ */
+export function nextCycleZoom(
+  zoom: number,
+  fitted: Size,
+  source: Size,
+  maxZoom: number,
+): number {
+  const targets = ZOOM_CYCLE_PERCENTS
+    .map((percent) => clampZoom(zoomForPixelPercent(fitted, source, percent), maxZoom))
+    .filter((target) => target > MIN_ZOOM + ZOOM_EPSILON);
+  if (zoom <= MIN_ZOOM + ZOOM_EPSILON) return targets[0] ?? MIN_ZOOM;
+  return targets.find((target) => target > zoom + ZOOM_EPSILON) ?? MIN_ZOOM;
+}
+
 export function clampPan(offset: Point, zoom: number, stage: Size, image: Size): Point {
   const maxX = Math.max(0, (image.width * zoom - stage.width) / 2);
   const maxY = Math.max(0, (image.height * zoom - stage.height) / 2);

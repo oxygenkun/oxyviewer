@@ -17,10 +17,12 @@ const ACTION_LABELS: Record<ShortcutAction, MessageKey> = {
   "loupe.previousAsset": "shortcutPreviousAsset",
   "loupe.nextAsset": "shortcutNextAsset",
   "loupe.toggleFocusAreas": "shortcutToggleFocusAreas",
+  "loupe.cycleZoom": "shortcutCycleZoom",
   "grid.moveLeft": "shortcutGridMoveLeft",
   "grid.moveRight": "shortcutGridMoveRight",
   "grid.moveUp": "shortcutGridMoveUp",
   "grid.moveDown": "shortcutGridMoveDown",
+  "grid.openLoupe": "shortcutOpenLoupe",
   "marking.rating1": "shortcutRating1",
   "marking.rating2": "shortcutRating2",
   "marking.rating3": "shortcutRating3",
@@ -34,8 +36,8 @@ const ACTION_LABELS: Record<ShortcutAction, MessageKey> = {
 };
 
 const ACTION_GROUPS: Array<{ labelKey: MessageKey; actions: ShortcutAction[] }> = [
-  { labelKey: "shortcutGroupLoupe", actions: ["loupe.previousAsset", "loupe.nextAsset", "loupe.toggleFocusAreas"] },
-  { labelKey: "shortcutGroupGrid", actions: ["grid.moveLeft", "grid.moveRight", "grid.moveUp", "grid.moveDown"] },
+  { labelKey: "shortcutGroupLoupe", actions: ["loupe.previousAsset", "loupe.nextAsset", "loupe.toggleFocusAreas", "loupe.cycleZoom"] },
+  { labelKey: "shortcutGroupGrid", actions: ["grid.moveLeft", "grid.moveRight", "grid.moveUp", "grid.moveDown", "grid.openLoupe"] },
   {
     labelKey: "shortcutGroupMarking",
     actions: [

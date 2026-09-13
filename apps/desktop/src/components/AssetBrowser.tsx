@@ -132,7 +132,13 @@ export function AssetBrowser(props: AssetBrowserProps) {
       />
     );
   } else if (props.view === "list") {
-    content = <VirtualList {...props} onAssetContextMenu={showContextMenu} />;
+    content = (
+      <VirtualList
+        {...props}
+        keyboardSuppressed={Boolean(contextMenu) || Boolean(pendingTrash)}
+        onAssetContextMenu={showContextMenu}
+      />
+    );
   } else {
     content = (
       <VirtualGrid
@@ -326,11 +332,17 @@ function VirtualGrid({
       } else if (matchesAction(event, shortcuts, "grid.moveDown")) {
         event.preventDefault();
         stepSelection(columns);
+      } else if (matchesAction(event, shortcuts, "grid.openLoupe")) {
+        if (event.repeat) return;
+        const target = activeId ?? assets[0]?.id;
+        if (!target) return;
+        event.preventDefault();
+        openAsset(target);
       }
     };
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, [columns, keyboardSuppressed, shortcuts, stepSelection]);
+  }, [activeId, assets, columns, keyboardSuppressed, openAsset, shortcuts, stepSelection]);
 
   return (
     <div
@@ -390,9 +402,11 @@ function VirtualList({
   hasNextPage,
   isFetchingNextPage,
   fetchNextPage,
+  keyboardSuppressed = false,
   t,
   onAssetContextMenu,
 }: AssetBrowserProps & {
+  keyboardSuppressed?: boolean;
   onAssetContextMenu: (event: React.MouseEvent, asset: AssetSummary) => void;
 }) {
   const parentRef = useRef<HTMLDivElement>(null);
@@ -400,6 +414,7 @@ function VirtualList({
   const selectedIds = useWorkspaceStore((state) => state.selectedIds);
   const select = useWorkspaceStore((state) => state.select);
   const setView = useWorkspaceStore((state) => state.setView);
+  const shortcuts = useWorkspaceStore((state) => state.shortcuts);
   const thumbnailOrientation = useWorkspaceStore((state) => state.thumbnailOrientation);
   const rowHeight = thumbnailOrientation === "portrait" ? 68 : 58;
   const assetCount = virtualAssetCount(assets.length, total);
@@ -476,6 +491,26 @@ function VirtualList({
       fetchNextPage();
     }
   }, [assets.length, fetchNextPage, hasNextPage, isFetchingNextPage, rows]);
+
+  useEffect(() => {
+    if (keyboardSuppressed) return;
+    const editableTarget = (target: EventTarget | null) => (
+      target instanceof HTMLElement
+      && Boolean(target.closest("input, textarea, select, [contenteditable='true']"))
+    );
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.repeat) return;
+      if (useWorkspaceStore.getState().settingsOpen || editableTarget(event.target)) return;
+      if (!matchesAction(event, shortcuts, "grid.openLoupe")) return;
+      const target = activeId ?? assets[0]?.id;
+      if (!target) return;
+      event.preventDefault();
+      select(target);
+      setView("loupe");
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [activeId, assets, keyboardSuppressed, select, setView, shortcuts]);
 
   return (
     <div

@@ -23,7 +23,9 @@ import {
   fitSize,
   getNavigatorViewport,
   MAX_PIXEL_ZOOM_PERCENT,
+  nextCycleZoom,
   panByNavigatorDelta,
+  panFromNavigatorPoint,
   pixelZoomPercent,
   resolveLoupeSourceSize,
   zoomAtPoint,
@@ -35,7 +37,7 @@ import { LAYOUT_SIZE_LIMITS } from "../lib/layoutSizing";
 import { matchesAction } from "../lib/shortcuts";
 import { useMarkingShortcuts } from "../lib/useMarkingShortcuts";
 import { getAssetDetails } from "../lib/api";
-import { mapFocusRegions } from "../lib/focusArea";
+import { focusRegionAnchor, mapFocusRegions } from "../lib/focusArea";
 import type { MessageKey } from "../lib/i18n";
 import type { RawPreviewStatus } from "../lib/rawPreview";
 import { renderPlan } from "../lib/preview";
@@ -185,6 +187,21 @@ export function Loupe({
     setOffset({ x: 0, y: 0 });
   }, []);
 
+  const cycleZoom = useCallback(() => {
+    const maxZoom = zoomForPixelPercent(fittedImageSize, sourceSize, MAX_PIXEL_ZOOM_PERCENT);
+    const nextZoom = nextCycleZoom(zoom, fittedImageSize, sourceSize, maxZoom);
+    if (nextZoom <= 1) {
+      resetZoom();
+      return;
+    }
+    // Center the zoom on the shooting focus area when one was parsed;
+    // otherwise fall back to the image center.
+    const anchor = focusRegionAnchor(mappedFocusRegions) ?? { x: 0.5, y: 0.5 };
+    const { stage, image } = getSizes();
+    setOffset(panFromNavigatorPoint(anchor, nextZoom, stage, image));
+    setZoom(nextZoom);
+  }, [fittedImageSize, getSizes, mappedFocusRegions, resetZoom, sourceSize, zoom]);
+
   const handleHeifImageSize = useCallback((size: Size) => {
     setHeifFullSize((current) => (
       current?.assetId === active.id
@@ -248,6 +265,12 @@ export function Loupe({
         setFocusAreasVisible(!focusAreasVisible);
         return;
       }
+      if (matchesAction(event, shortcuts, "loupe.cycleZoom")) {
+        if (event.repeat) return;
+        event.preventDefault();
+        cycleZoom();
+        return;
+      }
       if (matchesAction(event, shortcuts, "loupe.previousAsset")) {
         event.preventDefault();
         stepSelection(-1);
@@ -270,7 +293,7 @@ export function Loupe({
       window.removeEventListener("keyup", handleKeyUp);
       window.removeEventListener("blur", resetTemporaryState);
     };
-  }, [focusAreasVisible, keyboardSuppressed, setFocusAreasVisible, shortcuts, stepSelection]);
+  }, [cycleZoom, focusAreasVisible, keyboardSuppressed, setFocusAreasVisible, shortcuts, stepSelection]);
 
   useLayoutEffect(() => {
     const stage = stageRef.current;
