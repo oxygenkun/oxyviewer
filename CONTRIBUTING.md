@@ -184,9 +184,42 @@ In the pull request description:
 - Link the related issue or discussion when one exists.
 
 Before requesting review, inspect the diff for accidental generated files,
-secrets, local paths, and unrelated changes. CI runs formatting, Clippy, Rust
-tests, frontend checks and builds, followed by desktop builds on macOS, Windows,
-and Linux.
+secrets, local paths, and unrelated changes.
+
+## CI and build costs
+
+Pushing the `build` tag runs formatting, Clippy, workspace Rust tests, and
+frontend checks/tests/builds on Linux. It does not package desktop apps.
+Platform-specific Rust code is verified when its desktop build is selected.
+Formatting and frontend checks must pass before the Rust lint/test job starts.
+Desktop builds wait for both checks. Linux packaging reuses the workspace test
+result; Windows and macOS still run their native media and desktop tests.
+
+For a desktop package, use **Actions → CI → Run workflow**, select the ref to
+build, and choose `windows`, `macos`, `linux`, or `all` in `platform`. The default
+`checks` option only runs checks. The workflow must first exist on the default
+branch for GitHub to expose manual dispatch. Pushing a `release-*` tag runs all
+three desktop builds, including native regression tests and FFmpeg payload
+verification. To retry an unchanged failed build, use **Re-run failed jobs**
+instead of re-running successful platforms.
+
+New runs cancel superseded runs of the same non-release ref. Checks and builds
+have explicit timeouts. Manual build artifacts expire after 7 days; release-tag
+artifacts expire after 30 days. Download packages that need longer retention.
+
+Windows vcpkg and Rust link caches include the runner image, vcpkg revision,
+overlay content, and core-only feature selection in their keys. This prevents
+stale link flags and lets rebuilt binary packages be saved when native inputs
+change. Rust dependency caches are also saved after failed jobs.
+FFmpeg preparation and verification run before Tauri packaging, with the cache
+saved immediately after successful preparation so a later packaging failure
+does not discard that work. The Tauri wrapper still verifies the cached payload.
+
+Private-repository Actions usage can incur charges after the account allowance
+is exhausted. Job timeouts limit individual runs, not monthly spending. Check
+the account's **Billing & licensing** usage and budgets for the actual net
+charges. A payment or budget block must be resolved in account settings; a
+workflow change cannot clear it.
 
 ## Contribution Licensing
 

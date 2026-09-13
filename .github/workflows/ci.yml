@@ -5,20 +5,39 @@ on:
     tags:
       - "release-*"
       - "build"
+  workflow_dispatch:
+    inputs:
+      platform:
+        description: Package platform (checks always run)
+        type: choice
+        default: checks
+        options: [checks, windows, macos, linux, all]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ !startsWith(github.ref, 'refs/tags/release-') }}
 
 jobs:
   lint:
-    runs-on: macos-latest
+    needs: frontend
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
         with:
           submodules: recursive
       - uses: dtolnay/rust-toolchain@stable
         with:
-          components: rustfmt, clippy
+          components: clippy
       - uses: Swatinem/rust-cache@v2.9.1
+        with:
+          cache-on-failure: true
       - uses: ilammy/setup-nasm@v1
-      - run: cargo fmt --all --check
+      - name: Linux system dependencies
+        run: sudo apt-get update && sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf
       - name: cargo clippy
         run: cargo clippy --workspace --all-targets -- -D warnings
         env:
@@ -29,9 +48,15 @@ jobs:
           CARGO_INCREMENTAL: 1
 
   frontend:
+    name: Format and frontend checks
     runs-on: ubuntu-24.04
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt
+      - run: cargo fmt --all --check
       - uses: pnpm/action-setup@v4
       - uses: actions/setup-node@v4
         with:
@@ -44,18 +69,19 @@ jobs:
 
   build:
     name: Build (${{ matrix.os }})
+    if: startsWith(github.ref, 'refs/tags/release-') || (github.event_name == 'workflow_dispatch' && inputs.platform != 'checks')
     needs: [lint, frontend]
+    timeout-minutes: 75
     strategy:
       fail-fast: false
       matrix:
-        os: [macos-latest, windows-latest, ubuntu-24.04]
+        os: ${{ fromJSON(inputs.platform == 'windows' && '["windows-latest"]' || inputs.platform == 'macos' && '["macos-latest"]' || inputs.platform == 'linux' && '["ubuntu-24.04"]' || '["macos-latest", "windows-latest", "ubuntu-24.04"]') }}
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
         with:
           submodules: recursive
       - uses: dtolnay/rust-toolchain@stable
-      - uses: Swatinem/rust-cache@v2.9.1
       - uses: ilammy/setup-nasm@v1
       - name: Linux system dependencies
         if: runner.os == 'Linux'
@@ -72,21 +98,31 @@ jobs:
         shell: pwsh
         run: '"OXY_FFMPEG_BASH=${{ steps.msys2.outputs.msys2-location }}\usr\bin\bash.exe" >> $env:GITHUB_ENV'
       - name: Restore FFmpeg build cache
-        uses: actions/cache@v4
+        id: ffmpeg-cache
+        uses: actions/cache/restore@v4
         with:
           path: |
             target/ffmpeg
             apps/desktop/src-tauri/binaries
-          key: ffmpeg-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('3rdpart/ffmpeg/**') }}
+          key: ffmpeg-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('3rdpart/ffmpeg/source.json', '3rdpart/ffmpeg/build.sh', '3rdpart/ffmpeg/prepare.mjs') }}
+      - name: Identify Windows native toolchain
+        id: native-toolchain
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $vcpkgCommit = git -C "$env:VCPKG_INSTALLATION_ROOT" rev-parse HEAD
+          if ($LASTEXITCODE -ne 0) { throw 'Cannot identify vcpkg revision' }
+          "revision=$vcpkgCommit" >> $env:GITHUB_OUTPUT
+          "image=$env:ImageVersion" >> $env:GITHUB_OUTPUT
       - name: Restore Windows dependency cache
         id: vcpkg-cache
         if: runner.os == 'Windows'
         uses: actions/cache/restore@v5
         with:
           path: vcpkg-binary-cache
-          key: vcpkg-${{ runner.os }}-${{ runner.arch }}-libheif-1.23.3-core-x64-windows-static-md-v2
-          restore-keys: |
-            vcpkg-${{ runner.os }}-${{ runner.arch }}-libheif-1.23.3-core-x64-windows-static-md-
+          # vcpkg ABI changes with its ports, the compiler, and our overlay.
+          # An exact hit on an obsolete fixed key cannot save rebuilt packages.
+          key: vcpkg-${{ runner.os }}-${{ runner.arch }}-${{ steps.native-toolchain.outputs.image }}-${{ steps.native-toolchain.outputs.revision }}-${{ hashFiles('3rdpart/vcpkg-ports/**') }}-core-static-md
       - name: Windows system dependencies
         if: runner.os == 'Windows'
         shell: pwsh
@@ -95,18 +131,20 @@ jobs:
         run: |
           New-Item -ItemType Directory -Force "$env:VCPKG_DEFAULT_BINARY_CACHE" | Out-Null
           & "$env:VCPKG_INSTALLATION_ROOT\vcpkg.exe" install "libheif[core]:x64-windows-static-md" --overlay-ports="${{ github.workspace }}\3rdpart\vcpkg-ports"
+          if ($LASTEXITCODE -ne 0) { throw "vcpkg install failed: $LASTEXITCODE" }
           "VCPKG_ROOT=$env:VCPKG_INSTALLATION_ROOT" >> $env:GITHUB_ENV
-      - name: Refresh Windows libheif link metadata
-        if: runner.os == 'Windows'
-        # The Rust cache can retain link flags from a different vcpkg feature set.
-        # Re-run discovery against the installed core-only libraries.
-        run: cargo clean -p libheif-sys
       - name: Save Windows dependency cache
         if: runner.os == 'Windows' && steps.vcpkg-cache.outputs.cache-hit != 'true'
         uses: actions/cache/save@v5
         with:
           path: vcpkg-binary-cache
           key: ${{ steps.vcpkg-cache.outputs.cache-primary-key }}
+      - uses: Swatinem/rust-cache@v2.9.1
+        with:
+          # Isolate Windows link metadata by the same native inputs as vcpkg,
+          # avoiding both stale link flags and unconditional cargo clean.
+          key: ${{ runner.os == 'Windows' && format('native-{0}-{1}-{2}-core-static-md', steps.native-toolchain.outputs.image, steps.native-toolchain.outputs.revision, hashFiles('3rdpart/vcpkg-ports/**')) || '' }}
+          cache-on-failure: true
       - uses: pnpm/action-setup@v4
       - uses: actions/setup-node@v4
         with:
@@ -114,7 +152,19 @@ jobs:
           cache: pnpm
       - run: pnpm install --frozen-lockfile
       - name: Cross-platform HIF detail and media regression tests
+        # The lint job already tests the full workspace on this Linux image.
+        if: runner.os != 'Linux'
         run: cargo test -p oxy-media -p oxy-metadata -p oxyviewer
+      - name: Prepare and verify FFmpeg
+        run: pnpm ffmpeg:prepare
+      - name: Save FFmpeg build cache
+        if: steps.ffmpeg-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: |
+            target/ffmpeg
+            apps/desktop/src-tauri/binaries
+          key: ${{ steps.ffmpeg-cache.outputs.cache-primary-key }}
       - name: Build Tauri app
         if: runner.os == 'Linux'
         working-directory: apps/desktop
@@ -154,22 +204,26 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: OxyViewer-macOS-${{ runner.arch }}-App
+          retention-days: ${{ startsWith(github.ref, 'refs/tags/release-') && 30 || 7 }}
           path: target/release/bundle/macos/*.app
       - name: Upload Windows MSI
         if: runner.os == 'Windows'
         uses: actions/upload-artifact@v4
         with:
           name: OxyViewer-Windows-${{ runner.arch }}-MSI
+          retention-days: ${{ startsWith(github.ref, 'refs/tags/release-') && 30 || 7 }}
           path: target/release/bundle/msi/*.msi
       - name: Upload Linux DEB
         if: runner.os == 'Linux'
         uses: actions/upload-artifact@v4
         with:
           name: OxyViewer-Linux-${{ runner.arch }}-DEB
+          retention-days: ${{ startsWith(github.ref, 'refs/tags/release-') && 30 || 7 }}
           path: target/release/bundle/deb/*.deb
       - name: Upload Linux AppImage
         if: runner.os == 'Linux'
         uses: actions/upload-artifact@v4
         with:
           name: OxyViewer-Linux-${{ runner.arch }}-AppImage
+          retention-days: ${{ startsWith(github.ref, 'refs/tags/release-') && 30 || 7 }}
           path: target/release/bundle/appimage/*.AppImage
