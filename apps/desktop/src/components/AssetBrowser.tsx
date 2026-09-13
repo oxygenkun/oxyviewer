@@ -1,7 +1,6 @@
 import { useVirtualizer } from "@tanstack/react-virtual";
-import { Copy, FileImage, FolderOpen, Trash2 } from "lucide-react";
+import { FileImage } from "lucide-react";
 import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
-import { createPortal } from "react-dom";
 import {
   activeAssetIndex,
   gridRowCount,
@@ -10,7 +9,8 @@ import {
 } from "../lib/assetViewPosition";
 import { requestMetadata } from "../lib/api";
 import type { MessageKey } from "../lib/i18n";
-import { platformFileManager } from "../lib/folderPaths";
+import { useExternalAppSettings } from "../lib/externalApps";
+import { AssetContextMenu, type AssetMenuTarget } from "./AssetContextMenu";
 import { acceptMetadataProjections } from "../lib/metadataProjection";
 import {
   backgroundPreviewIntents,
@@ -34,6 +34,7 @@ interface AssetBrowserProps {
   onTrashAsset: (asset: AssetSummary) => void;
   onCopyAssetPath: (asset: AssetSummary, relative: boolean) => void;
   onOpenInFileManager: (path: string) => void;
+  onOpenExternal: (path: string, appId?: string) => void;
   deletionMode: FileDeletionMode;
   view: ViewMode;
   t: (key: MessageKey) => string;
@@ -50,13 +51,6 @@ interface AssetCardProps {
   onOpen: (id: string) => void;
   showMetadata: boolean;
 }
-
-const FILE_MANAGER_LABEL = {
-  finder: "openInFinder",
-  windowsExplorer: "openInWindowsExplorer",
-  generic: "openInFileManager",
-} as const satisfies Record<ReturnType<typeof platformFileManager>, MessageKey>;
-
 
 const AssetCard = memo(function AssetCard({
   asset,
@@ -97,41 +91,20 @@ const AssetCard = memo(function AssetCard({
 });
 
 export function AssetBrowser(props: AssetBrowserProps) {
-  const [contextMenu, setContextMenu] = useState<{
-    asset: AssetSummary;
-    x: number;
-    y: number;
-  }>();
+  const [contextMenu, setContextMenu] = useState<AssetMenuTarget>();
+  const externalApps = useExternalAppSettings();
+  const openSettings = useWorkspaceStore((state) => state.openSettings);
+  const dismissContextMenu = useCallback(() => setContextMenu(undefined), []);
   const [pendingTrash, setPendingTrash] = useState<AssetSummary>();
   const showContextMenu = useCallback((event: React.MouseEvent, asset: AssetSummary) => {
     event.preventDefault();
     event.stopPropagation();
     setContextMenu({
       asset,
-      x: Math.max(8, Math.min(event.clientX, window.innerWidth - 224)),
-      y: Math.max(8, Math.min(event.clientY, window.innerHeight - 132)),
+      x: event.clientX,
+      y: event.clientY,
     });
   }, []);
-
-  useEffect(() => {
-    if (!contextMenu) return;
-    const dismiss = () => setContextMenu(undefined);
-    const dismissOnEscape = (event: KeyboardEvent) => {
-      if (event.key === "Escape") dismiss();
-    };
-    window.addEventListener("pointerdown", dismiss);
-    window.addEventListener("blur", dismiss);
-    window.addEventListener("resize", dismiss);
-    window.addEventListener("keydown", dismissOnEscape);
-    document.addEventListener("scroll", dismiss, true);
-    return () => {
-      window.removeEventListener("pointerdown", dismiss);
-      window.removeEventListener("blur", dismiss);
-      window.removeEventListener("resize", dismiss);
-      window.removeEventListener("keydown", dismissOnEscape);
-      document.removeEventListener("scroll", dismiss, true);
-    };
-  }, [contextMenu]);
 
   let content;
   if (props.assets.length === 0) {
@@ -164,65 +137,20 @@ export function AssetBrowser(props: AssetBrowserProps) {
   return (
     <>
       {content}
-      {contextMenu ? createPortal(
-        <div
-          className="asset-context-menu"
-          role="menu"
-          aria-label={contextMenu.asset.name}
-          style={{ left: contextMenu.x, top: contextMenu.y }}
-          onContextMenu={(event) => event.preventDefault()}
-          onPointerDown={(event) => event.stopPropagation()}
-        >
-          <button
-            autoFocus
-            role="menuitem"
-            onClick={() => {
-              const { asset } = contextMenu;
-              setContextMenu(undefined);
-              props.onCopyAssetPath(asset, true);
-            }}
-          >
-            <Copy size={13} />
-            {props.t("copyRelativePath")}
-          </button>
-          <button
-            role="menuitem"
-            onClick={() => {
-              const { asset } = contextMenu;
-              setContextMenu(undefined);
-              props.onCopyAssetPath(asset, false);
-            }}
-          >
-            <Copy size={13} />
-            {props.t("copyAbsolutePath")}
-          </button>
-          <button
-            role="menuitem"
-            onClick={() => {
-              const { asset } = contextMenu;
-              setContextMenu(undefined);
-              props.onOpenInFileManager(asset.path);
-            }}
-          >
-            <FolderOpen size={13} />
-            {props.t(FILE_MANAGER_LABEL[platformFileManager()])}
-          </button>
-          <div className="asset-context-menu__separator" />
-          <button
-            className="asset-context-menu__danger"
-            role="menuitem"
-            onClick={() => {
-              const { asset } = contextMenu;
-              setContextMenu(undefined);
-              setPendingTrash(asset);
-            }}
-          >
-            <Trash2 size={13} />
-            {props.t(props.deletionMode === "permanent" ? "deletePermanently" : "delete")}
-          </button>
-        </div>,
-        document.body,
-      ) : null}
+      {contextMenu ? <AssetContextMenu
+        key={`${contextMenu.asset.id}:${contextMenu.x}:${contextMenu.y}`}
+        target={contextMenu}
+        settings={externalApps.data}
+        settingsError={externalApps.isError}
+        deletionMode={props.deletionMode}
+        t={props.t}
+        onDismiss={dismissContextMenu}
+        onOpen={props.onOpenExternal}
+        onSettings={() => openSettings("externalApps")}
+        onCopy={props.onCopyAssetPath}
+        onReveal={props.onOpenInFileManager}
+        onTrash={setPendingTrash}
+      /> : null}
       {pendingTrash ? (
         <ConfirmTrashDialog
           deletionMode={props.deletionMode}

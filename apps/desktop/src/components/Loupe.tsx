@@ -422,6 +422,7 @@ export function Loupe({
         ) : null}
         <div
           className="loupe__image"
+          onContextMenu={(event) => onAssetContextMenu(event, active)}
           ref={imageRef}
           style={{
             width: fittedImageSize.width || undefined,

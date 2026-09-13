@@ -3,6 +3,8 @@ use std::path::{Path, PathBuf};
 
 mod raw;
 pub use raw::*;
+mod external_apps;
+pub use external_apps::*;
 
 pub type AssetId = String;
 pub type JobId = String;

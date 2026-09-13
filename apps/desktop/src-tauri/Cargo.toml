@@ -16,6 +16,7 @@ crate-type = ["staticlib", "cdylib", "rlib"]
 tauri-build = { version = "2", features = [] }
 
 [dependencies]
+tempfile.workspace = true
 oxy-domain = { path = "../../../crates/oxy-domain" }
 oxy-fs = { path = "../../../crates/oxy-fs" }
 oxy-library = { path = "../../../crates/oxy-library" }
@@ -35,6 +36,3 @@ ureq = { version = "3.4", default-features = false, features = ["native-tls"] }
 [target.'cfg(windows)'.dependencies]
 windows = { workspace = true, features = ["Win32_UI_Shell", "Win32_UI_WindowsAndMessaging"] }
 zip = { version = "2.4", default-features = false, features = ["deflate"] }
-
-[dev-dependencies]
-tempfile.workspace = true

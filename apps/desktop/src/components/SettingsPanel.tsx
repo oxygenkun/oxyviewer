@@ -21,6 +21,7 @@ import type { Locale, MessageKey } from "../lib/i18n";
 import { UI_FONT_SCALES } from "../lib/workspacePersistence";
 import { useWorkspaceStore } from "../store";
 import { RawDecoderPanel } from "./RawDecoderPanel";
+import { ExternalAppsSettings } from "./ExternalAppsSettings";
 import type { AssetSummary } from "../types";
 
 interface SettingsPanelProps {
@@ -49,6 +50,7 @@ export function SettingsPanel({ t, activeAsset }: SettingsPanelProps) {
     setLoupeMetadataVisible,
     setUiFontScale,
     toggleSettings,
+    settingsSection,
   } = useWorkspaceStore();
   const capabilities = useQuery({
     queryKey: ["heif-capabilities"],
@@ -192,6 +194,8 @@ export function SettingsPanel({ t, activeAsset }: SettingsPanelProps) {
           </div>
           {cacheError ? <p className="settings-panel__error">{String(cacheError)}</p> : null}
         </div>
+
+        <ExternalAppsSettings t={t} focus={settingsSection === "externalApps"} />
 
         <div className="settings-panel__section">
           <RawDecoderPanel t={t} asset={activeAsset?.kind === "raw" ? activeAsset : undefined} />

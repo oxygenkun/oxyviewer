@@ -339,3 +339,19 @@
   font: 0.5rem ui-monospace, monospace;
 }
 .settings-panel__diagnostics small { color: #dcddd7; }
+.external-apps-settings {
+  scroll-margin-top: 16px;
+  & .settings-panel__section-heading { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+  & button { padding: 5px 8px; border-radius: 4px; background: var(--surface-hover); color: var(--text); font-size: 0.6875rem; }
+  & button:disabled { opacity: 0.4; cursor: default; }
+  & button:focus-visible, & input:focus-visible { outline: 1px solid var(--text); outline-offset: 2px; }
+}
+.external-apps-settings__hint { margin: 6px 0 12px; font-size: 0.6875rem; color: var(--muted); line-height: 1.5; }
+.external-apps-settings__row { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; padding: 10px 0; border-top: 1px solid var(--line-strong); }
+.external-apps-settings__row > label { display: flex; align-items: center; gap: 8px; flex: 1; min-width: 100px; font-size: 0.75rem; overflow-wrap: anywhere; }
+.external-apps-settings__row input[type="radio"] { width: auto; margin: 0; }
+.external-apps-settings__actions { display: flex; flex-wrap: wrap; gap: 4px; }
+.external-apps-settings__path { flex-basis: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--muted); font-size: 0.625rem; }
+.external-apps-settings__editor { display: grid; gap: 10px; min-width: 0; margin-top: 10px; padding: 12px; border: 1px solid var(--line-strong); border-radius: 5px; }
+.external-apps-settings__editor label { display: grid; gap: 5px; font-size: 0.6875rem; }
+.external-apps-settings__editor input { min-width: 0; width: 100%; padding: 6px 8px; border: 1px solid var(--line-strong); border-radius: 4px; color: var(--text); background: #20262a; }

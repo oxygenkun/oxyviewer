@@ -494,3 +494,15 @@ export interface ResourceRegistryStats {
   materializedResponses: number;
   materializedBytes: number;
 }
+export interface ExternalApplication {
+  id: string;
+  name: string;
+  executablePath: string;
+}
+
+export interface ExternalAppSettings {
+  apps: ExternalApplication[];
+  defaultAppId: string | null;
+}
+
+export type ExternalOpenResult = "launched" | "cancelled";

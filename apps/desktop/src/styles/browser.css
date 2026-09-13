@@ -247,6 +247,15 @@
   }
 }
 .asset-context-menu__separator { height: 1px; margin: 3px 5px; background: var(--line-strong); }
+.asset-context-menu--external {
+  width: max-content;
+  min-width: min(216px, calc(100vw - 16px));
+  max-width: min(360px, calc(100vw - 16px));
+  max-height: calc(100vh - 16px);
+  overflow-y: auto;
+  & button > svg { flex-shrink: 0; }
+  & button > span { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+}
 .trash-confirm-overlay {
   position: fixed;
   z-index: 200;

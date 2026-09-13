@@ -182,6 +182,7 @@ pub fn run() {
             )?);
             cache.schedule_prune(None);
             let library = Arc::new(Library::open(&data_dir.join("oxyviewer.sqlite"))?);
+            let external_apps = Arc::new(state::external_apps::ExternalAppManager::load(data_dir.join("external-apps.json")));
             let metadata_provider = Arc::new(ProviderManager::load(data_dir));
             let files = Arc::new(FsCatalog::default());
             let directory_tree_queue =
@@ -200,6 +201,7 @@ pub fn run() {
             );
             let library_index_queue = jobs::LibraryIndexQueue::new(library.clone());
             app.manage(AppState {
+                external_apps,
                 files,
                 jobs: JobRegistry::default(),
                 library,
@@ -220,6 +222,10 @@ pub fn run() {
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
+            get_external_app_settings,
+            update_external_app_settings,
+            open_asset_with_application,
+            open_asset_with_system_dialog,
             get_raw_decoder_status,
             retry_raw_full,
             open_raw_decoder_install_page,

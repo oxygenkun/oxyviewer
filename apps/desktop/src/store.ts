@@ -30,6 +30,8 @@ interface WorkspaceState {
   inspectorOpen: boolean;
   leftPanelOpen: boolean;
   settingsOpen: boolean;
+  settingsSection: "general" | "externalApps";
+  openSettings: (section?: "general" | "externalApps") => void;
   locale: Locale;
   navigatorVisible: boolean;
   navigatorPosition: NavigatorPosition;
@@ -82,6 +84,8 @@ export const useWorkspaceStore = create<WorkspaceState>((set) => ({
   inspectorOpen: true,
   leftPanelOpen: true,
   settingsOpen: false,
+  settingsSection: "general",
+  openSettings: (settingsSection = "general") => set({ settingsOpen: true, settingsSection }),
   locale: "zh-CN",
   navigatorVisible: true,
   navigatorPosition: "bottom-right",
@@ -111,7 +115,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set) => ({
   clearSelection: () => set({ selectedIds: [], activeId: undefined }),
   toggleInspector: () => set((state) => ({ inspectorOpen: !state.inspectorOpen })),
   toggleLeftPanel: () => set((state) => ({ leftPanelOpen: !state.leftPanelOpen })),
-  toggleSettings: () => set((state) => ({ settingsOpen: !state.settingsOpen })),
+  toggleSettings: () => set((state) => ({ settingsOpen: !state.settingsOpen, settingsSection: "general" })),
   setLocale: (locale) => set({ locale }),
   setNavigatorVisible: (navigatorVisible) => set({ navigatorVisible }),
   setNavigatorPosition: (navigatorPosition) => set({ navigatorPosition }),

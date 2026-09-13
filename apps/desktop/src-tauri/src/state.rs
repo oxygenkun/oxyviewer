@@ -1,4 +1,5 @@
 pub(crate) mod cache;
+pub(crate) mod external_apps;
 
 use crate::{jobs, providers};
 use oxy_fs::FsCatalog;
@@ -7,6 +8,7 @@ use oxy_runtime::JobRegistry;
 use std::sync::Arc;
 
 pub(crate) struct AppState {
+    pub(crate) external_apps: Arc<external_apps::ExternalAppManager>,
     pub(crate) files: Arc<FsCatalog>,
     pub(crate) jobs: JobRegistry,
     pub(crate) library: Arc<Library>,

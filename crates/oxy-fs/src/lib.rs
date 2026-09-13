@@ -21,6 +21,7 @@ use thiserror::Error;
 
 #[cfg(target_os = "macos")]
 mod bulk_attributes;
+pub mod external_apps;
 mod identity;
 
 pub use identity::{FileObservation, observe_file};

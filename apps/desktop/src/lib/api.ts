@@ -4,6 +4,8 @@ import { invoke } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { open } from "@tauri-apps/plugin-dialog";
 import type {
+  ExternalAppSettings,
+  ExternalOpenResult,
   RawDecoderStatus,
   AssetDetails,
   AssetDetailsResult,
@@ -396,6 +398,35 @@ export async function copyText(text: string): Promise<void> {
 export async function openInFileManager(path: string): Promise<void> {
   if (!isTauri()) return;
   await invoke("open_in_file_manager", { path });
+}
+
+export async function getExternalAppSettings(): Promise<ExternalAppSettings> {
+  if (isTauri()) return invoke("get_external_app_settings");
+  const saved = localStorage.getItem("oxyviewer.demo.externalApps");
+  return saved ? JSON.parse(saved) : { apps: [], defaultAppId: null };
+}
+
+export async function updateExternalAppSettings(settings: ExternalAppSettings): Promise<ExternalAppSettings> {
+  if (isTauri()) return invoke("update_external_app_settings", { settings });
+  localStorage.setItem("oxyviewer.demo.externalApps", JSON.stringify(settings));
+  return settings;
+}
+
+export async function chooseExternalApplication(): Promise<string | null> {
+  if (!isTauri()) return null;
+  const selected = await open({ multiple: false, directory: false, filters: navigator.userAgent.includes("Windows")
+    ? [{ name: "Application", extensions: ["exe"] }] : undefined });
+  return typeof selected === "string" ? selected : null;
+}
+
+export async function openAssetWithApplication(path: string, appId: string): Promise<ExternalOpenResult> {
+  if (!isTauri()) throw new Error("Opening external applications requires the desktop app");
+  return invoke("open_asset_with_application", { path, appId });
+}
+
+export async function openAssetWithSystemDialog(path: string): Promise<ExternalOpenResult> {
+  if (!isTauri()) throw new Error("Opening external applications requires the desktop app");
+  return invoke("open_asset_with_system_dialog", { path });
 }
 
 export async function getAssetDetails(asset: AssetSummary): Promise<AssetDetails> {

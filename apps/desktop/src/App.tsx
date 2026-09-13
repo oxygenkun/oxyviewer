@@ -18,6 +18,8 @@ import {
   listLibraryRoots,
   openFolder,
   openInFileManager,
+  openAssetWithApplication,
+  openAssetWithSystemDialog,
   onDirectoryTreeUpdated,
   onDirectoryBrowseProgress,
   onLibraryDirectoryIndexUpdated,
@@ -660,6 +662,15 @@ export function App({ perfScenario }: { perfScenario?: PerfScenario }) {
     }
   }, []);
 
+  const handleOpenExternal = useCallback(async (path: string, appId?: string) => {
+    setError(undefined);
+    try {
+      if (!isTauri()) throw new Error(t("externalDesktopOnly"));
+      if (appId) await openAssetWithApplication(path, appId);
+      else await openAssetWithSystemDialog(path);
+    } catch (cause) { setError(String(cause)); }
+  }, [t]);
+
   const handleOpenInFileManager = useCallback(async (path: string) => {
     setError(undefined);
     try {
@@ -746,6 +757,7 @@ export function App({ perfScenario }: { perfScenario?: PerfScenario }) {
             fetchNextPage={fetchNextAssetsPage}
             onTrashAsset={(asset) => void handleTrashAsset(asset)}
             onCopyAssetPath={(asset, relative) => void handleCopyPath(activeSession.rootPath, asset.path, relative)}
+            onOpenExternal={handleOpenExternal}
             onOpenInFileManager={(path) => void handleOpenInFileManager(path)}
             t={t}
           />
