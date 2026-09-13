@@ -199,11 +199,12 @@ the matching GitHub Release and attaches the macOS DMG, multilingual Windows
 NSIS EXE, Windows portable ZIP, Linux DEB, Linux AppImage, and the corresponding
 FFmpeg source archive.
 The NSIS installer follows the operating-system language for English and
-Simplified Chinese. Published filenames include the target platform. Re-running
-a completed release replaces assets with the newly verified packages, removes
-obsolete installer names, and refreshes the release description from the
-matching version section in `CHANGELOG.md`. A missing or empty section fails the
-release instead of publishing incomplete notes.
+Simplified Chinese. Published filenames include the target platform; the Windows
+installer is named `OxyViewer_<version>_Windows_x64.exe` without the bundler's
+`-setup` suffix. Re-running a completed release replaces assets with the newly
+verified packages, removes obsolete installer names, and refreshes the release
+description from the matching version section in `CHANGELOG.md`. A missing or
+empty section fails the release instead of publishing incomplete notes.
 
 The `build` tag no longer triggers CI. For a Windows test package, use
 **Actions → CI → Run workflow** and select the ref to build. Manual runs build

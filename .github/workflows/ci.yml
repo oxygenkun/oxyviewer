@@ -308,6 +308,12 @@ jobs:
               exit 1
             fi
             printf '%s\n' "$old_name" >> release-assets/.legacy-installer-names
+            if [ "$platform" = Windows ]; then
+              case "$suffix" in
+                *-setup.exe) suffix="${suffix%-setup.exe}.exe" ;;
+                *) echo "Unexpected NSIS installer name: $old_name" >&2; exit 1 ;;
+              esac
+            fi
             mv "$source" "release-assets/OxyViewer_${version}_${platform}_${suffix}"
           }
 
@@ -342,7 +348,7 @@ jobs:
             done < release-assets/.legacy-installer-names
             while IFS= read -r obsolete_asset; do
               case "$obsolete_asset" in
-                *.msi)
+                *.msi|*-setup.exe)
                   gh release delete-asset "$GITHUB_REF_NAME" "$obsolete_asset" \
                     --yes \
                     --repo "$GITHUB_REPOSITORY"
