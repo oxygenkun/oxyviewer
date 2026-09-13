@@ -200,8 +200,10 @@ NSIS EXE, Windows portable ZIP, Linux DEB, Linux AppImage, and the corresponding
 FFmpeg source archive.
 The NSIS installer follows the operating-system language for English and
 Simplified Chinese. Published filenames include the target platform. Re-running
-a completed release replaces assets with the newly verified packages and removes
-obsolete installer names.
+a completed release replaces assets with the newly verified packages, removes
+obsolete installer names, and refreshes the release description from the
+matching version section in `CHANGELOG.md`. A missing or empty section fails the
+release instead of publishing incomplete notes.
 
 The `build` tag no longer triggers CI. For a Windows test package, use
 **Actions → CI → Run workflow** and select the ref to build. Manual runs build

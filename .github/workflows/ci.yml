@@ -265,6 +265,10 @@ jobs:
     permissions:
       contents: write
     steps:
+      - name: Check out release metadata
+        uses: actions/checkout@v4
+      - name: Build release notes from changelog
+        run: node scripts/extract-release-notes.mjs "$GITHUB_REF_NAME" > release-notes.md
       - name: Download installers
         uses: actions/download-artifact@v4
         with:
@@ -319,6 +323,10 @@ jobs:
           shopt -s nullglob
           assets=(release-assets/*.dmg release-assets/*.exe release-assets/*.zip release-assets/*.deb release-assets/*.AppImage release-assets/*.tar.xz)
           if gh release view "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            gh release edit "$GITHUB_REF_NAME" \
+              --title "OxyViewer $GITHUB_REF_NAME" \
+              --notes-file release-notes.md \
+              --repo "$GITHUB_REPOSITORY"
             gh release upload "$GITHUB_REF_NAME" "${assets[@]}" \
               --clobber \
               --repo "$GITHUB_REPOSITORY"
@@ -347,7 +355,7 @@ jobs:
           else
             gh release create "$GITHUB_REF_NAME" "${assets[@]}" \
               --verify-tag \
-              --generate-notes \
+              --notes-file release-notes.md \
               --title "OxyViewer $GITHUB_REF_NAME" \
               --repo "$GITHUB_REPOSITORY"
           fi
