@@ -10,11 +10,13 @@ runtime lookup and installer verification.
 
 ## Rebuilding the distributed standalone programs
 
-The installed `licenses/ffmpeg` directory includes the unmodified source archive,
-this recipe and the effective configuration. To rebuild outside the OxyViewer
-repository, copy that directory to a writable location and install the native
-compiler, GNU Make, Bash and tar (plus NASM on x86_64). For Windows use MSYS2
-UCRT64 with its GCC toolchain. Extract the archive and run:
+The installed `licenses/ffmpeg` directory includes this recipe, the pinned
+source manifest and the effective configuration. Download the corresponding
+`OxyViewer_<version>_FFmpeg_8.0.1_source.tar.xz` asset from the GitHub Release
+matching the installed OxyViewer version. Its SHA-256 must match `source.json`.
+Copy it into this directory, then install the native compiler, GNU Make, Bash
+and tar (plus NASM on x86_64). For Windows use MSYS2 UCRT64 with its GCC
+toolchain. Extract the archive and run:
 
 ```sh
 tar -xf ffmpeg-8.0.1.tar.xz

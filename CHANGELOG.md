@@ -19,5 +19,6 @@ All notable changes to OxyViewer are documented in this file.
   actions.
 - Rebuildable media and library caches with configurable storage controls and
   queue diagnostics.
-- macOS and Linux installers plus Windows MSI, bilingual NSIS EXE, and portable
-  ZIP packages with bundled, pinned FFmpeg tools.
+- macOS and Linux installers plus bilingual Windows NSIS EXE and portable ZIP
+  packages with bundled, pinned FFmpeg tools; corresponding FFmpeg source is
+  published as a separate release asset.

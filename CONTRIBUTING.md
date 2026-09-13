@@ -195,8 +195,9 @@ the tag is exactly `v<version>`.
 
 Push a semantic version tag such as `v0.1.0` to run the complete release
 pipeline. After all checks and platform builds succeed, CI creates or updates
-the matching GitHub Release and attaches the macOS DMG, Windows MSI, multilingual
-Windows NSIS EXE, Windows portable ZIP, Linux DEB, and Linux AppImage packages.
+the matching GitHub Release and attaches the macOS DMG, multilingual Windows
+NSIS EXE, Windows portable ZIP, Linux DEB, Linux AppImage, and the corresponding
+FFmpeg source archive.
 The NSIS installer follows the operating-system language for English and
 Simplified Chinese. Published filenames include the target platform. Re-running
 a completed release replaces assets with the newly verified packages and removes
@@ -204,9 +205,9 @@ obsolete installer names.
 
 The `build` tag no longer triggers CI. For a Windows test package, use
 **Actions → CI → Run workflow** and select the ref to build. Manual runs build
-only Windows, including native media/desktop tests, MSI packaging, and FFmpeg
-payload verification. They skip the Linux formatting/frontend and Clippy/test
-jobs; these packages have not necessarily passed the release checks. The
+only Windows, including native media/desktop tests, NSIS/portable packaging,
+and FFmpeg payload verification. They skip the Linux formatting/frontend and
+Clippy/test jobs; these packages have not necessarily passed the release checks. The
 workflow must first exist on the default branch to expose manual dispatch.
 
 Pushing a `v<major>.<minor>.<patch>` tag runs formatting and frontend checks on

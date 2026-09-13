@@ -12,8 +12,8 @@ Use the repository wrapper, from the repository root:
 pnpm tauri build
 # macOS DMG installer:
 pnpm tauri build --bundles app,dmg
-# Windows MSI and multilingual NSIS EXE:
-pnpm tauri build --bundles msi,nsis
+# Windows multilingual NSIS EXE:
+pnpm tauri build --bundles nsis
 ```
 
 `apps/desktop/scripts/tauri.mjs` prepares FFmpeg before `build`/`bundle` and
@@ -78,12 +78,16 @@ in the build recipe and verification.
 
 Every package includes `licenses/ffmpeg` under its Tauri resources directory:
 
-- The exact source archive, LGPL text and upstream license description.
+- The LGPL text and upstream license description.
 - The source manifest and build scripts.
 - Generated `config.h`, configure summary and version/build information.
 
-Keep these materials in redistributed installers. The included source and
-recipe allow rebuilding the standalone FFmpeg programs. Update
+The exact source archive is intentionally excluded from application and portable
+installations because it is not needed at runtime. CI instead attaches one
+checksum-verified `OxyViewer_<version>_FFmpeg_8.0.1_source.tar.xz` asset to the
+matching GitHub Release. Keep the installed materials and the separate source
+asset available when redistributing releases; together they allow rebuilding
+the standalone FFmpeg programs. Update
 `THIRD_PARTY_NOTICES.md` alongside version/configuration changes. No GPL or
 nonfree third-party codec library is enabled by this recipe.
 
@@ -106,11 +110,12 @@ beside the built application.
 
 Preparation checks both versions, license flags, required capabilities and
 executes the composition/rotation/sharpening/scale pipeline to JPEG and BMP
-with PATH cleared. CI extracts MSI, portable ZIP, DEB and AppImage packages and
+with PATH cleared. CI extracts portable ZIP, DEB and AppImage packages and
 checks the macOS app inside the DMG build output directly, verifying the
-installed pair and bundled source/license payload before publishing the
-installers. The Windows portable ZIP contains the application, both FFmpeg
-programs, and the same license/source materials as the installers; CI expands
+installed pair and license/build payload before publishing the installers.
+It separately verifies the corresponding FFmpeg source archive before upload.
+The Windows portable ZIP contains the application, both FFmpeg programs, and
+the same license/build materials as the installers; CI expands
 the finished ZIP and verifies that extracted layout before upload:
 
 Extract the portable ZIP as a directory and launch `OxyViewer.exe` in place.

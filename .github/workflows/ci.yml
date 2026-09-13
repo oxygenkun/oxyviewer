@@ -176,22 +176,13 @@ jobs:
         if: runner.os == 'macOS'
         working-directory: apps/desktop
         run: pnpm tauri build --bundles app,dmg
-      - name: Build Tauri app (MSI and multilingual NSIS EXE)
+      - name: Build Tauri app (multilingual NSIS EXE)
         if: runner.os == 'Windows'
         working-directory: apps/desktop
-        run: pnpm tauri build --bundles msi,nsis
+        run: pnpm tauri build --bundles nsis
       - name: Verify macOS app FFmpeg payload
         if: runner.os == 'macOS'
         run: node 3rdpart/ffmpeg/prepare.mjs --verify-bundle target/release/bundle/macos/OxyViewer.app
-      - name: Verify Windows MSI FFmpeg payload
-        if: runner.os == 'Windows'
-        shell: pwsh
-        run: |
-          $installer = (Get-ChildItem target/release/bundle/msi/*.msi | Select-Object -First 1).FullName
-          $destination = Join-Path $env:RUNNER_TEMP 'oxy-msi-extracted'
-          $process = Start-Process msiexec.exe -ArgumentList @('/a', "`"$installer`"", '/qn', "TARGETDIR=`"$destination`"") -Wait -PassThru
-          if ($process.ExitCode -ne 0) { throw "MSI extraction failed: $($process.ExitCode)" }
-          node 3rdpart/ffmpeg/prepare.mjs --verify-bundle "$destination"
       - name: Build and verify Windows portable ZIP
         if: runner.os == 'Windows'
         shell: pwsh
@@ -213,13 +204,6 @@ jobs:
           name: OxyViewer-macOS-${{ runner.arch }}-DMG
           retention-days: ${{ github.event_name == 'push' && 30 || 7 }}
           path: target/release/bundle/dmg/*.dmg
-      - name: Upload Windows MSI
-        if: runner.os == 'Windows'
-        uses: actions/upload-artifact@v4
-        with:
-          name: OxyViewer-Windows-${{ runner.arch }}-MSI
-          retention-days: ${{ github.event_name == 'push' && 30 || 7 }}
-          path: target/release/bundle/msi/*.msi
       - name: Upload Windows multilingual NSIS EXE
         if: runner.os == 'Windows'
         uses: actions/upload-artifact@v4
@@ -248,6 +232,29 @@ jobs:
           name: OxyViewer-Linux-${{ runner.arch }}-AppImage
           retention-days: ${{ github.event_name == 'push' && 30 || 7 }}
           path: target/release/bundle/appimage/*.AppImage
+      - name: Stage corresponding FFmpeg source
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          shopt -s nullglob
+          app_version=$(node -p "require('./package.json').version")
+          ffmpeg_version=$(node -p "require('./3rdpart/ffmpeg/source.json').version")
+          source_archives=(target/ffmpeg/*/"ffmpeg-${ffmpeg_version}.tar.xz")
+          if [ "${#source_archives[@]}" -ne 1 ]; then
+            echo "Expected one FFmpeg source archive, found ${#source_archives[@]}" >&2
+            exit 1
+          fi
+          mkdir -p target/release/bundle/source
+          release_source="target/release/bundle/source/OxyViewer_${app_version}_FFmpeg_${ffmpeg_version}_source.tar.xz"
+          cp "${source_archives[0]}" "$release_source"
+          node 3rdpart/ffmpeg/prepare.mjs --verify-source "$release_source"
+      - name: Upload corresponding FFmpeg source
+        if: runner.os == 'Linux'
+        uses: actions/upload-artifact@v4
+        with:
+          name: OxyViewer-FFmpeg-Source
+          retention-days: ${{ github.event_name == 'push' && 30 || 7 }}
+          path: target/release/bundle/source/*.tar.xz
 
   release:
     name: Publish GitHub Release
@@ -268,13 +275,18 @@ jobs:
         shell: bash
         run: |
           shopt -s nullglob
-          for extension in dmg msi exe zip deb AppImage; do
+          for extension in dmg exe zip deb AppImage; do
             installers=(release-assets/*."$extension")
             if [ "${#installers[@]}" -ne 1 ]; then
               echo "Expected one .$extension installer, found ${#installers[@]}" >&2
               exit 1
             fi
           done
+          sources=(release-assets/*.tar.xz)
+          if [ "${#sources[@]}" -ne 1 ]; then
+            echo "Expected one FFmpeg source archive, found ${#sources[@]}" >&2
+            exit 1
+          fi
       - name: Add platform names to installers
         shell: bash
         run: |
@@ -296,7 +308,6 @@ jobs:
           }
 
           rename_installer release-assets/*.dmg macOS
-          rename_installer release-assets/*.msi Windows
           rename_installer release-assets/*.exe Windows
           rename_installer release-assets/*.deb Linux
           rename_installer release-assets/*.AppImage Linux
@@ -306,7 +317,7 @@ jobs:
         shell: bash
         run: |
           shopt -s nullglob
-          assets=(release-assets/*.dmg release-assets/*.msi release-assets/*.exe release-assets/*.zip release-assets/*.deb release-assets/*.AppImage)
+          assets=(release-assets/*.dmg release-assets/*.exe release-assets/*.zip release-assets/*.deb release-assets/*.AppImage release-assets/*.tar.xz)
           if gh release view "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
             gh release upload "$GITHUB_REF_NAME" "${assets[@]}" \
               --clobber \
@@ -321,6 +332,18 @@ jobs:
                   --repo "$GITHUB_REPOSITORY"
               fi
             done < release-assets/.legacy-installer-names
+            while IFS= read -r obsolete_asset; do
+              case "$obsolete_asset" in
+                *.msi)
+                  gh release delete-asset "$GITHUB_REF_NAME" "$obsolete_asset" \
+                    --yes \
+                    --repo "$GITHUB_REPOSITORY"
+                  ;;
+              esac
+            done < <(gh release view "$GITHUB_REF_NAME" \
+              --repo "$GITHUB_REPOSITORY" \
+              --json assets \
+              --jq '.assets[].name')
           else
             gh release create "$GITHUB_REF_NAME" "${assets[@]}" \
               --verify-tag \

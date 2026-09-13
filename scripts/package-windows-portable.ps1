@@ -38,10 +38,15 @@ foreach ($entry in $files.GetEnumerator()) {
 }
 
 $ffmpegResources = Join-Path $repositoryRoot "apps/desktop/src-tauri/resources/ffmpeg"
-if (-not (Test-Path -LiteralPath $ffmpegResources -PathType Container)) {
-  throw "FFmpeg resource directory is missing: $ffmpegResources"
+$ffmpegLicenses = Join-Path $portableRoot "licenses/ffmpeg"
+New-Item -ItemType Directory -Path $ffmpegLicenses -Force | Out-Null
+foreach ($name in @("COPYING.LGPLv2.1", "LICENSE.md", "README.md", "build.sh", "source.json", "prepare.mjs", "config.h", "configure-summary.txt", "build-info.json")) {
+  $source = Join-Path $ffmpegResources $name
+  if (-not (Test-Path -LiteralPath $source -PathType Leaf)) {
+    throw "Required FFmpeg distribution material is missing: $source"
+  }
+  Copy-Item -LiteralPath $source -Destination (Join-Path $ffmpegLicenses $name)
 }
-Copy-Item -LiteralPath $ffmpegResources -Destination (Join-Path $portableRoot "licenses") -Recurse
 
 & node (Join-Path $repositoryRoot "3rdpart/ffmpeg/prepare.mjs") --verify-bundle $portableRoot
 Compress-Archive -LiteralPath $portableRoot -DestinationPath $archivePath -CompressionLevel Optimal

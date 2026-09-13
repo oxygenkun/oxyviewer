@@ -6,7 +6,15 @@
       "../../../LICENSE-AGPL-3.0": "licenses/OxyViewer/LICENSE-AGPL-3.0",
       "../../../LICENSE-COMMERCIAL.md": "licenses/OxyViewer/LICENSE-COMMERCIAL.md",
       "../../../THIRD_PARTY_NOTICES.md": "licenses/OxyViewer/THIRD_PARTY_NOTICES.md",
-      "resources/ffmpeg/": "licenses/ffmpeg/"
+      "resources/ffmpeg/COPYING.LGPLv2.1": "licenses/ffmpeg/COPYING.LGPLv2.1",
+      "resources/ffmpeg/LICENSE.md": "licenses/ffmpeg/LICENSE.md",
+      "resources/ffmpeg/README.md": "licenses/ffmpeg/README.md",
+      "resources/ffmpeg/build.sh": "licenses/ffmpeg/build.sh",
+      "resources/ffmpeg/source.json": "licenses/ffmpeg/source.json",
+      "resources/ffmpeg/prepare.mjs": "licenses/ffmpeg/prepare.mjs",
+      "resources/ffmpeg/config.h": "licenses/ffmpeg/config.h",
+      "resources/ffmpeg/configure-summary.txt": "licenses/ffmpeg/configure-summary.txt",
+      "resources/ffmpeg/build-info.json": "licenses/ffmpeg/build-info.json"
     }
   }
 }

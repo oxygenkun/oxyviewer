@@ -75,11 +75,24 @@ function verifyBundle(directory) {
   if (programs.length !== 1) throw new Error(`Expected exactly one bundled FFmpeg in ${directory}, found ${programs.length}`);
   verifyPair(programs[0], join(dirname(programs[0]), `oxy-ffprobe${extension}`));
   const archives = files.filter((path) => path.endsWith(`ffmpeg-${source.version}.tar.xz`));
-  if (archives.length !== 1 || sha(readFileSync(archives[0])) !== source.sha256) throw new Error("Bundled corresponding FFmpeg source missing or corrupt");
-  for (const name of ["COPYING.LGPLv2.1", "LICENSE.md", "README.md", "build.sh", "source.json", "prepare.mjs", "config.h", "configure-summary.txt", "build-info.json"]) {
-    if (!existsSync(join(dirname(archives[0]), name))) throw new Error(`Missing bundled FFmpeg notice/build material: ${name}`);
+  if (archives.length !== 0) throw new Error("FFmpeg source archive must be published separately, not bundled in the application");
+  const manifests = files.filter((path) => path.endsWith("/licenses/ffmpeg/source.json") || path.endsWith("\\licenses\\ffmpeg\\source.json"));
+  if (manifests.length !== 1) throw new Error(`Expected one installed FFmpeg source manifest, found ${manifests.length}`);
+  const installedSource = JSON.parse(readFileSync(manifests[0], "utf8"));
+  if (installedSource.version !== source.version || installedSource.sha256 !== source.sha256 || installedSource.url !== source.url) {
+    throw new Error("Installed FFmpeg source manifest does not match the bundled programs");
   }
-  console.log(`Verified installed FFmpeg and source/license materials in ${directory}`);
+  for (const name of ["COPYING.LGPLv2.1", "LICENSE.md", "README.md", "build.sh", "source.json", "prepare.mjs", "config.h", "configure-summary.txt", "build-info.json"]) {
+    if (!existsSync(join(dirname(manifests[0]), name))) throw new Error(`Missing bundled FFmpeg notice/build material: ${name}`);
+  }
+  console.log(`Verified installed FFmpeg and license/build materials in ${directory}`);
+}
+
+function verifySourceArchive(path) {
+  if (!existsSync(path) || sha(readFileSync(path)) !== source.sha256) {
+    throw new Error(`Corresponding FFmpeg source archive missing or corrupt: ${path}`);
+  }
+  console.log(`Verified corresponding FFmpeg source archive: ${path}`);
 }
 
 export function prepare(requestedTarget) {
@@ -133,7 +146,6 @@ export function prepare(requestedTarget) {
   }
   verifyPair(ffmpeg, ffprobe);
   mkdirSync(resources, { recursive: true });
-  copyFileSync(archive, join(resources, archiveName));
   for (const name of ["COPYING.LGPLv2.1", "LICENSE.md"]) copyFileSync(join(sourceDir, name), join(resources, name));
   for (const name of ["README.md", "build.sh", "source.json", "prepare.mjs"]) copyFileSync(join(here, name), join(resources, name));
   copyFileSync(join(buildDir, "config.h"), join(resources, "config.h"));
@@ -148,6 +160,8 @@ if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.ur
   try {
     if (process.argv[2] === "--verify-bundle") {
       verifyBundle(resolve(process.argv[3]));
+    } else if (process.argv[2] === "--verify-source") {
+      verifySourceArchive(resolve(process.argv[3]));
     } else if (process.argv[2] === "--verify-dir") {
       const directory = resolve(process.argv[3]);
       const extension = process.platform === "win32" ? ".exe" : "";
