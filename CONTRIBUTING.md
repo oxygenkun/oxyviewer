@@ -188,22 +188,22 @@ secrets, local paths, and unrelated changes.
 
 ## CI and build costs
 
-Pushing the `build` tag runs formatting, Clippy, workspace Rust tests, and
-frontend checks/tests/builds on Linux. It does not package desktop apps.
-Platform-specific Rust code is verified when its desktop build is selected.
-Formatting and frontend checks must pass before the Rust lint/test job starts.
-Desktop builds wait for both checks. Linux packaging reuses the workspace test
-result; Windows and macOS still run their native media and desktop tests.
+The `build` tag no longer triggers CI. For a Windows test package, use
+**Actions → CI → Run workflow** and select the ref to build. Manual runs build
+only Windows, including native media/desktop tests, MSI packaging, and FFmpeg
+payload verification. They skip the Linux formatting/frontend and Clippy/test
+jobs; these packages have not necessarily passed the release checks. The
+workflow must first exist on the default branch to expose manual dispatch.
 
-For a desktop package, use **Actions → CI → Run workflow**, select the ref to
-build, and choose `windows`, `macos`, `linux`, or `all` in `platform`. The default
-`checks` option only runs checks. The workflow must first exist on the default
-branch for GitHub to expose manual dispatch. Pushing a `release-*` tag runs all
-three desktop builds, including native regression tests and FFmpeg payload
-verification. To retry an unchanged failed build, use **Re-run failed jobs**
-instead of re-running successful platforms.
+Pushing a `release-*` tag runs formatting and frontend checks on Linux, followed
+by Clippy and workspace Rust tests. Only after both jobs succeed do Windows,
+macOS, and Linux package builds start. Linux packaging reuses the workspace
+test result; Windows and macOS run their native media and desktop tests. All
+packages undergo FFmpeg payload verification. To retry an unchanged failed
+build, use **Re-run failed jobs** instead of re-running successful platforms.
 
-New runs cancel superseded runs of the same non-release ref. Checks and builds
+New manual runs cancel superseded manual runs of the same ref, independently
+of release runs. Checks and builds
 have explicit timeouts. Manual build artifacts expire after 7 days; release-tag
 artifacts expire after 30 days. Download packages that need longer retention.
 
