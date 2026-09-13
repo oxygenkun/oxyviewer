@@ -66,5 +66,3 @@ windows = { workspace = true, features = [
 [build-dependencies]
 cc = { version = "1.2", features = ["parallel"] }
 cmake = "0.1"
-flate2 = "1"
-tar = "0.4"

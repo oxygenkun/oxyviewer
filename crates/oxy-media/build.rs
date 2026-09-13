@@ -44,22 +44,14 @@ fn main() {
 }
 
 fn build_libjpeg(manifest_dir: &Path) {
-    let archive = manifest_dir.join("../../3rdpart/libjpeg-turbo/libjpeg-turbo-3.1.3.tar.gz");
+    let source = manifest_dir.join("../../3rdpart/libjpeg-turbo");
     let stitch_wrapper = manifest_dir.join("src/backends/libjpeg/stitch.c");
     let decode_wrapper = manifest_dir.join("src/backends/libjpeg/wrapper.c");
     let out = PathBuf::from(env::var_os("OUT_DIR").unwrap());
-    println!("cargo:rerun-if-changed={}", archive.display());
+    println!("cargo:rerun-if-changed={}", source.display());
     println!("cargo:rerun-if-changed={}", stitch_wrapper.display());
     println!("cargo:rerun-if-changed={}", decode_wrapper.display());
     println!("cargo:rerun-if-env-changed=NASM");
-    let source = out.join("libjpeg-turbo-3.1.3");
-    if !source.join("CMakeLists.txt").exists() {
-        tar::Archive::new(flate2::read::GzDecoder::new(
-            fs::File::open(archive).unwrap(),
-        ))
-        .unpack(&out)
-        .expect("unpack pinned libjpeg-turbo source");
-    }
     let mut config = cmake::Config::new(&source);
     config
         .out_dir(out.join("jpeg-build"))

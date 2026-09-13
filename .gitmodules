@@ -1,3 +1,6 @@
 [submodule "3rdpart/libraw"]
 	path = 3rdpart/libraw
 	url = https://github.com/LibRaw/LibRaw.git
+[submodule "3rdpart/libjpeg-turbo"]
+	path = 3rdpart/libjpeg-turbo
+	url = https://github.com/libjpeg-turbo/libjpeg-turbo.git

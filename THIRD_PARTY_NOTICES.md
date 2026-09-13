@@ -9,10 +9,10 @@ Native runtime components:
 | Component | Purpose | Intended integration |
 | --- | --- | --- |
 | FFmpeg 8.0.1 | HEIF probing, HEVC decoding and JPEG/BMP tile output | Unmodified pinned source, standalone `oxy-ffmpeg` / `oxy-ffprobe`, LGPL-2.1-or-later build with GPL/nonfree/version3 disabled; source, license and build recipe bundled under `licenses/ffmpeg` |
-| LibRaw 0.22.1 | RAW preview extraction and decoding | Vendored unmodified source, statically linked under the CDDL-1.0 option; release legal review pending |
+| LibRaw 0.22.2 | RAW preview extraction and decoding | Pinned upstream Git submodule, statically linked under the CDDL-1.0 option; release legal review pending |
 | OxyViewer metadata parser (SiftX fork at `fcf8e3d`) | Pure-Rust EXIF/XMP/IPTC/ICC/MakerNote reads | Modified image-only fork, statically linked under the MIT OR Apache-2.0 license; upstream notices retained |
-| libheif | HEIF/HEIC decoding | Dynamically linked, with codec licenses reviewed per platform |
-| libjpeg-turbo 3.1.3 | Background JPEG tile coefficient stitching | Unmodified pinned source archive, statically linked with SIMD; IJG/BSD-3-Clause/zlib notices retained in `3rdpart/libjpeg-turbo/LICENSE.md` and `README.ijg` |
+| libheif | HEIF/HEIC decoding | Statically linked through the pinned Cargo source on macOS/Linux and the pinned vcpkg overlay on Windows; codec licenses reviewed per platform |
+| libjpeg-turbo 3.1.3 | JPEG thumbnail decoding and tile coefficient stitching | Pinned upstream Git submodule, statically linked with SIMD; IJG/BSD-3-Clause/zlib notices retained in `3rdpart/libjpeg-turbo/LICENSE.md` and `README.ijg` |
 | ExifTool | Optional metadata compatibility/write worker | Separate process; Artistic/GPL terms reviewed before release |
 
 OxyViewer does not link Exiv2 because the product must retain the option of
