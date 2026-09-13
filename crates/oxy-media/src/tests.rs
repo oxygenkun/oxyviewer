@@ -299,16 +299,30 @@ fn heif_without_identified_fast_representation_uses_semantic_preview_size() {
     )
     .unwrap();
 
-    assert_eq!(thumbnail.kind, PreviewKind::Embedded);
+    // macOS prefers ImageIO; other platforms may decode a container thumbnail
+    // through FFmpeg or libheif. All must bypass the removed Sony JPEG hint.
+    assert!(matches!(
+        thumbnail.kind,
+        PreviewKind::Embedded | PreviewKind::Decoded
+    ));
     assert_eq!(fit.kind, PreviewKind::Decoded);
+    let thumbnail_facts = thumbnail.image_facts.as_ref().unwrap();
     assert!(
-        thumbnail
-            .image_facts
-            .as_ref()
-            .unwrap()
-            .source
-            .candidate_id
-            .starts_with("ffmpeg-stream:")
+        thumbnail_facts.source.candidate_id == "primary"
+            || thumbnail_facts
+                .source
+                .candidate_id
+                .starts_with("ffmpeg-stream:")
+            || thumbnail_facts
+                .source
+                .candidate_id
+                .starts_with("heif-thumbnail-item:")
+    );
+    assert!(
+        thumbnail_facts
+            .processing
+            .iter()
+            .any(|operation| matches!(operation, oxy_domain::ImageOperation::Decode { .. }))
     );
     assert_eq!(
         fit.image_facts.as_ref().unwrap().source.origin,
@@ -449,13 +463,14 @@ fn writes_raw_backend_comparison_artifacts() {
                     apple_image_io::render_jpeg(&source, &destination, max_size, 90).unwrap();
                 }
                 PlannedRawBackend::LibRawDevelopment => {
-                    let image = libraw::developed(
+                    let decoded = libraw::developed(
                         &source,
                         max_size,
                         &oxy_runtime::CancellationToken::default(),
                     )
                     .unwrap();
-                    write_jpeg_atomically(&image, &destination, 90, RAW_DEVELOPED_JPEG).unwrap();
+                    write_jpeg_atomically(&decoded.image, &destination, 90, RAW_DEVELOPED_JPEG)
+                        .unwrap();
                 }
             }
             let level = if max_size.is_none() {
