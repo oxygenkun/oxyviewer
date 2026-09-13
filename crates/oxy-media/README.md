@@ -244,7 +244,7 @@ flowchart TD
 - Sony HIF 已验证的 160px 内嵌 JPEG 不进入 HEVC decode gate；可确认的 padding 通过
   `PreviewResult.geometry` 描述，保留 JPEG 原字节并由前端映射到 full 逻辑画布。
   geometry 随 artifact presentation 缓存；未知布局/暗场保持原路径。详见
-  [内容几何](../../docs/architecture/05-preview-content-geometry.md)。
+  [内容几何](../../docs/architecture/09-preview-content-geometry.md)。
 
 ## Fallback 流程
 

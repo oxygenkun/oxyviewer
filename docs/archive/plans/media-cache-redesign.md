@@ -353,7 +353,7 @@ projection 必须：
 
 ### 性能
 
-遵循 [PERFORMANCE.md](../PERFORMANCE.md) 与 [PERF_E2E.md](../PERF_E2E.md)：
+遵循 [PERFORMANCE.md](../../PERFORMANCE.md) 与 [PERF_E2E.md](../../PERF_E2E.md)：
 
 - 100k 文件目录首屏 300ms 保留为参考目标，不作为本任务严格完成门禁（用户后续决定）；仍不得增加媒体扫描或同步索引。
 - 热缓存 loupe 预览 <150ms。
@@ -373,7 +373,7 @@ cargo clippy --workspace --all-targets -- -D warnings
 cargo test --workspace
 ```
 
-Rust 实施遵循 [RUST_STYLE.md](../RUST_STYLE.md)。真实 fixture 缺失导致跳过的检查必须明确报告，不当作验证通过。测试结束关闭自行启动的 debug 实例。
+Rust 实施遵循 [RUST_STYLE.md](../../RUST_STYLE.md)。真实 fixture 缺失导致跳过的检查必须明确报告，不当作验证通过。测试结束关闭自行启动的 debug 实例。
 
 ## 12. 非目标与后续设计约束
 
@@ -390,10 +390,10 @@ resource registry、有界 publisher 队列与跨进程 manifest/file locks。Wi
 
 ## 相关文档
 
-- [媒体架构](../architecture/03-preview-pipeline.md)
-- [HEIF tile session](../architecture/04-heif-tile-session.md)
-- [数据与状态](../architecture/05-data-and-state.md)
-- [已有媒体模块整理](../architecture/07-media-refactoring.md)
+- [媒体架构](../../architecture/03-preview-pipeline.md)
+- [HEIF tile session](../../architecture/04-heif-tile-session.md)
+- [数据与状态](../../architecture/05-data-and-state.md)
+- [已有媒体模块整理](../../architecture/07-media-refactoring.md)
 - [已完成的 lib.rs 简化任务](oxy-media-lib-refactor.md)
 
 本计划是行为重设计，不是上述已完成文件拆分任务的等价代码移动。实施后再将已验证结果同步到正式架构文档，不能提前写成已落地。

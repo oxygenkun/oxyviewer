@@ -5,7 +5,7 @@
 
 本设计细化 [ADR 0006](../adr/0006-semantic-render-level-graph.md) 的原生方法选择，
 先用于大尺寸 JPEG，再逐步接入 RAW 和其他格式。
-实施顺序及卡顿治理见 [任务计划](../tasks/jpg-quality-and-scroll-performance.md)。
+实施顺序及卡顿治理见[已归档任务计划](../archive/plans/jpg-quality-and-scroll-performance.md)。
 
 实现入口：`oxy-metadata-parser::jpeg_preview` 解析 APP1/MPF，
 `oxy-media/formats/jpeg.rs` 执行有界头部读取，`pipeline/jpeg/planner.rs` 判断内嵌候选资格，

@@ -280,7 +280,7 @@ flowchart TD
 
 ### 8.1 512 和 4096
 
-RAW 由 vendored LibRaw 0.22.2 处理。预览优先尝试内嵌预览：相机通常已经在 RAW 容器里存了
+RAW 由固定版本的 LibRaw 0.22.2 source submodule 处理。预览优先尝试内嵌预览：相机通常已经在 RAW 容器里存了
 JPEG，读取它远比 demosaic 原始感光数据快。若内嵌预览不适用，才执行 half-size development。
 
 RAW `thumbnail` 映射 512，`preview` 映射 4096。thumbnail 请求让 LibRaw 选择满足目标尺寸的最小

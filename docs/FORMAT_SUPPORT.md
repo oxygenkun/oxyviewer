@@ -9,7 +9,7 @@
 | TIFF | Implemented as a secondary format | macOS ImageIO-generated JPEG at 512 px for thumbnail/preview and 4096 px for full; Windows/Linux native preview remains unavailable | Unified native EXIF/XMP/IPTC/ICC reader | XMP sidecar rating/color/flag |
 
 RAW support follows bundled LibRaw 0.22.2. The code builds LibRaw from the
-vendored source and does not depend on a developer machine's system package.
+pinned source submodule and does not depend on a developer machine's system package.
 The full RAW fixture matrix and Windows/Linux packaging validation remain part
 of milestone RAW-1. “Implemented” here describes the code path; it does not mean
 that every camera/codec combination has passed the release matrix.

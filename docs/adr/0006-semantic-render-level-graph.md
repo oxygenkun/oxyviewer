@@ -11,7 +11,7 @@ Implemented refinement (2026-09-12; Windows measurements and remaining budget ga
 [source-representation planning](../architecture/08-representation-planning.md)
 separates JPEG thumbnail delivery from full-quality primary-image delivery,
 while preserving the semantic levels below. Its implementation and scrolling
-qualification are tracked in the [task plan](../tasks/jpg-quality-and-scroll-performance.md).
+qualification are retained in the [completed task plan](../archive/plans/jpg-quality-and-scroll-performance.md).
 
 ## Context
 

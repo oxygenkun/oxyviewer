@@ -3,7 +3,7 @@
 Status markers: `[x]` complete, `[~]` active, `[ ]` planned.
 
 This roadmap describes the current `main` branch rather than the order in which
-features originally landed. Last reviewed: 2026-09-04.
+features originally landed. Last reviewed: 2026-09-13.
 
 ## Current Status
 
@@ -73,7 +73,7 @@ now fixture coverage, cancellation, platform packaging, and conflict safety.
 - [x] Scoped `loupe / visible / nearby / preload` scheduling with request
   coalescing, two preview workers, up-tier cache reuse, and a shared decode gate
 - [x] Direct JPEG/PNG/WebP display and semantic TIFF preview routing
-- [x] Bundled LibRaw 0.22.2 build, dimensions, embedded RAW preview, half-size
+- [x] Pinned LibRaw 0.22.2 source submodule build, dimensions, embedded RAW preview, half-size
   fallback, 512/4096 caches, and full-resolution development
 - [x] Near-full-size RAW embedded-JPEG fast path and measured macOS ImageIO/Core Image RAW JPEG fallbacks
 - [x] HEIF embedded-preview fast path, ICC/HDR-to-SDR conversion, and bounded
@@ -92,7 +92,7 @@ now fixture coverage, cancellation, platform packaging, and conflict safety.
 
 - [ ] Validate ARW, CR2, CR3, NEF, DNG, RAF, RW2, and ORF with distributable
   orientation, color, embedded-preview, damaged-file, and full-detail fixtures.
-- [ ] Validate the bundled LibRaw build and RAW preview/full behavior on Windows
+- [ ] Validate the pinned LibRaw build and RAW preview/full behavior on Windows
   and Linux release artifacts, not only compile-only or synthetic coverage.
 - [ ] Add cooperative cancellation checkpoints where possible. Pending work can
   be reordered and consumers can stop waiting, but an active native decode is not

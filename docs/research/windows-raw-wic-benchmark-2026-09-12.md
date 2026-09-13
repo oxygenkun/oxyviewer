@@ -7,7 +7,7 @@
 
 - Windows 11 Pro，build 26200.9278，x64。
 - Intel Core i7-13700K，16 核 / 24 逻辑处理器。
-- OxyViewer 的 vendored LibRaw 0.22.2，release 构建。
+- OxyViewer 固定版本的 LibRaw 0.22.2 source submodule，release 构建。
 - Microsoft Raw Image Extension 2.5.35.0，Microsoft Raw Image Decoder，
   CLSID `41945702-8302-44A6-9445-AC98E8AFA086`。
 - 两张本地 Sony ARW。原始照片、机器绝对路径和输出图像不进入 Git。

@@ -1,6 +1,6 @@
 # JPEG thumbnail 与滚动验收（Windows，2026-09-12）
 
-对应[实施计划](../tasks/jpg-quality-and-scroll-performance.md)与[表示规划设计](../architecture/08-representation-planning.md)。
+对应[已归档实施计划](../archive/plans/jpg-quality-and-scroll-performance.md)与[表示规划设计](../architecture/08-representation-planning.md)。
 
 ## 实现范围
 

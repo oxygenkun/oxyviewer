@@ -127,44 +127,5 @@ The installed application should also be checked on each release platform
 without a system FFmpeg installation. macOS signing/notarization must include
 the external binaries via Tauri's normal signing workflow.
 
-### Local verification, 2026-09-10
-
-- macOS arm64: native source build and cached preparation both passed. The two
-  stripped executables total about 7 MiB; the included source archive is about
-  11 MiB. `otool -L` reports only Apple system libraries/frameworks.
-- `pnpm tauri build --bundles app` produced an app containing both executables
-  and all source/license materials; `--verify-bundle` passed with PATH cleared
-  for the executable checks. No debug application was launched.
-- TypeScript checks, all 167 frontend tests and the frontend build passed.
-  Rust formatting and workspace Clippy passed. Real HIF FFmpeg decode,
-  orientation, JPEG output and DCT compatibility tests passed.
-- The full Rust suite found two pre-existing macOS preview-size failures:
-  `app_interim_hif_can_upgrade_to_a_satisfied_preview` and
-  `heif_without_identified_fast_representation_uses_semantic_preview_size`.
-  Both were reproduced after restoring the original FFmpeg backend code for
-  comparison. With those two tests excluded, all 530 remaining unit tests and
-  two doctests passed (existing ignored fixture tests remained ignored).
-- Windows/Linux package extraction checks are configured in CI; those native
-  builds and installed-app behavior have not been executed on this Mac.
-
-### Windows standard build verification, 2026-09-11
-
-- Installed and updated MSYS2 at the default location, then installed Make,
-  diffutils, NASM and the UCRT64 GCC toolchain. The local mirror priority was
-  adjusted to an accessible mirror from MSYS2's supplied list after the primary
-  servers timed out.
-- Fixed the build recipe's Windows Make targets: MinGW requires `ffmpeg.exe`
-  and `ffprobe.exe`, whereas macOS/Linux retain the suffix-free targets.
-- The unmodified command `pnpm tauri build` completed the pinned FFmpeg 8.0.1
-  source build, frontend/Release build, and both MSI and NSIS installers.
-  A subsequent `pnpm ffmpeg:prepare` reused the verified cache successfully.
-- MSI administrative extraction followed by `--verify-bundle` passed: both
-  programs run with PATH cleared, capabilities/filter smoke tests pass, and the
-  exact source archive and required license/build materials are present.
-- The application extracted from the MSI passed `cold-preview-hif`,
-  `resource-stress-hif` and `filmstrip-scroll-hif` with PATH empty and
-  `OXY_FFMPEG_DIR` unset. Cold first preview was 83.2 ms and first tile 1015 ms.
-  The stress run switched 80 paths, revisited eight full presentations, and
-  passed active-resource reads across cache maintenance. These single runs use
-  copies of a real Sony HIF fixture, not a diverse camera corpus. All test
-  application instances were closed.
+Dated local qualification results are retained in
+[the September 2026 packaging report](research/ffmpeg-packaging-verification-2026-09.md).

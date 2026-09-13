@@ -2,10 +2,10 @@
 
 日期：2026-09-12。状态：**S0–S6 实施与验收完成；未达预算项单独保留**。
 
-结果见[Windows 实测报告](../research/jpeg-thumbnail-scroll-2026-09-12.md)。滚动主线程长任务已消除，
+结果见[Windows 实测报告](../../research/jpeg-thumbnail-scroll-2026-09-12.md)。滚动主线程长任务已消除，
 但仍有启动／GPU 长帧、Sony 暖启动单次尾部和既有十万文件首屏预算缺口；不能解读为所有性能目标均达标。
 
-主设计：[按源表示规划 thumbnail 与 full](../architecture/08-representation-planning.md)。
+主设计：[按源表示规划 thumbnail 与 full](../../architecture/08-representation-planning.md)。
 设计已进入生产代码实施；所有阶段完成以实际代码和验收记录为准。
 
 ## 1. 已有证据与优先级
@@ -183,7 +183,7 @@ filmstrip resize、列表/网格切换；记录提交次数/耗时和可见空�
 >50 ms 长任务数量/总时长/最大值、帧间隔 P50/P95/max、输入到位移、读取字节/次数、
 IPC 延迟分段、进程及子进程峰值内存。不能用低 P95 掩盖少量 400 ms 停顿。
 
-性能门槛继续采用 [PERFORMANCE.md](../PERFORMANCE.md)：主线程滚动不得出现 >50 ms 长任务；
+性能门槛继续采用 [PERFORMANCE.md](../../PERFORMANCE.md)：主线程滚动不得出现 >50 ms 长任务；
 本地 SSD 首屏300ms/热loupe150ms/冷选中800ms独立测量。NAS单列结果，不挪用本地预算作已达标结论。
 三轮最大值不能称为统计稳定的尾延迟；预热完成速度不能代替滚动/首屏验收。
 

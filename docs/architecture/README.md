@@ -19,7 +19,7 @@
    - 取消语义和性能取舍
 4. [HEIF 渐进瓦片与完整 JPEG 缓存](04-heif-tile-session.md)
    - 当前会话协议、渐进显示与热缓存路径
-   - event 只传元数据，自定义协议传 RGBA
+   - event 只传元数据，自定义协议传 JPEG 或 RGBA fallback payload
    - `generation` 如何防止旧结果污染新选择
 5. [状态、数据与安全边界](05-data-and-state.md)
    - React Query 与 Zustand 的分工
@@ -31,11 +31,14 @@
 
 7. [oxy-media 重构规则与目标](07-media-refactoring.md)
    - 多平台、多格式和厂商兼容规则的目标边界
-   - 分阶段迁移、行为不变量与验收记录（进行中）
+   - 已完成迁移、当前行为不变量与验收记录
 
 8. [按源表示规划 thumbnail 与 full](08-representation-planning.md)（已实现，Windows 验收与剩余预算缺口已记录）
    - JPEG 内嵌图选择、质量与交付上限、缓存派生及向其他格式扩展
-   - [JPEG 质量分层与滚动卡顿实施计划](../tasks/jpg-quality-and-scroll-performance.md)
+   - [已归档的 JPEG 质量分层与滚动卡顿实施计划](../archive/plans/jpg-quality-and-scroll-performance.md)
+9. [预览内容几何](09-preview-content-geometry.md)
+   - 原始画布、有效内容矩形、显示尺寸和对焦坐标之间的契约
+   - 缓存生产、前端渲染与渐进表示切换时如何保持几何一致
 
 ## 快速查找表
 

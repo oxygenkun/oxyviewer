@@ -101,7 +101,13 @@ LRU was removed: filesystem timestamps were never a valid coherence token and
 all production reads already bypassed it. Source, lease and generation checks
 remain in place, as do normal asynchronous disk persistence and decode fallback.
 
-## Verification Log
+## Historical verification log
+
+The entries below are dated implementation and benchmark evidence. They are not
+the current requirements: use the budgets above together with
+[`PERFORMANCE_INVARIANTS.md`](PERFORMANCE_INVARIANTS.md) for that. New detailed
+investigations belong in [`research/`](research/); keep only a short result and
+link in this document.
 
 - 2026-09-12: Cache maintenance, preview admission, HIF candidate lookup and
   small browser Blob retention were optimized. Final Release/WebView2 warming
@@ -238,7 +244,7 @@ remain in place, as do normal asynchronous disk persistence and decode fallback.
   avoid unchanged manifest rewrites during prune. Worker count and the 160 ms scroll-idle gate
   are unchanged. App artifact caches were isolated/cold; OS/NAS caches were not cleared.
   Reproduce with `--folder <path> --grid-scroll --cold-cache --runs 3`;
-  [case details and validation limits](tasks/nas-hif-grid-latency.md).
+  [case details and validation limits](research/nas-hif-grid-latency-2026-09-09.md).
 
 - 2026-09-08: Final media-cache review fixes were measured with a rebuilt macOS release binary,
   three isolated packaged-WebView runs per route, and repository fixtures. Median/P95 first-preview
@@ -256,7 +262,7 @@ remain in place, as do normal asynchronous disk persistence and decode fallback.
   snapshot serialization, 0/0 ms snapshot persistence/enqueue, 10/11 ms sorting, 435/452 ms native,
   437/454 ms IPC, and 57/79 ms return-to-double-rAF paint. The gate remains failed without weakening
   the 300 ms paint metric or the complete-summary contract. The intermediate synchronous-persistence
-  measurement is documented in `tasks/media-cache-redesign.md`; it is paired implementation evidence,
+  measurement is documented in `archive/plans/media-cache-redesign.md`; it is paired implementation evidence,
   not a historical baseline claim. Windows/Linux lock, rename/sharing and packaged protocol behavior remain
   unverified environment gates.
 
@@ -958,7 +964,7 @@ geometry still waits for the complete canvas. A repeat observed a visible Canvas
 with three of six tiles drawn, first tile at 1208 ms and all tiles at 1261 ms after
 selection. These single debug runs verify progressive visibility, not release
 performance budgets. These debug checks preceded the streaming FFmpeg change
-recorded in the Verification Log above.
+recorded in the historical verification log above.
 
 ### Independent loupe and thumbnail workers (2026-09-11)
 
@@ -989,5 +995,5 @@ initially could not rebuild bundled FFmpeg because MSYS2 was absent. The subsequ
 standard Windows build installed that toolchain and corrected the recipe's `.exe`
 Make targets. Both MSI and NSIS now build successfully. The MSI-extracted application
 passed all three HIF scenarios again with PATH empty and no FFmpeg override; cold
-first preview was 83.2 ms and first tile 1015 ms. See [packaging verification](FFMPEG_PACKAGING.md#windows-standard-build-verification-2026-09-11).
+first preview was 83.2 ms and first tile 1015 ms. See [packaging verification](research/ffmpeg-packaging-verification-2026-09.md#windows-standard-build-2026-09-11).
 All owned native test instances were closed.

@@ -20,6 +20,9 @@ You will need:
 - pnpm 10.34.5 (the version pinned in `package.json`)
 - Rust 1.85 or newer with `rustfmt` and `clippy` (the workspace uses edition 2024)
 - The platform prerequisites required by Tauri 2
+- CMake and a C/C++ compiler for the linked native media libraries
+- NASM on `PATH`, or the `NASM` environment variable pointing to it, for the
+  libjpeg-turbo SIMD backend on x86/x64
 
 On Windows, install the repository-pinned libheif before building the Rust
 workspace (replace `C:\vcpkg` if `VCPKG_ROOT` points elsewhere):
@@ -43,9 +46,10 @@ If you already cloned the repository without submodules, initialize them with:
 git submodule update --init --recursive
 ```
 
-The vendored LibRaw source under `3rdpart/libraw` is a submodule. Do not modify
-or update vendored dependencies unless the contribution specifically requires
-it.
+The LibRaw and libjpeg-turbo sources under `3rdpart` are pinned submodules.
+Cargo compiles both automatically: LibRaw through `cc`, and libjpeg-turbo
+through its upstream CMake `jpeg-static` target. Do not modify or update pinned
+native dependencies unless the contribution specifically requires it.
 
 ## Running OxyViewer
 
@@ -61,6 +65,24 @@ desktop application and exercise native commands:
 ```bash
 pnpm tauri dev
 ```
+
+Build the browser frontend without packaging the desktop application:
+
+```bash
+pnpm build
+```
+
+Build release desktop packages through the repository wrapper:
+
+```bash
+pnpm tauri build
+```
+
+Release builds also download, build, cache, verify, and stage the pinned
+standalone FFmpeg/ffprobe programs. Run `pnpm ffmpeg:prepare` to perform that
+step independently. Do not bypass the wrapper with `pnpm exec tauri` for a
+release build; see `docs/FFMPEG_PACKAGING.md` for platform prerequisites,
+bundle verification, signing, and redistribution requirements.
 
 Run all commands in this guide from the repository root. Use `pnpm icons` only
 when intentionally regenerating application icons.
@@ -80,6 +102,10 @@ when intentionally regenerating application icons.
 
 Read `docs/ARCHITECTURE.md` before making a cross-layer change. The focused
 guides under `docs/architecture` describe the main runtime and extension paths.
+
+Use the [documentation index](docs/README.md) to choose the current contract,
+focused architecture guide, active plan, or historical evidence relevant to a
+substantial change.
 
 ## Architecture and Performance Rules
 

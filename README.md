@@ -21,29 +21,14 @@ The current application includes:
   capability for explicit embedded metadata synchronization
 - Rename, copy, move, reveal-in-file-manager, and recoverable trash workflows
 
-The project is still pre-release. Cross-platform codec packaging, the full camera
-fixture matrix, filesystem watching, cooperative mid-decode cancellation, and
-release hardening remain incomplete. The measured 100k-file first-page path also
-does not yet meet its 300 ms performance budget.
+The project is still pre-release. Cross-platform release qualification, the full
+camera fixture matrix, filesystem watching, cancellation for native APIs without
+an interrupt hook, and release hardening remain incomplete. The measured
+100k-file first-page path also does not yet meet its 300 ms performance budget.
 
-## Development
+## Documentation
 
-Native builds require CMake and a C/C++ compiler. x86/x64 builds also require
-NASM on `PATH` (or the `NASM` environment variable pointing to its executable)
-for the statically linked libjpeg-turbo SIMD backend. See
-[the pinned dependency notes](3rdpart/libjpeg-turbo/README.md).
-
-```bash
-pnpm install --frozen-lockfile
-pnpm dev                 # browser-only demo
-pnpm tauri dev           # native desktop app
-```
-
-Common verification commands are `pnpm check`, `pnpm test`, `pnpm build`,
-`cargo fmt --all --check`, `cargo clippy --workspace --all-targets -- -D warnings`,
-and `cargo test --workspace`. Use `pnpm icons` only when intentionally
-regenerating application icons.
-
-Start with [the architecture overview](docs/ARCHITECTURE.md), then see the
-[roadmap](docs/ROADMAP.md), [format matrix](docs/FORMAT_SUPPORT.md), and
-[performance budgets](docs/PERFORMANCE.md) for the current implementation limits.
+- Use [CONTRIBUTING.md](CONTRIBUTING.md) for development prerequisites, build
+  commands, verification, and pull-request guidance.
+- Use [the documentation index](docs/README.md) to find current architecture,
+  performance, format, packaging, task-plan, and research documents.

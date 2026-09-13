@@ -98,7 +98,7 @@ Runner 由 mark 对计算出命名指标，`scenarios.json` 的 `budgets` 引用
 视口的 displayed images。每 25 ms 采样，15 秒内未补齐则失败；只记录耗时，不默认给任意 NAS
 套用本地 SSD 预算。`--grid-scroll` 不与 `--scroll-end` / `--select-name` 混用。
 这补充了原资源预算压力测试每次滚动等待 350 ms、主要检查内存上限的场景。
-案例与前后对照见 [NAS HIF grid 延迟](tasks/nas-hif-grid-latency.md)。
+案例与前后对照见 [NAS HIF grid 延迟](research/nas-hif-grid-latency-2026-09-09.md)。
 
 场景定义在 `tests/perf/scenarios.json`，起步矩阵：
 
@@ -178,7 +178,7 @@ node scripts/perf-e2e.mjs --update-baseline
 2. 重构后：`pnpm perf:e2e`。任一绝对预算或基线回归失败即视为重构引入了
    性能退化。
 3. 结果符合预期时，把关键数字追加到 `docs/PERFORMANCE.md` 的
-   Verification Log。
+   historical verification log。
 
 ## 已知边界与后续工作
 

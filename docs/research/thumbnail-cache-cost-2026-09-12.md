@@ -80,7 +80,7 @@ EXIF 方向字段，共 8,330 bytes，显示尺寸为 120×160。原型只在初
    `image::load_from_memory` 检查候选。geometry 检测还会解码选中的 JPEG。
    已知位置、geometry 和方向后，这些重复扫描及检查可以被源版本绑定的信息替代。
 
-2. [DiskMediaCache](../../crates/oxy-media/src/cache/v2.rs) 的命中不是一次 `read`：
+2. [DiskMediaCache](../../crates/oxy-media/src/cache/store.rs) 的命中不是一次 `read`：
    它校验源版本，取得进程内锁和跨进程锁，读取 generation，读取 manifest，校验
    artifact，选取满足请求的表示，建立 lease。这些操作对大图缓存必要，但对 8 KiB
    内嵌图片显得相对昂贵。不能为降低开销而直接绕过版本、generation、lease 和发布约束。

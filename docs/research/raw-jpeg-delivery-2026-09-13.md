@@ -15,7 +15,7 @@ DC-S5M2X 样本中，前者为 1920×1280，后者为 6000×4000。后者的 TIF
 Windows/macOS/Linux 共用选择逻辑；保留 LibRaw EXIF 方向处理和 JPEG 原有颜色信息。
 相机 JPEG 不执行像素解码、锐化或有损重编码，也不声明传感器 native detail。full/preview
 投影策略与 largest-JPEG 精确产物身份已更新，避免旧选择抑制升级。Interim/Satisfied、lease、
-generation 和异步持久化边界不变。没有修改 vendored LibRaw。
+generation 和异步持久化边界不变。没有修改固定版本的 LibRaw source submodule。
 
 读取有界：JPEG 头最多 1 MiB / 4096 markers，缓冲 4 KiB，最多 8 个 LibRaw 候选。
 RW2 只读一个 IFD0，最多 1024 entries；标签必须是 UNDEFINED 字节数组，范围不越界且

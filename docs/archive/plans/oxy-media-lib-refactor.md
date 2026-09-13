@@ -1,7 +1,7 @@
 # oxy-media `lib.rs` simplification
 
 Status: Completed; public API details below were superseded by the final convergence recorded in
-`docs/architecture/07-media-refactoring.md`.
+[`docs/architecture/07-media-refactoring.md`](../../architecture/07-media-refactoring.md).
 
 ## Goal
 
@@ -23,7 +23,7 @@ force RAW, HEIF, and system previews behind an artificial common decoder trait.
   planning/execution in `pipeline/`.
 - Do not remove code required by a supported platform merely because it is not
   reachable on the current development platform.
-- Follow `docs/RUST_STYLE.md`; do not introduce broad lint exemptions.
+- Follow [`docs/RUST_STYLE.md`](../../RUST_STYLE.md); do not introduce broad lint exemptions.
 
 ## Steps
 

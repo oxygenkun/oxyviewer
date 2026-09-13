@@ -29,6 +29,9 @@ The `get_debug_queue_snapshot` command returns:
 ```text
 DebugQueueSnapshot
   capturedAtUnixMs
+  workerWaitMicros
+  collectionMicros
+  staleQueues[]
   queues[]
     name
     concurrency
@@ -44,10 +47,15 @@ visits only logical pending entries rather than stale heap nodes.
 
 ## Safety and performance
 
-- The endpoint rejects calls from release builds.
+- The endpoint is available in debug builds; release builds require an explicit
+  performance scenario.
 - Sampling starts only while the dashboard is open and stops when it closes.
 - The endpoint is read-only; it cannot cancel or reprioritize work.
-- Snapshots briefly take existing queue locks and never perform filesystem,
-  database, metadata, or decode work.
+- Every queue and active-request snapshot uses `try_lock`. A busy queue returns
+  its last sample and appears in `staleQueues`; it never waits for the business
+  lock or reports a never-observed queue as empty.
+- Collection runs on a blocking worker and never performs filesystem, database,
+  metadata, or decode work. Worker wait and native collection time are reported
+  separately from the WebView-observed IPC round trip.
 - The dashboard is lazy-loaded and its JavaScript and CSS are split from the
   normal application bundle.
