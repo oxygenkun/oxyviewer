@@ -96,6 +96,11 @@ jobs:
           New-Item -ItemType Directory -Force "$env:VCPKG_DEFAULT_BINARY_CACHE" | Out-Null
           & "$env:VCPKG_INSTALLATION_ROOT\vcpkg.exe" install "libheif[core]:x64-windows-static-md" --overlay-ports="${{ github.workspace }}\3rdpart\vcpkg-ports"
           "VCPKG_ROOT=$env:VCPKG_INSTALLATION_ROOT" >> $env:GITHUB_ENV
+      - name: Refresh Windows libheif link metadata
+        if: runner.os == 'Windows'
+        # The Rust cache can retain link flags from a different vcpkg feature set.
+        # Re-run discovery against the installed core-only libraries.
+        run: cargo clean -p libheif-sys
       - name: Save Windows dependency cache
         if: runner.os == 'Windows' && steps.vcpkg-cache.outputs.cache-hit != 'true'
         uses: actions/cache/save@v5
