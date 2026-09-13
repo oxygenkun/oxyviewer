@@ -257,6 +257,30 @@ jobs:
               exit 1
             fi
           done
+      - name: Add platform names to installers
+        shell: bash
+        run: |
+          version="${GITHUB_REF_NAME#v}"
+          : > release-assets/.legacy-installer-names
+
+          rename_installer() {
+            local source="$1"
+            local platform="$2"
+            local old_name suffix
+            old_name=$(basename "$source")
+            suffix="${old_name#OxyViewer_${version}_}"
+            if [ "$suffix" = "$old_name" ]; then
+              echo "Unexpected installer name: $old_name" >&2
+              exit 1
+            fi
+            printf '%s\n' "$old_name" >> release-assets/.legacy-installer-names
+            mv "$source" "release-assets/OxyViewer_${version}_${platform}_${suffix}"
+          }
+
+          rename_installer release-assets/*.dmg macOS
+          rename_installer release-assets/*.msi Windows
+          rename_installer release-assets/*.deb Linux
+          rename_installer release-assets/*.AppImage Linux
       - name: Create or update GitHub Release
         env:
           GH_TOKEN: ${{ github.token }}
@@ -268,6 +292,16 @@ jobs:
             gh release upload "$GITHUB_REF_NAME" "${assets[@]}" \
               --clobber \
               --repo "$GITHUB_REPOSITORY"
+            while IFS= read -r legacy_asset; do
+              if gh release view "$GITHUB_REF_NAME" \
+                --repo "$GITHUB_REPOSITORY" \
+                --json assets \
+                --jq '.assets[].name' | grep -Fqx "$legacy_asset"; then
+                gh release delete-asset "$GITHUB_REF_NAME" "$legacy_asset" \
+                  --yes \
+                  --repo "$GITHUB_REPOSITORY"
+              fi
+            done < release-assets/.legacy-installer-names
           else
             gh release create "$GITHUB_REF_NAME" "${assets[@]}" \
               --verify-tag \

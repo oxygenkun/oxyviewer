@@ -196,8 +196,9 @@ the tag is exactly `v<version>`.
 Push a semantic version tag such as `v0.1.0` to run the complete release
 pipeline. After all checks and platform builds succeed, CI creates or updates
 the matching GitHub Release and attaches the macOS DMG, Windows MSI, Linux DEB,
-and Linux AppImage installers. Re-running a completed release replaces assets
-with the newly verified packages.
+and Linux AppImage installers. Published filenames include the target platform.
+Re-running a completed release replaces assets with the newly verified packages
+and removes obsolete installer names.
 
 The `build` tag no longer triggers CI. For a Windows test package, use
 **Actions → CI → Run workflow** and select the ref to build. Manual runs build
