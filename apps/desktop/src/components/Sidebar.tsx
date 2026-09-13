@@ -37,6 +37,7 @@ import type { FolderRestoreState } from "../lib/folderRestoration";
 import { isSameOrDescendantPath, platformFileManager } from "../lib/folderPaths";
 import type { DirectorySummary, DirectoryTreeNode, DirectoryTreeSnapshot, FolderSession } from "../types";
 import { ConfirmTrashDialog } from "./ConfirmTrashDialog";
+import { FolderNameButton } from "./FolderNameButton";
 
 interface SidebarProps {
   sessions: FolderSession[];
@@ -142,7 +143,7 @@ function DirectoryNode({
             <span />
           )}
         </button>
-        <button
+        <FolderNameButton
           className="tree-row__main"
           onClick={() => {
             onNavigate(session, entry.path);
@@ -153,7 +154,7 @@ function DirectoryNode({
           {isActive ? <FolderOpen size={15} /> : <Folder size={15} />}
           <span>{entry.name}</span>
           {isActive ? <i /> : null}
-        </button>
+        </FolderNameButton>
         {onRemove ? (
           <button
             className="tree-row__remove"
@@ -222,7 +223,7 @@ function SearchDirectoryNode({
         >
           {hasChildren ? expanded ? <ChevronDown size={13} /> : <ChevronRight size={13} /> : <span />}
         </button>
-        <button
+        <FolderNameButton
           className="tree-row__main"
           onClick={() => onNavigate(session, node.entry.path)}
           title={node.entry.path}
@@ -230,7 +231,7 @@ function SearchDirectoryNode({
           {isActive ? <FolderOpen size={15} /> : <Folder size={15} />}
           <HighlightedDirectoryName name={node.entry.name} search={node.matched ? search : ""} />
           {isActive ? <i /> : null}
-        </button>
+        </FolderNameButton>
       </div>
       {expanded ? (
         <div className="directory-node__children">
