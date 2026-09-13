@@ -27,6 +27,16 @@ and local cold/warm previews. Scroll long tasks were eliminated in the measured 
 The existing 100k-file first-page target remains unmet (570 ms versus the original build's
 555 ms), and startup/GPU frame gaps plus a Sony warm-start tail sample remain visible in the report.
 
+## Loupe zoom rendering
+
+Loupe computes its render box from the displayed image aspect and requested pixel
+zoom. Its image uses `object-fit: fill` inside that already-fitted box: applying
+`contain` again causes visible large-image distortion in macOS WKWebView even
+when DOM width and height remain correct. Grid and navigator fitting keep their
+existing behavior. Verification must include real Release pixels, not only DOM
+geometry; see [the zoom probe](PERF_E2E.md#loupe-大图缩放回归) and
+[macOS CR3 verification](research/loupe-zoom-webkit-2026-09-13.md).
+
 ## Whole-directory browser thumbnails
 
 After the first ordinary browse page commits, the frontend continues fetching

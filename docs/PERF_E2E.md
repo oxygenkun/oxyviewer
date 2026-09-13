@@ -228,3 +228,16 @@ maintenance/read and resource-settlement checks.
 with 80 HIF sources. Both scroll probes emit `*:moving` samples (displayed versus
 visible images) as well as stopped-viewport readiness. A locked or backgrounded
 WebView can clamp timers; such runs are not valid fast-scroll measurements.
+
+## Loupe 大图缩放回归
+
+外部场景配置可使用 `resourceStress: "loupe-zoom"` 和
+`awaitMarks: ["resource:stress-complete"]`，fixture 指向单张真实大尺寸 RAW。
+探针选择该图并等待 fullReady，然后通过实际 wheel 事件依次缩放至
+50%、73%、91%、100%、150%、200%、400%，检查图片宽高与原始像素尺寸一致，
+并记录 `loupe:zoom-sample`（实际宽高、render 宽高、源尺寸、objectFit）。
+使用 `node scripts/perf-e2e.mjs --config <external-json> --scenario <name>` 运行。
+
+该探针只证明 DOM 几何正确，不能证明最终绘制的像素比例。macOS WKWebView
+曾在 DOM 完全正确时将 `object-fit: contain` 的大图拉伸；必须另外在 Release
+窗口检查 73% 前后及 100% / 200% 的实际画面，并与同图低倍率的细节比例对照。

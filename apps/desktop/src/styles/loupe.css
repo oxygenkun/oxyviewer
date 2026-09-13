@@ -67,7 +67,9 @@
   box-shadow: 0 15px 50px rgb(0 0 0 / 55%);
 }
 .loupe__render .thumbnail img {
-  object-fit: contain;
+  /* Loupe already fits this box to the image aspect. WebKit distorts large
+     images with contain even when their DOM dimensions remain correct. */
+  object-fit: fill;
 }
 .loupe__render .thumbnail__fallback span { font-size: 0.8125rem; letter-spacing: 3px; }
 .loupe__caption {
