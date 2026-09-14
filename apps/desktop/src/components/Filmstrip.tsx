@@ -12,6 +12,7 @@ import { AssetMetadataBadges } from "./AssetMetadataBadges";
 import { FilmstripPreviewPreloader } from "./FilmstripPreviewPreloader";
 import { Thumbnail } from "./Thumbnail";
 import { installFilmstripWheel } from "../lib/filmstripWheel";
+import { useOrientationRetention } from "../lib/useOrientationRetention";
 
 interface FilmstripProps {
   active: AssetSummary;
@@ -59,7 +60,14 @@ export const Filmstrip = memo(function Filmstrip({ active, assets, nearbyPreview
   }
   const visibleFilmstripIds = filmstripIdsRef.current;
   useLayoutEffect(() => { filmstripVirtualizer.measure(); }, [filmstripItemSize, filmstripVirtualizer]);
-  useLayoutEffect(() => { if (activeIndex >= 0) filmstripVirtualizer.scrollToIndex(activeIndex, { align: "auto" }); }, [active.id, activeIndex, filmstripVirtualizer]);
+  // Keep the active thumbnail framed through selection moves.
+  useLayoutEffect(() => {
+    if (activeIndex >= 0) filmstripVirtualizer.scrollToIndex(activeIndex, { align: "auto" });
+  }, [active.id, activeIndex, filmstripVirtualizer]);
+  useOrientationRetention(thumbnailOrientation, () => {
+    // Portrait and landscape filmstrip items have different widths.
+    if (activeIndex >= 0) filmstripVirtualizer.scrollToIndex(activeIndex, { align: "auto" });
+  });
   useEffect(() => {
     const element = filmstripRef.current;
     return element ? installFilmstripWheel(element) : undefined;

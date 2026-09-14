@@ -19,6 +19,7 @@ import {
   PreviewScheduleScope,
   viewportPreviewIntents,
 } from "../lib/previewScheduling";
+import { useOrientationRetention } from "../lib/useOrientationRetention";
 import { useWorkspaceStore } from "../store";
 import type { AssetSummary, FileDeletionMode, ViewMode } from "../types";
 import { AssetMetadataBadges } from "./AssetMetadataBadges";
@@ -219,6 +220,7 @@ function VirtualGrid({
   const restoreRowIndex = restoreAssetIndex === undefined
     ? undefined
     : gridRowForAsset(restoreAssetIndex, columns);
+  const restoreApplied = useRef(false);
   const virtualizer = useVirtualizer({
     count: rowCount,
     getScrollElement: () => parentRef.current,
@@ -287,9 +289,21 @@ function VirtualGrid({
   }, [columns, rowHeight, virtualizer]);
 
   useLayoutEffect(() => {
-    if (restoreRowIndex === undefined) return;
+    // Center the photo restored from the folder exactly once. Later column
+    // changes belong to the current selection, not to the restored one.
+    if (restoreApplied.current || restoreRowIndex === undefined) return;
+    restoreApplied.current = true;
     virtualizer.scrollToIndex(restoreRowIndex, { align: "center" });
   }, [restoreRowIndex, virtualizer]);
+
+  useOrientationRetention(thumbnailOrientation, () => {
+    // Columns and row height both change with the orientation, so re-measure
+    // before scrolling the active photo back inside the viewport.
+    virtualizer.measure();
+    const activeIndex = activeAssetIndex(assets, activeId);
+    if (activeIndex === undefined) return;
+    virtualizer.scrollToIndex(gridRowForAsset(activeIndex, columns), { align: "auto" });
+  });
 
   useEffect(() => {
     const last = rows.at(-1);
@@ -396,6 +410,9 @@ function VirtualGrid({
   );
 }
 
+/** Height of `.list-header`, reserved above the virtualized list rows. */
+const LIST_HEADER_HEIGHT = 29;
+
 function VirtualList({
   assets,
   total,
@@ -423,6 +440,11 @@ function VirtualList({
     getScrollElement: () => parentRef.current,
     estimateSize: () => rowHeight,
     overscan: 16,
+    // The frozen column header is rendered before the virtualized rows, so the
+    // list itself starts below it. Keeping that space inside the virtualizer
+    // keeps its offsets aligned with the scroll element instead of shifting
+    // every row by the header height.
+    paddingStart: LIST_HEADER_HEIGHT,
   });
   const rows = virtualizer.getVirtualItems();
   const resourcesEnabled = true;
@@ -484,6 +506,15 @@ function VirtualList({
   useEffect(() => {
     virtualizer.measure();
   }, [rowHeight, virtualizer]);
+
+  useOrientationRetention(thumbnailOrientation, () => {
+    // Row height changes with the orientation, so re-measure before scrolling
+    // the active photo back inside the viewport.
+    virtualizer.measure();
+    const activeIndex = activeAssetIndex(assets, activeId);
+    if (activeIndex === undefined) return;
+    virtualizer.scrollToIndex(activeIndex, { align: "auto" });
+  });
 
   useEffect(() => {
     const last = rows.at(-1);

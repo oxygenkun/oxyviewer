@@ -396,7 +396,8 @@
 }
 .loading-more { position: sticky; bottom: 8px; width: fit-content; margin: auto; padding: 4px 9px; border-radius: 20px; color: var(--accent); background: #181d19; font-size: 0.5625rem; }
 
-.asset-scroll--list { padding-top: 29px; }
+/* The header's 29px are reserved by the list virtualizer's paddingStart, which
+   keeps its scroll offsets aligned with this element. */
 .list-header {
   position: absolute;
   z-index: 2;
