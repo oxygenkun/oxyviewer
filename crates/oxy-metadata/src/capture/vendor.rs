@@ -1,6 +1,7 @@
 use super::{TagLookup, format::ImageType};
 use oxy_domain::CaptureMetadata;
 
+mod canon;
 mod sony;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -46,8 +47,8 @@ pub(super) fn apply(
 ) {
     match vendor {
         CameraVendor::Sony => sony::apply(image_type, values, capture),
-        CameraVendor::Canon
-        | CameraVendor::Nikon
+        CameraVendor::Canon => canon::apply(image_type, values, capture),
+        CameraVendor::Nikon
         | CameraVendor::Fujifilm
         | CameraVendor::Panasonic
         | CameraVendor::Olympus

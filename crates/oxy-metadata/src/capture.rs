@@ -142,7 +142,9 @@ mod tests {
         let mut canon_tags = sony_tags;
         canon_tags[0] = Tag::new("EXIF", "Make", "Canon");
         let canon = from_tags(&canon_tags, Path::new("photo.cr3"));
-        assert_eq!(canon.color_temperature, None);
+        // ColorTemperature is a shared MakerNotes tag name; the Sony-only
+        // tint and DRO tags must not leak into the Canon mapping.
+        assert_eq!(canon.color_temperature.as_deref(), Some("5600 K"));
         assert_eq!(canon.tint, None);
         assert_eq!(canon.dynamic_range_optimizer, None);
     }
