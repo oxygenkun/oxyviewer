@@ -58,6 +58,50 @@ describe("loupe geometry", () => {
     )).toEqual({ width: 7_008, height: 4_672 });
   });
 
+  it("anchors the pixel-zoom scale to the file dimensions, not the displayed raster", () => {
+    const thumbnail = { width: 512, height: 341 };
+    const metadata = { width: 8_192, height: 5_464 };
+    // Intermediate previews and full pixels alike defer to the file size.
+    expect(resolveLoupeSourceSize(
+      "raw", thumbnail, undefined, metadata, { width: 3, height: 2 },
+    )).toEqual(metadata);
+    expect(resolveLoupeSourceSize(
+      "raw", { width: 8_192, height: 5_464 }, undefined, { width: 8_256, height: 5_504 }, { width: 3, height: 2 },
+    )).toEqual({ width: 8_256, height: 5_504 });
+  });
+
+  it("rotates stored metadata to match the on-screen orientation", () => {
+    expect(resolveLoupeSourceSize(
+      "jpeg", { width: 341, height: 512 }, undefined, { width: 6_000, height: 4_000 }, { width: 3, height: 2 },
+    )).toEqual({ width: 4_000, height: 6_000 });
+  });
+
+  it("falls back to the displayed raster when file dimensions are unknown", () => {
+    const thumbnail = { width: 512, height: 341 };
+    expect(resolveLoupeSourceSize(
+      "raw", thumbnail, undefined, undefined, { width: 3, height: 2 },
+    )).toEqual(thumbnail);
+  });
+
+  it("uses file dimensions before anything is displayed", () => {
+    expect(resolveLoupeSourceSize(
+      "raw", undefined, undefined, { width: 8_192, height: 5_464 }, { width: 3, height: 2 },
+    )).toEqual({ width: 8_192, height: 5_464 });
+  });
+
+  it("keeps the HEIF scale on real pixels and matches metadata to the display orientation", () => {
+    const placeholder = { width: 341, height: 512 };
+    // The tile canvas full size wins over everything.
+    expect(resolveLoupeSourceSize(
+      "heif", placeholder, { width: 4_000, height: 6_000 }, { width: 6_000, height: 4_000 }, { width: 3, height: 2 },
+    )).toEqual({ width: 4_000, height: 6_000 });
+    // Without geometry or full pixels, pre-rotation container metadata follows
+    // the portrait placeholder instead of redefining the scale landscape-side.
+    expect(resolveLoupeSourceSize(
+      "heif", placeholder, undefined, { width: 6_000, height: 4_000 }, { width: 3, height: 2 },
+    )).toEqual({ width: 4_000, height: 6_000 });
+  });
+
   it("fits landscape and portrait images without changing their aspect ratio", () => {
     expect(fitSize({ width: 800, height: 600 }, { width: 1_600, height: 900 }))
       .toEqual({ width: 800, height: 450 });

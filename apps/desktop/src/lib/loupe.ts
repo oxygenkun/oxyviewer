@@ -75,12 +75,42 @@ export function resolveLoupeSourceSize(
   fallback: Size,
   previewGeometry?: PreviewGeometry,
 ) {
-  // HEIF's <img> is only a 512 px placeholder. It must never define the
-  // pixel-zoom scale once the full-resolution tile canvas is available.
+  // The pixel-zoom scale is always anchored to the complete image's real
+  // dimensions, never to the raster currently on screen. Intermediate
+  // artifacts (retained thumbnail, scaled preview, interim embedded JPEG)
+  // carry fewer pixels; letting them define the scale made the percentage
+  // jump while the full image loads (a 512 px RAW thumbnail showed ~100%
+  // where the settled view is ~6%). Metadata may be stored pre-rotation,
+  // so match the on-screen orientation before using it.
   if (kind === "heif") {
-    return fullResolutionSize ?? previewGeometry?.displaySize ?? metadataSize ?? previewNaturalSize ?? fallback;
+    // HEIF's <img> is only a 512 px placeholder. The tile canvas reports the
+    // real full-resolution pixels, and recognized previews (e.g. Sony HIF)
+    // carry full-resolution display dimensions; raw container metadata is only
+    // a fallback and may be pre-rotation, so it follows the on-screen
+    // orientation of the placeholder.
+    if (fullResolutionSize) return fullResolutionSize;
+    if (previewGeometry?.displaySize) return previewGeometry.displaySize;
+    if (metadataSize) {
+      return previewNaturalSize
+        ? matchDisplayOrientation(metadataSize, previewNaturalSize)
+        : metadataSize;
+    }
+    return previewNaturalSize ?? fallback;
   }
-  return previewNaturalSize ?? metadataSize ?? fallback;
+  if (metadataSize) {
+    const displayed = previewGeometry?.displaySize ?? previewNaturalSize;
+    return displayed ? matchDisplayOrientation(metadataSize, displayed) : metadataSize;
+  }
+  return previewNaturalSize ?? fallback;
+}
+
+/** Metadata may be stored pre-rotation; match the on-screen orientation. */
+function matchDisplayOrientation(reference: Size, displayed: Size): Size {
+  const referencePortrait = reference.height > reference.width;
+  const displayedPortrait = displayed.height > displayed.width;
+  return referencePortrait === displayedPortrait
+    ? reference
+    : { width: reference.height, height: reference.width };
 }
 
 export function clampZoom(zoom: number, maxZoom = MAX_PIXEL_ZOOM_PERCENT) {
