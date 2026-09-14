@@ -8,29 +8,27 @@ All notable changes to OxyViewer are documented in this file. Each release lists
 
 ### 新增
 
-- 可自定义的键盘快捷键，覆盖 loupe、网格和列表视图，支持按键录制改键、单项与全局重置、内置别名、按作用域检测冲突，并持久保存绑定。
-- loupe 中空格键循环切换缩放，已解析对焦区域时以其为锚点；网格或列表中按空格可用 loupe 打开当前照片。
-- 工具栏与资源查询支持 pick 标记筛选，组内按“任一选中标记”匹配。
-- 从 RAW MakerNotes 提取佳能色温、色调（白平衡偏移）和自动亮度优化（DRO）。
+- 新增可自定义快捷键，并可在设置中查看全部可用快捷键。
+- 新增旗标筛选功能。
 
 ### 修复
 
-- loupe 的像素缩放百分比改为基于文件真实尺寸，切换到 RAW 文件时不再在全像素加载前闪现瞬时比例。
-- 状态栏显示所选照片在筛选后文件夹顺序中的位置，而不是已加载缩略图的数量。
-- 缩略图在横竖方向之间切换时，网格、列表和胶片条保持所选照片可见。
+- 改进佳能 CR3 文件的元数据读取，包括色温、色调（白平衡偏移）和自动亮度优化（DRO）。
+- 修复切换放大镜视图时缩放比例异常跳动的问题。
+- 修复状态栏中所选文件坐标数值显示异常的问题。
+- 修复在横向与纵向布局之间切换时，所选缩略图无法保持可见位置的问题。
 
 ### Added
 
-- Customizable keyboard shortcuts for the loupe, grid, and list views, with press-to-rebind capture, per-action and global reset, built-in aliases, scope-aware conflict detection, and persisted bindings.
-- Space-bar zoom cycling in the loupe, anchored on the shooting focus region when one is parsed, and space opens the active photo in the loupe from the grid or list.
-- Pick-flag filtering in the toolbar and asset query, matching any selected flag within the group.
-- Canon color temperature, tint (WB shift), and Auto Lighting Optimizer extraction from RAW MakerNotes.
+- Added customizable keyboard shortcuts, with all available shortcuts now listed in Settings.
+- Added flag-based filtering.
 
 ### Fixed
 
-- The loupe's pixel-zoom percentage now derives from the file's real dimensions, so switching to a RAW file no longer flashes a transient scale before the full pixels load.
-- The status bar shows the selected photo's position within the filtered folder order instead of the number of thumbnails loaded so far.
-- The grid, list, and filmstrip keep the selected photo in view when thumbnail orientation changes between landscape and portrait.
+- Improved metadata parsing for Canon CR3 files, including color temperature, tint (white balance shift), and Auto Lighting Optimizer (DRO).
+- Fixed unexpected zoom level changes when switching between Loupe views.
+- Fixed coordinate values for the selected file in the status bar.
+- The selected thumbnail now stays in view when switching between horizontal and vertical layouts.
 
 ## [0.1.0] - 2026-09-13
 
