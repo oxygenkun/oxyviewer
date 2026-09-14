@@ -2416,7 +2416,7 @@ checksum = "04744f49eae99ab78e0d5c0b603ab218f515ea8cfe5a456d7629ad883a3b6e7d"
 
 [[package]]
 name = "oxy-domain"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "serde",
  "serde_json",
@@ -2424,7 +2424,7 @@ dependencies = [
 
 [[package]]
 name = "oxy-fs"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "libc",
  "oxy-domain",
@@ -2437,7 +2437,7 @@ dependencies = [
 
 [[package]]
 name = "oxy-library"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "oxy-domain",
  "oxy-fs",
@@ -2451,7 +2451,7 @@ dependencies = [
 
 [[package]]
 name = "oxy-media"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "cc",
  "cmake",
@@ -2474,7 +2474,7 @@ dependencies = [
 
 [[package]]
 name = "oxy-metadata"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "libheif-rs",
  "oxy-domain",
@@ -2488,7 +2488,7 @@ dependencies = [
 
 [[package]]
 name = "oxy-metadata-parser"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "memmap2",
  "miniz_oxide 0.9.1",
@@ -2497,7 +2497,7 @@ dependencies = [
 
 [[package]]
 name = "oxy-runtime"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "oxy-domain",
  "parking_lot",
@@ -2505,7 +2505,7 @@ dependencies = [
 
 [[package]]
 name = "oxyviewer"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "flate2",
  "oxy-domain",
