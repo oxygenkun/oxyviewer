@@ -9,6 +9,15 @@ export function activeAssetIndex(
   return index >= 0 ? index : undefined;
 }
 
+/** 1-based position of the active asset, for "n / total" readouts. */
+export function activeAssetOrdinal(
+  assets: readonly Pick<AssetSummary, "id">[],
+  activeId: string | undefined,
+): number | undefined {
+  const index = activeAssetIndex(assets, activeId);
+  return index === undefined ? undefined : index + 1;
+}
+
 export type FocusRestoreAction = "none" | "fetch" | "wait" | "fallback";
 
 export function focusRestoreAction(

@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   activeAssetIndex,
+  activeAssetOrdinal,
   focusRestoreAction,
   gridRowCount,
   gridRowForAsset,
@@ -15,6 +16,13 @@ describe("asset view position", () => {
     expect(activeAssetIndex(assets, "d")).toBe(3);
     expect(activeAssetIndex(assets, "missing")).toBeUndefined();
     expect(activeAssetIndex(assets, undefined)).toBeUndefined();
+  });
+
+  it("reports the active asset's 1-based position and nothing when unselected", () => {
+    expect(activeAssetOrdinal(assets, "a")).toBe(1);
+    expect(activeAssetOrdinal(assets, "d")).toBe(4);
+    expect(activeAssetOrdinal(assets, "missing")).toBeUndefined();
+    expect(activeAssetOrdinal(assets, undefined)).toBeUndefined();
   });
 
   it("keeps paging while restoring a filtered filmstrip focus", () => {

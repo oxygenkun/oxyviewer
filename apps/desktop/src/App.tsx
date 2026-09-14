@@ -38,7 +38,7 @@ import { recordBrowseTiming } from "./lib/browseDiagnostics";
 import { firstBrowseCursor, nextBrowseCursor } from "./lib/browsePagination";
 import { useBackgroundAssetPagination } from "./lib/useBackgroundAssetPagination";
 import { insertRestoredFolder, restoreFoldersProgressively, type FolderRestoreState } from "./lib/folderRestoration";
-import { focusRestoreAction, replacementAssetIdAfterRemoval } from "./lib/assetViewPosition";
+import { activeAssetOrdinal, focusRestoreAction, replacementAssetIdAfterRemoval } from "./lib/assetViewPosition";
 import { setBrowserImageResourceScope } from "./lib/browserImageCache";
 import { acceptDirectoryTreeSnapshot } from "./lib/directoryTreeProjection";
 import { acceptImageProjection, invalidateImageDirectory } from "./lib/imageProjection";
@@ -378,6 +378,12 @@ export function App({ perfScenario }: { perfScenario?: PerfScenario }) {
     ? assets.length
     : assetsQuery.data?.pages[0]?.total ?? 0;
   const activeAsset = assets.find((asset) => asset.id === activeId);
+  // The status bar reports the selected photo's position in the visible order,
+  // not how many thumbs happen to be paged in so far.
+  const activeOrdinal = useMemo(
+    () => activeAssetOrdinal(displayedAssets, activeId),
+    [activeId, displayedAssets],
+  );
   const progressiveWorkPending = progressivelyFilterMetadata && (
     progressiveMetadataQuery.isLoading ||
     progressiveMetadataQuery.isFetchingNextPage ||
@@ -797,7 +803,7 @@ export function App({ perfScenario }: { perfScenario?: PerfScenario }) {
               ) : null}
             </span>
           ) : null}
-          <span>{assetsLoading || !activeSession && restoringFolders ? t("loading") : `${assets.length.toLocaleString()} / ${total.toLocaleString()} ${t("photos")}`}</span>
+          <span>{assetsLoading || !activeSession && restoringFolders ? t("loading") : `${activeOrdinal === undefined ? "–" : activeOrdinal.toLocaleString()} / ${total.toLocaleString()} ${t("photos")}`}</span>
           <span
             className="statusbar__thumbnail-orientation"
             role="group"
