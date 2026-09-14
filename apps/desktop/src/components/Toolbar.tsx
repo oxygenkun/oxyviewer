@@ -16,11 +16,17 @@ import {
 } from "lucide-react";
 import type { MessageKey } from "../lib/i18n";
 import { useWorkspaceStore } from "../store";
-import type { AssetKind, AssetSort, ViewMode } from "../types";
+import type { AssetKind, AssetSort, PickLabel, ViewMode } from "../types";
+import { PickFlagIcon } from "./PickFlagIcon";
 
 const kinds: Array<AssetKind | undefined> = [undefined, "raw", "jpeg", "heif"];
 const ratings = [1, 2, 3, 4, 5] as const;
 const colorLabels = ["Red", "Yellow", "Green", "Blue", "Purple"] as const;
+const pickLabels: Array<[PickLabel, MessageKey]> = [
+  ["accepted", "flagAccepted"],
+  ["pending", "flagPending"],
+  ["rejected", "flagRejected"],
+];
 const views: Array<[ViewMode, typeof Grid3X3, MessageKey]> = [
   ["grid", Grid3X3, "viewGrid"],
   ["list", List, "viewList"],
@@ -38,6 +44,7 @@ export function Toolbar({ total, loading, t }: ToolbarProps) {
     view, setView, search, setSearch, kind, setKind, sort, setSort, direction,
     toggleDirection, inspectorOpen, toggleInspector, leftPanelOpen, toggleLeftPanel,
     minimumRating, setMinimumRating, colorLabels: selectedColorLabels, toggleColorLabel,
+    pickLabels: selectedPickLabels, togglePickLabel,
   } = useWorkspaceStore();
 
   return (
@@ -122,6 +129,23 @@ export function Toolbar({ total, loading, t }: ToolbarProps) {
                     title={t(label.toLowerCase() as MessageKey)}
                   >
                     {active ? <Check size={9} strokeWidth={3} /> : null}
+                  </button>
+                );
+              })}
+            </div>
+            <div className="filterbar__flags" role="group" aria-label={t("flagFilter")}>
+              {pickLabels.map(([value, label]) => {
+                const active = selectedPickLabels.includes(value);
+                return (
+                  <button
+                    key={value}
+                    className={`filterbar__flag filterbar__flag--${value}${active ? " is-active" : ""}`}
+                    onClick={() => togglePickLabel(value)}
+                    aria-label={t(label)}
+                    aria-pressed={active}
+                    title={`${t("flagFilter")}: ${t(label)}`}
+                  >
+                    <PickFlagIcon value={value} size={13} />
                   </button>
                 );
               })}

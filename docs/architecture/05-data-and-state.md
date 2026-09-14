@@ -242,7 +242,7 @@ SMB/NAS 上产生延迟或不支持错误。
 `patch_metadata` 在 blocking worker 中把多选编辑写入各自 sidecar；独立的
 `sync_metadata_to_embedded` 才调用 ExifTool。完成后使对应目录摘要缓存失效，并刷新
 详情与列表查询。普通目录打开仍先使用廉价分页，首屏返回后再异步批量补全已加载分页的
-rating/color/flag；只有启用 rating/color 筛选时才批量读取整个当前目录的元数据，然后进行过滤和分页。
+rating/color/flag；只有启用 rating/color/flag 中任一筛选时才批量读取整个当前目录的元数据，然后进行过滤和分页。
 
 ## 8. 文件操作
 

@@ -709,7 +709,7 @@ impl Library {
                 status_name(candidate.status),
                 candidate.rating,
                 candidate.color_label,
-                candidate.pick_label.map(pick_label_name),
+                candidate.pick_label.map(PickLabel::as_str),
                 candidate.error,
             ],
         )?;
@@ -893,7 +893,10 @@ impl Library {
         query: &AssetQuery,
         offset: usize,
     ) -> Result<Option<Page<AssetSummary>>, LibraryError> {
-        if query.minimum_rating.is_some() || !query.color_labels.is_empty() {
+        // The index stores ratings, colors, and flags but the paged query path
+        // here only serves cheap filters; metadata filters fall back to a
+        // scanned-and-enriched page.
+        if query.needs_metadata_enrichment() {
             return Ok(None);
         }
         let root = root.to_string_lossy();
@@ -1676,14 +1679,6 @@ fn parse_kind(value: &str) -> Result<AssetKind, rusqlite::Error> {
         "tiff" => Ok(AssetKind::Tiff),
         "webp" => Ok(AssetKind::Webp),
         _ => Err(rusqlite::Error::InvalidQuery),
-    }
-}
-
-fn pick_label_name(value: PickLabel) -> &'static str {
-    match value {
-        PickLabel::Rejected => "rejected",
-        PickLabel::Pending => "pending",
-        PickLabel::Accepted => "accepted",
     }
 }
 

@@ -80,7 +80,7 @@ export function App({ perfScenario }: { perfScenario?: PerfScenario }) {
   const queryClient = useQueryClient();
   const {
     view, thumbnailOrientation, activeId, selectedIds, inspectorOpen, leftPanelOpen, settingsOpen, locale,
-    search, kind, minimumRating, colorLabels, sort, direction, clearSelection, select, setThumbnailOrientation, toggleSettings,
+    search, kind, minimumRating, colorLabels, pickLabels, sort, direction, clearSelection, select, setThumbnailOrientation, toggleSettings,
     leftPanelWidth, inspectorWidth, setLeftPanelWidth, setInspectorWidth, uiFontScale,
   } = useWorkspaceStore();
   const appShellRef = useRef<HTMLDivElement>(null);
@@ -276,16 +276,17 @@ export function App({ perfScenario }: { perfScenario?: PerfScenario }) {
     kind,
     minimumRating,
     colorLabels: colorLabels.length ? colorLabels : undefined,
+    pickLabels: pickLabels.length ? pickLabels : undefined,
     sort,
     direction,
     pageSize: 250,
-  }), [colorLabels, direction, kind, minimumRating, search, sort]);
-  const metadataFiltersActive = Boolean(minimumRating || colorLabels.length);
+  }), [colorLabels, direction, kind, minimumRating, pickLabels, search, sort]);
+  const metadataFiltersActive = Boolean(minimumRating || colorLabels.length || pickLabels.length);
   if (metadataFiltersActive && activeId) filteredFocusRef.current = activeId;
   const filteredFocusRestoreId = metadataFiltersActive ? undefined : filteredFocusRef.current;
-  const progressivelyFilterMetadata = Boolean(!search && (minimumRating || colorLabels.length));
+  const progressivelyFilterMetadata = Boolean(!search && (minimumRating || colorLabels.length || pickLabels.length));
   const metadataRecords = useMetadataProjectionStore((state) => progressivelyFilterMetadata ? state.records : NO_METADATA_RECORDS);
-  const shouldPreloadFilteredAssets = Boolean(search || kind || minimumRating || colorLabels.length);
+  const shouldPreloadFilteredAssets = Boolean(search || kind || minimumRating || colorLabels.length || pickLabels.length);
   const preloadQuery = useMemo<AssetQuery>(() => ({
     sort: "name",
     direction: "ascending",

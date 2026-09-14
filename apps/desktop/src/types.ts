@@ -348,6 +348,7 @@ export interface AssetQuery {
   kind?: AssetKind;
   minimumRating?: number;
   colorLabels?: string[];
+  pickLabels?: string[];
   sort: AssetSort;
   direction: SortDirection;
   pageSize: number;

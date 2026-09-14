@@ -783,6 +783,18 @@ pub fn page_assets(
         {
             continue;
         }
+        // Flags filter as OR within the group, matching the color labels. An
+        // unlabeled asset never matches: "any flag" is the cleared filter.
+        if !query.pick_labels.is_empty()
+            && summary.pick_label.is_none_or(|value| {
+                !query
+                    .pick_labels
+                    .iter()
+                    .any(|label| value.as_str().eq_ignore_ascii_case(label))
+            })
+        {
+            continue;
+        }
         items.push(summary);
     }
 
@@ -1170,6 +1182,7 @@ fn epoch_ms(time: SystemTime) -> u64 {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use oxy_domain::PickLabel;
     use std::fs::File;
     use tempfile::tempdir;
 
@@ -1791,6 +1804,72 @@ mod tests {
         assert_eq!(page.total, 2);
         assert_eq!(page.items[0].name, "a.jpg");
         assert_eq!(page.items[1].name, "b.jpg");
+    }
+
+    #[test]
+    fn filters_summaries_by_pick_labels_with_or_logic_and_excludes_unflagged() {
+        let directory = tempdir().unwrap();
+        for name in ["a.jpg", "b.jpg", "c.jpg", "d.jpg"] {
+            File::create(directory.path().join(name)).unwrap();
+        }
+        let mut assets = scan_assets(directory.path()).unwrap();
+        for (name, pick_label) in [
+            ("a.jpg", Some(PickLabel::Accepted)),
+            ("b.jpg", Some(PickLabel::Rejected)),
+            ("c.jpg", Some(PickLabel::Pending)),
+            ("d.jpg", None),
+        ] {
+            assets
+                .iter_mut()
+                .find(|asset| asset.name == name)
+                .unwrap()
+                .pick_label = pick_label;
+        }
+
+        let accepted = page_assets(
+            &assets,
+            &AssetQuery {
+                pick_labels: vec!["accepted".into()],
+                ..AssetQuery::default()
+            },
+            0,
+        );
+        assert_eq!(accepted.total, 1);
+        assert_eq!(accepted.items[0].name, "a.jpg");
+
+        // Values are case-insensitive, like the color label filter.
+        let rejected_or_accepted = page_assets(
+            &assets,
+            &AssetQuery {
+                pick_labels: vec!["Accepted".into(), "REJECTED".into()],
+                ..AssetQuery::default()
+            },
+            0,
+        );
+        assert_eq!(
+            rejected_or_accepted
+                .items
+                .iter()
+                .map(|asset| asset.name.as_str())
+                .collect::<Vec<_>>(),
+            ["a.jpg", "b.jpg"]
+        );
+
+        // The pending asset and the unflagged asset stay out of both groups,
+        // so a cleared filter is the only way to see every asset.
+        let pending = page_assets(
+            &assets,
+            &AssetQuery {
+                pick_labels: vec!["pending".into()],
+                ..AssetQuery::default()
+            },
+            0,
+        );
+        assert_eq!(pending.total, 1);
+        assert_eq!(pending.items[0].name, "c.jpg");
+
+        let none = page_assets(&assets, &AssetQuery::default(), 0);
+        assert_eq!(none.total, 4);
     }
 
     #[test]

@@ -196,6 +196,8 @@ export async function listAssets(
       .filter((asset) => !query.minimumRating || (asset.rating ?? 0) >= query.minimumRating)
       .filter((asset) => !query.colorLabels?.length ||
         query.colorLabels.some((label) => asset.colorLabel?.toLowerCase() === label.toLowerCase()))
+      .filter((asset) => !query.pickLabels?.length ||
+        query.pickLabels.some((label) => asset.pickLabel?.toLowerCase() === label.toLowerCase()))
       .filter((asset) => !needle || asset.name.toLowerCase().includes(needle))
       .sort((left, right) => {
         const multiplier = query.direction === "ascending" ? 1 : -1;

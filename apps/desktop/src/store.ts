@@ -56,6 +56,7 @@ interface WorkspaceState {
   kind?: AssetKind;
   minimumRating?: number;
   colorLabels: string[];
+  pickLabels: string[];
   sort: AssetSort;
   direction: SortDirection;
   shortcuts: ShortcutBindings;
@@ -85,6 +86,7 @@ interface WorkspaceState {
   setKind: (kind?: AssetKind) => void;
   setMinimumRating: (rating?: number) => void;
   toggleColorLabel: (label: string) => void;
+  togglePickLabel: (label: string) => void;
   setSort: (sort: AssetSort) => void;
   toggleDirection: () => void;
 }
@@ -114,6 +116,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set) => ({
   filmstripHeight: loadLayoutSize("filmstrip"),
   search: "",
   colorLabels: [],
+  pickLabels: [],
   sort: "name",
   direction: "ascending",
   shortcuts: loadShortcuts(),
@@ -186,6 +189,11 @@ export const useWorkspaceStore = create<WorkspaceState>((set) => ({
     colorLabels: state.colorLabels.includes(label)
       ? state.colorLabels.filter((colorLabel) => colorLabel !== label)
       : [...state.colorLabels, label],
+  })),
+  togglePickLabel: (label) => set((state) => ({
+    pickLabels: state.pickLabels.includes(label)
+      ? state.pickLabels.filter((pickLabel) => pickLabel !== label)
+      : [...state.pickLabels, label],
   })),
   setSort: (sort) => set({ sort }),
   toggleDirection: () =>

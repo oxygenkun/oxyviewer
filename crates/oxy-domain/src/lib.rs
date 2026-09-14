@@ -106,6 +106,19 @@ pub enum PickLabel {
     Accepted,
 }
 
+impl PickLabel {
+    /// Canonical lowercase name. Serialization, the library projection cache,
+    /// and query filters all share this spelling so a filter value never
+    /// drifts from what the UI displays.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            PickLabel::Rejected => "rejected",
+            PickLabel::Pending => "pending",
+            PickLabel::Accepted => "accepted",
+        }
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct AssetSummary {
@@ -884,9 +897,22 @@ pub struct AssetQuery {
     pub minimum_rating: Option<u8>,
     #[serde(default)]
     pub color_labels: Vec<String>,
+    #[serde(default)]
+    pub pick_labels: Vec<String>,
     pub sort: AssetSort,
     pub direction: SortDirection,
     pub page_size: Option<usize>,
+}
+
+impl AssetQuery {
+    /// True when a filter cannot be answered from a cheap directory scan and
+    /// needs sidecar/XMP enrichment first. Keep this the single source of truth:
+    /// a caller that skips enrichment silently drops every matching asset.
+    pub fn needs_metadata_enrichment(&self) -> bool {
+        self.minimum_rating.is_some()
+            || !self.color_labels.is_empty()
+            || !self.pick_labels.is_empty()
+    }
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, Default)]
@@ -1077,6 +1103,38 @@ pub struct PerfScenario {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn metadata_enrichment_is_required_only_for_metadata_filters() {
+        assert!(!AssetQuery::default().needs_metadata_enrichment());
+
+        // Cheap filters are answerable from the directory scan alone.
+        assert!(
+            !AssetQuery {
+                search: Some("beach".into()),
+                kind: Some(AssetKind::Raw),
+                ..AssetQuery::default()
+            }
+            .needs_metadata_enrichment()
+        );
+
+        for filter in [
+            AssetQuery {
+                minimum_rating: Some(1),
+                ..AssetQuery::default()
+            },
+            AssetQuery {
+                color_labels: vec!["red".into()],
+                ..AssetQuery::default()
+            },
+            AssetQuery {
+                pick_labels: vec!["accepted".into()],
+                ..AssetQuery::default()
+            },
+        ] {
+            assert!(filter.needs_metadata_enrichment());
+        }
+    }
 
     #[test]
     fn asset_kind_classifies_supported_paths_case_insensitively() {

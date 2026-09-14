@@ -32,7 +32,7 @@ not by basic UI construction.
 - [x] Cargo/pnpm workspaces, Rust 2024 lint policy, Tauri 2 shell, logging, i18n,
   shared domain contracts, and macOS/Windows/Linux CI builds
 - [x] Native folder picker and cheap, non-recursive folder sessions
-- [x] Paged asset queries with search, type/rating/color filters, sorting, and
+- [x] Paged asset queries with search, type/rating/color/flag filters, sorting, and
   virtualized grid/list rendering
 - [x] Grid, list, progressive loupe, filmstrip, multi-selection, and keyboard navigation
 - [x] Rust-owned, revisioned directory trees with on-demand child loading and
@@ -51,7 +51,7 @@ not by basic UI construction.
 - [ ] Add filesystem watching and streamed `folder_delta` updates without making
   folder open recursive or blocking.
 - [ ] Add cross-root asset search and metadata-aware indexed filters. Current FTS
-  queries cover one loaded root; rating/color filters still enrich current-directory
+  queries cover one loaded root; rating/color/flag filters still enrich current-directory
   metadata progressively.
 - [ ] Put file writes behind an explicit folder-session/root authorization policy,
   then add complete dialogs, partial-failure reporting, an undo journal, and recovery.

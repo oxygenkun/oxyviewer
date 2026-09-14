@@ -136,7 +136,9 @@ pub(crate) async fn list_assets(
         progress.stage = "sorting".into();
         let _ = app.emit("directory-browse-progress", &progress);
         let sort_started = Instant::now();
-        let page = if query.minimum_rating.is_some() || !query.color_labels.is_empty() {
+        // A metadata filter cannot be answered from the cheap directory scan:
+        // flags reach the summary only through the sidecar/XMP enrichment pass.
+        let page = if query.needs_metadata_enrichment() {
             let mut assets = read.assets.as_ref().clone();
             metadata
                 .enrich_summaries(&mut assets)
