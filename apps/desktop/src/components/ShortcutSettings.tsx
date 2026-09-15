@@ -4,12 +4,12 @@ import type { MessageKey } from "../lib/i18n";
 import {
   DEFAULT_SHORTCUTS,
   SHORTCUT_ACTIONS,
-  SHORTCUT_ALIASES,
-  bindingsEqual,
   findShortcutConflict,
   formatShortcut,
   shortcutFromEvent,
+  shortcutSlotsEqual,
   type ShortcutAction,
+  type ShortcutSlot,
 } from "../lib/shortcuts";
 import { useWorkspaceStore } from "../store";
 
@@ -48,11 +48,19 @@ const ACTION_GROUPS: Array<{ labelKey: MessageKey; actions: ShortcutAction[] }> 
   },
 ];
 
+const CLEAR_KEYS = new Set(["Backspace", "Delete"]);
+
+interface Capture {
+  action: ShortcutAction;
+  slot: ShortcutSlot;
+}
+
 export function ShortcutSettings({ t }: { t: (key: MessageKey) => string }) {
   const shortcuts = useWorkspaceStore((state) => state.shortcuts);
   const setShortcut = useWorkspaceStore((state) => state.setShortcut);
+  const resetShortcut = useWorkspaceStore((state) => state.resetShortcut);
   const resetShortcuts = useWorkspaceStore((state) => state.resetShortcuts);
-  const [capturing, setCapturing] = useState<ShortcutAction>();
+  const [capturing, setCapturing] = useState<Capture>();
   const [error, setError] = useState<string>();
 
   useEffect(() => {
@@ -60,27 +68,32 @@ export function ShortcutSettings({ t }: { t: (key: MessageKey) => string }) {
     const onKeyDown = (event: KeyboardEvent) => {
       event.preventDefault();
       event.stopPropagation();
-      if (event.key === "Escape") {
-        setCapturing(undefined);
+      const { action, slot } = capturing;
+      setCapturing(undefined);
+      if (event.key === "Escape") return;
+      if (CLEAR_KEYS.has(event.key)) {
+        setError(undefined);
+        setShortcut(action, slot, null);
         return;
       }
       const binding = shortcutFromEvent(event);
       if (!binding) return;
-      const conflict = findShortcutConflict(shortcuts, capturing, binding);
+      const conflict = findShortcutConflict(shortcuts, action, slot, binding);
       if (conflict) {
-        setError(t("shortcutConflict").replace("{action}", t(ACTION_LABELS[conflict])));
+        setError(conflict === action
+          ? t("shortcutDuplicate")
+          : t("shortcutConflict").replace("{action}", t(ACTION_LABELS[conflict])));
       } else {
         setError(undefined);
-        setShortcut(capturing, binding);
+        setShortcut(action, slot, binding);
       }
-      setCapturing(undefined);
     };
     window.addEventListener("keydown", onKeyDown, true);
     return () => window.removeEventListener("keydown", onKeyDown, true);
   }, [capturing, shortcuts, setShortcut, t]);
 
   const customized = SHORTCUT_ACTIONS.some(
-    (action) => !bindingsEqual(shortcuts[action], DEFAULT_SHORTCUTS[action]),
+    (action) => !shortcutSlotsEqual(shortcuts[action], DEFAULT_SHORTCUTS[action]),
   );
 
   return (
@@ -96,32 +109,38 @@ export function ShortcutSettings({ t }: { t: (key: MessageKey) => string }) {
         <div className="shortcut-settings__group" key={group.labelKey}>
           <h3 className="shortcut-settings__group-title">{t(group.labelKey)}</h3>
           {group.actions.map((action) => {
-            const binding = shortcuts[action];
-            const aliases = SHORTCUT_ALIASES[action] ?? [];
-            const isDefault = bindingsEqual(binding, DEFAULT_SHORTCUTS[action]);
-            const isCapturing = capturing === action;
+            const bindingSlots = shortcuts[action];
+            const isDefault = shortcutSlotsEqual(bindingSlots, DEFAULT_SHORTCUTS[action]);
+            const label = t(ACTION_LABELS[action]);
             return (
               <div className="shortcut-settings__row" key={action}>
-                <span className="shortcut-settings__action">{t(ACTION_LABELS[action])}</span>
-                <kbd className={`shortcut-settings__keys ${isCapturing ? "is-listening" : ""}`}>
-                  {isCapturing ? t("shortcutListening") : formatShortcut(binding)}
-                </kbd>
-                {aliases.map((alias) => (
-                  <kbd className="shortcut-settings__keys shortcut-settings__keys--alias" key={formatShortcut(alias)}>
-                    {formatShortcut(alias)}
-                  </kbd>
-                ))}
+                <span className="shortcut-settings__action">{label}</span>
+                {bindingSlots.map((binding, slot) => {
+                  const isCapturing = capturing?.action === action && capturing.slot === slot;
+                  return (
+                    <button
+                      key={slot}
+                      type="button"
+                      aria-label={`${label} · ${t("shortcutSlotLabel").replace("{index}", String(slot + 1))}`}
+                      aria-pressed={isCapturing}
+                      title={t("shortcutEditHint")}
+                      className={["shortcut-settings__keys", isCapturing && "is-listening", !binding && "is-unset"]
+                        .filter(Boolean)
+                        .join(" ")}
+                      onClick={() => {
+                        setError(undefined);
+                        setCapturing(isCapturing ? undefined : { action, slot: slot as ShortcutSlot });
+                      }}
+                    >
+                      {isCapturing ? t("shortcutListening") : binding ? formatShortcut(binding) : t("shortcutUnset")}
+                    </button>
+                  );
+                })}
                 <div className="shortcut-settings__actions">
                   <button
-                    aria-pressed={isCapturing}
-                    onClick={() => { setError(undefined); setCapturing(isCapturing ? undefined : action); }}
-                  >
-                    {isCapturing ? t("cancel") : t("shortcutRebind")}
-                  </button>
-                  <button
-                    aria-label={`${t("restoreDefault")} ${t(ACTION_LABELS[action])}`}
+                    aria-label={`${t("restoreDefault")} ${label}`}
                     disabled={isDefault}
-                    onClick={() => { setError(undefined); setShortcut(action, DEFAULT_SHORTCUTS[action]); }}
+                    onClick={() => { setError(undefined); resetShortcut(action); }}
                   >
                     {t("restoreDefault")}
                   </button>

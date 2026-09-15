@@ -1,4 +1,5 @@
-const SHORTCUTS_KEY = "oxyviewer.shortcuts.v1";
+const SHORTCUTS_KEY = "oxyviewer.shortcuts.v2";
+const LEGACY_SHORTCUTS_KEY = "oxyviewer.shortcuts.v1";
 
 export interface ShortcutBinding {
   key: string;
@@ -31,35 +32,37 @@ export const SHORTCUT_ACTIONS = [
 ] as const;
 
 export type ShortcutAction = (typeof SHORTCUT_ACTIONS)[number];
-export type ShortcutBindings = Record<ShortcutAction, ShortcutBinding>;
+
+// Every action owns two independently customizable slots. A null slot is an
+// intentionally unbound key.
+export type ShortcutSlot = 0 | 1;
+export type ShortcutSlots = [ShortcutBinding | null, ShortcutBinding | null];
+export type ShortcutBindings = Record<ShortcutAction, ShortcutSlots>;
 
 const plain = (key: string): ShortcutBinding => ({ key, ctrl: false, alt: false, shift: false, meta: false });
+const slots = (primary: ShortcutBinding | null, secondary: ShortcutBinding | null = null): ShortcutSlots =>
+  [primary, secondary];
 
 export const DEFAULT_SHORTCUTS: ShortcutBindings = {
-  "loupe.previousAsset": plain("arrowleft"),
-  "loupe.nextAsset": plain("arrowright"),
-  "loupe.toggleFocusAreas": plain("f"),
-  "loupe.cycleZoom": plain("space"),
-  "grid.moveLeft": plain("arrowleft"),
-  "grid.moveRight": plain("arrowright"),
-  "grid.moveUp": plain("arrowup"),
-  "grid.moveDown": plain("arrowdown"),
-  "grid.openLoupe": plain("space"),
-  "marking.rating1": plain("1"),
-  "marking.rating2": plain("2"),
-  "marking.rating3": plain("3"),
-  "marking.rating4": plain("4"),
-  "marking.rating5": plain("5"),
-  "marking.clearRating": plain("0"),
-  "marking.colorRed": plain("6"),
-  "marking.colorYellow": plain("7"),
-  "marking.colorGreen": plain("8"),
-  "marking.colorBlue": plain("9"),
-};
-
-// Extra built-in bindings that always match alongside the customizable one.
-export const SHORTCUT_ALIASES: Partial<Record<ShortcutAction, ShortcutBinding[]>> = {
-  "marking.clearRating": [plain("`")],
+  "loupe.previousAsset": slots(plain("arrowleft")),
+  "loupe.nextAsset": slots(plain("arrowright")),
+  "loupe.toggleFocusAreas": slots(plain("f")),
+  "loupe.cycleZoom": slots(plain("space")),
+  "grid.moveLeft": slots(plain("arrowleft")),
+  "grid.moveRight": slots(plain("arrowright")),
+  "grid.moveUp": slots(plain("arrowup")),
+  "grid.moveDown": slots(plain("arrowdown")),
+  "grid.openLoupe": slots(plain("space")),
+  "marking.rating1": slots(plain("1")),
+  "marking.rating2": slots(plain("2")),
+  "marking.rating3": slots(plain("3")),
+  "marking.rating4": slots(plain("4")),
+  "marking.rating5": slots(plain("5")),
+  "marking.clearRating": slots(plain("0"), plain("`")),
+  "marking.colorRed": slots(plain("6")),
+  "marking.colorYellow": slots(plain("7")),
+  "marking.colorGreen": slots(plain("8")),
+  "marking.colorBlue": slots(plain("9")),
 };
 
 export type ShortcutScope = "loupe" | "grid" | "marking";
@@ -114,20 +117,75 @@ function isBinding(value: unknown): value is ShortcutBinding {
     && typeof binding.meta === "boolean";
 }
 
+function cloneSlot(slot: ShortcutBinding | null): ShortcutBinding | null {
+  return slot ? { ...slot } : null;
+}
+
+export function cloneSlots(source: ShortcutSlots): ShortcutSlots {
+  return [cloneSlot(source[0]), cloneSlot(source[1])];
+}
+
+export function cloneShortcuts(bindings: ShortcutBindings = DEFAULT_SHORTCUTS): ShortcutBindings {
+  return Object.fromEntries(
+    SHORTCUT_ACTIONS.map((action) => [action, cloneSlots(bindings[action])]),
+  ) as ShortcutBindings;
+}
+
+function parseSlots(value: unknown): ShortcutSlots | undefined {
+  if (!Array.isArray(value) || value.length !== 2) return undefined;
+  const [primary, secondary] = value as unknown[];
+  if (primary !== null && !isBinding(primary)) return undefined;
+  if (secondary !== null && !isBinding(secondary)) return undefined;
+  return [
+    isBinding(primary) ? { ...primary, key: normalizeKey(primary.key) } : null,
+    isBinding(secondary) ? { ...secondary, key: normalizeKey(secondary.key) } : null,
+  ];
+}
+
+function parseStored(raw: string | null): Partial<Record<ShortcutAction, unknown>> | undefined {
+  if (!raw) return undefined;
+  try {
+    const parsed: unknown = JSON.parse(raw);
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return undefined;
+    return parsed as Partial<Record<ShortcutAction, unknown>>;
+  } catch {
+    return undefined;
+  }
+}
+
+function fromStoredSlots(stored: Partial<Record<ShortcutAction, unknown>>): ShortcutBindings {
+  return Object.fromEntries(
+    SHORTCUT_ACTIONS.map((action) => [
+      action,
+      parseSlots(stored[action]) ?? cloneSlots(DEFAULT_SHORTCUTS[action]),
+    ]),
+  ) as ShortcutBindings;
+}
+
+// v1 stored one binding per action. It becomes the first slot, while the second
+// slot keeps its default so upgraded users retain every default key.
+function fromLegacyBindings(stored: Partial<Record<ShortcutAction, unknown>>): ShortcutBindings {
+  return Object.fromEntries(
+    SHORTCUT_ACTIONS.map((action) => {
+      const entry = stored[action];
+      return [
+        action,
+        isBinding(entry)
+          ? [{ ...entry, key: normalizeKey(entry.key) }, cloneSlot(DEFAULT_SHORTCUTS[action][1])]
+          : cloneSlots(DEFAULT_SHORTCUTS[action]),
+      ];
+    }),
+  ) as ShortcutBindings;
+}
+
 export function loadShortcuts(storage?: StorageLike): ShortcutBindings {
   const resolved = storage ?? (typeof window === "undefined" ? undefined : window.localStorage);
-  if (!resolved) return { ...DEFAULT_SHORTCUTS };
-  try {
-    const parsed = JSON.parse(resolved.getItem(SHORTCUTS_KEY) ?? "{}") as Partial<Record<ShortcutAction, unknown>>;
-    return Object.fromEntries(
-      SHORTCUT_ACTIONS.map((action) => {
-        const stored = parsed[action];
-        return [action, isBinding(stored) ? { ...stored, key: normalizeKey(stored.key) } : { ...DEFAULT_SHORTCUTS[action] }];
-      }),
-    ) as ShortcutBindings;
-  } catch {
-    return { ...DEFAULT_SHORTCUTS };
-  }
+  if (!resolved) return cloneShortcuts();
+  const stored = parseStored(resolved.getItem(SHORTCUTS_KEY));
+  if (stored) return fromStoredSlots(stored);
+  const legacy = parseStored(resolved.getItem(LEGACY_SHORTCUTS_KEY));
+  if (legacy) return fromLegacyBindings(legacy);
+  return cloneShortcuts();
 }
 
 export function saveShortcuts(bindings: ShortcutBindings, storage?: StorageLike): void {
@@ -167,21 +225,33 @@ export function matchesAction(
   bindings: ShortcutBindings,
   action: ShortcutAction,
 ): boolean {
-  return matchesShortcut(event, bindings[action])
-    || (SHORTCUT_ALIASES[action] ?? []).some((alias) => matchesShortcut(event, alias));
+  return bindings[action].some((slot) => slot !== null && matchesShortcut(event, slot));
 }
 
+function slotMatches(candidate: ShortcutBinding | null, binding: ShortcutBinding): boolean {
+  return candidate !== null && bindingsEqual(candidate, binding);
+}
+
+export function shortcutSlotsEqual(a: ShortcutSlots, b: ShortcutSlots): boolean {
+  return (a[0] === null || b[0] === null ? a[0] === b[0] : bindingsEqual(a[0], b[0]))
+    && (a[1] === null || b[1] === null ? a[1] === b[1] : bindingsEqual(a[1], b[1]));
+}
+
+// Returns the action whose binding collides with `binding`, or `action` itself
+// when the two slots of one action would hold the same key.
 export function findShortcutConflict(
   bindings: ShortcutBindings,
   action: ShortcutAction,
+  slot: ShortcutSlot,
   binding: ShortcutBinding,
 ): ShortcutAction | undefined {
-  return SHORTCUT_ACTIONS.find(
+  const conflicting = SHORTCUT_ACTIONS.find(
     (candidate) => candidate !== action
       && scopesConflict(SHORTCUT_SCOPES[action], SHORTCUT_SCOPES[candidate])
-      && (bindingsEqual(bindings[candidate], binding)
-        || (SHORTCUT_ALIASES[candidate] ?? []).some((alias) => bindingsEqual(alias, binding))),
+      && bindings[candidate].some((candidateSlot) => slotMatches(candidateSlot, binding)),
   );
+  if (conflicting) return conflicting;
+  return slotMatches(bindings[action][slot === 0 ? 1 : 0], binding) ? action : undefined;
 }
 
 const KEY_LABELS: Record<string, string> = {
@@ -208,6 +278,6 @@ export function formatShortcut(binding: ShortcutBinding): string {
   if (binding.shift) parts.push("Shift");
   if (binding.meta) parts.push("Meta");
   const label = KEY_LABELS[binding.key];
-  parts.push(label ?? (binding.key.length === 1 ? binding.key.toUpperCase() : binding.key));
+  parts.push(label ?? (binding.key.length === 1 ? binding.key.toLowerCase() : binding.key));
   return parts.join("+");
 }

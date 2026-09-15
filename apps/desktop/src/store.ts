@@ -1,12 +1,16 @@
 import { create } from "zustand";
 import type { Locale } from "./lib/i18n";
 import {
+  cloneShortcuts,
+  cloneSlots,
   DEFAULT_SHORTCUTS,
   loadShortcuts,
   saveShortcuts,
   type ShortcutAction,
   type ShortcutBinding,
   type ShortcutBindings,
+  type ShortcutSlot,
+  type ShortcutSlots,
 } from "./lib/shortcuts";
 import {
   loadFocusAreasVisible,
@@ -60,7 +64,8 @@ interface WorkspaceState {
   sort: AssetSort;
   direction: SortDirection;
   shortcuts: ShortcutBindings;
-  setShortcut: (action: ShortcutAction, binding: ShortcutBinding) => void;
+  setShortcut: (action: ShortcutAction, slot: ShortcutSlot, binding: ShortcutBinding | null) => void;
+  resetShortcut: (action: ShortcutAction) => void;
   resetShortcuts: () => void;
   setView: (view: ViewMode) => void;
   setThumbnailOrientation: (orientation: ThumbnailOrientation) => void;
@@ -120,14 +125,22 @@ export const useWorkspaceStore = create<WorkspaceState>((set) => ({
   sort: "name",
   direction: "ascending",
   shortcuts: loadShortcuts(),
-  setShortcut: (action, binding) =>
+  setShortcut: (action, slot, binding) =>
     set((state) => {
-      const shortcuts = { ...state.shortcuts, [action]: binding };
+      const slots: ShortcutSlots = [...state.shortcuts[action]];
+      slots[slot] = binding;
+      const shortcuts = { ...state.shortcuts, [action]: slots };
+      saveShortcuts(shortcuts);
+      return { shortcuts };
+    }),
+  resetShortcut: (action) =>
+    set((state) => {
+      const shortcuts = { ...state.shortcuts, [action]: cloneSlots(DEFAULT_SHORTCUTS[action]) };
       saveShortcuts(shortcuts);
       return { shortcuts };
     }),
   resetShortcuts: () => {
-    const shortcuts = { ...DEFAULT_SHORTCUTS };
+    const shortcuts = cloneShortcuts();
     saveShortcuts(shortcuts);
     set({ shortcuts });
   },

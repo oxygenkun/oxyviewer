@@ -598,7 +598,7 @@ export function Loupe({
           </button>
           <i />
           <button
-            aria-keyshortcuts="F"
+            aria-keyshortcuts="f"
             aria-pressed={showFocusAreas}
             className={showFocusAreas ? "is-active" : ""}
             onClick={() => setFocusAreasVisible(!focusAreasVisible)}
