@@ -16,7 +16,10 @@ if (start < 0) {
   throw new Error(`CHANGELOG.md has no section for ${version}`);
 }
 
-const next = lines.findIndex((line, index) => index > start && /^## \[/.test(line));
+const next = lines.findIndex(
+  (line, index) =>
+    index > start && (/^## \[/.test(line) || /^\[[^\]]+\]:\s/.test(line)),
+);
 const notes = lines.slice(start + 1, next < 0 ? lines.length : next).join("\n").trim();
 if (!notes) {
   throw new Error(`CHANGELOG.md section for ${version} is empty`);
