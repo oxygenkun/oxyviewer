@@ -2514,6 +2514,7 @@ dependencies = [
  "oxy-media",
  "oxy-metadata",
  "oxy-runtime",
+ "semver",
  "serde",
  "serde_json",
  "sha2",

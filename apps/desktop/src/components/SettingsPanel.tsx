@@ -4,6 +4,7 @@ import {
   ExternalLink,
   FolderOpen,
   HardDrive,
+  Info,
   Keyboard,
   LoaderCircle,
   Monitor,
@@ -34,6 +35,7 @@ import type { Locale, MessageKey } from "../lib/i18n";
 import { UI_FONT_SCALES } from "../lib/workspacePersistence";
 import { useWorkspaceStore } from "../store";
 import { RawDecoderPanel } from "./RawDecoderPanel";
+import { AboutSettings } from "./AboutSettings";
 import { ExternalAppsSettings } from "./ExternalAppsSettings";
 import { ShortcutSettings } from "./ShortcutSettings";
 import type { AssetSummary } from "../types";
@@ -130,6 +132,7 @@ export function SettingsPanel({ t, activeAsset }: SettingsPanelProps) {
     { id: "media" as const, label: t("settingsMedia"), description: t("settingsMediaDescription"), icon: <Database size={16} /> },
     { id: "externalApps" as const, label: t("settingsExternal"), description: t("settingsExternalDescription"), icon: <ExternalLink size={16} /> },
     { id: "shortcuts" as const, label: t("settingsShortcuts"), description: t("settingsShortcutsDescription"), icon: <Keyboard size={16} /> },
+    { id: "about" as const, label: t("settingsAbout"), description: t("settingsAboutDescription"), icon: <Info size={16} /> },
   ];
   const activeTab = tabs.find((tab) => tab.id === settingsSection) ?? tabs[0];
 
@@ -155,14 +158,17 @@ export function SettingsPanel({ t, activeAsset }: SettingsPanelProps) {
               <button
                 aria-controls="settings-tabpanel"
                 aria-selected={settingsSection === tab.id}
-                className={settingsSection === tab.id ? "is-active" : ""}
+                className={[
+                  settingsSection === tab.id ? "is-active" : "",
+                  tab.id === "about" ? "is-pinned" : "",
+                ].filter(Boolean).join(" ")}
                 id={`settings-tab-${tab.id}`}
                 key={tab.id}
                 onClick={() => setSettingsSection(tab.id)}
                 role="tab"
               >
                 {tab.icon}
-                <span>{tab.label}<small>{tab.description}</small></span>
+                <span>{tab.label}</span>
               </button>
             ))}
           </nav>
@@ -273,6 +279,8 @@ export function SettingsPanel({ t, activeAsset }: SettingsPanelProps) {
             {settingsSection === "externalApps" ? <ExternalAppsSettings t={t} focus /> : null}
 
             {settingsSection === "shortcuts" ? <ShortcutSettings t={t} /> : null}
+
+            {settingsSection === "about" ? <AboutSettings t={t} /> : null}
           </div>
         </div>
       </div>

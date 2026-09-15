@@ -111,7 +111,7 @@
   display: grid;
   grid-template-columns: 20px minmax(0, 1fr);
   gap: 10px;
-  align-items: start;
+  align-items: center;
   min-width: 0;
   padding: 10px 11px;
   border: 1px solid transparent;
@@ -120,14 +120,13 @@
   background: transparent;
   text-align: left;
 
-  & > svg { margin-top: 1px; color: #6f777b; }
+  & > svg { color: #6f777b; }
   & > span { min-width: 0; font-size: .6875rem; font-weight: 650; line-height: 1.35; }
-  & small { display: block; margin-top: 3px; color: #5f676c; font-size: .5rem; font-weight: 400; line-height: 1.35; }
   &:hover { color: #d1d4cf; background: #1b2023; }
   &:focus-visible { outline: 1px solid var(--accent-dim); outline-offset: 1px; }
   &.is-active { border-color: #424c36; color: var(--accent); background: #20261f; }
   &.is-active > svg { color: var(--accent); }
-  &.is-active small { color: #8e967d; }
+  &.is-pinned { margin-top: auto; }
 }
 .settings-panel__content {
   min-width: 0;
@@ -441,6 +440,79 @@
 }
 .shortcut-settings__actions { display: flex; flex-wrap: wrap; gap: 4px; }
 
+/* ── About ── */
+.about-settings__identity { display: grid; grid-template-columns: 34px minmax(0, 1fr); gap: 11px; align-items: center; }
+.about-settings__mark {
+  display: grid;
+  place-items: center;
+  width: 34px;
+  height: 34px;
+  border: 1px solid #3b4247;
+  border-radius: 8px;
+  color: var(--accent);
+  background: #171b1e;
+}
+.about-settings__title { display: grid; gap: 5px; min-width: 0; }
+.about-settings__title strong { color: #e1e3de; font-size: 0.8125rem; font-weight: 650; letter-spacing: 0.2px; }
+.about-settings__version { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; color: #8a9297; font-size: 0.625rem; }
+.about-settings__version > button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  min-height: 24px;
+  padding: 0 9px;
+  border: 1px solid #343b40;
+  border-radius: 5px;
+  color: #afb4b0;
+  background: #171b1e;
+  font-size: 0.5625rem;
+
+  &:hover:not(:disabled) { border-color: #657248; color: var(--accent); }
+}
+.about-settings__facts { display: grid; margin: 0; }
+.about-settings__facts > div {
+  display: grid;
+  grid-template-columns: 72px minmax(0, 1fr);
+  gap: 10px;
+  align-items: baseline;
+  padding: 9px 0;
+  border-top: 1px solid var(--line-strong);
+}
+.about-settings__facts > div:first-child { border-top: 0; }
+.about-settings__facts dt { color: #8a9297; font-size: 0.625rem; }
+.about-settings__facts dd { margin: 0; color: #c6c9c3; font-size: 0.6875rem; overflow-wrap: anywhere; }
+.about-settings__link {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 0;
+  border: 0;
+  color: var(--accent-dim);
+  background: none;
+  font: inherit;
+  font-size: 0.6875rem;
+  text-align: left;
+  overflow-wrap: anywhere;
+
+  &:hover { color: var(--accent); text-decoration: underline; }
+  &:focus-visible { outline: 1px solid var(--text); outline-offset: 2px; }
+}
+.about-settings__result { display: inline-flex; flex-wrap: wrap; align-items: center; gap: 7px; margin: 0; color: #9aa39d; font-size: 0.6875rem; }
+.about-settings__result.is-available { color: var(--accent); }
+.about-settings__result > button {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 3px 8px;
+  border: 1px solid #46523a;
+  border-radius: 4px;
+  color: var(--accent);
+  background: #1b2118;
+  font-size: 0.625rem;
+}
+.about-settings__result > button:hover { border-color: var(--accent); }
+
 @media (max-width: 700px) {
   .settings-overlay { padding: 10px; }
   .settings-panel { width: calc(100vw - 20px); height: calc(100vh - 20px); min-height: 0; }
@@ -461,7 +533,7 @@
     align-items: center;
     padding: 8px 10px;
   }
-  .settings-panel__tabs > button small { display: none; }
+  .settings-panel__tabs > button.is-pinned { margin-top: 0; }
   .settings-panel__content { padding: 18px 16px 24px; }
   .settings-panel__content-heading { margin-bottom: 14px; }
   .settings-panel__section { padding: 14px; }
@@ -469,4 +541,5 @@
   .settings-panel__limit-row { grid-template-columns: 1fr 92px; }
   .settings-panel__limit-row > button { grid-column: 2; }
   .settings-panel__cache-footer { align-items: flex-start; flex-direction: column; }
+  .about-settings__facts > div { grid-template-columns: minmax(0, 1fr); gap: 3px; }
 }

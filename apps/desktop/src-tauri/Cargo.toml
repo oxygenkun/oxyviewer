@@ -13,6 +13,7 @@ name = "oxyviewer_lib"
 crate-type = ["staticlib", "cdylib", "rlib"]
 
 [build-dependencies]
+serde_json.workspace = true
 tauri-build = { version = "2", features = [] }
 
 [dependencies]
@@ -24,6 +25,7 @@ oxy-media = { path = "../../../crates/oxy-media" }
 oxy-metadata = { path = "../../../crates/oxy-metadata" }
 oxy-runtime = { path = "../../../crates/oxy-runtime" }
 flate2 = "1.1"
+semver.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 sha2 = "0.10"

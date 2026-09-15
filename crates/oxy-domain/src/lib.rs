@@ -5,6 +5,8 @@ mod raw;
 pub use raw::*;
 mod external_apps;
 pub use external_apps::*;
+mod about;
+pub use about::*;
 
 pub type AssetId = String;
 pub type JobId = String;

@@ -1,5 +1,6 @@
 import { defineConfig } from "vite";
 import react from "@vitejs/plugin-react";
+import desktopPackage from "./package.json";
 
 const environment = (
   globalThis as typeof globalThis & {
@@ -16,6 +17,7 @@ export default defineConfig(({ command }) => {
     clearScreen: false,
     define: {
       __OXY_DEBUG__: JSON.stringify(debugBuild),
+      __OXY_APP_VERSION__: JSON.stringify(desktopPackage.version),
     },
     server: {
       port: 15142,

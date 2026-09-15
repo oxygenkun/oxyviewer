@@ -4,9 +4,12 @@ import { invoke } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { open } from "@tauri-apps/plugin-dialog";
 import type {
+  AboutLink,
+  AppInfo,
   ExternalAppSettings,
   ExternalOpenResult,
   RawDecoderStatus,
+  UpdateStatus,
   AssetDetails,
   AssetDetailsResult,
   AssetKind,
@@ -718,6 +721,19 @@ export async function reorderLibraryRoots(paths: string[]): Promise<string[]> {
   return invoke<string[]>("reorder_library_roots", { paths });
 }
 
+/**
+ * Metadata mirrored from the desktop bundle for the browser demo, which has no
+ * backend to report it. `__OXY_APP_VERSION__` comes from apps/desktop/package.json,
+ * so the demo version cannot drift from the shipped one.
+ */
+const demoAppInfo: AppInfo = {
+  name: "OxyViewer",
+  version: __OXY_APP_VERSION__,
+  repositoryUrl: "https://github.com/oxygenkun/oxyviewer",
+  author: "oxygenkun",
+  license: "AGPL-3.0-only OR LicenseRef-OxyViewer-Commercial",
+};
+
 let demoCacheSettings: CacheSettings = {
   location: "/demo/OxyViewer Cache/previews",
   defaultLocation: "/demo/OxyViewer Cache/previews",
@@ -1092,4 +1108,51 @@ export async function writePerfReport(path: string, report: unknown): Promise<vo
 export async function getMediaResourceStats(): Promise<import("../types").ResourceRegistryStats | undefined> {
   if (!isTauri()) return undefined;
   return invoke("get_media_resource_stats");
+}
+
+/**
+ * Build metadata for the About panel.
+ *
+ * The desktop build reads the version from the running package. The browser demo
+ * has no backend, so it reports the version injected at build time.
+ */
+export async function getAppInfo(): Promise<AppInfo> {
+  if (!isTauri()) return demoAppInfo;
+  return invoke<AppInfo>("get_app_info");
+}
+
+/**
+ * Queries GitHub Releases for the newest published release.
+ *
+ * Only user-initiated: the app never polls for updates in the background, and it
+ * never downloads or installs one from this path.
+ */
+export async function checkForUpdates(): Promise<UpdateStatus> {
+  if (!isTauri()) {
+    await new Promise((resolve) => window.setTimeout(resolve, 400));
+    return {
+      currentVersion: demoAppInfo.version,
+      latestVersion: demoAppInfo.version,
+      updateAvailable: false,
+      releaseUrl: `${demoAppInfo.repositoryUrl}/releases`,
+    };
+  }
+  return invoke<UpdateStatus>("check_for_updates");
+}
+
+/**
+ * Opens one of the About panel's fixed destinations in the system browser.
+ * `releaseUrl` is accepted only when it points at an OxyViewer release page.
+ */
+export async function openAboutLink(target: AboutLink, releaseUrl?: string): Promise<void> {
+  if (!isTauri()) {
+    const destinations: Record<AboutLink, string> = {
+      repository: demoAppInfo.repositoryUrl,
+      releases: `${demoAppInfo.repositoryUrl}/releases`,
+      license: `${demoAppInfo.repositoryUrl}/blob/main/LICENSE.md`,
+    };
+    window.open(destinations[target], "_blank", "noopener,noreferrer");
+    return;
+  }
+  await invoke("open_about_link", { target, releaseUrl: releaseUrl ?? null });
 }

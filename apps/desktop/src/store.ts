@@ -91,7 +91,7 @@ interface WorkspaceState {
   toggleDirection: () => void;
 }
 
-export type SettingsSection = "general" | "display" | "media" | "externalApps" | "shortcuts";
+export type SettingsSection = "general" | "display" | "media" | "externalApps" | "shortcuts" | "about";
 
 export const useWorkspaceStore = create<WorkspaceState>((set) => ({
   view: "grid",

@@ -1,5 +1,7 @@
+mod about;
 mod external_apps;
 mod folder;
+pub(crate) use about::*;
 pub(crate) use external_apps::*;
 mod library;
 mod metadata;

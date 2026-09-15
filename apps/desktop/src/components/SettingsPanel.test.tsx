@@ -14,8 +14,16 @@ vi.mock("./RawDecoderPanel", () => ({
   RawDecoderPanel: () => <div data-testid="raw-decoder">RAW decoder</div>,
 }));
 vi.mock("../lib/api", () => ({
+  checkForUpdates: vi.fn(),
   chooseCacheParent: vi.fn().mockResolvedValue(null),
   clearPreviewCache: vi.fn(),
+  getAppInfo: vi.fn().mockResolvedValue({
+    name: "OxyViewer",
+    version: "0.1.1",
+    repositoryUrl: "https://github.com/oxygenkun/oxyviewer",
+    author: "oxygenkun",
+    license: "AGPL-3.0-only",
+  }),
   getCacheSettings: vi.fn().mockResolvedValue({
     location: "C:\\cache",
     defaultLocation: "C:\\cache",
@@ -25,6 +33,7 @@ vi.mock("../lib/api", () => ({
     usedSizeBytes: 2 * 1024 ** 3,
   }),
   getHeifCapabilities: vi.fn().mockResolvedValue([]),
+  openAboutLink: vi.fn().mockResolvedValue(undefined),
   updateCacheSettings: vi.fn(),
 }));
 
@@ -36,6 +45,8 @@ const clickTab = async (label: string) => {
   const tab = [...host.querySelectorAll<HTMLButtonElement>("[role=tab]")]
     .find((button) => button.textContent?.includes(label));
   await act(async () => tab!.click());
+  // Settings modules load their own queries; give the first resolution a tick.
+  await act(async () => new Promise((resolve) => setTimeout(resolve, 20)));
 };
 
 beforeEach(async () => {
@@ -58,7 +69,9 @@ afterEach(async () => {
 });
 
 it("separates settings into tabs and renders only the selected module", async () => {
-  expect(host.querySelectorAll("[role=tab]")).toHaveLength(5);
+  expect(host.querySelectorAll("[role=tab]")).toHaveLength(6);
+  // Tab labels are single-line: the description only belongs to the panel heading.
+  expect(host.querySelectorAll("[role=tab] small")).toHaveLength(0);
   expect(host.querySelector('[role=tab][aria-selected="true"]')?.textContent).toContain("常规");
   expect(host.querySelector("[role=tabpanel]")?.textContent).toContain("语言");
 
@@ -76,6 +89,14 @@ it("separates settings into tabs and renders only the selected module", async ()
 
   await clickTab("快捷键");
   expect(host.querySelector("[role=tabpanel]")?.textContent).toContain("键盘快捷键");
+
+  await clickTab("关于");
+  expect(useWorkspaceStore.getState().settingsSection).toBe("about");
+  expect(host.querySelector("[role=tabpanel]")?.textContent).toContain("0.1.1");
+  expect(host.querySelector("[role=tabpanel]")?.textContent).toContain("检查更新");
+  // The running version is stated once, with the update check beside it.
+  expect((host.querySelector("[role=tabpanel]")?.textContent ?? "").split("0.1.1")).toHaveLength(2);
+  expect(host.querySelectorAll(".about-settings__version > button")).toHaveLength(1);
 });
 
 it("opens directly on the external applications tab", async () => {

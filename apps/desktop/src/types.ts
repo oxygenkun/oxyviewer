@@ -335,6 +335,28 @@ export interface CacheSettings {
   usedSizeBytes: number;
 }
 
+/** Build metadata rendered by the About settings panel. */
+export interface AppInfo {
+  name: string;
+  version: string;
+  repositoryUrl: string;
+  author: string | null;
+  license: string | null;
+}
+
+/** Result of one user-requested release check. Advisory only; nothing installs. */
+export interface UpdateStatus {
+  currentVersion: string;
+  latestVersion: string;
+  updateAvailable: boolean;
+  releaseUrl: string;
+  releaseName?: string;
+  publishedAt?: string;
+}
+
+/** Fixed external destinations the About panel may open. */
+export type AboutLink = "repository" | "releases" | "license";
+
 export interface RawDecoderStatus {
   installAvailable: boolean;
   availability: "available" | "missing" | "unavailable" | "unsupportedPlatform";
