@@ -745,7 +745,7 @@ export function App({ perfScenario }: { perfScenario?: PerfScenario }) {
             {currentBrowseProgress && <span>{t("browseDiscovered")} {currentBrowseProgress.discoveredCount.toLocaleString()} {t("photos")}</span>}
           </div>
         ) : assetsError ? (
-          <div className="workspace-error">
+          <div className="workspace-error is-selectable">
             <CircleAlert size={24} />
             <strong>{String(assetsError)}</strong>
             <button onClick={handleOpen}><FolderPlus size={15} />{t("openFolder")}</button>
@@ -785,7 +785,7 @@ export function App({ perfScenario }: { perfScenario?: PerfScenario }) {
                 <span>{notice.message}</span>
               </button>
               {noticeExpanded ? (
-                <span className="statusbar__notice-panel" role="status">
+                <span className="statusbar__notice-panel is-selectable" role="status">
                   <span>{notice.message}</span>
                   {notice.detail ? <span className="statusbar__notice-detail">{notice.detail}</span> : null}
                   {notice.kind === "error" ? (

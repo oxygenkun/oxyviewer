@@ -306,7 +306,7 @@
 .tree-row__drag-handle svg { pointer-events: none; }
 .folder-root.is-dragging { opacity: .22; }
 .is-folder-dragging,
-.is-folder-dragging * { cursor: grabbing !important; user-select: none !important; }
+.is-folder-dragging * { cursor: grabbing !important; }
 .folder-drag-preview {
   position: fixed;
   z-index: 200;

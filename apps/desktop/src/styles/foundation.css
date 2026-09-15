@@ -38,6 +38,15 @@ body,
   height: 100%;
   margin: 0;
   overflow: hidden;
+  -webkit-user-select: none;
+  user-select: none;
+}
+
+/* Dragging panels, handles, or the loupe must not highlight UI chrome as text.
+   Editable fields and explicit opt-in surfaces keep native selection. */
+:is(input, textarea, select, [contenteditable="true"], .is-selectable) {
+  -webkit-user-select: text;
+  user-select: text;
 }
 
 :is(button, input, select) {
