@@ -1,44 +1,40 @@
 # Changelog
 
-All notable changes to OxyViewer are documented in this file. Each release lists the Simplified Chinese notes first, followed by the English notes.
+All notable changes to OxyViewer will be documented in this file.
 
-本文件记录 OxyViewer 的所有重要变更。每个版本先列出简体中文说明，随后是英文说明。
+The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
+and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
+
+Each release lists the English notes first, followed by the Simplified Chinese notes.
+
+本文件记录 OxyViewer 的所有重要变更。格式遵循 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/)，
+版本号遵循[语义化版本](https://semver.org/lang/zh-CN/)。每个版本先列出英文说明，随后是同一版本的简体中文说明。
+
+## [Unreleased]
 
 ## [0.1.2] - 2026-09-16
 
-### 新增
-
-- 设置中新增“关于”面板，显示当前版本、许可证与作者，并可按需手动检查是否有新版本。
-- 每个快捷键操作可绑定两个键位，点击键位即可改键，按 Backspace 或 Delete 清空，按 Esc 取消。
-- 搜索框支持按层级标签筛选，输入 `#` 可获得标签建议，并可切换“全部满足”与“任一满足”两种匹配方式。
-
-### 修复
-
-- 修复拖动面板、调整手柄或放大镜时界面元素被当作文本选中的问题，输入框与错误详情仍可正常选中复制。
-
 ### Added
 
-- Added an About panel in Settings that shows the running version, license, and author, and can check for a new release on demand.
-- Each shortcut action can bind two keys: click a key to rebind, press Backspace or Delete to clear it, and press Escape to cancel.
-- Search now filters by hierarchical tags, with tag suggestions when typing `#` and a switch between matching all and matching any tag.
+- Added an About panel with version information and update checking.
+- Improved keyboard shortcut settings.
+- Added tag filtering.
 
 ### Fixed
 
-- Dragging panels, resize handles, or the loupe no longer selects interface elements as text, while inputs and error details remain selectable.
-
-## [0.1.1] - 2026-09-14
+- Fixed an issue where UI control content could be accidentally selected.
 
 ### 新增
 
-- 新增可自定义快捷键，并可在设置中查看全部可用快捷键。
-- 新增旗标筛选功能。
+- 新增“关于”面板，可查看版本信息并检查更新。
+- 优化快捷键设置功能。
+- 新增标签筛选功能。
 
 ### 修复
 
-- 改进佳能 CR3 文件的元数据读取，包括色温、色调（白平衡偏移）和自动亮度优化（DRO）。
-- 修复切换放大镜视图时缩放比例异常跳动的问题。
-- 修复状态栏中所选文件坐标数值显示异常的问题。
-- 修复在横向与纵向布局之间切换时，所选缩略图无法保持可见位置的问题。
+- 修复应用界面控件内容可能被意外选中的问题。
+
+## [0.1.1] - 2026-09-14
 
 ### Added
 
@@ -52,7 +48,30 @@ All notable changes to OxyViewer are documented in this file. Each release lists
 - Fixed coordinate values for the selected file in the status bar.
 - The selected thumbnail now stays in view when switching between horizontal and vertical layouts.
 
+### 新增
+
+- 新增可自定义快捷键，并可在设置中查看全部可用快捷键。
+- 新增旗标筛选功能。
+
+### 修复
+
+- 改进佳能 CR3 文件的元数据读取，包括色温、色调（白平衡偏移）和自动亮度优化（DRO）。
+- 修复切换放大镜视图时缩放比例异常跳动的问题。
+- 修复状态栏中所选文件坐标数值显示异常的问题。
+- 修复在横向与纵向布局之间切换时，所选缩略图无法保持可见位置的问题。
+
 ## [0.1.0] - 2026-09-13
+
+### Added
+
+- Local-first, paged folder browsing with a virtualized thumbnail grid and filmstrip.
+- JPEG, HEIF, and RAW preview workflows with progressive full-detail viewing.
+- Platform-aware image decoding, color management, orientation handling, and focus-area display.
+- Metadata inspection and filtering by rating, color label, and hierarchical tags.
+- Persistent library indexing, folder search, favorites, and custom folder ordering.
+- Photo rating, labeling, tagging, renaming, deletion, and external-application actions.
+- Rebuildable media and library caches with configurable storage controls and queue diagnostics.
+- macOS and Linux installers plus bilingual Windows NSIS EXE and portable ZIP packages with bundled, pinned FFmpeg tools; corresponding FFmpeg source is published as a separate release asset.
 
 ### 新增
 
@@ -65,13 +84,7 @@ All notable changes to OxyViewer are documented in this file. Each release lists
 - 可重建的媒体与图库缓存，支持可配置的存储管理和队列诊断。
 - macOS 与 Linux 安装包，以及双语 Windows NSIS EXE 和便携 ZIP 包，内置固定版本的 FFmpeg 工具；对应的 FFmpeg 源码作为独立发布资源提供。
 
-### Added
-
-- Local-first, paged folder browsing with a virtualized thumbnail grid and filmstrip.
-- JPEG, HEIF, and RAW preview workflows with progressive full-detail viewing.
-- Platform-aware image decoding, color management, orientation handling, and focus-area display.
-- Metadata inspection and filtering by rating, color label, and hierarchical tags.
-- Persistent library indexing, folder search, favorites, and custom folder ordering.
-- Photo rating, labeling, tagging, renaming, deletion, and external-application actions.
-- Rebuildable media and library caches with configurable storage controls and queue diagnostics.
-- macOS and Linux installers plus bilingual Windows NSIS EXE and portable ZIP packages with bundled, pinned FFmpeg tools; corresponding FFmpeg source is published as a separate release asset.
+[Unreleased]: https://github.com/oxygenkun/oxyviewer/compare/v0.1.2...HEAD
+[0.1.2]: https://github.com/oxygenkun/oxyviewer/compare/v0.1.1...v0.1.2
+[0.1.1]: https://github.com/oxygenkun/oxyviewer/compare/v0.1.0...v0.1.1
+[0.1.0]: https://github.com/oxygenkun/oxyviewer/releases/tag/v0.1.0
