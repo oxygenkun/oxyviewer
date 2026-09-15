@@ -1,3 +1,4 @@
+import { useEffect, useState } from "react";
 import {
   ArrowDownAZ,
   ArrowDownUp,
@@ -9,14 +10,13 @@ import {
   PanelLeftOpen,
   PanelRightClose,
   PanelRightOpen,
-  Search,
   Star,
   SlidersHorizontal,
-  X,
 } from "lucide-react";
 import type { MessageKey } from "../lib/i18n";
 import { useWorkspaceStore } from "../store";
 import type { AssetKind, AssetSort, PickLabel, ViewMode } from "../types";
+import { WorkspaceSearch } from "./WorkspaceSearch";
 import { PickFlagIcon } from "./PickFlagIcon";
 
 const kinds: Array<AssetKind | undefined> = [undefined, "raw", "jpeg", "heif"];
@@ -41,11 +41,18 @@ interface ToolbarProps {
 
 export function Toolbar({ total, loading, t }: ToolbarProps) {
   const {
-    view, setView, search, setSearch, kind, setKind, sort, setSort, direction,
+    view, setView, kind, setKind, sort, setSort, direction,
     toggleDirection, inspectorOpen, toggleInspector, leftPanelOpen, toggleLeftPanel,
     minimumRating, setMinimumRating, colorLabels: selectedColorLabels, toggleColorLabel,
     pickLabels: selectedPickLabels, togglePickLabel,
   } = useWorkspaceStore();
+
+  const [announcedTotal, setAnnouncedTotal] = useState(total);
+  useEffect(() => {
+    if (loading) return;
+    const timer = window.setTimeout(() => setAnnouncedTotal(total), 250);
+    return () => window.clearTimeout(timer);
+  }, [total, loading]);
 
   return (
     <>
@@ -57,16 +64,8 @@ export function Toolbar({ total, loading, t }: ToolbarProps) {
           <strong>WORKSPACE</strong>
           <span>{loading ? t("loading") : `${total.toLocaleString()} ${t("photos")}`}</span>
         </div>
-        <label className="search-field">
-          <Search size={15} />
-          <input
-            value={search}
-            onChange={(event) => setSearch(event.target.value)}
-            placeholder={t("search")}
-          />
-          {search ? <button onClick={() => setSearch("")}><X size={13} /></button> : null}
-          <kbd>⌘ K</kbd>
-        </label>
+        <span className="search-result-announcement" aria-live="polite" aria-atomic="true">{announcedTotal.toLocaleString()} {t("photos")}</span>
+        <WorkspaceSearch t={t} />
         <div className="segmented" aria-label={t("viewMode")}>
           {views.map(([mode, Icon, label]) => (
             <button

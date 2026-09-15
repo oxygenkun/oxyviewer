@@ -138,14 +138,24 @@ pub(crate) async fn list_assets(
         let sort_started = Instant::now();
         // A metadata filter cannot be answered from the cheap directory scan:
         // flags reach the summary only through the sidecar/XMP enrichment pass.
+        let tagged_assets = if query.tag_ids.is_empty() {
+            None
+        } else {
+            Some(
+                library
+                    .filter_assets_by_tags(&read.assets, &query)
+                    .map_err(|error| error.to_string())?,
+            )
+        };
+        let candidates = tagged_assets.as_deref().unwrap_or(&read.assets);
         let page = if query.needs_metadata_enrichment() {
-            let mut assets = read.assets.as_ref().clone();
+            let mut assets = candidates.to_vec();
             metadata
                 .enrich_summaries(&mut assets)
                 .map_err(|error| error.to_string())?;
             oxy_fs::page_assets(&assets, &query, cursor.unwrap_or(0))
         } else {
-            oxy_fs::page_assets(&read.assets, &query, cursor.unwrap_or(0))
+            oxy_fs::page_assets(candidates, &query, cursor.unwrap_or(0))
         };
         progress.sort_ms = sort_started.elapsed().as_millis() as u64;
         progress.discovered_count = read.assets.len();

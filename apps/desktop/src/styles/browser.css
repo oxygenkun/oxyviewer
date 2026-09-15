@@ -1,4 +1,5 @@
 .workspace {
+  container-type: inline-size;
   position: relative;
   display: grid;
   grid-template-rows: 51px 35px minmax(0, 1fr) 25px;
@@ -24,6 +25,7 @@
 .workspace-empty strong { color: #c8cbc3; font-size: 0.75rem; }
 .workspace-empty span { max-width: 300px; font-size: 0.625rem; line-height: 1.6; text-align: center; }
 .toolbar {
+  min-width: 0;
   display: flex;
   align-items: center;
   gap: 9px;
@@ -47,6 +49,10 @@
 .toolbar__title strong { color: #d7d6d0; font-size: 0.5625rem; letter-spacing: 1.7px; }
 .toolbar__title span { margin-top: 2px; color: var(--faint); font-size: 0.5625rem; }
 .search-field {
+  position: relative;
+  min-width: 0;
+  flex: 1 1 180px;
+  max-width: 370px;
   display: flex;
   align-items: center;
   gap: 7px;
@@ -72,11 +78,42 @@
   background: #15181b;
   font: 0.5rem ui-monospace, monospace;
 }
+
+.search-field > svg, .search-field > button, .search-field > kbd { flex-shrink: 0; }
+.search-field button { min-width: 24px; min-height: 24px; }
+.search-field button:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+.search-field .search-field__token { display: flex; gap: 4px; max-width: 130px; border: 1px solid #42474d; background: #24282d; }
+.search-field__token span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.search-field__suggestions { position: absolute; z-index: 20; top: calc(100% + 5px); left: 0; right: 0; max-height: 240px; overflow: auto; padding: 4px; border: 1px solid #42474d; border-radius: 6px; background: var(--surface-input); box-shadow: 0 8px 20px #0008; }
+.search-field__suggestions [role="option"] { min-height: 24px; padding: 4px 8px; cursor: pointer; }
+.search-field__suggestions [aria-selected="true"] { outline: 1px solid #727981; outline-offset: -1px; background: #24282d; }
+@media (max-width: 900px) { .search-field kbd { display: none; } }
+.search-field__selected { display: flex; flex-wrap: wrap; gap: 4px; padding: 4px; }
+.search-field__selected button { display: flex; gap: 4px; text-align: left; overflow-wrap: anywhere; border: 1px solid #42474d; }
+.search-field__mode { display: flex; gap: 6px; padding: 4px; }
+.search-field__mode [aria-pressed="true"] { outline: 1px solid currentColor; background: #30353b; }
+.search-query-error { position: absolute; top: 86px; left: 0; right: 0; z-index: 10; padding: 8px; background: var(--panel); }
+@media (max-width: 900px) { .search-field > .search-field__token { max-width: 65px; } }
+.search-field > button.is-pending { outline: 2px solid var(--accent); }
+.search-result-announcement { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+.search-field__token, .search-field__suggestions { font-size: 0.6875rem; }
+.toolbar > .icon-button, .toolbar > .segmented { flex-shrink: 0; }
+.filterbar > div { flex-shrink: 0; }
+.workspace-empty button { min-height: 28px; padding: 4px 10px; border: 1px solid #42474d; border-radius: 4px; color: var(--text); background: var(--panel); font-size: 0.6875rem; }
+@container (max-width: 600px) {
+  .toolbar__title, .search-field kbd { display: none; }
+  .search-field > .search-field__token { max-width: 70px; }
+}
+
 .segmented { display: flex; padding: 2px; border: 1px solid #2b3035; border-radius: 6px; background: #0e1012; }
 .segmented button { display: grid; place-items: center; width: 26px; height: 23px; border-radius: 4px; color: #727981; background: transparent; }
 .segmented button:hover, .segmented button.is-active { color: var(--text); background: #24292e; }
 .segmented button.is-active { color: var(--accent); box-shadow: inset 0 0 0 1px #333a40; }
 .filterbar {
+  min-width: 0;
+  overflow-x: auto;
+  overflow-y: hidden;
+  scrollbar-width: none;
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -84,6 +121,7 @@
   border-bottom: 1px solid var(--line-soft);
   background: var(--panel);
 }
+.filterbar::-webkit-scrollbar { display: none; }
 .filterbar__kinds { display: flex; align-items: center; height: 100%; gap: 1px; }
 .filterbar__kinds button {
   position: relative;

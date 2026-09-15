@@ -896,7 +896,7 @@ impl Library {
         // The index stores ratings, colors, and flags but the paged query path
         // here only serves cheap filters; metadata filters fall back to a
         // scanned-and-enriched page.
-        if query.needs_metadata_enrichment() {
+        if query.needs_metadata_enrichment() || !query.tag_ids.is_empty() {
             return Ok(None);
         }
         let root = root.to_string_lossy();

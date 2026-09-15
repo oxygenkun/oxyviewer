@@ -8,6 +8,8 @@ override them.
   follow-up work for persistent decoding and broader qualification.
 - [Native image presentation](native-image-presentation-plan.md): deferred
   long-term investigation with explicit measurement gates.
+- [Top search and tag filtering](top-search-tag-filter-design.md): basic hierarchical custom-tag search is implemented;
+  tracks the remaining interaction refinements and full native qualification.
 
 Completed implementation plans are archived in
 [archive/plans](../archive/plans/README.md). Dated measurements and diagnoses

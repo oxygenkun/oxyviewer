@@ -366,6 +366,8 @@ export interface RawDecoderStatus {
 }
 
 export interface AssetQuery {
+  tagIds?: number[];
+  tagMatch?: "all" | "any";
   search?: string;
   kind?: AssetKind;
   minimumRating?: number;

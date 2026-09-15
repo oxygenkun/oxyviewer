@@ -53,6 +53,10 @@ not by basic UI construction.
 - [ ] Add cross-root asset search and metadata-aware indexed filters. Current FTS
   queries cover one loaded root; rating/color/flag filters still enrich current-directory
   metadata progressively.
+- [ ] Complete hierarchical custom-tag search qualification. Basic stable-ID tokens,
+  subtree AND/OR filtering, keyboard/IME handling, and paged queries are implemented.
+  Remaining interaction refinements and native qualification are tracked in the
+  [top search and tag filtering design](tasks/top-search-tag-filter-design.md).
 - [ ] Put file writes behind an explicit folder-session/root authorization policy,
   then add complete dialogs, partial-failure reporting, an undo journal, and recovery.
 

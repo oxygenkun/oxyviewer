@@ -193,8 +193,15 @@ export async function listAssets(
 ): Promise<Page<AssetSummary>> {
   if (!isTauri()) {
     const needle = query.search?.toLowerCase();
+    const tagGroups = (query.tagIds ?? []).map((id) => {
+      const root = demoTags.find((tag) => tag.id === id);
+      return new Set(root ? demoTags.filter((tag) => tag.id === id || tag.path.startsWith(`${root.path}|`)).map((tag) => tag.id) : []);
+    });
     const filtered = [...demoAssets]
-      .filter((asset) => needle || asset.path.slice(0, asset.path.lastIndexOf("/")) === directory)
+      .filter((asset) => !tagGroups.length || (query.tagMatch === "any"
+        ? tagGroups.some((group) => [...(demoAssetTags.get(asset.path) ?? [])].some((id) => group.has(id)))
+        : tagGroups.every((group) => [...(demoAssetTags.get(asset.path) ?? [])].some((id) => group.has(id)))))
+      .filter((asset) => (!query.tagIds?.length && needle) || asset.path.slice(0, asset.path.lastIndexOf("/")) === directory)
       .filter((asset) => !query.kind || asset.kind === query.kind)
       .filter((asset) => !query.minimumRating || (asset.rating ?? 0) >= query.minimumRating)
       .filter((asset) => !query.colorLabels?.length ||

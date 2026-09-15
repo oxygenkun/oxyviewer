@@ -1007,3 +1007,14 @@ Make targets. Both MSI and NSIS now build successfully. The MSI-extracted applic
 passed all three HIF scenarios again with PATH empty and no FFmpeg override; cold
 first preview was 83.2 ms and first tile 1015 ms. See [packaging verification](research/ffmpeg-packaging-verification-2026-09.md#windows-standard-build-2026-09-11).
 All owned native test instances were closed.
+
+
+## Custom-tag filtering
+
+Explicit custom-tag filters query the current directory snapshot with one batched SQLite
+recursive CTE, then apply existing filters and pagination. They do not trigger tag-by-tag
+or asset-by-asset IPC, recursive discovery, or metadata enrichment solely for tag counts.
+Existing rating/color/flag filters still use their metadata path. Query identity includes
+selected IDs and match mode; the UI retains the last successful same-directory result
+while updating or reporting an error. Full large-directory tag-toggle and queue-count
+qualification remains pending; this is not a new performance-budget claim.

@@ -80,7 +80,7 @@ export function App({ perfScenario }: { perfScenario?: PerfScenario }) {
   const queryClient = useQueryClient();
   const {
     view, thumbnailOrientation, activeId, selectedIds, inspectorOpen, leftPanelOpen, settingsOpen, locale,
-    search, kind, minimumRating, colorLabels, pickLabels, sort, direction, clearSelection, select, setThumbnailOrientation, toggleSettings,
+    search, tagIds, tagMatch, clearSearch, kind, minimumRating, colorLabels, pickLabels, sort, direction, clearSelection, select, setThumbnailOrientation, toggleSettings,
     leftPanelWidth, inspectorWidth, setLeftPanelWidth, setInspectorWidth, uiFontScale,
   } = useWorkspaceStore();
   const appShellRef = useRef<HTMLDivElement>(null);
@@ -273,6 +273,8 @@ export function App({ perfScenario }: { perfScenario?: PerfScenario }) {
 
   const query = useMemo<AssetQuery>(() => ({
     search: search || undefined,
+    tagIds: tagIds.length ? tagIds : undefined,
+    tagMatch,
     kind,
     minimumRating,
     colorLabels: colorLabels.length ? colorLabels : undefined,
@@ -280,13 +282,13 @@ export function App({ perfScenario }: { perfScenario?: PerfScenario }) {
     sort,
     direction,
     pageSize: 250,
-  }), [colorLabels, direction, kind, minimumRating, pickLabels, search, sort]);
+  }), [colorLabels, direction, kind, minimumRating, pickLabels, search, sort, tagIds, tagMatch]);
   const metadataFiltersActive = Boolean(minimumRating || colorLabels.length || pickLabels.length);
   if (metadataFiltersActive && activeId) filteredFocusRef.current = activeId;
   const filteredFocusRestoreId = metadataFiltersActive ? undefined : filteredFocusRef.current;
-  const progressivelyFilterMetadata = Boolean(!search && (minimumRating || colorLabels.length || pickLabels.length));
+  const progressivelyFilterMetadata = Boolean(!search && !tagIds.length && (minimumRating || colorLabels.length || pickLabels.length));
   const metadataRecords = useMetadataProjectionStore((state) => progressivelyFilterMetadata ? state.records : NO_METADATA_RECORDS);
-  const shouldPreloadFilteredAssets = Boolean(search || kind || minimumRating || colorLabels.length || pickLabels.length);
+  const shouldPreloadFilteredAssets = Boolean(tagIds.length || search || kind || minimumRating || colorLabels.length || pickLabels.length);
   const preloadQuery = useMemo<AssetQuery>(() => ({
     sort: "name",
     direction: "ascending",
@@ -344,9 +346,15 @@ export function App({ perfScenario }: { perfScenario?: PerfScenario }) {
     enabled: Boolean(progressivelyFilterMetadata && activeSession && currentPath),
     staleTime: Infinity,
   });
+  const resultScope = `${activeSession?.id}/${currentPath}`;
+  const [lastResult, setLastResult] = useState<{ scope: string; data: typeof assetsQuery.data }>();
+  useEffect(() => {
+    if (assetsQuery.data) setLastResult({ scope: resultScope, data: assetsQuery.data });
+  }, [assetsQuery.data, resultScope]);
+  const resultData = assetsQuery.data ?? (lastResult?.scope === resultScope ? lastResult.data : undefined);
   const cheapAssets = useMemo(
-    () => assetsQuery.data?.pages.flatMap((page) => page.items) ?? [],
-    [assetsQuery.data],
+    () => resultData?.pages.flatMap((page) => page.items) ?? [],
+    [resultData],
   );
   const progressivelyEnrichedAssets = useMemo(
     () => progressiveMetadataQuery.data?.pages.flatMap((page) =>
@@ -376,7 +384,7 @@ export function App({ perfScenario }: { perfScenario?: PerfScenario }) {
   }, [assets, cheapAssets, preloadAssetsQuery.data, progressiveMetadataQuery.data, progressivelyFilterMetadata]);
   const total = progressivelyFilterMetadata
     ? assets.length
-    : assetsQuery.data?.pages[0]?.total ?? 0;
+    : resultData?.pages[0]?.total ?? 0;
   const activeAsset = assets.find((asset) => asset.id === activeId);
   // The status bar reports the selected photo's position in the visible order,
   // not how many thumbs happen to be paged in so far.
@@ -733,23 +741,28 @@ export function App({ perfScenario }: { perfScenario?: PerfScenario }) {
         value={leftPanelWidth}
       />
       <section className="workspace">
-        <Toolbar total={total} loading={assetsLoading || !activeSession && restoringFolders} t={t} />
+        {assetsError && resultData ? <div className="search-query-error" role="status">{String(assetsError)}
+          <button onClick={() => void assetsQuery.refetch()}>{t("retry")}</button></div> : null}
+        <Toolbar total={total} loading={assetsLoading || assetsQuery.isFetching || !activeSession && restoringFolders} t={t} />
         {!activeSession ? (
           <div className="workspace-empty">
             <FolderPlus size={29} strokeWidth={1.4} />
             <strong>{restoringFolders ? t("restoringFolders") : t("noFolderTitle")}</strong>
             <span>{restoringFolders ? t("restoringFoldersBody") : t("noFolderBody")}</span>
           </div>
-        ) : assetsLoading ? (
+        ) : assetsLoading && !resultData ? (
           <div className="workspace-loading"><Aperture size={24} /> {t("scanningFolder")} {currentPath?.split(/[\\/]/).pop() || activeSession.displayName}…
             {currentBrowseProgress && <span>{t("browseDiscovered")} {currentBrowseProgress.discoveredCount.toLocaleString()} {t("photos")}</span>}
           </div>
-        ) : assetsError ? (
+        ) : assetsError && !resultData ? (
           <div className="workspace-error is-selectable">
             <CircleAlert size={24} />
             <strong>{String(assetsError)}</strong>
             <button onClick={handleOpen}><FolderPlus size={15} />{t("openFolder")}</button>
           </div>
+        ) : !displayedAssets.length && !assetsQuery.isFetching && !assetsError && (search || tagIds.length) ? (
+          <div className="workspace-empty"><strong>{t("noSearchResults")}</strong>
+            <button onClick={clearSearch}>{t("clearSearchTags")}</button></div>
         ) : (
           <AssetBrowser
             assets={displayedAssets}

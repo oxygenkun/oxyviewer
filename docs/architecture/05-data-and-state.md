@@ -317,3 +317,19 @@ session/root policy 显式加入 command 契约并增加符号链接测试。
 - 为什么 sidecar 的 rename/copy/trash 必须与源照片一起设计？
 
 下一章：[06：扩展、调试与验证](06-extension-guide.md)。
+
+
+## 顶部自定义标签筛选
+
+Workspace 的 `tagIds` 和 `tagMatch` 是同步 UI 查询意图，不持久化；搜索组件独立持有
+`#` 补全文字、焦点、候选项及会话最近使用。标签树复用 `custom-tags` 查询，改名/移动刷新
+显示路径，成功刷新后删除已不存在的 ID。
+
+`AssetQuery.tagIds` / `tagMatch` 在 `oxy-domain` 定义（camelCase，默认空集合 / `all`）。
+有标签时绕过资料库 FTS，`oxy-library::filter_assets_by_tags` 对当前目录快照路径执行一次
+递归 CTE 集合查询：每个选中标签扩展其后代，按明确分配命中，再按 `all` / `any` 合并。
+筛选结果进入既有文件名/类型/评级/颜色/旗标排序分页逻辑。标签条件本身不要求元数据富化，
+也不改变标签分配事实；Tauri 只在已有 blocking worker 中连接这些调用。
+
+React Query 的完整 query key 包含标签 ID 与模式，旧请求不能覆盖新查询；同目录请求等待
+或失败时保留最近成功结果并显示更新状态/错误。最近成功结果不跨目录展示。

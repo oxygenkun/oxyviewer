@@ -59,6 +59,52 @@ fn enqueue_paths(transaction: &Transaction<'_>, paths: &[String]) -> Result<(), 
 }
 
 impl Library {
+    /// Match explicit assignments against selected subtrees in one SQLite read.
+    /// Only the supplied directory snapshot participates; no index or metadata is needed.
+    pub fn filter_assets_by_tags(
+        &self,
+        assets: &[oxy_domain::AssetSummary],
+        query: &oxy_domain::AssetQuery,
+    ) -> Result<Vec<oxy_domain::AssetSummary>, LibraryError> {
+        if query.tag_ids.is_empty() {
+            return Ok(assets.to_vec());
+        }
+        let selected = serde_json::to_string(&query.tag_ids)?;
+        let paths =
+            serde_json::to_string(&assets.iter().map(|asset| &asset.path).collect::<Vec<_>>())?;
+        let connection = self.read_connection();
+        let mut statement = connection.prepare(
+            "WITH RECURSIVE selected(id) AS (
+                SELECT DISTINCT value FROM json_each(?1)
+             ), subtree(root, id) AS (
+                SELECT id, id FROM selected
+                UNION
+                SELECT subtree.root, tag.id FROM custom_tags tag
+                JOIN subtree ON tag.parent_id = subtree.id
+             )
+             SELECT assignment.asset_path FROM asset_tags assignment
+             JOIN subtree ON assignment.tag_id = subtree.id
+             WHERE assignment.asset_path IN (SELECT value FROM json_each(?2))
+             GROUP BY assignment.asset_path
+             HAVING ?3 OR COUNT(DISTINCT subtree.root) = (SELECT COUNT(*) FROM selected)",
+        )?;
+        let matches = statement
+            .query_map(
+                params![
+                    selected,
+                    paths,
+                    query.tag_match == oxy_domain::TagMatchMode::Any
+                ],
+                |row| row.get::<_, String>(0),
+            )?
+            .collect::<Result<std::collections::HashSet<_>, _>>()?;
+        Ok(assets
+            .iter()
+            .filter(|asset| matches.contains(asset.path.to_string_lossy().as_ref()))
+            .cloned()
+            .collect())
+    }
+
     pub fn custom_tags(&self) -> Result<Vec<CustomTag>, LibraryError> {
         let connection = self.read_connection();
         let mut statement = connection.prepare(
@@ -664,6 +710,101 @@ fn assigned_tag_paths(
 mod tests {
     use super::*;
     use std::path::PathBuf;
+
+    #[test]
+    fn filters_snapshot_by_subtrees_and_groups_before_paging() {
+        use oxy_domain::{AssetQuery, AssetSummary, TagMatchMode};
+        let library = Library::in_memory().unwrap();
+        let parent = library.create_custom_tag(None, "People").unwrap();
+        let child = library
+            .create_custom_tag(Some(parent.id), "Family")
+            .unwrap();
+        let other = library.create_custom_tag(None, "Trips").unwrap();
+        let same_name = library.create_custom_tag(Some(other.id), "Family").unwrap();
+        let paths = [
+            PathBuf::from("/photos/a.jpg"),
+            PathBuf::from("/photos/b.jpg"),
+            PathBuf::from("/elsewhere/c.jpg"),
+        ];
+        library.set_asset_tag(&paths[..1], child.id, true).unwrap();
+        library.set_asset_tag(&paths, other.id, true).unwrap();
+        library
+            .set_asset_tag(&paths[1..2], same_name.id, true)
+            .unwrap();
+        let assets = paths[..2]
+            .iter()
+            .enumerate()
+            .map(|(index, path)| AssetSummary {
+                id: index.to_string(),
+                path: path.clone(),
+                name: format!("{index}.jpg"),
+                extension: "jpg".into(),
+                kind: oxy_domain::AssetKind::Jpeg,
+                size_bytes: 1,
+                modified_at_ms: 0,
+                has_sidecar: false,
+                rating: Some(4),
+                color_label: Some("Red".into()),
+                pick_label: Some(oxy_domain::PickLabel::Accepted),
+            })
+            .collect::<Vec<_>>();
+        let mut query = AssetQuery {
+            tag_ids: vec![parent.id],
+            ..Default::default()
+        };
+        assert!(!query.needs_metadata_enrichment());
+        assert_eq!(
+            library
+                .filter_assets_by_tags(&assets, &query)
+                .unwrap()
+                .len(),
+            1
+        );
+        query.tag_ids.push(other.id);
+        assert_eq!(
+            library
+                .filter_assets_by_tags(&assets, &query)
+                .unwrap()
+                .len(),
+            1
+        );
+        query.tag_match = TagMatchMode::Any;
+        query.minimum_rating = Some(4);
+        query.color_labels = vec!["Red".into()];
+        query.pick_labels = vec!["accepted".into()];
+        query.page_size = Some(1);
+        let matched = library.filter_assets_by_tags(&assets, &query).unwrap();
+        let page = oxy_fs::page_assets(&matched, &query, 0);
+        assert_eq!(page.total, 2);
+        assert_eq!(page.items.len(), 1);
+        assert_eq!(oxy_fs::page_assets(&matched, &query, 1).items.len(), 1);
+        query.tag_ids = vec![child.id];
+        library
+            .update_custom_tag(child.id, Some(other.id), "Renamed")
+            .unwrap();
+        assert_eq!(
+            library
+                .filter_assets_by_tags(&assets, &query)
+                .unwrap()
+                .len(),
+            1
+        );
+        query.tag_ids = vec![parent.id];
+        assert!(
+            library
+                .filter_assets_by_tags(&assets, &query)
+                .unwrap()
+                .is_empty()
+        );
+        query.tag_ids = vec![child.id];
+        library.delete_custom_tag(child.id).unwrap();
+        assert!(
+            library
+                .filter_assets_by_tags(&assets, &query)
+                .unwrap()
+                .is_empty()
+        );
+    }
 
     #[test]
     fn manages_hierarchy_assignments_and_subtree_deletion() {

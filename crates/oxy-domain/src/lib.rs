@@ -891,9 +891,21 @@ pub struct HeifStatusEvent {
     pub message: Option<String>,
 }
 
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, Default, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub enum TagMatchMode {
+    #[default]
+    All,
+    Any,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 #[serde(rename_all = "camelCase")]
 pub struct AssetQuery {
+    #[serde(default)]
+    pub tag_ids: Vec<CustomTagId>,
+    #[serde(default)]
+    pub tag_match: TagMatchMode,
     pub search: Option<String>,
     pub kind: Option<AssetKind>,
     pub minimum_rating: Option<u8>,

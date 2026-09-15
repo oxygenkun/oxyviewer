@@ -57,6 +57,12 @@ interface WorkspaceState {
   inspectorWidth: number;
   filmstripHeight: number;
   search: string;
+  tagIds: number[];
+  tagMatch: "all" | "any";
+  setTagIds: (ids: number[]) => void;
+  setTagMatch: (mode: "all" | "any") => void;
+  clearSearch: () => void;
+  searchReset: number;
   kind?: AssetKind;
   minimumRating?: number;
   colorLabels: string[];
@@ -120,6 +126,12 @@ export const useWorkspaceStore = create<WorkspaceState>((set) => ({
   inspectorWidth: loadLayoutSize("inspector"),
   filmstripHeight: loadLayoutSize("filmstrip"),
   search: "",
+  tagIds: [],
+  tagMatch: "all",
+  setTagIds: (tagIds) => set({ tagIds }),
+  setTagMatch: (tagMatch) => set({ tagMatch }),
+  searchReset: 0,
+  clearSearch: () => set((state) => ({ search: "", tagIds: [], searchReset: state.searchReset + 1 })),
   colorLabels: [],
   pickLabels: [],
   sort: "name",
