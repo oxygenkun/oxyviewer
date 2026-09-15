@@ -4,6 +4,28 @@ All notable changes to OxyViewer are documented in this file. Each release lists
 
 本文件记录 OxyViewer 的所有重要变更。每个版本先列出简体中文说明，随后是英文说明。
 
+## [0.1.2] - 2026-09-16
+
+### 新增
+
+- 设置中新增“关于”面板，显示当前版本、许可证与作者，并可按需手动检查是否有新版本。
+- 每个快捷键操作可绑定两个键位，点击键位即可改键，按 Backspace 或 Delete 清空，按 Esc 取消。
+- 搜索框支持按层级标签筛选，输入 `#` 可获得标签建议，并可切换“全部满足”与“任一满足”两种匹配方式。
+
+### 修复
+
+- 修复拖动面板、调整手柄或放大镜时界面元素被当作文本选中的问题，输入框与错误详情仍可正常选中复制。
+
+### Added
+
+- Added an About panel in Settings that shows the running version, license, and author, and can check for a new release on demand.
+- Each shortcut action can bind two keys: click a key to rebind, press Backspace or Delete to clear it, and press Escape to cancel.
+- Search now filters by hierarchical tags, with tag suggestions when typing `#` and a switch between matching all and matching any tag.
+
+### Fixed
+
+- Dragging panels, resize handles, or the loupe no longer selects interface elements as text, while inputs and error details remain selectable.
+
 ## [0.1.1] - 2026-09-14
 
 ### 新增
