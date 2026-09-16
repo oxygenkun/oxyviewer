@@ -1,9 +1,11 @@
 # FFmpeg build recipe
 
 This directory owns OxyViewer's pinned FFmpeg source manifest and the scripts
-that build and verify the standalone FFmpeg/ffprobe programs. Generated source,
+that build and verify the standalone FFmpeg/ffprobe programs. On macOS and Linux
+the same build also installs a static prefix (headers and libraries) that the
+pinned libheif FFmpeg decoder links into the application. Generated source,
 objects and executables are not checked in. From the repository root, run
-`pnpm ffmpeg:prepare` or `pnpm tauri build`.
+`pnpm native:prepare` or `pnpm tauri build`.
 
 See [the packaging guide](../../docs/FFMPEG_PACKAGING.md) for prerequisites,
 runtime lookup and installer verification.
@@ -12,16 +14,20 @@ runtime lookup and installer verification.
 
 The installed `licenses/ffmpeg` directory includes this recipe, the pinned
 source manifest and the effective configuration. Download the corresponding
-`OxyViewer_<version>_FFmpeg_8.0.1_source.tar.xz` asset from the GitHub Release
+`OxyViewer_<version>_FFmpeg_9.0.1_source.tar.xz` asset from the GitHub Release
 matching the installed OxyViewer version. Its SHA-256 must match `source.json`.
 Copy it into this directory, then install the native compiler, GNU Make, Bash
 and tar (plus NASM on x86_64). For Windows use MSYS2 UCRT64 with its GCC
 toolchain. Extract the archive and run:
 
 ```sh
-tar -xf ffmpeg-8.0.1.tar.xz
-bash build.sh aarch64-apple-darwin "$PWD/ffmpeg-8.0.1" "$PWD/build"
+tar -xf ffmpeg-9.0.1.tar.xz
+bash build.sh aarch64-apple-darwin "$PWD/ffmpeg-9.0.1" "$PWD/build"
 ```
+
+Pass an absolute install prefix as the fourth argument to also build the static
+prefix consumed by libheif (`pnpm native:prepare` does this automatically on
+macOS and Linux).
 
 Replace the target with the native target listed in the packaging guide or
 `build-info.json`. Windows commands should run in an MSYS2 UCRT64 shell. The

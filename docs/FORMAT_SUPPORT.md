@@ -50,11 +50,17 @@ primary write target; explicit embedded sync copies both arrays into supported
 JPEG/HEIF/HIF files through ExifTool.
 
 HEIF decoding uses libheif through `libheif-rs`; release packages must include a
-working HEVC decoder such as libde265. libheif and libde265 LGPL distribution
+working HEVC decoder, which the pinned FFmpeg libraries provide on macOS/Linux
+and libde265 provides on Windows. libheif, libde265 and FFmpeg LGPL distribution
 and relinking obligations, plus HEVC patent/licensing requirements, must be
 checked per release platform. LittleCMS performs ICC conversion and is linked
 statically under its MIT license.
 
-Windows builds pin libheif 1.23.3 through the repository's vcpkg overlay port.
-This is the minimum accepted Windows version because it contains the September
-2026 security fixes; the Rust test suite rejects an older linked library.
+Every platform pins libheif 1.23.4, the minimum accepted version because it
+contains the September 2026 security fixes, including three high-severity issues;
+the Rust test suite rejects an older linked library. macOS and Linux build the
+pinned libheif source with `WITH_FFMPEG_DECODER=ON` and link it statically
+against the pinned FFmpeg libraries through `pnpm native:prepare`, so HEVC
+decoding does not depend on a host codec. Windows takes the same libheif version
+from a checked-out vcpkg revision of the curated registry, where HEVC decoding
+comes from libde265 instead; it is not linked against FFmpeg.

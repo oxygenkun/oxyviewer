@@ -12,6 +12,16 @@ Each release lists the English notes first, followed by the Simplified Chinese n
 
 ## [Unreleased]
 
+### Changed
+
+- Upgraded the pinned FFmpeg to 9.0.1 and the pinned libheif to 1.23.4.
+- macOS and Linux now build libheif with its FFmpeg decoder and link it statically through `pnpm native:prepare`; Windows keeps using the vcpkg libheif with libde265.
+
+### 变更
+
+- 将固定的 FFmpeg 升级到 9.0.1，将固定的 libheif 升级到 1.23.4。
+- macOS 与 Linux 现在通过 `pnpm native:prepare` 使用 FFmpeg 解码器构建并静态链接 libheif；Windows 仍使用 vcpkg libheif 与 libde265。
+
 ## [0.1.2] - 2026-09-16
 
 ### Added

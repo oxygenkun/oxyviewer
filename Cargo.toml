@@ -43,7 +43,7 @@ fs2 = "0.4"
 image = { version = "0.25", default-features = false, features = ["jpeg", "png", "webp"] }
 lcms2 = { version = "6.1", features = ["static"] }
 libc = "0.2"
-libheif-rs = { version = "2.7", default-features = false, features = ["v1_21", "embedded-libheif"] }
+libheif-rs = { version = "2.7", default-features = false, features = ["v1_21"] }
 parking_lot = "0.12"
 rusqlite = { version = "0.37", features = ["bundled"] }
 semver = "1.0"

@@ -5,9 +5,15 @@ set -euo pipefail
 target=$1
 source_dir=$2
 build_dir=$3
+# Optional static prefix (headers + libraries) consumed by the pinned libheif
+# build. Windows links libheif through vcpkg instead, so it passes nothing.
+install_prefix=${4:-}
 if command -v cygpath >/dev/null 2>&1; then
   source_dir=$(cygpath -u "$source_dir")
   build_dir=$(cygpath -u "$build_dir")
+  if [ -n "$install_prefix" ]; then
+    install_prefix=$(cygpath -u "$install_prefix")
+  fi
 fi
 mkdir -p "$build_dir"
 cd "$build_dir"
@@ -26,19 +32,30 @@ case "$target" in
   *) echo "Unsupported FFmpeg target: $target" >&2; exit 1 ;;
 esac
 
-# Static FFmpeg libraries are linked only into these standalone LGPL programs.
-# Disable autodetection to prevent host libraries changing the shipped license
-# or introducing undeclared DLL/dylib dependencies. Keep SIMD enabled.
+configure_args=(
+  --disable-autodetect --disable-everything --disable-network
+  --disable-gpl --disable-nonfree --disable-version3
+  --disable-shared --enable-static --disable-debug --disable-doc
+  --disable-ffplay --enable-ffmpeg --enable-ffprobe
+  --disable-avdevice
+  --enable-avcodec --enable-avformat --enable-avfilter --enable-swscale
+  --enable-decoder=hevc,mjpeg,rawvideo --enable-parser=hevc
+  --enable-demuxer=mov,rawvideo --enable-protocol=file,pipe
+  --enable-encoder=mjpeg,bmp --enable-muxer=image2,image2pipe
+  --enable-filter=buffer,buffersink,scale,format,crop,transpose,hflip,vflip,unsharp,xstack,split
+)
+if [ -n "$install_prefix" ]; then
+  configure_args+=(--prefix="$install_prefix")
+fi
+
+# Static FFmpeg libraries are linked into these standalone LGPL programs and,
+# on macOS/Linux, into the pinned libheif FFmpeg decoder. Disable autodetection
+# to prevent host libraries changing the shipped license or introducing
+# undeclared DLL/dylib dependencies. Keep SIMD enabled.
 bash "$source_dir/configure" \
-  --disable-autodetect --disable-everything --disable-network \
-  --disable-gpl --disable-nonfree --disable-version3 \
-  --disable-shared --enable-static --disable-debug --disable-doc \
-  --disable-ffplay --enable-ffmpeg --enable-ffprobe \
-  --disable-avdevice \
-  --enable-avcodec --enable-avformat --enable-avfilter --enable-swscale \
-  --enable-decoder=hevc,mjpeg,rawvideo --enable-parser=hevc \
-  --enable-demuxer=mov,rawvideo --enable-protocol=file,pipe \
-  --enable-encoder=mjpeg,bmp --enable-muxer=image2,image2pipe \
-  --enable-filter=buffer,buffersink,scale,format,crop,transpose,hflip,vflip,unsharp,xstack,split \
+  "${configure_args[@]}" \
   "${platform[@]}" | tee configure-summary.txt
 make -j "${OXY_FFMPEG_JOBS:-4}" "ffmpeg${executable_suffix}" "ffprobe${executable_suffix}"
+if [ -n "$install_prefix" ]; then
+  make install
+fi

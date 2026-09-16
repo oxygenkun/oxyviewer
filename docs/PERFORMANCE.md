@@ -419,6 +419,40 @@ link in this document.
   down from the reproduced 4.11 s. Three cold loupe runs painted the full
   embedded JPEG in 278 ms median / 290 ms P95.
 
+- 2026-09-16: macOS and Linux now build the pinned libheif 1.23.4 from
+  `3rdpart/libheif/source.json` with `WITH_FFMPEG_DECODER=ON` and link it
+  statically against the pinned FFmpeg libraries, which moved from 8.0.1 to
+  9.0.1 in the same change. The workspace dropped the `embedded-libheif` feature,
+  so `libheif-sys` resolves libheif through `pkg-config` against the prefix
+  `pnpm native:prepare` installs. Windows is unchanged: libheif 1.23.4 from the
+  pinned vcpkg revision decoding HEVC through libde265, with no FFmpeg link.
+  Before this, the embedded source found no libde265 on a clean macOS host, so
+  libheif had no HEVC decoder at all and HEVC HEIC previews only worked through
+  the FFmpeg or ImageIO fallbacks.
+  Reference measurement, Apple Silicon host, release build,
+  `tests/fixtures/DSC00449.HIF` (4672x7008, 10-bit, 4:2:2, six tiles, no
+  embedded thumbnail): the in-process libheif `heif_decode_bench` reports one
+  `FFmpeg decoder 9.0.1` decoder, 1.23.4, and display-ready RGB8 decode medians
+  of 691 ms (default threads), 639 ms at one thread, and 634 ms at all threads,
+  with source-depth output at 727 ms. That is a compatibility path, not a
+  replacement for the FFmpeg tile session: on the same host and fixture the
+  production six-tile JPEG command completes in 332 ms and the composed
+  full-frame FFmpeg path takes about 1.0 s when driven by the system FFmpeg
+  9.0.1 command line, so the CLI backend remains the
+  faster full-resolution producer while libheif gains a working decoder and the
+  Linux preview plan stops failing on HEVC.
+
+- 2026-09-16: The repository-owned vcpkg overlay for libheif is gone. Windows CI
+  now checks out the vcpkg revision whose curated registry carries the libheif
+  1.23.4 port and installs `libheif[core]:x64-windows-static-md` from it, so the
+  overlay's port copies no longer need to be kept in sync with upstream. The
+  pinned revision replaces the overlay content in both the vcpkg binary and Rust
+  link cache keys. This moves Windows from 1.23.3 to 1.23.4, which is a security
+  release that fixes three high-severity issues; the Windows media test now
+  rejects anything older than 1.23.4. macOS and Linux still used the libheif
+  1.23.1 embedded in `libheif-sys` 5.3.1 at that point; the entry above replaces
+  that source with the pinned 1.23.4 build.
+
 - 2026-09-07: Windows release builds now install the pinned vcpkg libheif port
   with only its `core` feature. The application discovers HEIF/HEIC/HIF assets
   and uses libde265 for the required HEVC compatibility decode; it does not

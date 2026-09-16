@@ -6,6 +6,8 @@
   "packageManager": "pnpm@10.34.5",
   "scripts": {
     "ffmpeg:prepare": "node 3rdpart/ffmpeg/prepare.mjs",
+    "heif:prepare": "node 3rdpart/libheif/prepare.mjs",
+    "native:prepare": "pnpm ffmpeg:prepare && pnpm heif:prepare",
     "release:check": "node scripts/check-release-version.mjs",
     "icons": "node scripts/generate-icons.mjs && pnpm --filter @oxyviewer/desktop exec tauri icon src-tauri/icons/icon.png",
     "dev": "pnpm --filter @oxyviewer/desktop dev",

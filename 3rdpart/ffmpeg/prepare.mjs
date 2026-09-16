@@ -104,6 +104,9 @@ export function prepare(requestedTarget) {
   }
   const extension = target.includes("windows") ? ".exe" : "";
   const cache = join(root, "target", "ffmpeg", target);
+  // macOS/Linux link these static FFmpeg libraries into the pinned libheif
+  // FFmpeg decoder. Windows takes libheif from vcpkg and installs no prefix.
+  const prefix = process.platform === "win32" ? "" : join(root, "target", "native", "ffmpeg");
   const binaries = join(root, "apps/desktop/src-tauri/binaries");
   const resources = join(root, "apps/desktop/src-tauri/resources/ffmpeg");
   const archiveName = `ffmpeg-${source.version}.tar.xz`;
@@ -127,15 +130,17 @@ export function prepare(requestedTarget) {
   try { cached = JSON.parse(readFileSync(receipt, "utf8")); } catch { /* First build. */ }
   const reusable = cached?.recipe === recipe
     && existsSync(join(sourceDir, "COPYING.LGPLv2.1")) && existsSync(join(buildDir, "config.h"))
+    && (!prefix || existsSync(join(prefix, "lib", "pkgconfig", "libavcodec.pc")))
     && [ffmpeg, ffprobe].every((path) => existsSync(path) && sha(readFileSync(path)) === cached.binaries?.[path]);
   if (!reusable) {
     rmSync(buildDir, { recursive: true, force: true });
     rmSync(sourceDir, { recursive: true, force: true });
+    if (prefix) rmSync(prefix, { recursive: true, force: true });
     run("tar", ["-xf", archive, "-C", cache]);
     const bash = process.platform === "win32" ? process.env.OXY_FFMPEG_BASH ?? "C:/msys64/usr/bin/bash.exe" : "bash";
     console.log(`Building FFmpeg ${source.version} for ${target} (first build may take several minutes)`);
     const shellPath = (path) => process.platform === "win32" ? path.replaceAll("\\", "/") : path;
-    run(bash, [...(process.platform === "win32" ? ["--login"] : []), shellPath(join(here, "build.sh")), target, shellPath(sourceDir), shellPath(buildDir)], {
+    run(bash, [...(process.platform === "win32" ? ["--login"] : []), shellPath(join(here, "build.sh")), target, shellPath(sourceDir), shellPath(buildDir), prefix ? shellPath(prefix) : ""], {
       stdio: "inherit", env: { ...process.env, MSYSTEM: "UCRT64", CHERE_INVOKING: "1" },
     });
     mkdirSync(binaries, { recursive: true });
@@ -145,6 +150,9 @@ export function prepare(requestedTarget) {
     }
   }
   verifyPair(ffmpeg, ffprobe);
+  // Rebuild the generated resource directory from scratch so a previous
+  // version's archive or build material cannot linger beside the current one.
+  rmSync(resources, { recursive: true, force: true });
   mkdirSync(resources, { recursive: true });
   for (const name of ["COPYING.LGPLv2.1", "LICENSE.md"]) copyFileSync(join(sourceDir, name), join(resources, name));
   for (const name of ["README.md", "build.sh", "source.json", "prepare.mjs"]) copyFileSync(join(here, name), join(resources, name));

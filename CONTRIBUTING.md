@@ -21,15 +21,24 @@ You will need:
 - Rust 1.85 or newer with `rustfmt` and `clippy` (the workspace uses edition 2024)
 - The platform prerequisites required by Tauri 2
 - CMake and a C/C++ compiler for the linked native media libraries
+- `pkg-config` on macOS and Linux (`brew install pkg-config` or the
+  distribution package); `libheif-sys` locates the pinned libheif through it
 - NASM on `PATH`, or the `NASM` environment variable pointing to it, for the
   libjpeg-turbo SIMD backend on x86/x64
 
-On Windows, install the repository-pinned libheif before building the Rust
-workspace (replace `C:\vcpkg` if `VCPKG_ROOT` points elsewhere):
+On Windows, install the pinned libheif before building the Rust workspace
+(replace `C:\vcpkg` if `VCPKG_ROOT` points elsewhere):
 
 ```powershell
-C:\vcpkg\vcpkg.exe install "libheif[core]:x64-windows-static-md" --overlay-ports="$PWD\3rdpart\vcpkg-ports"
+C:\vcpkg\vcpkg.exe install "libheif[core]:x64-windows-static-md"
 ```
+
+libheif resolves from the vcpkg curated registry, so the checkout must be at or
+after vcpkg commit `0635f447edcc25f50645afade4e91a229a35fcdc`, the revision that
+added the 1.23.4 port that satisfies the security baseline. Run
+`git -C C:\vcpkg pull` first if an older version is selected. CI checks out that
+revision explicitly instead of using the one bundled with the runner image. The
+Windows libheif decodes HEVC through libde265; it is not linked against FFmpeg.
 
 Clone the repository with its submodules, then install the frontend
 dependencies:
@@ -39,6 +48,19 @@ git clone --recurse-submodules <repository-url>
 cd oxyviewer
 pnpm install --frozen-lockfile
 ```
+
+On macOS and Linux, build the pinned native media libraries before any Cargo
+command. Cargo resolves the resulting static libheif through
+`.cargo/config.toml`; without the prefix, `cargo build` and `cargo test` fail to
+find libheif:
+
+```bash
+pnpm native:prepare
+```
+
+`native:prepare` builds the pinned FFmpeg (programs plus a static prefix) and
+then the pinned libheif with `WITH_FFMPEG_DECODER=ON`. It is cached under
+`target/` and safe to re-run. Windows skips the libheif step and uses vcpkg.
 
 If you already cloned the repository without submodules, initialize them with:
 
@@ -79,8 +101,9 @@ pnpm tauri build
 ```
 
 Release builds also download, build, cache, verify, and stage the pinned
-standalone FFmpeg/ffprobe programs. Run `pnpm ffmpeg:prepare` to perform that
-step independently. Do not bypass the wrapper with `pnpm exec tauri` for a
+standalone FFmpeg/ffprobe programs. Run `pnpm native:prepare` to perform the
+native media steps independently (`pnpm ffmpeg:prepare` covers only FFmpeg). Do
+not bypass the wrapper with `pnpm exec tauri` for a
 release build; see `docs/FFMPEG_PACKAGING.md` for platform prerequisites,
 bundle verification, signing, and redistribution requirements.
 
@@ -146,7 +169,7 @@ pnpm test
 pnpm build
 ```
 
-For Rust-only changes, run:
+For Rust-only changes, run (after `pnpm native:prepare` on macOS and Linux):
 
 ```bash
 cargo fmt --all --check
@@ -227,13 +250,13 @@ have explicit timeouts. Manual build artifacts expire after 7 days; release-tag
 Actions artifacts expire after 30 days. Published GitHub Release installers
 remain attached to the release.
 
-Windows vcpkg and Rust link caches include the runner image, vcpkg revision,
-overlay content, and core-only feature selection in their keys. This prevents
+Windows vcpkg and Rust link caches include the runner image, the pinned vcpkg
+revision, and the core-only feature selection in their keys. This prevents
 stale link flags and lets rebuilt binary packages be saved when native inputs
 change. Rust dependency caches are also saved after failed jobs.
-FFmpeg preparation and verification run before Tauri packaging, with the cache
-saved immediately after successful preparation so a later packaging failure
-does not discard that work. The Tauri wrapper still verifies the cached payload.
+
+Native media preparation and verification run before Tauri packaging, and the
+Tauri wrapper verifies the prepared payload.
 
 Private-repository Actions usage can incur charges after the account allowance
 is exhausted. Job timeouts limit individual runs, not monthly spending. Check

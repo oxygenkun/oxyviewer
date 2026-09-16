@@ -1,7 +1,10 @@
 # Bundled FFmpeg
 
 OxyViewer ships standalone `oxy-ffmpeg` and `oxy-ffprobe` programs built from
-unmodified FFmpeg 8.0.1. The application does not link FFmpeg libraries.
+unmodified FFmpeg 9.0.1. On Windows the application does not link FFmpeg
+libraries. On macOS and Linux the pinned libheif FFmpeg decoder links the same
+statically built libraries into the application, so the relink and
+corresponding-source material below covers the application packages as well.
 The source URL and SHA-256 are pinned in `3rdpart/ffmpeg/source.json`.
 
 ## Building installers
@@ -20,7 +23,9 @@ pnpm tauri build --bundles nsis
 merges `tauri.bundle.json`. Do not bypass this wrapper with `pnpm exec tauri`
 for release builds. The overlay keeps plain Cargo checks and `tauri dev`
 independent of the FFmpeg source build. `pnpm ffmpeg:prepare` explicitly
-prepares and verifies the sidecars without building the application.
+prepares and verifies the sidecars without building the application; on macOS
+and Linux `pnpm native:prepare` additionally installs the static prefix and the
+pinned libheif that links it.
 
 Prerequisites: Node, Rust, curl, tar with xz support, Bash, GNU Make and a C
 compiler; x86_64 builds also need NASM for SIMD. macOS uses Xcode command-line
@@ -55,7 +60,9 @@ packaging a host-architecture executable. Set `OXY_FFMPEG_JOBS` to change the
 default four build jobs.
 
 The first build downloads and verifies the official source archive. Build
-outputs and the archive live under `target/ffmpeg/<target>`. The staged
+outputs and the archive live under `target/ffmpeg/<target>`; on macOS and Linux
+the static prefix that libheif links is installed under `target/native/ffmpeg`.
+The staged
 executables in `apps/desktop/src-tauri/binaries` have Tauri target suffixes;
 installed executables are named `oxy-ffmpeg[.exe]` / `oxy-ffprobe[.exe]` beside
 the application binary. Generated files are ignored by Git. Subsequent builds
@@ -66,8 +73,10 @@ capability and encode smoke checks still run on cache hits.
 
 `3rdpart/ffmpeg/build.sh` disables external library autodetection, network
 protocols, GPL, nonfree and version3 components. FFmpeg libraries are statically
-linked into the two standalone LGPL programs, not into OxyViewer. Windows also
-links compiler runtime support statically. System OS libraries remain dynamic.
+linked into the two standalone LGPL programs; on macOS and Linux the same static
+prefix is linked into OxyViewer by the pinned libheif FFmpeg decoder. Windows
+also links compiler runtime support statically. System OS libraries remain
+dynamic.
 SIMD remains enabled; unrelated codecs and protocols are omitted.
 
 The enabled features cover the existing HEIF path: MOV/HEIF demuxing, HEVC and
@@ -84,7 +93,7 @@ Every package includes `licenses/ffmpeg` under its Tauri resources directory:
 
 The exact source archive is intentionally excluded from application and portable
 installations because it is not needed at runtime. CI instead attaches one
-checksum-verified `OxyViewer_<version>_FFmpeg_8.0.1_source.tar.xz` asset to the
+checksum-verified `OxyViewer_<version>_FFmpeg_9.0.1_source.tar.xz` asset to the
 matching GitHub Release. Keep the installed materials and the separate source
 asset available when redistributing releases; together they allow rebuilding
 the standalone FFmpeg programs. Update

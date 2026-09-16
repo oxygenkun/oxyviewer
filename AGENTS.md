@@ -32,8 +32,9 @@ Repository-specific rules for coding agents working on OxyViewer.
 - Treat the SQLite library and generated previews as rebuildable caches.
 - Route file discovery and safe file operations through `oxy-fs`; do not add
   ad hoc frontend filesystem access.
-- Treat native dependencies as pinned inputs. Do not change submodules, vcpkg
-  overlays, FFmpeg sources, or third-party notices unless the task requires it.
+- Treat native dependencies as pinned inputs. Do not change submodules, the
+  pinned vcpkg revision, the pinned native source manifests (`3rdpart/ffmpeg`,
+  `3rdpart/libheif`), or third-party notices unless the task requires it.
 
 ## Change Discipline
 

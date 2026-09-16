@@ -29,9 +29,18 @@ jobs:
       - uses: Swatinem/rust-cache@v2.9.1
         with:
           cache-on-failure: true
-      - uses: ilammy/setup-nasm@v1
+          # Tag-scoped caches are invisible to other tags; the default branch
+          # owns the reusable Rust caches.
+          save-if: ${{ github.ref == 'refs/heads/main' }}
       - name: Linux system dependencies
-        run: sudo apt-get update && sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf
+        run: sudo apt-get update && sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf nasm cmake pkg-config
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Prepare pinned native media libraries
+        run: |
+          node 3rdpart/ffmpeg/prepare.mjs
+          node 3rdpart/libheif/prepare.mjs
       - name: cargo clippy
         run: cargo clippy --workspace --all-targets -- -D warnings
         env:
@@ -85,10 +94,18 @@ jobs:
         with:
           submodules: recursive
       - uses: dtolnay/rust-toolchain@stable
+      # Linux takes NASM 2.16.01 from apt with the other system packages. The
+      # action has to cover the remaining x64 platforms: MSYS2 supplies the
+      # Windows FFmpeg build, but the libjpeg-turbo SIMD build needs NASM on the
+      # Windows PATH, and arm64 hosts have no x86 SIMD to assemble.
       - uses: ilammy/setup-nasm@v1
+        if: runner.arch == 'X64' && runner.os != 'Linux'
       - name: Linux system dependencies
         if: runner.os == 'Linux'
-        run: sudo apt-get update && sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf
+        run: sudo apt-get update && sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf nasm cmake pkg-config
+      - name: macOS native build tools
+        if: runner.os == 'macOS'
+        run: brew list pkg-config >/dev/null 2>&1 || brew install pkg-config
       - name: Windows FFmpeg build tools
         if: runner.os == 'Windows'
         id: msys2
@@ -100,14 +117,28 @@ jobs:
         if: runner.os == 'Windows'
         shell: pwsh
         run: '"OXY_FFMPEG_BASH=${{ steps.msys2.outputs.msys2-location }}\usr\bin\bash.exe" >> $env:GITHUB_ENV'
-      - name: Restore FFmpeg build cache
-        id: ffmpeg-cache
-        uses: actions/cache/restore@v4
-        with:
-          path: |
-            target/ffmpeg
-            apps/desktop/src-tauri/binaries
-          key: ffmpeg-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('3rdpart/ffmpeg/source.json', '3rdpart/ffmpeg/build.sh', '3rdpart/ffmpeg/prepare.mjs') }}
+      - name: Pin Windows vcpkg revision
+        id: vcpkg-pin
+        if: runner.os == 'Windows'
+        shell: pwsh
+        env:
+          # vcpkg revision whose curated registry carries the libheif 1.23.4
+          # port. The runner image ships an older revision that still resolves
+          # libheif 1.23.2, so the workflow checks this one out instead. Keep
+          # the Windows prerequisite in CONTRIBUTING.md in sync with it.
+          VCPKG_REVISION: 0635f447edcc25f50645afade4e91a229a35fcdc
+        run: |
+          $vcpkgRoot = $env:VCPKG_INSTALLATION_ROOT
+          if (Test-Path "$vcpkgRoot\.git\shallow") {
+            git -C $vcpkgRoot fetch --quiet --unshallow origin master
+          } else {
+            git -C $vcpkgRoot fetch --quiet origin master
+          }
+          if ($LASTEXITCODE -ne 0) { throw 'Cannot fetch the vcpkg repository' }
+          git -C $vcpkgRoot checkout --quiet $env:VCPKG_REVISION
+          if ($LASTEXITCODE -ne 0) { throw 'Cannot check out the pinned vcpkg revision' }
+          & "$vcpkgRoot\bootstrap-vcpkg.bat"
+          if ($LASTEXITCODE -ne 0) { throw "vcpkg bootstrap failed: $LASTEXITCODE" }
       - name: Identify Windows native toolchain
         id: native-toolchain
         if: runner.os == 'Windows'
@@ -123,9 +154,9 @@ jobs:
         uses: actions/cache/restore@v5
         with:
           path: vcpkg-binary-cache
-          # vcpkg ABI changes with its ports, the compiler, and our overlay.
-          # An exact hit on an obsolete fixed key cannot save rebuilt packages.
-          key: vcpkg-${{ runner.os }}-${{ runner.arch }}-${{ steps.native-toolchain.outputs.image }}-${{ steps.native-toolchain.outputs.revision }}-${{ hashFiles('3rdpart/vcpkg-ports/**') }}-core-static-md
+          # vcpkg ABI changes with its ports and the compiler. An exact hit on
+          # an obsolete fixed key cannot save rebuilt packages.
+          key: vcpkg-${{ runner.os }}-${{ runner.arch }}-${{ steps.native-toolchain.outputs.image }}-${{ steps.native-toolchain.outputs.revision }}-core-static-md
       - name: Windows system dependencies
         if: runner.os == 'Windows'
         shell: pwsh
@@ -133,7 +164,7 @@ jobs:
           VCPKG_DEFAULT_BINARY_CACHE: ${{ github.workspace }}\vcpkg-binary-cache
         run: |
           New-Item -ItemType Directory -Force "$env:VCPKG_DEFAULT_BINARY_CACHE" | Out-Null
-          & "$env:VCPKG_INSTALLATION_ROOT\vcpkg.exe" install "libheif[core]:x64-windows-static-md" --overlay-ports="${{ github.workspace }}\3rdpart\vcpkg-ports"
+          & "$env:VCPKG_INSTALLATION_ROOT\vcpkg.exe" install "libheif[core]:x64-windows-static-md"
           if ($LASTEXITCODE -ne 0) { throw "vcpkg install failed: $LASTEXITCODE" }
           "VCPKG_ROOT=$env:VCPKG_INSTALLATION_ROOT" >> $env:GITHUB_ENV
       - name: Save Windows dependency cache
@@ -146,28 +177,25 @@ jobs:
         with:
           # Isolate Windows link metadata by the same native inputs as vcpkg,
           # avoiding both stale link flags and unconditional cargo clean.
-          key: ${{ runner.os == 'Windows' && format('native-{0}-{1}-{2}-core-static-md', steps.native-toolchain.outputs.image, steps.native-toolchain.outputs.revision, hashFiles('3rdpart/vcpkg-ports/**')) || '' }}
+          key: ${{ runner.os == 'Windows' && format('native-{0}-{1}-core-static-md', steps.native-toolchain.outputs.image, steps.native-toolchain.outputs.revision) || '' }}
           cache-on-failure: true
+          # Tag runs restore this cache but must not write a tag-scoped copy
+          # that no other ref can read; only the default branch may write.
+          save-if: ${{ github.ref == 'refs/heads/main' }}
       - uses: pnpm/action-setup@v4
       - uses: actions/setup-node@v4
         with:
           node-version: 22
           cache: pnpm
       - run: pnpm install --frozen-lockfile
+      - name: Prepare pinned native media libraries
+        run: |
+          pnpm ffmpeg:prepare
+          pnpm heif:prepare
       - name: Cross-platform HIF detail and media regression tests
         # The lint job already tests the full workspace on this Linux image.
         if: runner.os != 'Linux'
         run: cargo test -p oxy-media -p oxy-metadata -p oxyviewer
-      - name: Prepare and verify FFmpeg
-        run: pnpm ffmpeg:prepare
-      - name: Save FFmpeg build cache
-        if: steps.ffmpeg-cache.outputs.cache-hit != 'true'
-        uses: actions/cache/save@v4
-        with:
-          path: |
-            target/ffmpeg
-            apps/desktop/src-tauri/binaries
-          key: ${{ steps.ffmpeg-cache.outputs.cache-primary-key }}
       - name: Build Tauri app
         if: runner.os == 'Linux'
         working-directory: apps/desktop

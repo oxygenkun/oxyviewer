@@ -14,7 +14,12 @@
       "resources/ffmpeg/prepare.mjs": "licenses/ffmpeg/prepare.mjs",
       "resources/ffmpeg/config.h": "licenses/ffmpeg/config.h",
       "resources/ffmpeg/configure-summary.txt": "licenses/ffmpeg/configure-summary.txt",
-      "resources/ffmpeg/build-info.json": "licenses/ffmpeg/build-info.json"
+      "resources/ffmpeg/build-info.json": "licenses/ffmpeg/build-info.json",
+      "resources/libheif/COPYING": "licenses/libheif/COPYING",
+      "resources/libheif/README.md": "licenses/libheif/README.md",
+      "resources/libheif/build.sh": "licenses/libheif/build.sh",
+      "resources/libheif/source.json": "licenses/libheif/source.json",
+      "resources/libheif/prepare.mjs": "licenses/libheif/prepare.mjs"
     }
   }
 }

@@ -211,8 +211,8 @@ mod tests {
     fn linked_libheif_meets_security_baseline() {
         let version = LibHeif::new().version();
         assert!(
-            version >= [1, 23, 3],
-            "linked libheif {version:?} is older than the required 1.23.3"
+            version >= [1, 23, 4],
+            "linked libheif {version:?} is older than the required 1.23.4"
         );
     }
 

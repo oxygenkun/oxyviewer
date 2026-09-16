@@ -1,2 +1,9 @@
 [resolver]
 incompatible-rust-versions = "fallback"
+
+# `pnpm native:prepare` builds the pinned native media libraries. On macOS and
+# Linux, libheif-sys links that libheif (built with the pinned FFmpeg decoder)
+# through pkg-config. Windows takes libheif from the pinned vcpkg revision, so
+# the path below is only meaningful for Unix builds.
+[env]
+PKG_CONFIG_PATH = { value = "target/native/libheif/lib/pkgconfig", relative = true }
