@@ -150,6 +150,15 @@ stateDiagram-v2
 显式刷新会删除完成标记，使对应 root 过期并重新建立 generation。由于当前没有文件系统 watcher，
 外部变更仍以用户刷新作为缓存失效边界。
 
+拖拽文件夹导入与侧边栏 `+` 按钮走**完全相同**的后续逻辑：前者由 Tauri 原生拖放事件给出平台落点
+（`dragDropEnabled` 默认开启，因此 HTML5 drag 事件不携带真实路径），后者由文件选择器返回路径；
+两者都调用 `startFolderImport(paths)`，逐个执行既有的 `open_folder`（建 session）与
+`add_library_root`（注册并把根排入索引），没有任何解析、去重或文件夹关系判断，也没有新增 command、
+event 或领域契约。注册是索引的唯一触发点，`add_root` 幂等，因此重复导入不会重建索引。导入的记账
+（进行中、完成、逐根失败）由前端纯函数状态机完成，只呈现为状态栏提示；索引进度不被解析，照片数
+由既有的完成事件补上。方案与边界态见
+[拖拽文件夹导入方案](../tasks/folder-drop-import-plan.md)。
+
 目录符号链接只有 canonical path 仍位于根目录且尚未访问过时才会进入队列，避免逃出授权根目录
 或形成递归环。索引是可重建缓存，不读取图片像素，也不进入 preview/metadata 流水线。
 

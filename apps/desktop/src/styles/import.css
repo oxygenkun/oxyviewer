@@ -1,0 +1,75 @@
+/* Drop-to-import affordance and post-drop panel. */
+
+.drop-overlay {
+  position: fixed;
+  inset: 0;
+  /* Above the debug queue launcher (9999) so the card really covers the window. */
+  z-index: 10000;
+  /* The window must still receive the native drop. */
+  pointer-events: none;
+  opacity: 0;
+  visibility: hidden;
+  transition: opacity 140ms ease, visibility 140ms ease;
+}
+
+.drop-overlay.is-visible {
+  opacity: 1;
+  visibility: visible;
+}
+
+/*
+ * The card is the drop zone: it covers the whole window, keeps the app readable
+ * through a plain translucent panel (no blur, no extra GPU work), and its dashed
+ * frame hugs the app edge inset by a hairline so the border is not clipped by the
+ * window.
+ */
+.drop-overlay__card {
+  position: absolute;
+  inset: 9px;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  align-items: center;
+  gap: 7px;
+  padding: 24px;
+  border: 1.5px dashed color-mix(in srgb, var(--accent) 56%, transparent);
+  border-radius: 15px;
+  background: color-mix(in srgb, var(--panel-raised) 80%, transparent);
+  color: var(--text);
+  text-align: center;
+}
+
+.drop-overlay__card strong {
+  font-size: 0.8125rem;
+  font-weight: 600;
+}
+
+.drop-overlay__card > span {
+  color: var(--muted);
+  font-size: 0.6875rem;
+}
+
+.drop-overlay__names {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 6px;
+  margin: 10px 0 0;
+  padding: 0;
+  list-style: none;
+  color: var(--muted);
+  /* The folder names are the point of the card, so they run a size above the
+     rest of its copy. */
+  font-size: 0.75rem;
+}
+
+.drop-overlay__names li {
+  max-width: 180px;
+  padding: 2px 8px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: var(--surface-muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}

@@ -2,6 +2,7 @@ import { normalizeCustomTag } from "./tagTree";
 import { retainMediaResource, releaseUnretainedMediaResource } from "./mediaResourceLease";
 import { invoke } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
+import { getCurrentWebview } from "@tauri-apps/api/webview";
 import { open } from "@tauri-apps/plugin-dialog";
 import type {
   AboutLink,
@@ -45,6 +46,7 @@ import type {
   DebugQueueSnapshot,
   TagDeleteImpact,
   TagSyncStatus,
+  WindowDragEvent,
 } from "../types";
 import { getFolderThumbnail, getFolderThumbnailGeneration, preloadFolderThumbnail } from "./folderThumbnailCache";
 import { browserPreloadQueue, orderedPriorityWeight } from "./previewQueue";
@@ -168,10 +170,13 @@ export async function chooseFolder(): Promise<string | null> {
 
 export async function openFolder(path: string): Promise<FolderSession> {
   if (!isTauri()) {
+    // The browser demo can open more than one folder, so the session must be
+    // keyed by path rather than a single shared id.
+    const displayName = path.replace(/[\\/]+$/, "").split(/[\\/]/).at(-1) || "Field Notes";
     const session: FolderSession = {
-      id: "demo-session",
+      id: `demo-${path}`,
       rootPath: path,
-      displayName: "Field Notes",
+      displayName,
       openedAtMs: Date.now(),
       deletionMode: "trash",
     };
@@ -244,6 +249,33 @@ export async function onLibraryIndexUpdated(
 ): Promise<UnlistenFn> {
   if (!isTauri()) return () => {};
   return listen<LibraryIndexUpdate>("library-index-updated", (event) => callback(event.payload));
+}
+
+/**
+ * Native drag-and-drop from the OS. Tauri intercepts the platform drop
+ * (`dragDropEnabled` defaults to on), so HTML5 drag events never carry a real
+ * path; this is the only channel that sees the dropped folders.
+ */
+export async function onWindowDragDrop(
+  callback: (event: WindowDragEvent) => void,
+): Promise<UnlistenFn> {
+  if (!isTauri()) return () => {};
+  return getCurrentWebview().onDragDropEvent((event) => {
+    const payload = event.payload;
+    if (payload.type === "enter" || payload.type === "drop") {
+      callback({
+        type: payload.type,
+        paths: payload.paths,
+        position: { x: payload.position.x, y: payload.position.y },
+      });
+      return;
+    }
+    if (payload.type === "over") {
+      callback({ type: "over", position: { x: payload.position.x, y: payload.position.y } });
+      return;
+    }
+    callback({ type: "leave" });
+  });
 }
 
 export async function onDirectoryBrowseProgress(callback: (progress: DirectoryBrowseProgress) => void): Promise<UnlistenFn> {

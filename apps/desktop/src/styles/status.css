@@ -71,6 +71,8 @@
   gap: 6px;
   width: max-content;
   max-width: min(460px, 60vw);
+  max-height: 42vh;
+  overflow-y: auto;
   padding: 9px 11px;
   border: 1px solid #30373a;
   border-radius: 6px;
@@ -83,7 +85,7 @@
   word-break: break-word;
   box-shadow: 0 -10px 28px rgb(0 0 0 / 45%);
 }
-.statusbar__notice-detail { color: var(--faint); }
+.statusbar__notice-detail { color: var(--faint); font-size: 0.75rem; line-height: 1.6; }
 .statusbar__notice--error .statusbar__notice-panel {
   border-color: #74443e;
   background: #281b1a;
@@ -99,6 +101,18 @@
   line-height: 1.4;
 }
 .statusbar__notice-dismiss:hover { background: #ffffff14; }
+.statusbar__notice-action {
+  justify-self: end;
+  padding: 2px 9px;
+  border: 1px solid #42484d;
+  border-radius: 4px;
+  color: inherit;
+  background: transparent;
+  font-size: 0.625rem;
+  line-height: 1.4;
+  cursor: pointer;
+}
+.statusbar__notice-action:hover { background: #ffffff14; }
 .debug-queue-launcher {
   position: fixed;
   z-index: 9999;

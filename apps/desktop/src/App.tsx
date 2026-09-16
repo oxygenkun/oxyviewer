@@ -3,6 +3,7 @@ import { Aperture, CircleAlert, FolderPlus, RectangleHorizontal, RectangleVertic
 import { useCallback, useDeferredValue, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties } from "react";
 import { AssetBrowser } from "./components/AssetBrowser";
 import { BackgroundPreviewPreloader } from "./components/BackgroundPreviewPreloader";
+import { ImportOverlay } from "./components/ImportOverlay";
 import { Inspector } from "./components/Inspector";
 import { PerfHarness } from "./components/PerfHarness";
 import { SettingsPanel } from "./components/SettingsPanel";
@@ -38,6 +39,22 @@ import { recordBrowseTiming } from "./lib/browseDiagnostics";
 import { firstBrowseCursor, nextBrowseCursor } from "./lib/browsePagination";
 import { useBackgroundAssetPagination } from "./lib/useBackgroundAssetPagination";
 import { insertRestoredFolder, restoreFoldersProgressively, type FolderRestoreState } from "./lib/folderRestoration";
+import {
+  applyEntryFailure,
+  applyEntryOpened,
+  applyEntryRetried,
+  attachImportRoot,
+  applyIndexCompleted,
+  beginFolderImport,
+  dismissFolderImport,
+  failFolderImport,
+  failedImportEntries,
+  folderImportSummary,
+  IDLE_FOLDER_IMPORT,
+  type FolderImportState,
+} from "./lib/folderImport";
+import { folderImportNotice } from "./lib/folderImportNotice";
+import { useFolderDrop } from "./lib/useFolderDrop";
 import { activeAssetOrdinal, focusRestoreAction, replacementAssetIdAfterRemoval } from "./lib/assetViewPosition";
 import { setBrowserImageResourceScope } from "./lib/browserImageCache";
 import { acceptDirectoryTreeSnapshot } from "./lib/directoryTreeProjection";
@@ -69,10 +86,23 @@ import type { AssetQuery, DirectoryBrowseProgress, DirectoryTreeSnapshot, Folder
 
 const NO_METADATA_RECORDS: Record<string, MetadataProjection> = {};
 
+/** One status-bar message; the app's single place for transient feedback. */
+interface StatusNotice {
+  kind: "error" | "status";
+  message: string;
+  detail?: string;
+  /** Offers the retry action for every failed import row. */
+  retry?: boolean;
+}
+
+/** How long a clean import result stays in the status bar. */
+const IMPORT_NOTICE_MS = 6000;
+
 export function App({ perfScenario }: { perfScenario?: PerfScenario }) {
   const [workspace, setWorkspace] = useState(loadWorkspace);
   const [browseProgress, setBrowseProgress] = useState<DirectoryBrowseProgress>();
   const [folderRestoreStates, setFolderRestoreStates] = useState<FolderRestoreState[]>([]);
+  const [folderImport, setFolderImport] = useState<FolderImportState>(IDLE_FOLDER_IMPORT);
   const [showOnboarding, setShowOnboarding] = useState(() => !hasSeenFolderOnboarding());
   const [error, setError] = useState<string>();
   const [isRefreshing, setIsRefreshing] = useState(false);
@@ -214,7 +244,8 @@ export function App({ perfScenario }: { perfScenario?: PerfScenario }) {
   useEffect(() => {
     let unlisten: (() => void) | undefined;
     let disposed = false;
-    void onLibraryIndexUpdated(() => {
+    void onLibraryIndexUpdated((update) => {
+      setFolderImport((state) => applyIndexCompleted(state, update));
       void queryClient.invalidateQueries({ queryKey: ["assets"] });
       void queryClient.invalidateQueries({ queryKey: ["directory-search"] });
     }).then((dispose) => {
@@ -440,13 +471,23 @@ export function App({ perfScenario }: { perfScenario?: PerfScenario }) {
   }, [activeId, assets, fetchNextAssetsPage, filteredFocusAction, filteredFocusRestoreId, select]);
   const currentBrowseProgress = browseProgress?.sessionId === activeSession?.id && browseProgress?.directory === currentPath
     ? browseProgress : assetsQuery.data?.pages[0]?.progress;
-  const notice = error || foldersQuery.isError
-    ? { kind: "error" as const, message: error ?? String(foldersQuery.error), detail: undefined }
-    : currentBrowseProgress?.stage === "stale"
-      ? { kind: "status" as const, message: t("browseSnapshotOffline"), detail: currentBrowseProgress.error }
+  const importSummary = folderImportSummary(folderImport);
+  const importNotice: StatusNotice | undefined = folderImportNotice(folderImport, t);
+  const notice: StatusNotice | undefined = error || foldersQuery.isError
+    ? { kind: "error", message: error ?? String(foldersQuery.error), detail: undefined }
+    : importNotice ?? (currentBrowseProgress?.stage === "stale"
+      ? { kind: "status", message: t("browseSnapshotOffline"), detail: currentBrowseProgress.error }
       : currentBrowseProgress?.source === "snapshot"
-        ? { kind: "status" as const, message: t("browseSnapshotChecking"), detail: undefined }
-        : undefined;
+        ? { kind: "status", message: t("browseSnapshotChecking"), detail: undefined }
+        : undefined);
+  // A clean result is transient; failures stay until dismissed so the reason is readable.
+  const importSettledCleanly = folderImport.visible && !importSummary.pending
+    && importSummary.failed === 0 && !folderImport.error;
+  useEffect(() => {
+    if (!importSettledCleanly) return;
+    const timer = window.setTimeout(() => setFolderImport(dismissFolderImport()), IMPORT_NOTICE_MS);
+    return () => window.clearTimeout(timer);
+  }, [importSettledCleanly]);
   useEffect(() => {
     setNoticeExpanded(false);
   }, [notice?.message]);
@@ -488,34 +529,106 @@ export function App({ perfScenario }: { perfScenario?: PerfScenario }) {
     setShowOnboarding(false);
   }, []);
 
+  /**
+   * Open one root and register it in the library. Registration is what schedules
+   * the background index and it is idempotent, so re-adding an existing root is
+   * safe. This variant throws so a multi-folder import can report per-root
+   * failures instead of collapsing them into one error banner.
+   */
+  const registerRoot = useCallback(async (path: string, activate: boolean) => {
+    const opened = await openFolder(path);
+    if (!perfScenario) await addLibraryRoot(opened.rootPath);
+    queryClient.setQueryData<FolderSession[]>(["open-folders"], (current = []) => {
+      const existing = current.find((item) => item.rootPath === opened.rootPath);
+      return existing ? current : [...current, opened];
+    });
+    setWorkspace((current) => ({
+      ...current,
+      activeRoot: activate ? opened.rootPath : current.activeRoot,
+      currentDirectories: {
+        ...current.currentDirectories,
+        [opened.rootPath]: current.currentDirectories[opened.rootPath] ?? opened.rootPath,
+      },
+    }));
+    return opened;
+  }, [perfScenario, queryClient]);
+
+  /**
+   * Raw open, without the import affordance. Only the perf harness uses this:
+   * its scenario folders must not be registered or narrated.
+   */
   const openPath = useCallback(async (path: string) => {
     setError(undefined);
     try {
-      const opened = await openFolder(path);
-      if (!perfScenario) await addLibraryRoot(opened.rootPath);
       clearSelection();
-      queryClient.setQueryData<FolderSession[]>(["open-folders"], (current = []) => {
-        const existing = current.find((item) => item.rootPath === opened.rootPath);
-        return existing ? current : [...current, opened];
-      });
-      setWorkspace((current) => ({
-        ...current,
-        activeRoot: opened.rootPath,
-        currentDirectories: {
-          ...current.currentDirectories,
-          [opened.rootPath]: current.currentDirectories[opened.rootPath] ?? opened.rootPath,
-        },
-      }));
+      await registerRoot(path, true);
       dismissOnboarding();
     } catch (cause) {
       setError(String(cause));
     }
-  }, [clearSelection, dismissOnboarding, perfScenario, queryClient]);
+  }, [clearSelection, dismissOnboarding, registerRoot]);
 
+  /**
+   * The one import pipeline, shared by the drop target and the folder picker:
+   * open and register each folder in the given order — exactly what opening a
+   * folder already did, plus progress narration. No resolution pass and no
+   * analysis of how the paths relate to each other or to the library.
+   */
+  const startFolderImport = useCallback(async (paths: string[]) => {
+    if (!paths.length) return;
+    setError(undefined);
+    setFolderImport(beginFolderImport(paths));
+    clearSelection();
+    let firstRoot: string | undefined;
+    for (const [index, path] of paths.entries()) {
+      try {
+        const opened = await registerRoot(path, firstRoot === undefined);
+        firstRoot ??= opened.rootPath;
+        // The row is keyed by the canonical root the backend returned.
+        setFolderImport((state) => attachImportRoot(state, index, opened.rootPath));
+        setFolderImport((state) => applyEntryOpened(state, opened.rootPath));
+        // The browser demo has no background indexer or event stream, so an
+        // imported folder is settled here instead of leaving the row spinning.
+        if (!isTauri()) {
+          setFolderImport((state) =>
+            applyIndexCompleted(state, { rootPath: opened.rootPath, assetCount: 0, directoryCount: 0 }));
+        }
+      } catch (cause) {
+        setFolderImport((state) => applyEntryFailure(state, path, String(cause)));
+      }
+    }
+    if (firstRoot) dismissOnboarding();
+  }, [clearSelection, dismissOnboarding, registerRoot]);
+
+  /** The "+" button uses the picker, then the same pipeline as a drop. */
   const handleOpen = useCallback(async () => {
     const path = await chooseFolder();
-    if (path) await openPath(path);
-  }, [openPath]);
+    if (path) await startFolderImport([path]);
+  }, [startFolderImport]);
+
+  const retryFolderImport = useCallback(async (path: string) => {
+    try {
+      const opened = await registerRoot(path, false);
+      setFolderImport((state) => applyEntryRetried(state, opened.rootPath));
+    } catch (cause) {
+      setFolderImport((state) => applyEntryFailure(state, path, String(cause)));
+    }
+  }, [registerRoot]);
+
+  const retryFailedImports = useCallback(async () => {
+    for (const entry of failedImportEntries(folderImport)) {
+      await retryFolderImport(entry.rootPath ?? entry.droppedPath);
+    }
+  }, [folderImport, retryFolderImport]);
+
+  const dropState = useFolderDrop(startFolderImport);
+
+  /** Dismissing a status-bar message also retires a finished import result. */
+  const dismissStatusNotice = useCallback(() => {
+    setError(undefined);
+    setNoticeExpanded(false);
+    setFolderImport(dismissFolderImport());
+  }, []);
 
   const handleNavigate = useCallback((session: FolderSession, path: string) => {
     notifyActiveDirectory(session, path);
@@ -801,13 +914,16 @@ export function App({ perfScenario }: { perfScenario?: PerfScenario }) {
                 <span className="statusbar__notice-panel is-selectable" role="status">
                   <span>{notice.message}</span>
                   {notice.detail ? <span className="statusbar__notice-detail">{notice.detail}</span> : null}
+                  {notice.retry ? (
+                    <button
+                      className="statusbar__notice-action"
+                      onClick={() => void retryFailedImports()}
+                    >{t("importRetry")}</button>
+                  ) : null}
                   {notice.kind === "error" ? (
                     <button
                       className="statusbar__notice-dismiss"
-                      onClick={() => {
-                        setError(undefined);
-                        setNoticeExpanded(false);
-                      }}
+                      onClick={dismissStatusNotice}
                       aria-label={t("dismissNotice")}
                       title={t("dismissNotice")}
                     >×</button>
@@ -869,6 +985,12 @@ export function App({ perfScenario }: { perfScenario?: PerfScenario }) {
         />
       ) : null}
       {!isTauri() ? <span className="demo-pill">{t("demoHint")}</span> : null}
+      <ImportOverlay
+        visible={dropState.visible}
+        folderNames={dropState.folderNames}
+        itemCount={dropState.itemCount}
+        t={t}
+      />
       {settingsOpen ? <SettingsPanel t={t} activeAsset={assets.find((asset) => asset.id === activeId)} /> : null}
       {perfScenario ? (
         <PerfHarness

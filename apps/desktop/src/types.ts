@@ -409,6 +409,18 @@ export interface LibraryIndexUpdate {
   directoryCount: number;
 }
 
+export interface WindowDragPosition {
+  x: number;
+  y: number;
+}
+
+/** Normalized native drag-and-drop payload from the desktop window. */
+export type WindowDragEvent =
+  | { type: "enter"; paths: string[]; position: WindowDragPosition }
+  | { type: "over"; position: WindowDragPosition }
+  | { type: "drop"; paths: string[]; position: WindowDragPosition }
+  | { type: "leave" };
+
 export type HeifBackendKind =
   | "cachedArtifact"
   | "windowsWic"
