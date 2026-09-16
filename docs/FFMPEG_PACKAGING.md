@@ -60,14 +60,19 @@ packaging a host-architecture executable. Set `OXY_FFMPEG_JOBS` to change the
 default four build jobs.
 
 The first build downloads and verifies the official source archive. Build
-outputs and the archive live under `target/ffmpeg/<target>`; on macOS and Linux
-the static prefix that libheif links is installed under `target/native/ffmpeg`.
-The staged
+outputs and the archive live under `target/ffmpeg/<target>`; the pinned libheif
+keeps its own download, source and build tree under `target/libheif/<target>` on
+macOS and Linux, and the static prefixes that Cargo and CMake link against are
+installed under `target/native/ffmpeg` and `target/native/libheif`. The staged
 executables in `apps/desktop/src-tauri/binaries` have Tauri target suffixes;
 installed executables are named `oxy-ffmpeg[.exe]` / `oxy-ffprobe[.exe]` beside
-the application binary. Generated files are ignored by Git. Subsequent builds
-reuse the cache only when the source/recipe/target and binary checksums match;
-capability and encode smoke checks still run on cache hits.
+the application binary. Generated files are ignored by Git. Subsequent local
+builds reuse those trees only when the source/recipe/target and binary checksums
+match, and the capability and encode smoke checks still run when a build is
+reused. CI does not cache them: every job that links the native libraries
+prepares them from the pinned sources, so a release always ships binaries
+compiled in the release run. Only the Rust dependency and Windows vcpkg caches
+are reused there.
 
 ## Configuration and distribution materials
 

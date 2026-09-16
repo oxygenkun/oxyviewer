@@ -230,11 +230,12 @@ description from the matching version section in `CHANGELOG.md`. A missing or
 empty section fails the release instead of publishing incomplete notes.
 
 The `build` tag no longer triggers CI. For a Windows test package, use
-**Actions → CI → Run workflow** and select the ref to build. Manual runs build
-only Windows, including native media/desktop tests, NSIS/portable packaging,
-and FFmpeg payload verification. They skip the Linux formatting/frontend and
-Clippy/test jobs; these packages have not necessarily passed the release checks. The
-workflow must first exist on the default branch to expose manual dispatch.
+**Actions → CI → Run workflow** and select the ref to build. The `platform`
+input defaults to `windows` and also accepts `macos`, `linux`, or `all`; the
+`all` and `linux` selections additionally run the Clippy and workspace test job.
+Manual runs skip the Linux formatting/frontend checks, so these packages have
+not necessarily passed the release checks. The workflow must first exist on the
+default branch to expose manual dispatch.
 
 Pushing a `v<major>.<minor>.<patch>` tag runs formatting and frontend checks on
 Linux, followed by Clippy and workspace Rust tests. Only after both jobs succeed
@@ -250,13 +251,29 @@ have explicit timeouts. Manual build artifacts expire after 7 days; release-tag
 Actions artifacts expire after 30 days. Published GitHub Release installers
 remain attached to the release.
 
-Windows vcpkg and Rust link caches include the runner image, the pinned vcpkg
-revision, and the core-only feature selection in their keys. This prevents
-stale link flags and lets rebuilt binary packages be saved when native inputs
-change. Rust dependency caches are also saved after failed jobs.
+Windows vcpkg and Rust link caches include the MSVC toolset version (falling
+back to the runner image version when the toolset is not exported), the pinned
+vcpkg revision, and the core-only feature selection in their keys. The toolset
+version changes only when the compiler does, so an unrelated runner image update
+still reuses the cached binary packages instead of rebuilding them.
 
-Native media preparation and verification run before Tauri packaging, and the
-Tauri wrapper verifies the prepared payload.
+The pinned FFmpeg and libheif builds are deliberately not cached in CI. Every
+job that links them (the Linux checks and all three package builds) prepares and
+verifies them from the pinned sources through `prepare.mjs` before Tauri
+packaging, so a release always compiles the native libraries it ships. That costs
+a few minutes per platform, and `prepare.mjs` still reuses its own tree when the
+source/recipe/target and binary checksums match, which only shortens repeated
+local builds. `target/ffmpeg`, `target/libheif` and `target/native` are local
+build directories, not CI artifacts.
+
+Rust dependency and Windows vcpkg caches stay best-effort. Only the default
+branch writes them, so a cache saved by one version tag is invisible to every
+other tag and a cache saved by a branch is invisible to every release; tag and
+branch runs restore them without saving. Because `ci.yml` runs only for version
+tags and manual dispatch, run it on `main` with `platform=all` before tagging
+after a dependency change, a change to a cache key or the pinned vcpkg revision,
+or a quiet period longer than a week; any of these can leave those caches stale,
+and failed default-branch jobs still save through `cache-on-failure`.
 
 Private-repository Actions usage can incur charges after the account allowance
 is exhausted. Job timeouts limit individual runs, not monthly spending. Check
