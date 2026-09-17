@@ -1,5 +1,5 @@
 {
-  "$comment": "E2E performance scenarios for scripts/perf-e2e.mjs. Budgets mirror docs/PERFORMANCE.md; see docs/PERF_E2E.md. Metrics without a budget are recorded and regression-checked against baseline.json.",
+  "$comment": "E2E performance scenarios for scripts/perf/perf-e2e.mjs. Budgets mirror docs/PERFORMANCE.md; see docs/PERF_E2E.md. Metrics without a budget are recorded and regression-checked against baseline.json.",
   "regressionFactor": 1.2,
   "scenarios": {
     "folder-thumbnail-retention-hif": {

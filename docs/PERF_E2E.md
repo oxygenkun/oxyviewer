@@ -3,7 +3,7 @@
 本文档定义 OxyViewer 的端到端（E2E）性能回归测试方案，目标是在未来重构和
 新增功能时，保证 `docs/PERFORMANCE.md` 中的核心交互预算不退化：
 
-可用 `node scripts/perf-e2e.mjs --config <scenario-json> --scenario <name>` 传入外部
+可用 `node scripts/perf/perf-e2e.mjs --config <scenario-json> --scenario <name>` 传入外部
 fixture 配置，避免把私人照片路径写入默认场景。Windows runner 等待测试子进程退出后再清理
 隔离状态，对短暂残留的文件句柄做有界重试；不会清理普通用户的 data/cache。
 JPEG 合成仍依赖 macOS `sips`，Windows 验证应使用 `file` fixture。真实滚轮采样另见
@@ -34,7 +34,7 @@ E2E（真实后端、真实 IPC、真实 WebView 渲染），且跨平台一致�
 ## 架构
 
 ```
-scripts/perf-e2e.mjs (Node runner)
+scripts/perf/perf-e2e.mjs (Node runner)
   │  1. 准备夹具目录（合成 10 万文件 / 硬链接 RAW、HIF 夹具）
   │  2. coldCache 场景：删除 app_cache_dir/previews
   │  3. 以 OXY_PERF_SCENARIO=<json> 启动 target/release/oxyviewer
@@ -93,7 +93,7 @@ Runner 由 mark 对计算出命名指标，`scenarios.json` 的 `budgets` 引用
 
 ## 场景与图片矩阵
 
-任意真实目录可使用 `node scripts/perf-e2e.mjs --folder '<path>' --grid-scroll --cold-cache --runs 3`。
+任意真实目录可使用 `node scripts/perf/perf-e2e.mjs --folder '<path>' --grid-scroll --cold-cache --runs 3`。
 `grid-scroll` 每段连续滚动 32 次、间隔 16 ms，依次停在 45%、100%、20%，再检查整个实际可见
 视口的 displayed images。每 25 ms 采样，15 秒内未补齐则失败；只记录耗时，不默认给任意 NAS
 套用本地 SSD 预算。`--grid-scroll` 不与 `--scroll-end` / `--select-name` 混用。
@@ -158,14 +158,14 @@ pnpm tauri build --no-bundle
 pnpm perf:e2e
 
 # 单场景、自定义次数、查看每次明细
-node scripts/perf-e2e.mjs --scenario cold-preview-arw --runs 5 --verbose
+node scripts/perf/perf-e2e.mjs --scenario cold-preview-arw --runs 5 --verbose
 
 # 用真实本机目录验收快速跳到未缓存区域（目标文件应位于末屏）
-node scripts/perf-e2e.mjs --folder /path/to/arw-folder --select-name DSC09999.ARW \
+node scripts/perf/perf-e2e.mjs --folder /path/to/arw-folder --select-name DSC09999.ARW \
   --scroll-end --cold-cache --runs 1 --verbose
 
 # 重建基线（换参考机或有意的性能变化后）
-node scripts/perf-e2e.mjs --update-baseline
+node scripts/perf/perf-e2e.mjs --update-baseline
 ```
 
 本机目录模式沿用冷预览的 800 ms 交互预算：滚动到末屏时检查
@@ -173,7 +173,7 @@ node scripts/perf-e2e.mjs --update-baseline
 
 ## 重构防回归工作流
 
-1. 重构前：`node scripts/perf-e2e.mjs --update-baseline`（或确认仓库基线在
+1. 重构前：`node scripts/perf/perf-e2e.mjs --update-baseline`（或确认仓库基线在
    本机有效）。
 2. 重构后：`pnpm perf:e2e`。任一绝对预算或基线回归失败即视为重构引入了
    性能退化。
@@ -196,7 +196,7 @@ node scripts/perf-e2e.mjs --update-baseline
 
 ```bash
 pnpm tauri build --no-bundle
-node scripts/perf-e2e.mjs --scenario resource-stress-grid --scenario resource-stress-list --scenario resource-stress-hif --runs 1
+node scripts/perf/perf-e2e.mjs --scenario resource-stress-grid --scenario resource-stress-list --scenario resource-stress-hif --runs 1
 ```
 
 grid/list 各生成 600 个独立路径的 JPEG，使用生产的高密度竖图网格/列表和固定 overscan，逐视口滚动，
@@ -236,7 +236,7 @@ WebView can clamp timers; such runs are not valid fast-scroll measurements.
 探针选择该图并等待 fullReady，然后通过实际 wheel 事件依次缩放至
 50%、73%、91%、100%、150%、200%、400%，检查图片宽高与原始像素尺寸一致，
 并记录 `loupe:zoom-sample`（实际宽高、render 宽高、源尺寸、objectFit）。
-使用 `node scripts/perf-e2e.mjs --config <external-json> --scenario <name>` 运行。
+使用 `node scripts/perf/perf-e2e.mjs --config <external-json> --scenario <name>` 运行。
 
 该探针只证明 DOM 几何正确，不能证明最终绘制的像素比例。macOS WKWebView
 曾在 DOM 完全正确时将 `object-fit: contain` 的大图拉伸；必须另外在 Release

@@ -64,7 +64,7 @@
 
 ```bash
 pnpm tauri build --no-bundle
-node scripts/perf-e2e.mjs --folder '/Volumes/photo/2026/20260607 新歌空间 7.in ShangHai Fes Vol.1 I see the light序章~RealizE初披露/05 心跳序曲Prologue' --grid-scroll --cold-cache --runs 3 --verbose
+node scripts/perf/perf-e2e.mjs --folder '/Volumes/photo/2026/20260607 新歌空间 7.in ShangHai Fes Vol.1 I see the light序章~RealizE初披露/05 心跳序曲Prologue' --grid-scroll --cold-cache --runs 3 --verbose
 ```
 
 Runner 报告位于 `tests/perf/.reports/manual-folder.run{1,2,3}.json`。

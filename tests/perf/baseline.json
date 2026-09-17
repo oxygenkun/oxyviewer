@@ -1,5 +1,5 @@
 {
-  "$comment": "Baseline medians (ms) recorded by `node scripts/perf-e2e.mjs --update-baseline` on the reference machine. Rebuild when the reference machine changes or an intended performance change lands. See docs/PERF_E2E.md.",
+  "$comment": "Baseline medians (ms) recorded by `node scripts/perf/perf-e2e.mjs --update-baseline` on the reference machine. Rebuild when the reference machine changes or an intended performance change lands. See docs/PERF_E2E.md.",
   "meta": null,
   "scenarios": {}
 }

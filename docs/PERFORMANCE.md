@@ -319,7 +319,7 @@ link in this document.
   budget. Reproduce: `cargo run -p oxy-library --example browse_latency -- <directory>`.
   Regression coverage includes restart/offline, empty snapshots, incomplete
   indexing, coalesced reads, changed files/XMP, invalidation races and pinned
-  paging. `scripts/browse-startup.browser.js` verifies six App/IPC UI behaviors
+  paging. `scripts/browser/browse-startup.browser.js` verifies six App/IPC UI behaviors
   with controlled responses, including loading counts and snapshot/offline states.
 
   `window.__oxyBrowseDiagnostics` exposes the last 200 real startup records in
@@ -387,7 +387,7 @@ link in this document.
   an unloaded range renders bounded per-item placeholders and requests sequential
   250-item pages until the loaded range covers the viewport; page completion
   retriggers this check without another scroll event. The browser regression in
-  `scripts/filmstrip-pagination.browser.js` mounts the real Loupe with 1,473
+  `scripts/browser/filmstrip-pagination.browser.js` mounts the real Loupe with 1,473
   synthetic summaries and delayed pages, jumps across an unfinished page and
   then to the end, and keeps mounted asset buttons below 40 (15 near item 510
   and 10 at the end in the reference Chromium run). Page commits no longer
@@ -870,7 +870,7 @@ qualification against the budgets above.
 The Windows HEIF loupe thumbnail and canvas are sibling React nodes and must
 use distinct layer-prefixed keys. Reusing the asset ID for both leaves orphan
 thumbnail nodes after selection changes, displaying a previous photo over the
-current one. `scripts/loupe-switch.browser.js` exercises the real Loupe with
+current one. `scripts/browser/loupe-switch.browser.js` exercises the real Loupe with
 nine forward/reverse selections and verifies one thumbnail, one canvas, and
 the current source after each switch. This checks reconciliation correctness,
 not native decode latency.

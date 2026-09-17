@@ -2,7 +2,7 @@ $ErrorActionPreference = "Stop"
 $PSNativeCommandUseErrorActionPreference = $true
 Set-StrictMode -Version Latest
 
-$repositoryRoot = Split-Path -Parent $PSScriptRoot
+$repositoryRoot = Split-Path -Parent (Split-Path -Parent $PSScriptRoot)
 $version = (Get-Content -Raw (Join-Path $repositoryRoot "package.json") | ConvertFrom-Json).version
 $portableName = "OxyViewer_${version}_Windows_x64_portable"
 $portableRoot = Join-Path $env:RUNNER_TEMP $portableName

@@ -8,13 +8,13 @@
     "ffmpeg:prepare": "node 3rdpart/ffmpeg/prepare.mjs",
     "heif:prepare": "node 3rdpart/libheif/prepare.mjs",
     "native:prepare": "pnpm ffmpeg:prepare && pnpm heif:prepare",
-    "release:check": "node scripts/check-release-version.mjs",
-    "icons": "node scripts/generate-icons.mjs && pnpm --filter @oxyviewer/desktop exec tauri icon src-tauri/icons/icon.png",
+    "release:check": "node scripts/release/check-release-version.mjs",
+    "icons": "pnpm --filter @oxyviewer/desktop icons",
     "dev": "pnpm --filter @oxyviewer/desktop dev",
     "build": "pnpm --filter @oxyviewer/desktop build",
     "check": "pnpm --filter @oxyviewer/desktop check",
     "test": "pnpm --filter @oxyviewer/desktop test",
-    "perf:e2e": "node scripts/perf-e2e.mjs",
+    "perf:e2e": "node scripts/perf/perf-e2e.mjs",
     "tauri": "pnpm --filter @oxyviewer/desktop tauri"
   },
   "pnpm": {

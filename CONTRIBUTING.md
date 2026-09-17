@@ -122,6 +122,8 @@ when intentionally regenerating application icons.
 - `crates/oxy-library`: rebuildable SQLite cache and library roots
 - `crates/oxy-runtime`: job priority and cancellation vocabulary
 - `docs`: architecture, decisions, roadmap, formats, and performance budgets
+- `scripts`: repository tooling, grouped into `release/`, `perf/`, and browser
+  regression probes; see [scripts/README.md](scripts/README.md)
 
 Read `docs/ARCHITECTURE.md` before making a cross-layer change. The focused
 guides under `docs/architecture` describe the main runtime and extension paths.

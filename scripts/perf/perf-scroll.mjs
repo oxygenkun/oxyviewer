@@ -1,5 +1,5 @@
 // Real WebView/CDP wheel probe. Attach only to an explicitly supplied test port.
-// Usage: node scripts/perf-scroll.mjs PORT OUTPUT [--reload] [--reverse] [--filmstrip]
+// Usage: node scripts/perf/perf-scroll.mjs PORT OUTPUT [--reload] [--reverse] [--filmstrip]
 import fs from "node:fs/promises";
 
 const [port, output, ...flags] = process.argv.slice(2);

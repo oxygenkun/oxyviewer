@@ -85,7 +85,7 @@ jobs:
           cache: pnpm
       - run: pnpm install --frozen-lockfile
       - name: Verify release version
-        run: node scripts/check-release-version.mjs "$GITHUB_REF_NAME"
+        run: node scripts/release/check-release-version.mjs "$GITHUB_REF_NAME"
       - run: pnpm check
       - run: pnpm test
       - run: pnpm build
@@ -249,7 +249,7 @@ jobs:
       - name: Build and verify Windows portable ZIP
         if: runner.os == 'Windows'
         shell: pwsh
-        run: ./scripts/package-windows-portable.ps1
+        run: ./scripts/release/package-windows-portable.ps1
       - name: Verify Linux package FFmpeg payloads
         if: runner.os == 'Linux'
         run: |
@@ -331,7 +331,7 @@ jobs:
       - name: Check out release metadata
         uses: actions/checkout@v4
       - name: Build release notes from changelog
-        run: node scripts/extract-release-notes.mjs "$GITHUB_REF_NAME" > release-notes.md
+        run: node scripts/release/extract-release-notes.mjs "$GITHUB_REF_NAME" > release-notes.md
       - name: Download installers
         uses: actions/download-artifact@v4
         with:

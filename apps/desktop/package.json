@@ -9,6 +9,7 @@
     "build": "tsc -b && vite build",
     "check": "tsc -b --pretty false",
     "test": "vitest run --passWithNoTests",
+    "icons": "node scripts/generate-icons.mjs && tauri icon src-tauri/icons/icon.png",
     "tauri": "node scripts/tauri.mjs"
   },
   "dependencies": {

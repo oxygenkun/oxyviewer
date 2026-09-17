@@ -3,7 +3,7 @@ import { resolve } from "node:path";
 
 const tag = process.argv[2];
 if (!tag) {
-  throw new Error("Usage: node scripts/extract-release-notes.mjs <version-or-tag>");
+  throw new Error("Usage: node scripts/release/extract-release-notes.mjs <version-or-tag>");
 }
 
 const version = tag.replace(/^v/, "");

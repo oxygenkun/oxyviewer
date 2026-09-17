@@ -142,5 +142,5 @@ RAW 现有相机裁幅推断维持原路径。这套 geometry 暂不描述“预
 ImageIO 可将目标 512/4096 舍入为 511/4095，显示要求允许 1px 取整误差，不进行额外放大；
 full 的 native-detail 要求保持独立。
 
-浏览器回归入口：`scripts/preview-geometry.browser.js`，覆盖 metadata 延迟到达、
+浏览器回归入口：`scripts/browser/preview-geometry.browser.js`，覆盖 metadata 延迟到达、
 内容映射、完整表示替换和对焦框稳定性。支持注入真实方向校正 JPEG。

@@ -1,8 +1,11 @@
 import { deflateSync } from "node:zlib";
 import { mkdirSync, writeFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 
-const output = resolve("apps/desktop/src-tauri/icons/icon.png");
+// Resolved from this file so the generator works from any working directory.
+const APP_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
+const output = resolve(APP_ROOT, "src-tauri/icons/icon.png");
 const size = 1024;
 const pixels = Buffer.alloc((size * 4 + 1) * size);
 const center = size / 2;
