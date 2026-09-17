@@ -2,13 +2,13 @@ import { Activity, CirclePause, CirclePlay, RefreshCw, Server, Waves } from "luc
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { listen } from "@tauri-apps/api/event";
 import { getCurrentWindow } from "@tauri-apps/api/window";
-import type { DebugQueueItem, DebugQueueSnapshot, DebugQueueState } from "../types";
-import { getDebugQueueSnapshot, isTauri } from "../lib/api";
+import type { DebugQueueItem, DebugQueueSnapshot, DebugQueueState } from "@/types";
+import { getDebugQueueSnapshot, isTauri } from "@/lib/api";
 import {
   aggregatePreviewDebugSnapshot,
   getPreviewDebugSnapshot,
   type TrackedPreview,
-} from "../lib/previewDebug";
+} from "@/lib/diagnostics/previewDebug";
 import "./debugQueueDashboard.css";
 
 const REFRESH_MS = 250;

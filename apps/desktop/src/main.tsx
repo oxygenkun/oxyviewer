@@ -2,7 +2,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { Component, lazy, StrictMode, Suspense, useEffect, type ErrorInfo, type ReactNode } from "react";
 import { createRoot } from "react-dom/client";
 import { App } from "./App";
-import { closeDebugQueueWindow, getPerfScenario, openDebugQueueWindow } from "./lib/api";
+import { closeDebugQueueWindow, getPerfScenario, openDebugQueueWindow } from "@/lib/api";
 import type { PerfScenario } from "./types";
 import "./styles.css";
 
@@ -21,7 +21,7 @@ const queryClient = new QueryClient({
 });
 
 const LazyDebugQueueDashboard = __OXY_DEBUG__
-  ? lazy(() => import("./debug/DebugQueueDashboard").then((module) => ({ default: module.DebugQueueDashboard })))
+  ? lazy(() => import("@/debug/DebugQueueDashboard").then((module) => ({ default: module.DebugQueueDashboard })))
   : undefined;
 
 class DebugWindowErrorBoundary extends Component<{ children: ReactNode }, { error?: Error }> {

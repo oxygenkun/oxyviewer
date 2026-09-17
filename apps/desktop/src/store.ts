@@ -1,5 +1,5 @@
 import { create } from "zustand";
-import type { Locale } from "./lib/i18n";
+import type { Locale } from "@/lib/i18n";
 import {
   cloneShortcuts,
   cloneSlots,
@@ -11,7 +11,7 @@ import {
   type ShortcutBindings,
   type ShortcutSlot,
   type ShortcutSlots,
-} from "./lib/shortcuts";
+} from "@/lib/ui/shortcuts";
 import {
   loadFocusAreasVisible,
   loadLayoutSize,
@@ -24,7 +24,7 @@ import {
   saveMetadataVisibility,
   saveUiFontScale,
   type UiFontScale,
-} from "./lib/workspacePersistence";
+} from "@/lib/browse/workspacePersistence";
 import type {
   AssetKind,
   AssetSort,

@@ -1,5 +1,5 @@
-import { normalizeCustomTag } from "./tagTree";
-import { retainMediaResource, releaseUnretainedMediaResource } from "./mediaResourceLease";
+import { normalizeCustomTag } from "@/lib/assets/tagTree";
+import { retainMediaResource, releaseUnretainedMediaResource } from "@/lib/cache/mediaResourceLease";
 import { invoke } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { getCurrentWebview } from "@tauri-apps/api/webview";
@@ -47,16 +47,16 @@ import type {
   TagDeleteImpact,
   TagSyncStatus,
   WindowDragEvent,
-} from "../types";
-import { getFolderThumbnail, getFolderThumbnailGeneration, preloadFolderThumbnail } from "./folderThumbnailCache";
-import { browserPreloadQueue, orderedPriorityWeight } from "./previewQueue";
-import { acceptImageProjection } from "./imageProjection";
-import { mediaProtocolUrl } from "./mediaProtocolUrl";
-import { acceptMetadataProjection } from "./metadataProjection";
-import { perfMark } from "./perfProbe";
-import { recordBrowseTiming } from "./browseDiagnostics";
-import { beginPreviewDebug } from "./previewDebug";
-import { sharedThumbnailRequests } from "./sharedThumbnailRequests";
+} from "@/types";
+import { getFolderThumbnail, getFolderThumbnailGeneration, preloadFolderThumbnail } from "@/lib/cache/folderThumbnailCache";
+import { browserPreloadQueue, orderedPriorityWeight } from "@/lib/preview/previewQueue";
+import { acceptImageProjection } from "@/lib/projection/imageProjection";
+import { mediaProtocolUrl } from "@/lib/media/mediaProtocolUrl";
+import { acceptMetadataProjection } from "@/lib/projection/metadataProjection";
+import { perfMark } from "@/lib/diagnostics/perfProbe";
+import { recordBrowseTiming } from "@/lib/diagnostics/browseDiagnostics";
+import { beginPreviewDebug } from "@/lib/diagnostics/previewDebug";
+import { sharedThumbnailRequests } from "@/lib/preview/sharedThumbnailRequests";
 
 function cancelGeneratedPreviewRequest(
   asset: AssetSummary,
@@ -1144,7 +1144,7 @@ export async function writePerfReport(path: string, report: unknown): Promise<vo
 }
 
 /** Explicit native resource diagnostics for debug/performance harnesses. */
-export async function getMediaResourceStats(): Promise<import("../types").ResourceRegistryStats | undefined> {
+export async function getMediaResourceStats(): Promise<import("@/types").ResourceRegistryStats | undefined> {
   if (!isTauri()) return undefined;
   return invoke("get_media_resource_stats");
 }

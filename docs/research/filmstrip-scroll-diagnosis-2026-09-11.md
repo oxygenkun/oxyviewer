@@ -154,13 +154,13 @@ Those results do not support a multi-second database wait for this sample.
 
 Relevant code paths:
 
-- [Loupe](../../apps/desktop/src/components/Loupe.tsx) uses 12-item overscan and
+- [Loupe](../../apps/desktop/src/components/loupe/Loupe.tsx) uses 12-item overscan and
   renders a `Thumbnail` for each virtual filmstrip item. The filmstrip item is
-  not memoized. [FilmstripPreviewPreloader](../../apps/desktop/src/components/FilmstripPreviewPreloader.tsx)
+  not memoized. [FilmstripPreviewPreloader](../../apps/desktop/src/components/loupe/FilmstripPreviewPreloader.tsx)
   also requests nearby images.
 - [App](../../apps/desktop/src/App.tsx) subscribes to the metadata record map and
   maps loaded assets through `projectAssetMetadata` whenever that map changes.
-  [projectAssetMetadata](../../apps/desktop/src/lib/metadataProjection.ts) creates
+  [projectAssetMetadata](../../apps/desktop/src/lib/projection/metadataProjection.ts) creates
   a new asset object whenever a projection is present, even when displayed fields
   are unchanged. This expands the effect of per-file metadata updates.
 - [generatedPreview](../../apps/desktop/src/lib/api.ts) creates a request ID and

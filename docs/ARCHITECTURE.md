@@ -287,8 +287,13 @@ Tauri command 只负责：取状态、校验/转换参数、把阻塞工作转�
 | 文件夹如何限制在根目录内 | `crates/oxy-fs/src/lib.rs` 的 `FsCatalog` |
 | 预览怎样选择解码器 | `crates/oxy-media/src/lib.rs` 的 `preview` |
 | HEIF 瓦片怎样管理 | `crates/oxy-media/src/heif_service.rs` |
-| 组件怎样渐进升级图片 | `apps/desktop/src/components/Thumbnail.tsx` |
-| HEIF Canvas 怎样取瓦片 | `apps/desktop/src/components/HeifTileCanvas.tsx` |
+| 组件怎样渐进升级图片 | `apps/desktop/src/components/browsing/Thumbnail.tsx` |
+| HEIF Canvas 怎样取瓦片 | `apps/desktop/src/components/loupe/HeifTileCanvas.tsx` |
 | UI 请求与选择状态 | `apps/desktop/src/App.tsx`、`store.ts` |
+
+前端 `src/` 按域分层：`src/components/<域>/` 与 `src/lib/<域>/` 各自平铺，只有
+`App.tsx`、`main.tsx`、`store.ts`、`types.ts`、`lib/api.ts`、`lib/i18n.ts` 留在顶层。
+跨目录导入统一用 `@/` 前缀（`@` 在 `vite.config.ts` 与 `tsconfig.app.json` 中指向 `src/`），
+同目录导入保持 `./`。
 
 继续阅读：[架构专题索引](architecture/README.md)。

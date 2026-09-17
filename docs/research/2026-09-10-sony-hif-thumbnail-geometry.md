@@ -53,11 +53,11 @@ thumbnail，且存在黑边。它支持此类问题并非本样本独有，但�
    目前不是基于 primary item 关联的通用几何解析。
 2. `crates/oxy-media/src/pipeline/heif/artifact.rs`：将整个 JPEG 发布为 120×160 artifact；
    thumbnail 与 loupe preview 共用它。现有测试明确断言这个尺寸。
-3. `apps/desktop/src/lib/loupe.ts`：HEIF 布局尺寸依次优先 full、metadata、preview。
+3. `apps/desktop/src/lib/preview/loupe.ts`：HEIF 布局尺寸依次优先 full、metadata、preview。
    metadata 到达时，外层布局可能已经从 thumbnail 比例切换为 full 比例。
-4. `apps/desktop/src/components/Loupe.tsx`：对焦映射使用的尺寸依次优先 full、preview、
+4. `apps/desktop/src/components/loupe/Loupe.tsx`：对焦映射使用的尺寸依次优先 full、preview、
    metadata，与外层布局的优先级不同；存在外框按 full、对焦按带边 thumbnail 计算的窗口。
-5. `apps/desktop/src/components/HeifTileCanvas.tsx`：拿到 full session 后立即调用
+5. `apps/desktop/src/components/loupe/HeifTileCanvas.tsx`：拿到 full session 后立即调用
    `onImageSize`，并不等待 tile 绘制；artifact 路径也在图像显示之前报告尺寸。
    这时父组件切换对焦映射，thumbnail 仍然可见。代码顺序符合用户报告的现象；
    本轮未运行 UI 时间测量，不把报告的几百毫秒当作实测结果。

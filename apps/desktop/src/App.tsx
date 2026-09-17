@@ -1,15 +1,15 @@
 import { useInfiniteQuery, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Aperture, CircleAlert, FolderPlus, RectangleHorizontal, RectangleVertical } from "lucide-react";
 import { useCallback, useDeferredValue, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties } from "react";
-import { AssetBrowser } from "./components/AssetBrowser";
-import { BackgroundPreviewPreloader } from "./components/BackgroundPreviewPreloader";
-import { ImportOverlay } from "./components/ImportOverlay";
-import { Inspector } from "./components/Inspector";
-import { PerfHarness } from "./components/PerfHarness";
-import { SettingsPanel } from "./components/SettingsPanel";
-import { Sidebar } from "./components/Sidebar";
-import { ResizeHandle } from "./components/ResizeHandle";
-import { Toolbar } from "./components/Toolbar";
+import { AssetBrowser } from "@/components/browsing/AssetBrowser";
+import { BackgroundPreviewPreloader } from "@/components/loupe/BackgroundPreviewPreloader";
+import { ImportOverlay } from "@/components/overlay/ImportOverlay";
+import { Inspector } from "@/components/inspector/Inspector";
+import { PerfHarness } from "@/components/common/PerfHarness";
+import { SettingsPanel } from "@/components/settings/SettingsPanel";
+import { Sidebar } from "@/components/browsing/Sidebar";
+import { ResizeHandle } from "@/components/browsing/ResizeHandle";
+import { Toolbar } from "@/components/browsing/Toolbar";
 import {
   addLibraryRoot,
   chooseFolder,
@@ -33,12 +33,12 @@ import {
   reorderLibraryRoots,
   setActiveDirectory,
   deletePaths,
-} from "./lib/api";
-import { filterAndSortAssets } from "./lib/assetFiltering";
-import { recordBrowseTiming } from "./lib/browseDiagnostics";
-import { firstBrowseCursor, nextBrowseCursor } from "./lib/browsePagination";
-import { useBackgroundAssetPagination } from "./lib/useBackgroundAssetPagination";
-import { insertRestoredFolder, restoreFoldersProgressively, type FolderRestoreState } from "./lib/folderRestoration";
+} from "@/lib/api";
+import { filterAndSortAssets } from "@/lib/assets/assetFiltering";
+import { recordBrowseTiming } from "@/lib/diagnostics/browseDiagnostics";
+import { firstBrowseCursor, nextBrowseCursor } from "@/lib/browse/browsePagination";
+import { useBackgroundAssetPagination } from "@/lib/hooks/useBackgroundAssetPagination";
+import { insertRestoredFolder, restoreFoldersProgressively, type FolderRestoreState } from "@/lib/browse/folderRestoration";
 import {
   applyEntryFailure,
   applyEntryOpened,
@@ -52,35 +52,35 @@ import {
   folderImportSummary,
   IDLE_FOLDER_IMPORT,
   type FolderImportState,
-} from "./lib/folderImport";
-import { folderImportNotice } from "./lib/folderImportNotice";
-import { useFolderDrop } from "./lib/useFolderDrop";
-import { activeAssetOrdinal, focusRestoreAction, replacementAssetIdAfterRemoval } from "./lib/assetViewPosition";
-import { setBrowserImageResourceScope } from "./lib/browserImageCache";
-import { acceptDirectoryTreeSnapshot } from "./lib/directoryTreeProjection";
-import { acceptImageProjection, invalidateImageDirectory } from "./lib/imageProjection";
+} from "@/lib/browse/folderImport";
+import { folderImportNotice } from "@/lib/browse/folderImportNotice";
+import { useFolderDrop } from "@/lib/hooks/useFolderDrop";
+import { activeAssetOrdinal, focusRestoreAction, replacementAssetIdAfterRemoval } from "@/lib/assets/assetViewPosition";
+import { setBrowserImageResourceScope } from "@/lib/cache/browserImageCache";
+import { acceptDirectoryTreeSnapshot } from "@/lib/projection/directoryTreeProjection";
+import { acceptImageProjection, invalidateImageDirectory } from "@/lib/projection/imageProjection";
 import {
   queueMetadataProjection,
   acceptMetadataProjections,
   invalidateMetadataDirectory,
   projectAssetMetadata,
   useMetadataProjectionStore,
-} from "./lib/metadataProjection";
-import { isSameOrDescendantPath, parentFolderPath, relativeFolderPath } from "./lib/folderPaths";
-import { translate } from "./lib/i18n";
-import { LAYOUT_SIZE_LIMITS, maxInspectorWidth } from "./lib/layoutSizing";
+} from "@/lib/projection/metadataProjection";
+import { isSameOrDescendantPath, parentFolderPath, relativeFolderPath } from "@/lib/browse/folderPaths";
+import { translate } from "@/lib/i18n";
+import { LAYOUT_SIZE_LIMITS, maxInspectorWidth } from "@/lib/ui/layoutSizing";
 import {
   mergeVisibleFolderOrder,
   sortFolderSessions,
   type FolderSort,
-} from "./lib/folderOrdering";
+} from "@/lib/browse/folderOrdering";
 import {
   completeFolderOnboarding,
   hasSeenFolderOnboarding,
   loadWorkspace,
   recoverMissingCurrentDirectory,
   saveWorkspace,
-} from "./lib/workspacePersistence";
+} from "@/lib/browse/workspacePersistence";
 import { useWorkspaceStore } from "./store";
 import type { AssetQuery, DirectoryBrowseProgress, DirectoryTreeSnapshot, FolderSession, MetadataProjection, PerfScenario } from "./types";
 

@@ -98,7 +98,7 @@ EXIF 方向字段，共 8,330 bytes，显示尺寸为 120×160。原型只在初
    所以 HIF 的结果不能外推给大尺寸 JPEG；后者更应对比原图读取/解码与专用小缩略图。
    RAW、普通 HEIF、TIFF 也需要各自的样本，不能假定都含 8 KiB 的快速表示。
 
-6. [BrowserImageCache](../../apps/desktop/src/lib/browserImageCache.ts) 已保存解码后的图片
+6. [BrowserImageCache](../../apps/desktop/src/lib/cache/browserImageCache.ts) 已保存解码后的图片
    引用，限制为 1,024 项、512 MiB，并最多保留 256 个 native resource lease。
    提前填满整个文件夹的解码缓存可能驱逐视窗附近图片。这个 120×160 样本的 RGBA
    下限为每张 75 KiB，10,000 张约 732 MiB，还没计算浏览器其他开销。

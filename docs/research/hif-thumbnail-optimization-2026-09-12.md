@@ -32,7 +32,7 @@
 - `apps/desktop/src-tauri/src/jobs/preview.rs`
 - `crates/oxy-library/src/lib.rs`
 - `crates/oxy-media/src/pipeline/heif/artifact.rs`
-- `apps/desktop/src/lib/folderThumbnailCache.ts`
+- `apps/desktop/src/lib/cache/folderThumbnailCache.ts`
 
 ## 缩略图主路径复测
 

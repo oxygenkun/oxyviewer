@@ -1,20 +1,22 @@
 import { defineConfig } from "vite";
 import react from "@vitejs/plugin-react";
+import { fileURLToPath } from "node:url";
 import desktopPackage from "./package.json";
 
-const environment = (
-  globalThis as typeof globalThis & {
-    process?: { env?: Record<string, string | undefined> };
-  }
-).process?.env;
+const sourceDirectory = fileURLToPath(new URL("./src", import.meta.url));
 
 export default defineConfig(({ command }) => {
-  const host = environment?.TAURI_DEV_HOST;
-  const debugBuild = command === "serve" || environment?.TAURI_ENV_DEBUG === "true";
+  const host = process.env.TAURI_DEV_HOST;
+  const debugBuild = command === "serve" || process.env.TAURI_ENV_DEBUG === "true";
 
   return {
     plugins: [react()],
     clearScreen: false,
+    resolve: {
+      alias: {
+        "@": sourceDirectory,
+      },
+    },
     define: {
       __OXY_DEBUG__: JSON.stringify(debugBuild),
       __OXY_APP_VERSION__: JSON.stringify(desktopPackage.version),

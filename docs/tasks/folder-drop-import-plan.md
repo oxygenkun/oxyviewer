@@ -36,8 +36,8 @@
 | 索引进度数据 | `crates/oxy-library/src/lib.rs` 的 `IndexProgress` / `index_root_inner` | 内部每目录回调一次，仅用于队列诊断快照；**导入不解析它**（见 §3.2） |
 | 索引进度事件 | 同上 `jobs.rs` | 只有“进入 Assets 阶段”和“整根完成”两个里程碑事件，事件负载只含根路径与计数 |
 | 状态栏提示通道 | `App.tsx` 的 `notice` + `styles/status.css` | 错误/状态提示统一落在这里，可展开看明细；导入复用它 |
-| 恢复态 UI 可复用 | `apps/desktop/src/lib/folderRestoration.ts`、`components/Sidebar.tsx` | `restoring / ready / failed` 逐根独立发布 |
-| 侧栏文件夹排序 | `components/Sidebar.tsx` | 自研 pointer events，不是 HTML5 DnD，与原生拖放不冲突 |
+| 恢复态 UI 可复用 | `apps/desktop/src/lib/browse/folderRestoration.ts`、`components/browsing/Sidebar.tsx` | `restoring / ready / failed` 逐根独立发布 |
+| 侧栏文件夹排序 | `components/browsing/Sidebar.tsx` | 自研 pointer events，不是 HTML5 DnD，与原生拖放不冲突 |
 | 索引可取消性 | `crates/oxy-library/src/lib.rs` | 索引只在 `contains_root` 检查点可被“移除根”打断；`cancel_job` 只覆盖通用作业注册表 |
 | 浏览器 demo 模式 | `apps/desktop/src/lib/api.ts` 的 `isTauri()` 分支 | 新能力必须提供 demo 分支，否则 `pnpm dev` 浏览器调试不可用 |
 | i18n | `apps/desktop/src/lib/i18n.ts` | `translate(locale, key)` 无参数；占位符由调用点 `.replace("{x}", …)` 完成 |

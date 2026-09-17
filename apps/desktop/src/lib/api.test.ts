@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import type { AssetSummary, ImageProjection } from "../types";
+import type { AssetSummary, ImageProjection } from "@/types";
 
 const mocks = vi.hoisted(() => ({
   invoke: vi.fn(),
@@ -20,7 +20,7 @@ vi.mock("@tauri-apps/plugin-dialog", () => ({
   open: vi.fn(),
 }));
 
-vi.mock("./previewDebug", () => ({
+vi.mock("@/lib/diagnostics/previewDebug", () => ({
   beginPreviewDebug: mocks.beginPreviewDebug,
 }));
 
@@ -30,8 +30,8 @@ import {
   clearImageProjections,
   imageProjectionKey,
   useImageProjectionStore,
-} from "./imageProjection";
-import { mediaProtocolUrl } from "./mediaProtocolUrl";
+} from "@/lib/projection/imageProjection";
+import { mediaProtocolUrl } from "@/lib/media/mediaProtocolUrl";
 
 const asset: AssetSummary = {
   id: "raw-1",
