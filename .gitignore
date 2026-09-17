@@ -9,7 +9,6 @@ apps/desktop/src-tauri/resources/ffmpeg/
 apps/desktop/src-tauri/resources/libheif/
 .DS_Store
 *.log
-test/fixtures/media/
 tests/perf/generated/
 tests/perf/.reports/
 

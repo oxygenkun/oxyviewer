@@ -121,7 +121,7 @@ Runner 由 mark 对计算出命名指标，`scenarios.json` 的 `budgets` 引用
 | 场景 | 图片类型 | 冷/热 | 关键预算 |
 | --- | --- | --- | --- |
 | `folder-open-100k` | 10 万个合成 PNG（列表基准与格式无关） | 冷 | firstPageMs ≤ 300 |
-| `cold-preview-arw` | `test/fixtures/media/DSC00529.ARW` | 冷 | firstPreviewMs ≤ 800 |
+| `cold-preview-arw` | `tests/fixtures/DSC00529.ARW` | 冷 | firstPreviewMs ≤ 800 |
 | `cold-preview-hif` | `tests/fixtures/DSC00449.HIF` | 冷 | firstPreviewMs ≤ 800 |
 | `cold-preview-jpeg` | 合成 JPEG | 冷 | firstPreviewMs ≤ 800（走受控 original resource 路径） |
 | `warm-loupe-jpeg` | 同上 | 热（连续第二次，不清应用状态） | firstPreviewMs ≤ 150 |
@@ -130,9 +130,8 @@ Runner 由 mark 对计算出命名指标，`scenarios.json` 的 `budgets` 引用
 | `loupe-full-hif` | HIF | 清空缓存后进入 loupe | 完整 JPEG 上屏记录 + 基线回归 |
 | `loupe-full-arw` | ARW | 同上（awaitFull） | fullMs 仅记录（全幅显影是秒级，单列预算） |
 
-扩展新格式（CR3/NEF/DNG/TIFF/HEIC…）：把可分发夹具放入 `test/fixtures/media`
-或 `tests/fixtures`，在 `scenarios.json` 增加一条 `file` 型场景即可，无需改
-代码。
+扩展新格式（CR3/NEF/DNG/TIFF/HEIC…）：把可分发夹具放入 `tests/fixtures`，
+在 `scenarios.json` 增加一条 `file` 型场景即可，无需改代码。
 
 ## 夹具与缓存管理
 

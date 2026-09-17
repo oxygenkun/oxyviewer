@@ -126,6 +126,8 @@ when intentionally regenerating application icons.
   regression probes; see [scripts/README.md](scripts/README.md)
 - `tests/perf`: the E2E performance runner, its scenarios and baseline, and the
   ignored generated fixtures and reports; see [docs/PERF_E2E.md](docs/PERF_E2E.md)
+- `tests/fixtures`: camera fixtures and the HIF/RAW fixture metadata; restored
+  outside git, see [tests/fixtures/README.md](tests/fixtures/README.md)
 
 Read `docs/ARCHITECTURE.md` before making a cross-layer change. The focused
 guides under `docs/architecture` describe the main runtime and extension paths.

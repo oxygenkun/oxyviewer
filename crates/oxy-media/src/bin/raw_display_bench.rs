@@ -1,7 +1,7 @@
 //! End-to-end benchmark for the RAW loupe pipeline.
 //!
 //! Run from the workspace root:
-//! `cargo run --release -p oxy-media --bin raw_display_bench -- test/fixtures/media/DSC00529.ARW`
+//! `cargo run --release -p oxy-media --bin raw_display_bench -- tests/fixtures/DSC00529.ARW`
 
 use oxy_domain::{AssetKind, PreviewPriority, RenderLevel};
 use oxy_media::{dimensions, preview};
@@ -10,7 +10,7 @@ use std::{env, error::Error, path::PathBuf, time::Instant};
 
 fn main() -> Result<(), Box<dyn Error>> {
     let path = env::args_os().nth(1).map_or_else(
-        || PathBuf::from("test/fixtures/media/DSC00529.ARW"),
+        || PathBuf::from("tests/fixtures/DSC00529.ARW"),
         PathBuf::from,
     );
     let include_full = env::args().any(|argument| argument == "--full");

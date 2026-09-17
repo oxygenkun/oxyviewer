@@ -68,7 +68,7 @@
       "timeoutMs": 60000
     },
     "cold-preview-arw": {
-      "fixture": { "type": "file", "path": "test/fixtures/media/DSC00529.ARW" },
+      "fixture": { "type": "file", "path": "tests/fixtures/DSC00529.ARW" },
       "selectName": "DSC00529.ARW",
       "enterLoupe": true,
       "awaitMarks": ["image:loaded", "preview:result@level=preview"],
@@ -109,7 +109,7 @@
       "timeoutMs": 30000
     },
     "warm-loupe-arw": {
-      "fixture": { "type": "file", "path": "test/fixtures/media/DSC00529.ARW" },
+      "fixture": { "type": "file", "path": "tests/fixtures/DSC00529.ARW" },
       "selectName": "DSC00529.ARW",
       "enterLoupe": true,
       "awaitMarks": ["image:loaded", "preview:result@level=preview"],
@@ -150,7 +150,7 @@
       "timeoutMs": 60000
     },
     "loupe-full-arw": {
-      "fixture": { "type": "file", "path": "test/fixtures/media/DSC00529.ARW" },
+      "fixture": { "type": "file", "path": "tests/fixtures/DSC00529.ARW" },
       "selectName": "DSC00529.ARW",
       "enterLoupe": true,
       "awaitMarks": ["image:loaded@full"],

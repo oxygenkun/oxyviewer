@@ -790,7 +790,7 @@ fn generates_large_image_io_fallback_for_heif_fixture() {
 #[ignore = "requires local ARW/HIF fixtures; run explicitly in release mode"]
 fn fixture_preview_performance_budgets() {
     let fixture_dir = std::env::var_os("OXY_MEDIA_FIXTURE_DIR").map_or_else(
-        || Path::new(env!("CARGO_MANIFEST_DIR")).join("../../test/fixtures/media"),
+        || Path::new(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures"),
         workspace_path,
     );
     let mut fixtures = fs::read_dir(&fixture_dir)
