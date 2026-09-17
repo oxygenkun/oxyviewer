@@ -1,15 +1,15 @@
 // Run against the Vite server in an isolated Windows agent-browser session.
-// agent-browser --session oxy-loupe-switch eval (Get-Content -Raw scripts/loupe-switch.browser.js)
+// agent-browser --session oxy-loupe-switch eval (Get-Content -Raw scripts/browser/loupe-switch.browser.js)
 (async () => {
-  const source = await (await fetch('/src/components/Loupe.tsx')).text();
+  const source = await (await fetch('/src/components/loupe/Loupe.tsx')).text();
   const version = source.match(/react\.js(\?v=[a-z0-9]+)/)[1];
   const { default: React } = await import(`/node_modules/.vite/deps/react.js${version}`);
   const { default: ReactDOM } = await import(`/node_modules/.vite/deps/react-dom_client.js${version}`);
   const { QueryClient, QueryClientProvider } = await import(`/node_modules/.vite/deps/@tanstack_react-query.js${version}`);
-  const { Loupe } = await import('/src/components/Loupe.tsx');
+  const { Loupe } = await import('/src/components/loupe/Loupe.tsx');
   const { useWorkspaceStore } = await import('/src/store.ts');
-  const { useImageProjectionStore, imageProjectionKey } = await import('/src/lib/imageProjection.ts');
-  const { preloadBrowserImage } = await import('/src/lib/browserImageCache.ts');
+  const { useImageProjectionStore, imageProjectionKey } = await import('/src/lib/projection/imageProjection.ts');
+  const { preloadBrowserImage } = await import('/src/lib/cache/browserImageCache.ts');
   const assert = (value, message) => { if (!value) throw new Error(message); };
   const pause = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
   assert(/Windows/.test(navigator.userAgent), 'Windows HEIF renderer is required');

@@ -1,16 +1,16 @@
 // Run with a Vite server in an isolated agent-browser session:
-// agent-browser --session oxy-hif-geometry eval --stdin < scripts/preview-geometry.browser.js
+// agent-browser --session oxy-hif-geometry eval --stdin < scripts/browser/preview-geometry.browser.js
 // Optional window.__sonyPreviewUrl supplies a real display-oriented 120x160 JPEG.
 (async () => {
-  const source = await (await fetch('/src/components/Loupe.tsx')).text();
+  const source = await (await fetch('/src/components/loupe/Loupe.tsx')).text();
   const version = source.match(/react\.js(\?v=[a-z0-9]+)/)[1];
   const { default: React } = await import(`/node_modules/.vite/deps/react.js${version}`);
   const { default: ReactDOM } = await import(`/node_modules/.vite/deps/react-dom_client.js${version}`);
   const { QueryClient, QueryClientProvider } = await import(`/node_modules/.vite/deps/@tanstack_react-query.js${version}`);
-  const { Loupe } = await import('/src/components/Loupe.tsx');
+  const { Loupe } = await import('/src/components/loupe/Loupe.tsx');
   const { useWorkspaceStore } = await import('/src/store.ts');
-  const { useImageProjectionStore, imageProjectionKey } = await import('/src/lib/imageProjection.ts');
-  const { preloadBrowserImage } = await import('/src/lib/browserImageCache.ts');
+  const { useImageProjectionStore, imageProjectionKey } = await import('/src/lib/projection/imageProjection.ts');
+  const { preloadBrowserImage } = await import('/src/lib/cache/browserImageCache.ts');
   const pause = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
   const assert = (condition, message) => { if (!condition) throw new Error(message); };
   const near = (a, b) => Math.abs(a - b) < 0.1;

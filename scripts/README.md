@@ -46,12 +46,17 @@ they only run inside a page served by `pnpm dev`. Pass one to
 | `filmstrip-pagination.browser.js` | Virtualized Loupe filmstrip paging |
 | `loupe-switch.browser.js` | Photo switching and stale image layers |
 | `preview-geometry.browser.js` | Preview geometry with late metadata |
-| `folder-thumbnail-retention.browser.js` | Folder thumbnail retention; needs its host page |
-| `grid-frame-time.browser.js` | Grid scroll frame timing |
-| `folder-thumbnail-probe.html` | Host page for the retention probe, opened through Vite's `/@fs/` route |
 
 The `.browser.js` suffix is deliberate: it keeps these probes distinguishable
 from Node entry points and from the `.mjs` scripts in `release/` and `perf/`.
+
+These probes locate modules by `/src/...` path, so a frontend file move breaks
+them silently. `refactor(desktop): group frontend sources by domain` (ed19026)
+broke every probe path and none were updated; verify the `/src/...` targets
+exist after moving frontend files. Prefer extending the in-app
+diagnostics probes under `apps/desktop/src/lib/diagnostics/`, which are
+covered by type checks and tests and are driven by `perf-e2e.mjs`
+scenarios, when a measurement can live there instead.
 
 ## Constraints
 

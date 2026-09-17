@@ -1,15 +1,15 @@
 // Run in an isolated agent-browser session opened on the Vite dev server:
-// PowerShell: agent-browser --session filmstrip eval (Get-Content -Raw scripts/filmstrip-pagination.browser.js)
+// PowerShell: agent-browser --session filmstrip eval (Get-Content -Raw scripts/browser/filmstrip-pagination.browser.js)
 // Exercises the real virtualized Loupe with delayed summary pages, without native media.
 (async () => {
-  const source = await (await fetch('/src/components/Loupe.tsx')).text();
+  const source = await (await fetch('/src/components/loupe/Loupe.tsx')).text();
   const version = source.match(/react\.js(\?v=[a-z0-9]+)/)[1];
   const { default: React } = await import(`/node_modules/.vite/deps/react.js${version}`);
   const { default: ReactDOM } = await import(`/node_modules/.vite/deps/react-dom_client.js${version}`);
   const { QueryClient, QueryClientProvider } = await import(`/node_modules/.vite/deps/@tanstack_react-query.js${version}`);
-  const { Loupe } = await import('/src/components/Loupe.tsx');
+  const { Loupe } = await import('/src/components/loupe/Loupe.tsx');
   const { useWorkspaceStore } = await import('/src/store.ts');
-  const { filmstripItemWidth } = await import('/src/lib/loupe.ts');
+  const { filmstripItemWidth } = await import('/src/lib/preview/loupe.ts');
   const pause = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
   const assert = (value, message) => { if (!value) throw new Error(message); };
   const waitFor = async (predicate, message) => {

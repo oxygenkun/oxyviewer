@@ -145,6 +145,10 @@ link in this document.
   1,100 thumbnails beyond generic LRU pressure, painted first/last groups with
   no native calls, resized a 4000x3000 original to 512x384, preserved crop
   geometry, and released the previous directory's Blob URLs and image refs.
+  That browser prototype has since been removed; the retained-thumbnail budget is
+  enforced by the `folder-thumbnail-retention-png` and `-hif` scenarios above.
+  Resize-to-512x384, crop geometry, and Blob URL release on directory change are
+  **not** covered by the harness.
   Release HIF filmstrip scrolling passed (three readiness checks at 25.7–26.5 ms).
   Type checks, 198 frontend tests, frontend build and desktop build passed.
   The 1,100-HIF cold warming experiment did **not** complete within 150 seconds:
