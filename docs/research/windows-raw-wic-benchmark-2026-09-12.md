@@ -169,13 +169,13 @@ WIC 探索模式未强行写入 sRGB ICC，LibRaw 延续生产 ICC；小段 ICC 
 ```powershell
 cargo build --release -p oxy-media --features bench-tools --bin raw_backend_bench
 
-./scripts/perf/raw-backend-bench.ps1 -Sources @('<sample-1.ARW>', '<sample-2.ARW>') `
+./tests/perf/raw-backend-bench.ps1 -Sources @('<sample-1.ARW>', '<sample-2.ARW>') `
   -OutputDirectory tests/perf/.reports/raw-decode -Runs 5 -DecodeOnly
 
-./scripts/perf/raw-backend-bench.ps1 -Sources @('<sample-1.ARW>', '<sample-2.ARW>') `
+./tests/perf/raw-backend-bench.ps1 -Sources @('<sample-1.ARW>', '<sample-2.ARW>') `
   -OutputDirectory tests/perf/.reports/raw-jpeg -Runs 3
 
-./scripts/perf/raw-backend-bench.ps1 -Sources @('<sample-1.ARW>', '<sample-2.ARW>') `
+./tests/perf/raw-backend-bench.ps1 -Sources @('<sample-1.ARW>', '<sample-2.ARW>') `
   -OutputDirectory tests/perf/.reports/raw-buffered -Runs 3 -BufferedJpeg
 ```
 

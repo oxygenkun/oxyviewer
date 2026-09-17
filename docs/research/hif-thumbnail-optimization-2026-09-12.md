@@ -106,8 +106,8 @@ UI/read lease 均为 0。没有使用扩大 native 资源预算来获得吞吐�
 
 ```powershell
 pnpm tauri build --no-bundle
-node scripts/perf/perf-e2e.mjs --scenario folder-thumbnail-retention-hif --runs 2 --verbose
-node scripts/perf/perf-e2e.mjs --scenario cold-preview-hif --runs 1 --verbose
+node tests/perf/perf-e2e.mjs --scenario folder-thumbnail-retention-hif --runs 2 --verbose
+node tests/perf/perf-e2e.mjs --scenario cold-preview-hif --runs 1 --verbose
 ```
 
 `hif-thumbnail-optimization-2026-09-12/analyze.mjs` 接受一个或多个 runner report，

@@ -6,10 +6,10 @@
  * checks absolute budgets plus baseline regressions. See docs/PERF_E2E.md.
  *
  * Usage:
- *   node scripts/perf/perf-e2e.mjs [--scenario <name>]... [--runs N]
- *                             [--update-baseline] [--verbose] [--app <path>]
- *   node scripts/perf/perf-e2e.mjs --folder <path> --select-name <file>
- *                             [--scroll-end] [--cold-cache] [--await-mark <token>]
+ *   node tests/perf/perf-e2e.mjs [--scenario <name>]... [--runs N]
+ *                            [--update-baseline] [--verbose] [--app <path>]
+ *   node tests/perf/perf-e2e.mjs --folder <path> --select-name <file>
+ *                            [--scroll-end] [--cold-cache] [--await-mark <token>]
  *
  * Requires an embedded release build: pnpm tauri build --no-bundle
  */
@@ -20,8 +20,8 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import zlib from "node:zlib";
 
-const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..");
-const PERF_DIR = path.join(ROOT, "tests", "perf");
+const PERF_DIR = path.dirname(fileURLToPath(import.meta.url));
+const ROOT = path.resolve(PERF_DIR, "..", "..");
 const GENERATED_DIR = path.join(PERF_DIR, "generated");
 const REPORTS_DIR = path.join(PERF_DIR, ".reports");
 const SCENARIOS_PATH = path.join(PERF_DIR, "scenarios.json");
@@ -61,9 +61,9 @@ function parseArgs(argv) {
     else if (arg === "--cold-cache") args.coldCache = true;
     else if (arg === "--await-mark") args.awaitMarks.push(argv[++index]);
     else if (arg === "--help" || arg === "-h") {
-      console.log("Usage: node scripts/perf/perf-e2e.mjs [--config path] [--scenario name]... [--runs N] [--update-baseline] [--verbose] [--app path]");
-      console.log("       node scripts/perf/perf-e2e.mjs --folder path --select-name file [--scroll-end] [--cold-cache] [--await-mark token]");
-      console.log("       node scripts/perf/perf-e2e.mjs --folder path --grid-scroll [--cold-cache] [--runs N]");
+      console.log("Usage: node tests/perf/perf-e2e.mjs [--config path] [--scenario name]... [--runs N] [--update-baseline] [--verbose] [--app path]");
+      console.log("       node tests/perf/perf-e2e.mjs --folder path --select-name file [--scroll-end] [--cold-cache] [--await-mark token]");
+      console.log("       node tests/perf/perf-e2e.mjs --folder path --grid-scroll [--cold-cache] [--runs N]");
       process.exit(0);
     } else {
       console.error(`Unknown argument: ${arg}`);

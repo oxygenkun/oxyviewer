@@ -126,8 +126,8 @@ Reproduce the packaged smoke scenarios with:
 
 ```sh
 pnpm tauri build --no-bundle
-node scripts/perf/perf-e2e.mjs --scenario cold-preview-hif --scenario navigation-cache-hif --scenario filmstrip-scroll-hif --scenario resource-stress-small-grid --runs 1
-node scripts/perf/perf-e2e.mjs --scenario resource-stress-hif --runs 1
+node tests/perf/perf-e2e.mjs --scenario cold-preview-hif --scenario navigation-cache-hif --scenario filmstrip-scroll-hif --scenario resource-stress-small-grid --runs 1
+node tests/perf/perf-e2e.mjs --scenario resource-stress-hif --runs 1
 ```
 
 The A/B procedure above can be repeated on any chosen local HIF directory using

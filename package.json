@@ -14,7 +14,7 @@
     "build": "pnpm --filter @oxyviewer/desktop build",
     "check": "pnpm --filter @oxyviewer/desktop check",
     "test": "pnpm --filter @oxyviewer/desktop test",
-    "perf:e2e": "node scripts/perf/perf-e2e.mjs",
+    "perf:e2e": "node tests/perf/perf-e2e.mjs",
     "tauri": "pnpm --filter @oxyviewer/desktop tauri"
   },
   "pnpm": {

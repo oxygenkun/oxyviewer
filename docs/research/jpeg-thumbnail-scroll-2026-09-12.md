@@ -18,7 +18,7 @@
 冷缓存使用独立 data/cache/WebView profile；复用缓存仍是新进程和新 data，复用已生成 artifact 及 WebView profile。
 没有清空 OS/SMB cache，因此不称为严格冷盘。输入为 CDP wheel（`isTrusted=true`），不是硬件滚轮测量。
 
-通用探针：`node scripts/perf/perf-scroll.mjs PORT OUTPUT --steps=400 [--filmstrip]`；
+通用探针：`node tests/perf/perf-scroll.mjs PORT OUTPUT --steps=400 [--filmstrip]`；
 随后 `--reverse --await-retained=COUNT [--filmstrip]`。应用使用 `OXY_PERF_SCENARIO` 的真实目录，
 grid 等待 `harness:first-page-painted`，filmstrip 选择 JPEG 并等待 `image:loaded@full`。
 探针在首个 contentful paint 后开始滚动，同时保留完整原始帧序列、启动帧与长任务。

@@ -52,7 +52,7 @@ function markSatisfied(token: string, scenario: PerfScenario): boolean {
 /**
  * Drives one automated performance scenario through the real UI path
  * (open folder → first page → select → loupe) and writes a JSON mark report
- * for scripts/perf/perf-e2e.mjs. Renders nothing; see docs/PERF_E2E.md.
+ * for tests/perf/perf-e2e.mjs. Renders nothing; see docs/PERF_E2E.md.
  */
 export function PerfHarness({
   scenario,
