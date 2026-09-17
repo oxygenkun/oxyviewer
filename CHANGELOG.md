@@ -12,17 +12,15 @@ Each release lists the English notes first, followed by the Simplified Chinese n
 
 ## [Unreleased]
 
-### Changed
+## [0.1.3] - 2026-09-17
 
-- Upgraded the pinned FFmpeg to 9.0.1 and the pinned libheif to 1.23.4.
-- macOS and Linux now build libheif with its FFmpeg decoder and link it statically through `pnpm native:prepare`; Windows keeps using the vcpkg libheif with libde265.
-- Grouped the frontend under `src/components/<domain>/` and `src/lib/<domain>/`, and added the `@/` import alias for `src/`. Cross-directory imports now use `@/`; same-directory imports stay `./`.
+### Added
 
-### 变更
+- Folders can be imported by dropping them onto the window, with progress, per-folder results, and retry in the status bar.
 
-- 将固定的 FFmpeg 升级到 9.0.1，将固定的 libheif 升级到 1.23.4。
-- macOS 与 Linux 现在通过 `pnpm native:prepare` 使用 FFmpeg 解码器构建并静态链接 libheif；Windows 仍使用 vcpkg libheif 与 libde265。
-- 前端改为按域组织在 `src/components/<域>/` 与 `src/lib/<域>/` 下，并为 `src/` 增加 `@/` 导入别名。跨目录导入统一使用 `@/`，同目录导入保持 `./`。
+### 新增
+
+- 支持拖入文件夹导入；状态栏显示导入进度与各文件夹结果，失败可重试。
 
 ## [0.1.2] - 2026-09-16
 
@@ -96,7 +94,8 @@ Each release lists the English notes first, followed by the Simplified Chinese n
 - 可重建的媒体与图库缓存，支持可配置的存储管理和队列诊断。
 - macOS 与 Linux 安装包，以及双语 Windows NSIS EXE 和便携 ZIP 包，内置固定版本的 FFmpeg 工具；对应的 FFmpeg 源码作为独立发布资源提供。
 
-[Unreleased]: https://github.com/oxygenkun/oxyviewer/compare/v0.1.2...HEAD
+[Unreleased]: https://github.com/oxygenkun/oxyviewer/compare/v0.1.3...HEAD
+[0.1.3]: https://github.com/oxygenkun/oxyviewer/compare/v0.1.2...v0.1.3
 [0.1.2]: https://github.com/oxygenkun/oxyviewer/compare/v0.1.1...v0.1.2
 [0.1.1]: https://github.com/oxygenkun/oxyviewer/compare/v0.1.0...v0.1.1
 [0.1.0]: https://github.com/oxygenkun/oxyviewer/releases/tag/v0.1.0

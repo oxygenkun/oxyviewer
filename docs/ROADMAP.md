@@ -3,7 +3,7 @@
 Status markers: `[x]` complete, `[~]` active, `[ ]` planned.
 
 This roadmap describes the current `main` branch rather than the order in which
-features originally landed. Last reviewed: 2026-09-13.
+features originally landed. Last reviewed: 2026-09-17.
 
 ## Current Status
 
@@ -38,6 +38,8 @@ not by basic UI construction.
 - [x] Rust-owned, revisioned directory trees with on-demand child loading and
   active-directory priority scheduling
 - [x] Persistent, reorderable library roots and background SQLite WAL indexing
+- [x] Folder import from the folder picker and native drag and drop, with
+  per-folder status-bar results and retry
 - [x] Asset FTS search plus ancestor-preserving directory search inside an indexed root
 - [x] Configurable, size-bounded preview cache with safe clear/prune behavior
 - [x] Rename/copy/move/trash service contracts with sidecar pairing, collision
@@ -59,6 +61,8 @@ not by basic UI construction.
   [top search and tag filtering design](tasks/top-search-tag-filter-design.md).
 - [ ] Put file writes behind an explicit folder-session/root authorization policy,
   then add complete dialogs, partial-failure reporting, an undo journal, and recovery.
+- [ ] Validate drop import on real macOS and Windows devices, per the
+  [folder drop import plan](tasks/folder-drop-import-plan.md).
 
 **Gate:** on a local SSD release build, a 100k-file directory begins rendering
 within 300 ms, remains virtualized while scrolling, and reflects external changes
@@ -117,8 +121,10 @@ now fixture coverage, cancellation, platform packaging, and conflict safety.
   display-state cache correctness and background DCT stitching are implemented;
   concurrent performance matrices and measured foreground worker reuse remain planned.
 
-- [ ] Bundle and validate a working HEVC decoder, including libde265 where used,
-  in macOS, Windows, and Linux release packages.
+- [~] Bundle a working HEVC decoder in every release package. macOS and Linux
+  build the pinned libheif with `WITH_FFMPEG_DECODER=ON` against the pinned static
+  FFmpeg; Windows uses the vcpkg libheif with libde265. Validating decoding in
+  release artifacts is still pending.
 - [ ] Complete the HEIF/HEIC/HIF fixture matrix across embedded-thumbnail,
   full-frame, tile-grid, high-bit-depth, ICC, HLG/PQ, orientation, and damaged files.
 - [ ] Evaluate true reduced-resolution HEVC decode only where the packaged backend

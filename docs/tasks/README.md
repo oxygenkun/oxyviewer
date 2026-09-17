@@ -10,9 +10,9 @@ override them.
   long-term investigation with explicit measurement gates.
 - [Top search and tag filtering](top-search-tag-filter-design.md): basic hierarchical custom-tag search is implemented;
   tracks the remaining interaction refinements and full native qualification.
-- [Folder drag-and-drop import](folder-drop-import-plan.md): active plan for
-  importing dropped folders (register + index + visible progress); R1 verified,
-  Phase 1 and Phase 2 in progress.
+- [Folder drag-and-drop import](folder-drop-import-plan.md): implemented in
+  0.1.3 (register, index, and status-bar feedback); remaining work is the
+  real-device matrix and release-build comparison.
 
 Completed implementation plans are archived in
 [archive/plans](../archive/plans/README.md). Dated measurements and diagnoses

@@ -1,6 +1,6 @@
 {
   "name": "@oxyviewer/desktop",
-  "version": "0.1.2",
+  "version": "0.1.3",
   "private": true,
   "license": "AGPL-3.0-only OR LicenseRef-OxyViewer-Commercial",
   "type": "module",
