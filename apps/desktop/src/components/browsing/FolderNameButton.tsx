@@ -1,6 +1,14 @@
 import { useEffect, useId, useState, type ButtonHTMLAttributes, type CSSProperties } from "react";
 import { createPortal } from "react-dom";
 
+/** True when a row descendant clips its own content, e.g. an ellipsized folder name. */
+function isTruncated(row: HTMLButtonElement) {
+  for (const element of row.querySelectorAll<HTMLElement>("*")) {
+    if (element.clientWidth > 0 && element.scrollWidth > element.clientWidth + 1) return true;
+  }
+  return false;
+}
+
 export function FolderNameButton({ title, ...props }: ButtonHTMLAttributes<HTMLButtonElement>) {
   const tooltipId = useId();
   const [position, setPosition] = useState<CSSProperties>();
@@ -22,6 +30,7 @@ export function FolderNameButton({ title, ...props }: ButtonHTMLAttributes<HTMLB
   }, [position]);
 
   function show(button: HTMLButtonElement) {
+    if (!title || !isTruncated(button)) return;
     const bounds = button.getBoundingClientRect();
     const width = Math.min(420, window.innerWidth - 16);
     setPosition({
