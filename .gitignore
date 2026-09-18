@@ -7,6 +7,7 @@ apps/desktop/src-tauri/gen/
 apps/desktop/src-tauri/binaries/
 apps/desktop/src-tauri/resources/ffmpeg/
 apps/desktop/src-tauri/resources/libheif/
+apps/desktop/src-tauri/resources/face-models/
 .DS_Store
 *.log
 tests/perf/generated/

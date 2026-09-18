@@ -3,6 +3,7 @@ import { RawDecoderPanel } from "@/components/settings/RawDecoderPanel";
 import {
   Check,
   Focus,
+  ScanFace,
   LocateFixed,
   Minus,
   Plus,
@@ -38,6 +39,7 @@ import { matchesAction } from "@/lib/ui/shortcuts";
 import { useMarkingShortcuts } from "@/lib/hooks/useMarkingShortcuts";
 import { getAssetDetails } from "@/lib/api";
 import { focusRegionAnchor, mapFocusRegions } from "@/lib/ui/focusArea";
+import { FaceOverlay } from "@/components/loupe/FaceOverlay";
 import type { MessageKey } from "@/lib/i18n";
 import type { RawPreviewStatus } from "@/lib/media/rawPreview";
 import { renderPlan } from "@/lib/preview/preview";
@@ -97,12 +99,14 @@ export function Loupe({
   const navigatorPosition = useWorkspaceStore((state) => state.navigatorPosition);
   const displaySharpening = useWorkspaceStore((state) => state.displaySharpening);
   const focusAreasVisible = useWorkspaceStore((state) => state.focusAreasVisible);
+  const faceBoxesVisible = useWorkspaceStore((state) => state.faceBoxesVisible);
   const loupeMetadataVisible = useWorkspaceStore((state) => state.loupeMetadataVisible);
   const loupeControlsAutoHide = useWorkspaceStore((state) => state.loupeControlsAutoHide);
   const filmstripHeight = useWorkspaceStore((state) => state.filmstripHeight);
   const setNavigatorVisible = useWorkspaceStore((state) => state.setNavigatorVisible);
   const setNavigatorPosition = useWorkspaceStore((state) => state.setNavigatorPosition);
   const setFocusAreasVisible = useWorkspaceStore((state) => state.setFocusAreasVisible);
+  const setFaceBoxesVisible = useWorkspaceStore((state) => state.setFaceBoxesVisible);
   const setLoupeControlsAutoHide = useWorkspaceStore((state) => state.setLoupeControlsAutoHide);
   const setFilmstripHeight = useWorkspaceStore((state) => state.setFilmstripHeight);
   const shortcuts = useWorkspaceStore((state) => state.shortcuts);
@@ -503,6 +507,9 @@ export function Loupe({
                 onStatus={setHeifStatus}
               />
             ) : null}
+            {active ? (
+              <FaceOverlay asset={active} enabled={faceBoxesVisible} t={t} />
+            ) : null}
             {showFocusAreas && Boolean(currentNaturalSize || currentHeifSize) && mappedFocusRegions.length > 0 ? (
               <div className="loupe__focus-overlay" aria-hidden="true">
                 {mappedFocusRegions.map((region, index) => (
@@ -605,6 +612,14 @@ export function Loupe({
             title={`${showFocusAreas ? t("hideFocusAreas") : t("showFocusAreas")} · ${t("focusShortcutHint")}`}
           >
             <Focus size={14} />
+          </button>
+          <button
+            aria-pressed={faceBoxesVisible}
+            className={faceBoxesVisible ? "is-active" : ""}
+            onClick={() => setFaceBoxesVisible(!faceBoxesVisible)}
+            title={`${faceBoxesVisible ? t("hideFaceBoxes") : t("showFaceBoxes")}`}
+          >
+            <ScanFace size={14} />
           </button>
           <button
             ref={settingsButtonRef}

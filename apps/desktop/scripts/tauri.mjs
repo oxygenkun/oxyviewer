@@ -4,6 +4,7 @@ import { join } from "node:path";
 import { createRequire } from "node:module";
 import { fileURLToPath } from "node:url";
 import { prepare } from "../../../3rdpart/ffmpeg/prepare.mjs";
+import { prepare as prepareFaceModels } from "../../../3rdpart/face-models/prepare.mjs";
 import { prepare as prepareLibheif } from "../../../3rdpart/libheif/prepare.mjs";
 
 const require = createRequire(import.meta.url);
@@ -41,6 +42,9 @@ try {
     const target = targetIndex >= 0 ? args[targetIndex + 1] : args.find((arg) => arg.startsWith("--target="))?.slice(9);
     prepare(target);
     prepareLibheif(target);
+    // Face models are downloaded inputs; a package that ships without them
+    // reports the people feature as unavailable.
+    await prepareFaceModels();
     const separator = args.indexOf("--");
     args.splice(separator < 0 ? args.length : separator, 0, "--config", fileURLToPath(new URL("../src-tauri/tauri.bundle.json", import.meta.url)));
   }

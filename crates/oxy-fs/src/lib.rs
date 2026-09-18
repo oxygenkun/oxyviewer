@@ -9,6 +9,7 @@ use std::{
     collections::{HashMap, HashSet, hash_map::DefaultHasher},
     fs,
     hash::{Hash, Hasher},
+    io::Write,
     path::{Path, PathBuf},
     process::Command,
     sync::{
@@ -953,8 +954,55 @@ pub fn open_in_file_manager(path: &Path) -> Result<(), FsError> {
     Ok(())
 }
 
+/// Deterministic display id for an asset path, matching the id stored in the
+/// library index. Identity and joins always use the path itself; this exists so
+/// derived records can carry the same stable id the browser shows.
+pub fn stable_asset_id(path: &Path) -> String {
+    stable_id(&path.to_string_lossy())
+}
+
 pub fn sidecar_path(path: &Path) -> PathBuf {
     path.with_extension("xmp")
+}
+
+/// Durably replaces `destination` with `bytes`.
+///
+/// Writes a uniquely named temporary file in the destination directory, flushes
+/// it to stable storage, atomically renames it over the target, and then syncs
+/// the containing directory on Unix. A crash therefore leaves either the old
+/// file or the new one, never a truncated mix, which is what lets a small
+/// user-data store survive a power loss without a recovery journal.
+///
+/// The temporary file is created with the platform default permissions
+/// (`0600` on Unix via `tempfile`), which is appropriate for app-private user
+/// data. Callers that need the previous file's mode should set it explicitly.
+pub fn write_atomic(destination: &Path, bytes: &[u8]) -> Result<(), FsError> {
+    let parent = destination.parent().unwrap_or_else(|| Path::new("."));
+    fs::create_dir_all(parent)?;
+    let mut temporary = tempfile::Builder::new()
+        .prefix(".oxyviewer-write-")
+        .suffix(".tmp")
+        .tempfile_in(parent)?;
+    temporary.write_all(bytes)?;
+    temporary.as_file().sync_all()?;
+    temporary
+        .persist(destination)
+        .map_err(|error| FsError::Io(error.error))?;
+    sync_directory(parent)?;
+    Ok(())
+}
+
+/// Flushes a directory entry so a rename survives a crash. Windows has no
+/// directory fsync; `ReplaceFileW`/`MoveFileExW` is already atomic there.
+#[cfg(unix)]
+fn sync_directory(path: &Path) -> Result<(), FsError> {
+    fs::File::open(path)?.sync_all()?;
+    Ok(())
+}
+
+#[cfg(not(unix))]
+fn sync_directory(_path: &Path) -> Result<(), FsError> {
+    Ok(())
 }
 
 fn summary_for_path(path: &Path) -> Result<Option<AssetSummary>, FsError> {
@@ -1185,6 +1233,38 @@ mod tests {
     use oxy_domain::PickLabel;
     use std::fs::File;
     use tempfile::tempdir;
+
+    #[test]
+    fn write_atomic_creates_parents_and_replaces_without_leaving_temporaries() {
+        let directory = tempdir().unwrap();
+        let target = directory.path().join("nested").join("people.json");
+
+        write_atomic(&target, b"{\"version\":1}").unwrap();
+        assert_eq!(fs::read_to_string(&target).unwrap(), "{\"version\":1}");
+
+        write_atomic(&target, b"{\"version\":2}").unwrap();
+        assert_eq!(fs::read_to_string(&target).unwrap(), "{\"version\":2}");
+
+        let leftovers: Vec<String> = fs::read_dir(target.parent().unwrap())
+            .unwrap()
+            .filter_map(std::result::Result::ok)
+            .map(|entry| entry.file_name().into_string().unwrap())
+            .filter(|name| name != "people.json")
+            .collect();
+        assert!(
+            leftovers.is_empty(),
+            "atomic replace left temporary files: {leftovers:?}"
+        );
+    }
+
+    #[test]
+    fn write_atomic_overwrites_an_existing_longer_file_completely() {
+        let directory = tempdir().unwrap();
+        let target = directory.path().join("people.json");
+        write_atomic(&target, b"a-very-long-previous-payload").unwrap();
+        write_atomic(&target, b"short").unwrap();
+        assert_eq!(fs::read_to_string(&target).unwrap(), "short");
+    }
 
     #[test]
     fn discovers_supported_files_and_pairs_sidecars() {

@@ -2,6 +2,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { Component, lazy, StrictMode, Suspense, useEffect, type ErrorInfo, type ReactNode } from "react";
 import { createRoot } from "react-dom/client";
 import { App } from "./App";
+import { FaceWorkbench } from "@/components/people/FaceWorkbench";
 import { closeDebugQueueWindow, getPerfScenario, openDebugQueueWindow } from "@/lib/api";
 import type { PerfScenario } from "./types";
 import "./styles.css";
@@ -49,9 +50,17 @@ class DebugWindowErrorBoundary extends Component<{ children: ReactNode }, { erro
   }
 }
 
-function RootView({ perfScenario, isQueueDebugWindow }: { perfScenario?: PerfScenario; isQueueDebugWindow: boolean }) {
+function RootView({
+  perfScenario,
+  isQueueDebugWindow,
+  isFaceWorkbenchWindow,
+}: {
+  perfScenario?: PerfScenario;
+  isQueueDebugWindow: boolean;
+  isFaceWorkbenchWindow: boolean;
+}) {
   useEffect(() => {
-    if (!__OXY_DEBUG__ || isQueueDebugWindow) return;
+    if (!__OXY_DEBUG__ || isQueueDebugWindow || isFaceWorkbenchWindow) return;
     const onKeyDown = (event: KeyboardEvent) => {
       if (event.ctrlKey && event.shiftKey && event.code === "KeyD") {
         event.preventDefault();
@@ -60,7 +69,10 @@ function RootView({ perfScenario, isQueueDebugWindow }: { perfScenario?: PerfSce
     };
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, [isQueueDebugWindow]);
+  }, [isFaceWorkbenchWindow, isQueueDebugWindow]);
+  if (isFaceWorkbenchWindow) {
+    return <FaceWorkbench />;
+  }
   if (isQueueDebugWindow && LazyDebugQueueDashboard) {
     return (
       <DebugWindowErrorBoundary>
@@ -84,25 +96,33 @@ function RootView({ perfScenario, isQueueDebugWindow }: { perfScenario?: PerfSce
 
 async function bootstrap() {
   const windowContext = window as typeof window & { __OXY_QUEUE_DEBUG_WINDOW__?: boolean };
+  const query = new URLSearchParams(window.location.search);
   let isQueueDebugWindow = __OXY_DEBUG__ && (
-    new URLSearchParams(window.location.search).get("debug") === "queues"
+    query.get("debug") === "queues"
     || windowContext.__OXY_QUEUE_DEBUG_WINDOW__ === true
   );
-  if (__OXY_DEBUG__) {
-    try {
-      const { getCurrentWindow } = await import("@tauri-apps/api/window");
-      isQueueDebugWindow ||= getCurrentWindow().label === "debug-queues";
-    } catch {
-      // Browser-only development has no Tauri window label; the query fallback remains available.
-    }
+  let isFaceWorkbenchWindow = query.get("workbench") === "faces";
+  try {
+    const { getCurrentWindow } = await import("@tauri-apps/api/window");
+    const label = getCurrentWindow().label;
+    isQueueDebugWindow ||= __OXY_DEBUG__ && label === "debug-queues";
+    isFaceWorkbenchWindow ||= label === "face-workbench";
+  } catch {
+    // Browser-only development has no Tauri window label; the query fallback remains available.
   }
 
-  // The diagnostics window must mount before making optional startup IPC calls.
-  const perfScenario = isQueueDebugWindow ? undefined : await getPerfScenario().catch(() => undefined);
+  // Secondary windows must mount before making optional startup IPC calls.
+  const perfScenario = isQueueDebugWindow || isFaceWorkbenchWindow
+    ? undefined
+    : await getPerfScenario().catch(() => undefined);
   createRoot(document.getElementById("root")!).render(
     <StrictMode>
       <QueryClientProvider client={queryClient}>
-        <RootView perfScenario={perfScenario} isQueueDebugWindow={isQueueDebugWindow} />
+        <RootView
+          perfScenario={perfScenario}
+          isQueueDebugWindow={isQueueDebugWindow}
+          isFaceWorkbenchWindow={isFaceWorkbenchWindow}
+        />
       </QueryClientProvider>
     </StrictMode>,
   );

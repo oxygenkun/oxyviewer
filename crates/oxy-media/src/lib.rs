@@ -16,6 +16,7 @@ mod policy;
 mod presentation;
 mod publication;
 mod raw_support;
+mod rgb;
 
 pub use raw_support::{raw_decoder_status, raw_retry_revision, request_raw_retry};
 
@@ -41,6 +42,7 @@ pub use publication::{
     ResourcePayload, ResourceReadLease, ResourceRegistry, ResourceRegistryLimits,
     ResourceRegistryStats, resource_memory_budget, shared_resource_registry,
 };
+pub use rgb::{RgbPixels, apply_exif_orientation, decode_rgb_pixels, face_crop_jpeg};
 
 /// Resolves the Sony HIF test fixture, which is archived outside git (see
 /// `tests/fixtures/README.md`). `OXY_HIF_FIXTURE` overrides the default

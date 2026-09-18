@@ -504,6 +504,7 @@
   margin-top: auto;
   display: flex;
   align-items: center;
+  gap: 2px;
   padding: 4px 5px;
 }
 .sidebar__bottom-btn {
@@ -516,3 +517,5 @@
   background: transparent;
 }
 .sidebar__bottom-btn:hover { color: var(--text); background: #1a1e22; }
+/* A tool window is "on" while it stays open in the background. */
+.sidebar__bottom-btn.is-active { color: var(--accent); background: #1a1e22; }

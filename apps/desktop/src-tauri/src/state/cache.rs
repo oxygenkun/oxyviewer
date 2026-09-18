@@ -1,11 +1,12 @@
 use oxy_domain::{CacheSettings, CacheSettingsUpdate};
 use oxy_media::MediaCache;
+use oxy_userdata::{DocumentStore, StoreOrigin, UserDocument};
 use serde::{Deserialize, Serialize};
 use std::{
     fs,
     path::{Path, PathBuf},
     sync::{
-        Arc, RwLock,
+        Arc,
         atomic::{AtomicU8, Ordering},
     },
     time::Duration,
@@ -20,83 +21,125 @@ const PRUNE_RUNNING: u8 = 1;
 const PRUNE_PENDING: u8 = 2;
 const PRUNE_INTERVAL: Duration = Duration::from_secs(5);
 
+/// On-disk schema for the cache preferences.
+///
+/// Version 1 is the first versioned format: the file predates the durable-store
+/// envelope, so a document without a `version` field is read as version 1
+/// rather than rejected.
+const CONFIG_VERSION: u32 = 1;
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct PersistedCacheConfig {
+    #[serde(default = "config_version")]
+    version: u32,
     #[serde(default)]
     custom_parent: Option<PathBuf>,
     #[serde(default = "default_max_size_bytes")]
     max_size_bytes: u64,
 }
 
+fn config_version() -> u32 {
+    CONFIG_VERSION
+}
+
 fn default_max_size_bytes() -> u64 {
     DEFAULT_MAX_SIZE_BYTES
 }
 
+impl Default for PersistedCacheConfig {
+    fn default() -> Self {
+        Self {
+            version: CONFIG_VERSION,
+            custom_parent: None,
+            max_size_bytes: DEFAULT_MAX_SIZE_BYTES,
+        }
+    }
+}
+
+impl UserDocument for PersistedCacheConfig {
+    const KIND: &'static str = "cache settings";
+    const CURRENT_VERSION: u32 = CONFIG_VERSION;
+
+    fn version(&self) -> u32 {
+        self.version
+    }
+
+    fn stamp(&mut self) {
+        self.version = CONFIG_VERSION;
+    }
+}
+
 pub struct CacheManager {
     default_preview_dir: PathBuf,
-    config_path: PathBuf,
-    config: RwLock<PersistedCacheConfig>,
+    config: DocumentStore<PersistedCacheConfig>,
     prune_state: AtomicU8,
 }
 
 impl CacheManager {
     pub fn load(default_preview_dir: PathBuf, config_path: PathBuf) -> Result<Self, String> {
-        let mut config = fs::read(&config_path)
-            .ok()
-            .and_then(|bytes| serde_json::from_slice::<PersistedCacheConfig>(&bytes).ok())
-            .filter(|config| valid_limit(config.max_size_bytes))
-            .unwrap_or(PersistedCacheConfig {
-                custom_parent: None,
-                max_size_bytes: DEFAULT_MAX_SIZE_BYTES,
-            });
-        // A removable or disconnected custom volume must never prevent the
-        // photo browser from opening. Fall back for this run; the user can
-        // select the location again when it becomes available.
-        if config
-            .custom_parent
-            .as_ref()
-            .is_some_and(|parent| !parent.is_dir())
-        {
-            config.custom_parent = None;
+        // A preference file must never keep the browser from opening, so this
+        // load recovers: an unparseable file is moved aside instead of being
+        // silently replaced, and a file from a newer build is left alone with
+        // writes refused for this run.
+        let (mut config, origin) =
+            DocumentStore::<PersistedCacheConfig>::load_recoverable(config_path);
+        if let StoreOrigin::Quarantined { path, reason } = &origin {
+            eprintln!(
+                "cache settings were unreadable ({reason}); kept the original as {}",
+                path.display()
+            );
         }
-        let preview_dir =
-            resolve_preview_dir(&default_preview_dir, config.custom_parent.as_deref());
+        let loaded = config.read();
+        let effective = if valid_limit(loaded.max_size_bytes) {
+            // A removable or disconnected custom volume must never prevent the
+            // photo browser from opening. Fall back for this run; the user can
+            // select the location again when it becomes available, and the file
+            // keeps the path so it works again once the volume is back.
+            if loaded
+                .custom_parent
+                .as_ref()
+                .is_some_and(|parent| !parent.is_dir())
+            {
+                PersistedCacheConfig {
+                    custom_parent: None,
+                    ..loaded
+                }
+            } else {
+                loaded
+            }
+        } else {
+            // An out-of-range size means the file is not one this build can
+            // trust; fall back for this run without rewriting it.
+            PersistedCacheConfig::default()
+        };
+        config.reset_in_memory(effective);
+        let custom_parent = config.with(|config| config.custom_parent.clone());
+        let preview_dir = resolve_preview_dir(&default_preview_dir, custom_parent.as_deref());
         fs::create_dir_all(&preview_dir).map_err(|error| error.to_string())?;
         remove_legacy_cache_files(&preview_dir)?;
         if preview_dir != default_preview_dir {
             remove_legacy_cache_files(&default_preview_dir)?;
         }
         oxy_media::DiskMediaCache::new(&preview_dir, 256).map_err(|error| error.to_string())?;
-        let manager = Self {
+        Ok(Self {
             default_preview_dir,
-            config_path,
-            config: RwLock::new(config),
+            config,
             prune_state: AtomicU8::new(PRUNE_IDLE),
-        };
-        Ok(manager)
+        })
     }
 
     pub fn preview_dir(&self) -> PathBuf {
-        let config = self
-            .config
-            .read()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
-        resolve_preview_dir(&self.default_preview_dir, config.custom_parent.as_deref())
+        let custom_parent = self.config.with(|config| config.custom_parent.clone());
+        resolve_preview_dir(&self.default_preview_dir, custom_parent.as_deref())
     }
 
     pub fn max_size_bytes(&self) -> u64 {
-        self.config
-            .read()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .max_size_bytes
+        self.config.with(|config| config.max_size_bytes)
     }
 
     pub fn settings(&self) -> Result<CacheSettings, String> {
-        let config = self
-            .config
-            .read()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let config = self.config.read();
         let location =
             resolve_preview_dir(&self.default_preview_dir, config.custom_parent.as_deref());
         let usage = oxy_media::DiskMediaCache::new(&location, 256)
@@ -126,6 +169,7 @@ impl CacheManager {
             })
             .transpose()?;
         let next = PersistedCacheConfig {
+            version: CONFIG_VERSION,
             custom_parent,
             max_size_bytes: update.max_size_bytes,
         };
@@ -133,11 +177,11 @@ impl CacheManager {
             resolve_preview_dir(&self.default_preview_dir, next.custom_parent.as_deref());
         fs::create_dir_all(&preview_dir).map_err(|error| error.to_string())?;
         remove_legacy_cache_files(&preview_dir)?;
-        self.persist(&next)?;
-        *self
-            .config
-            .write()
-            .unwrap_or_else(std::sync::PoisonError::into_inner) = next;
+        // Durable before visible: the command must not report a location a
+        // refused or failed write would lose on the next start.
+        self.config
+            .update(|config| *config = next)
+            .map_err(|error| error.to_string())?;
         oxy_media::DiskMediaCache::new(&preview_dir, 256)
             .map_err(|error| error.to_string())?
             .prune(update.max_size_bytes)
@@ -265,14 +309,6 @@ impl CacheManager {
             .map(|_| ())
             .map_err(|error| error.to_string())
     }
-
-    fn persist(&self, config: &PersistedCacheConfig) -> Result<(), String> {
-        if let Some(parent) = self.config_path.parent() {
-            fs::create_dir_all(parent).map_err(|error| error.to_string())?;
-        }
-        let bytes = serde_json::to_vec_pretty(config).map_err(|error| error.to_string())?;
-        fs::write(&self.config_path, bytes).map_err(|error| error.to_string())
-    }
 }
 
 fn resolve_preview_dir(default: &Path, custom_parent: Option<&Path>) -> PathBuf {
@@ -385,6 +421,7 @@ mod tests {
         std::fs::write(
             &config_path,
             serde_json::to_vec(&PersistedCacheConfig {
+                version: CONFIG_VERSION,
                 custom_parent: Some(custom_parent.canonicalize().unwrap()),
                 max_size_bytes: DEFAULT_MAX_SIZE_BYTES,
             })
@@ -459,5 +496,82 @@ mod tests {
                 })
                 .is_err()
         );
+    }
+
+    #[test]
+    fn a_settings_file_from_before_the_version_envelope_still_loads() {
+        let parent = tempfile::tempdir().unwrap();
+        let default = parent.path().join("default/previews");
+        let custom_parent = parent.path().join("custom");
+        let custom = custom_parent.join(CUSTOM_CACHE_FOLDER).join("previews");
+        std::fs::create_dir_all(&default).unwrap();
+        std::fs::create_dir_all(&custom).unwrap();
+        let config_path = parent.path().join("settings.json");
+        // The format written before the durable-store envelope: no `version` key.
+        std::fs::write(
+            &config_path,
+            format!(
+                r#"{{"customParent":{},"maxSizeBytes":{DEFAULT_MAX_SIZE_BYTES}}}"#,
+                serde_json::to_string(&custom_parent.canonicalize().unwrap()).unwrap()
+            ),
+        )
+        .unwrap();
+
+        let manager = CacheManager::load(default.clone(), config_path.clone()).unwrap();
+
+        assert_eq!(manager.preview_dir(), custom.canonicalize().unwrap());
+        assert_eq!(manager.max_size_bytes(), DEFAULT_MAX_SIZE_BYTES);
+        // The next save upgrades the file in place, and it still reads back.
+        manager
+            .update(CacheSettingsUpdate {
+                custom_parent: Some(custom_parent),
+                max_size_bytes: MIN_MAX_SIZE_BYTES,
+            })
+            .unwrap();
+        let reloaded = CacheManager::load(default, config_path).unwrap();
+        assert_eq!(reloaded.max_size_bytes(), MIN_MAX_SIZE_BYTES);
+        assert_eq!(reloaded.preview_dir(), custom.canonicalize().unwrap());
+    }
+
+    #[test]
+    fn an_unreadable_settings_file_is_kept_instead_of_replaced() {
+        let parent = tempfile::tempdir().unwrap();
+        let config_path = parent.path().join("settings.json");
+        std::fs::write(&config_path, b"{ not json").unwrap();
+
+        let manager =
+            CacheManager::load(parent.path().join("default/previews"), config_path.clone())
+                .unwrap();
+
+        assert_eq!(manager.max_size_bytes(), DEFAULT_MAX_SIZE_BYTES);
+        assert_eq!(
+            std::fs::read(parent.path().join("settings.json.corrupt")).unwrap(),
+            b"{ not json".as_slice()
+        );
+        assert!(!config_path.exists());
+    }
+
+    #[test]
+    fn a_settings_file_from_a_newer_build_is_never_overwritten() {
+        let parent = tempfile::tempdir().unwrap();
+        let config_path = parent.path().join("settings.json");
+        let original = br#"{"version": 9, "customParent": null, "maxSizeBytes": 4096}"#;
+        std::fs::write(&config_path, original).unwrap();
+
+        let manager =
+            CacheManager::load(parent.path().join("default/previews"), config_path.clone())
+                .unwrap();
+
+        assert_eq!(manager.max_size_bytes(), DEFAULT_MAX_SIZE_BYTES);
+        assert!(
+            manager
+                .update(CacheSettingsUpdate {
+                    custom_parent: None,
+                    max_size_bytes: MIN_MAX_SIZE_BYTES,
+                })
+                .is_err(),
+            "an older build must never rewrite a newer file"
+        );
+        assert_eq!(std::fs::read(&config_path).unwrap(), original.as_slice());
     }
 }

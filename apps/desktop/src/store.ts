@@ -13,11 +13,13 @@ import {
   type ShortcutSlots,
 } from "@/lib/ui/shortcuts";
 import {
+  loadFaceBoxesVisible,
   loadFocusAreasVisible,
   loadLayoutSize,
   loadLoupeControlsAutoHide,
   loadMetadataVisibility,
   loadUiFontScale,
+  saveFaceBoxesVisible,
   saveFocusAreasVisible,
   saveLayoutSize,
   saveLoupeControlsAutoHide,
@@ -49,6 +51,7 @@ interface WorkspaceState {
   navigatorPosition: NavigatorPosition;
   displaySharpening: boolean;
   focusAreasVisible: boolean;
+  faceBoxesVisible: boolean;
   gridMetadataVisible: boolean;
   loupeMetadataVisible: boolean;
   loupeControlsAutoHide: boolean;
@@ -86,6 +89,7 @@ interface WorkspaceState {
   setNavigatorPosition: (position: NavigatorPosition) => void;
   setDisplaySharpening: (enabled: boolean) => void;
   setFocusAreasVisible: (visible: boolean) => void;
+  setFaceBoxesVisible: (visible: boolean) => void;
   setGridMetadataVisible: (visible: boolean) => void;
   setLoupeMetadataVisible: (visible: boolean) => void;
   setLoupeControlsAutoHide: (enabled: boolean) => void;
@@ -118,6 +122,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set) => ({
   navigatorPosition: "bottom-right",
   displaySharpening: true,
   focusAreasVisible: loadFocusAreasVisible(),
+  faceBoxesVisible: loadFaceBoxesVisible(),
   gridMetadataVisible: loadMetadataVisibility("grid"),
   loupeMetadataVisible: loadMetadataVisibility("loupe"),
   loupeControlsAutoHide: loadLoupeControlsAutoHide(),
@@ -175,6 +180,10 @@ export const useWorkspaceStore = create<WorkspaceState>((set) => ({
   setNavigatorVisible: (navigatorVisible) => set({ navigatorVisible }),
   setNavigatorPosition: (navigatorPosition) => set({ navigatorPosition }),
   setDisplaySharpening: (displaySharpening) => set({ displaySharpening }),
+  setFaceBoxesVisible: (faceBoxesVisible) => {
+    saveFaceBoxesVisible(faceBoxesVisible);
+    set({ faceBoxesVisible });
+  },
   setFocusAreasVisible: (focusAreasVisible) => {
     saveFocusAreasVisible(focusAreasVisible);
     set({ focusAreasVisible });

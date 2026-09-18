@@ -12,6 +12,16 @@ Each release lists the English notes first, followed by the Simplified Chinese n
 
 ## [Unreleased]
 
+### Added
+
+- The face feature moved out of settings into its own workbench window, opened from a sidebar icon button beside Settings: a large analysis launch rail plus cluster, person, and pending-review surfaces.
+- Clicking any face crop in the workbench switches the main window to its loupe on the photo that face was detected in, navigating to the containing folder when needed.
+
+### 新增
+
+- 人脸功能从设置中移出，改为独立工作台窗口，由侧边栏中与设置并排的图标按钮打开：左侧是大号分析启动区，右侧是相似人脸组、人物、待确认队列。
+- 点击工作台里的任意人脸裁切，主窗口会自动切到该人脸所属照片的 Loupe（必要时先导航到所在文件夹）。
+
 ## [0.1.3] - 2026-09-17
 
 ### Added

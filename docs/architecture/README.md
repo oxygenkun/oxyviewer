@@ -57,6 +57,10 @@
 | UI 请求生命周期 | 不适用 | React Query |
 | UI 交互状态 | 不适用 | Zustand `useWorkspaceStore` |
 | 资料库 | `oxy-library::Library` | library query in `App.tsx` |
+| 人脸分析 | `oxy-faces`（检测/对齐/embedding/聚类/匹配）、`oxy-library` 的 `faces` 模块、`jobs/faces.rs` 队列、`state/face_crops.rs` 裁切资源 | `components/people/FaceWorkbench.tsx`（独立窗口，由侧边栏按钮打开）、`components/loupe/FaceOverlay.tsx`；见[人脸与人物方案](../tasks/face-people-plan.md) |
+| 跨窗口同步（人脸工作台 ↔ 主窗口） | `commands/system.rs` 的 `face-workbench-*` 事件；主窗口发布浏览范围，工作台回传"查看该人脸所属照片" | `lib/api.ts` 的 face workbench 桥接封装、`App.tsx` 的 reveal 处理 |
+| 人物用户数据与撤销日志 | `oxy-userdata::PersonStore` → `app_data_dir/people.json`（权威），SQLite 为投影 | 不适用 |
+| 不可重建的用户数据机制 | `oxy-userdata::DocumentStore`（版本信封、原子写、先持久化后可见、拒绝覆盖未读懂的文件） | 不适用 |
 
 ## 术语
 

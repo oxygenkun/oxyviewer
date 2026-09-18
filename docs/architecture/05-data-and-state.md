@@ -189,7 +189,9 @@ loupe、inspector 和过滤。
 
 preview cache 默认位于 Tauri `app_cache_dir()/previews`。用户可以在设置中选择一个父目录；
 自定义缓存总是落到该目录下的 `OxyViewer Cache/previews`，不会把用户选择的目录本身当成可清空
-空间。缓存设置持久化在 app data 下的 `cache-settings.json`。它满足：
+空间。缓存设置是用户配置，持久化在 app data 下的 `cache-settings.json`，由
+`oxy-userdata::DocumentStore` 原子提交（无法解析时改名隔离后以默认值启动，来自更新版本的
+文件保留原样并拒绝写入）。它满足：
 
 - 删除不会损坏源照片；
 - 下次请求可重新生成；
@@ -306,6 +308,30 @@ session/root policy 显式加入 command 契约并增加符号链接测试。
 | React Query cache | 否 | 是 | 重新 invoke |
 | Rust directory snapshot | 否 | 是 | 重新 `read_dir` |
 | HEIF tiles | 否 | 是 | 重启 session |
+| 人脸观测 / embedding / 裁切 JPEG / 候选 / 聚类 | 否 | 是 | 重新解码并运行 analyzer；旧扫描缺裁切时按需补全 |
+| 人物、人工决策与可撤销操作日志 | 是 | 不应无故删除 | `app_data_dir/people.json`（`oxy-userdata::PersonStore`，原子写入）；SQLite 的 `persons` / `face_decisions` 只是它的投影 |
+| 预览缓存位置与容量 | 是 | 不应无故删除 | `app_data_dir/cache-settings.json`（`oxy-userdata::DocumentStore`，原子写入；无法解析时移到 `.corrupt` 并以默认值启动，不覆盖原文件） |
+| 外部应用列表 | 是 | 不应无故删除 | `app_data_dir/external-apps.json`（同上；来自更新版本或校验不通过的文档保留原样并拒绝写入） |
+
+人脸功能把「机器观测」和「用户事实」拆成两张表族：`face_observations` /
+`face_embeddings` / `face_crops` / `face_candidates` / `face_clusters` 与其它 projection 一样是可重建
+缓存；`persons` / `face_decisions` / `face_decision_events` 是用户数据。检测器升级时，
+人工决策按归一化区域重叠（IoU ≥ 0.5）重新绑定到新的观测，因此换模型不会让已确认的人物
+消失。
+
+文件重命名、移动、复制与删除会把人脸用户数据一起迁移，与标签的做法一致：
+`PersonStore` 的 move/copy/remove 决策迁移先于缓存迁移，随后整体重建投影；
+`Library::move_asset_face_state` 只搬运机器侧缓存，绝不写 `face_decisions`，
+以保证用户数据只有一个权威来源。
+
+SQLite 之外的耐久落点集中在 `oxy-userdata`。`DocumentStore<T>` 承载所有「不可重建的用户
+数据」共有的四件事：版本信封、`oxy_fs::write_atomic` 原子替换、先持久化后可见，以及
+**绝不覆盖自己没读懂的文件**——无法解析的文件被改名隔离，来自更新版本的文档保留原样并
+拒绝写入。每个域一份文件，互不连坐：`people.json` 是人物与决策的权威，`cache-settings.json`
+是缓存位置与容量的权威，`external-apps.json` 是外部应用列表的权威。权威方向是单向的：
+这些文件是权威，SQLite 的 `persons` / `face_decisions` 只是人物那份的投影，
+`Library::replace_user_data` 全量重建投影。因此删除 `oxyviewer.sqlite` 只损失机器缓存，
+重新分析后确认会按区域重新绑定；详见[人脸与人物方案](../tasks/face-people-plan.md) §3.8。
 
 ## 11. 本章检查点
 

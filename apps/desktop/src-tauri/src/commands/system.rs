@@ -1,5 +1,5 @@
 use crate::state::AppState;
-use oxy_domain::{DebugQueueSnapshot, PerfScenario};
+use oxy_domain::{DebugQueueSnapshot, FaceAssetReveal, FaceWorkbenchContext, PerfScenario};
 use std::{
     path::PathBuf,
     time::{Instant, SystemTime, UNIX_EPOCH},
@@ -123,6 +123,98 @@ pub(crate) fn close_debug_queue_window(app: AppHandle) -> Result<(), String> {
     window.hide().map_err(|error| error.to_string())?;
     window
         .emit("debug-queue-visibility", false)
+        .map_err(|error| error.to_string())
+}
+
+/// Window label of the face workbench, and the events that keep the two windows
+/// in step. Every cross-window message goes through a command rather than a
+/// frontend `emit`, so the Rust/TypeScript IPC contract test can see it.
+pub(crate) const FACE_WORKBENCH_WINDOW_LABEL: &str = "face-workbench";
+const FACE_WORKBENCH_VISIBILITY_EVENT: &str = "face-workbench-visibility";
+const FACE_WORKBENCH_CONTEXT_EVENT: &str = "face-workbench-context";
+const FACE_WORKBENCH_CONTEXT_REQUEST_EVENT: &str = "face-workbench-context-request";
+const FACE_ASSET_REVEAL_EVENT: &str = "face-asset-reveal";
+
+/// Builds the workbench window hidden. Building is idempotent, so opening an
+/// already-created window only shows it.
+fn create_face_workbench_window(app: &AppHandle) -> tauri::Result<()> {
+    if app
+        .get_webview_window(FACE_WORKBENCH_WINDOW_LABEL)
+        .is_some()
+    {
+        return Ok(());
+    }
+    let dev_url = app.config().build.dev_url.clone().map(|mut url| {
+        url.set_query(Some("workbench=faces"));
+        url
+    });
+    let webview_url = match dev_url {
+        Some(url) => WebviewUrl::External(url),
+        None => WebviewUrl::App("index.html".into()),
+    };
+    WebviewWindowBuilder::new(app, FACE_WORKBENCH_WINDOW_LABEL, webview_url)
+        .title("OxyViewer Face Workbench")
+        .inner_size(1320.0, 880.0)
+        .min_inner_size(960.0, 640.0)
+        .visible(false)
+        .build()
+        .map(|_| ())
+}
+
+#[tauri::command]
+pub(crate) fn open_face_workbench_window(app: AppHandle) -> Result<(), String> {
+    create_face_workbench_window(&app).map_err(|error| error.to_string())?;
+    let window = app
+        .get_webview_window(FACE_WORKBENCH_WINDOW_LABEL)
+        .ok_or_else(|| "face workbench window is unavailable".to_string())?;
+    window.show().map_err(|error| error.to_string())?;
+    window.set_focus().map_err(|error| error.to_string())?;
+    app.emit(FACE_WORKBENCH_VISIBILITY_EVENT, true)
+        .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+pub(crate) fn close_face_workbench_window(app: AppHandle) -> Result<(), String> {
+    let Some(window) = app.get_webview_window(FACE_WORKBENCH_WINDOW_LABEL) else {
+        return Ok(());
+    };
+    window.hide().map_err(|error| error.to_string())?;
+    app.emit(FACE_WORKBENCH_VISIBILITY_EVENT, false)
+        .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+pub(crate) fn is_face_workbench_window_open(app: AppHandle) -> bool {
+    app.get_webview_window(FACE_WORKBENCH_WINDOW_LABEL)
+        .is_some_and(|window| window.is_visible().unwrap_or(false))
+}
+
+/// Pushes the main window's browse scope to the workbench. The workbench cannot
+/// read the main window's store, so the scope travels as published state.
+#[tauri::command]
+pub(crate) fn publish_face_workbench_context(
+    app: AppHandle,
+    context: FaceWorkbenchContext,
+) -> Result<(), String> {
+    app.emit(FACE_WORKBENCH_CONTEXT_EVENT, context)
+        .map_err(|error| error.to_string())
+}
+
+/// A freshly mounted workbench asks once; the main window answers with the same
+/// publisher it uses for changes.
+#[tauri::command]
+pub(crate) fn request_face_workbench_context(app: AppHandle) -> Result<(), String> {
+    app.emit(FACE_WORKBENCH_CONTEXT_REQUEST_EVENT, ())
+        .map_err(|error| error.to_string())
+}
+
+/// Clicking a face asks the main window to show the photo it came from.
+#[tauri::command]
+pub(crate) fn notify_face_asset_reveal(
+    app: AppHandle,
+    reveal: FaceAssetReveal,
+) -> Result<(), String> {
+    app.emit(FACE_ASSET_REVEAL_EVENT, reveal)
         .map_err(|error| error.to_string())
 }
 

@@ -62,6 +62,21 @@ pnpm native:prepare
 then the pinned libheif with `WITH_FFMPEG_DECODER=ON`. It is cached under
 `target/` and safe to re-run. Windows skips the libheif step and uses vcpkg.
 
+The optional face analyzer needs its pinned ONNX models. They are downloaded
+inputs rather than native builds, so they are a separate, network-dependent
+step:
+
+```bash
+pnpm faces:prepare
+```
+
+It verifies each model and its upstream license text against the SHA-256 in
+`3rdpart/face-models/source.json`, writes them to `target/native/face-models`,
+and stages copies under `apps/desktop/src-tauri/resources/face-models/` so a
+release package bundles them (`pnpm tauri build` runs this step itself). Face tests skip with a message when the models are
+absent, so a media-only checkout still runs `cargo test`. Set
+`OXY_FACE_MODEL_DIR` to load them from elsewhere.
+
 If you already cloned the repository without submodules, initialize them with:
 
 ```bash
@@ -115,6 +130,12 @@ when intentionally regenerating application icons.
 - `apps/desktop/src`: React frontend and browser demo behavior
 - `apps/desktop/src-tauri`: thin Tauri command, state, and protocol layer
 - `crates/oxy-domain`: serialized contracts shared across Rust boundaries
+- `crates/oxy-faces`: face detection, alignment, embedding, clustering, and
+  person matching on pinned ONNX models
+- `crates/oxy-userdata`: durable, non-SQLite user data — persons and face
+  decisions (`app_data_dir/people.json`), cache settings, and external
+  applications — over a shared `DocumentStore` with version envelopes and atomic
+  writes
 - `crates/oxy-fs`: discovery, path identity, sidecars, and file operations
 - `crates/oxy-media`: previews, thumbnails, and native media adapters
 - `crates/oxy-metadata-parser`: in-process EXIF/XMP/IPTC/ICC/MakerNote parser

@@ -4,6 +4,7 @@ import { clampLayoutSize, LAYOUT_SIZE_LIMITS, type LayoutRegion } from "@/lib/ui
 const WORKSPACE_KEY = "oxyviewer.workspace.v1";
 const ONBOARDING_KEY = "oxyviewer.folder-onboarding.v1";
 const FOCUS_AREAS_KEY = "oxyviewer.focus-areas-visible.v1";
+const FACE_BOXES_KEY = "oxyviewer.faceBoxesVisible";
 const LOUPE_CONTROLS_AUTO_HIDE_KEY = "oxyviewer.loupe-controls-auto-hide.v1";
 const UI_FONT_SCALE_KEY = "oxyviewer.ui-font-scale.v1";
 export const UI_FONT_SCALES = [0.8, 1, 1.25, 1.5, 1.75] as const;
@@ -87,6 +88,31 @@ export function hasSeenFolderOnboarding(storage: StorageLike = window.localStora
 
 export function completeFolderOnboarding(storage: StorageLike = window.localStorage): void {
   storage.setItem(ONBOARDING_KEY, "done");
+}
+
+/**
+ * Face boxes default to on: the review flow depends on seeing which face the
+ * application is talking about, so hiding them is the deliberate action.
+ */
+export function loadFaceBoxesVisible(storage?: StorageLike): boolean {
+  const resolved = storage ?? (typeof window === "undefined" ? undefined : window.localStorage);
+  if (!resolved) return true;
+  try {
+    const stored = resolved.getItem(FACE_BOXES_KEY);
+    return stored === null ? true : stored === "true";
+  } catch {
+    return true;
+  }
+}
+
+export function saveFaceBoxesVisible(visible: boolean, storage?: StorageLike): void {
+  const resolved = storage ?? (typeof window === "undefined" ? undefined : window.localStorage);
+  if (!resolved) return;
+  try {
+    resolved.setItem(FACE_BOXES_KEY, String(visible));
+  } catch {
+    // Preferences must never prevent the viewer from opening.
+  }
 }
 
 export function loadFocusAreasVisible(storage?: StorageLike): boolean {

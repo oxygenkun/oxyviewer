@@ -3,9 +3,11 @@ resolver = "2"
 members = [
   "apps/desktop/src-tauri",
   "crates/oxy-domain",
+  "crates/oxy-faces",
   "crates/oxy-fs",
   "crates/oxy-library",
   "crates/oxy-media",
+  "crates/oxy-userdata",
   "crates/oxy-metadata",
   "crates/oxy-metadata-parser",
   "crates/oxy-runtime",
@@ -65,3 +67,20 @@ opt-level = 2
 
 [profile.dev.package.image]
 opt-level = 2
+
+# ONNX inference is pure Rust and is unusably slow unoptimized: a Debug test run
+# of `oxy-faces` spends minutes in the tensor kernels. Optimizing the analyzer
+# and the tract compute crates keeps rebuilds of the rest of the workspace fast
+# while making the reference-parity tests practical.
+[profile.dev.package.oxy-faces]
+opt-level = 2
+
+[profile.dev.package.tract-core]
+opt-level = 2
+
+[profile.dev.package.tract-linalg]
+opt-level = 2
+
+[profile.dev.package.tract-data]
+opt-level = 2
+

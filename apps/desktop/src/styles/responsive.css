@@ -2,6 +2,9 @@
 
 @media (prefers-reduced-motion: reduce) {
   .settings-panel__meter span { transition: none; }
+  /* Spinners stop too: a rotating glyph is exactly the motion this setting is
+     about, and the state is still announced by the text beside it. */
+  .is-spinning { animation: none; }
 }
 
 @media (max-width: 1180px) {

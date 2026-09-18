@@ -368,6 +368,9 @@ pub(crate) async fn execute_file_operation(
     state: State<'_, AppState>,
 ) -> Result<FileOperationResult, String> {
     let library = state.library.clone();
+    // A rename or move must not lose a face confirmation, so user data follows
+    // the bytes exactly as tags already do.
+    let people = state.people.clone();
     tauri::async_runtime::spawn_blocking(move || {
         let result =
             oxy_fs::execute_file_operation(&operation).map_err(|error| error.to_string())?;
@@ -380,6 +383,7 @@ pub(crate) async fn execute_file_operation(
                 library
                     .move_asset_tag_state(source, &destination)
                     .map_err(|error| error.to_string())?;
+                people.move_asset(source, &destination)?;
             }
             FileOperation::Copy {
                 sources,
@@ -387,9 +391,11 @@ pub(crate) async fn execute_file_operation(
             } => {
                 for source in sources {
                     if let Some(name) = source.file_name() {
+                        let destination = destination_dir.join(name);
                         library
-                            .copy_asset_tag_state(source, &destination_dir.join(name))
+                            .copy_asset_tag_state(source, &destination)
                             .map_err(|error| error.to_string())?;
+                        people.copy_asset(source, &destination)?;
                     }
                 }
             }
@@ -399,9 +405,11 @@ pub(crate) async fn execute_file_operation(
             } => {
                 for source in sources {
                     if let Some(name) = source.file_name() {
+                        let destination = destination_dir.join(name);
                         library
-                            .move_asset_tag_state(source, &destination_dir.join(name))
+                            .move_asset_tag_state(source, &destination)
                             .map_err(|error| error.to_string())?;
+                        people.move_asset(source, &destination)?;
                     }
                 }
             }
@@ -410,6 +418,7 @@ pub(crate) async fn execute_file_operation(
                     library
                         .remove_asset_tag_state(path)
                         .map_err(|error| error.to_string())?;
+                    people.remove_asset(path)?;
                 }
             }
         }

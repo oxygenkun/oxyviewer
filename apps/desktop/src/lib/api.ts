@@ -44,6 +44,23 @@ import type {
   AssetTagAssignmentsByPath,
   CustomTag,
   DebugQueueSnapshot,
+  FaceAnalysisProgress,
+  FaceAnalysisRequest,
+  FaceAnalyzerSettings,
+  FaceAssetReveal,
+  FaceCalibration,
+  FaceCapability,
+  FaceCluster,
+  FaceCropResource,
+  FaceDecision,
+  FaceLibraryStats,
+  FaceObservation,
+  FaceReviewFilter,
+  FaceReviewItem,
+  FaceReviewPage,
+  FaceWorkbenchContext,
+  Person,
+  UndoableOperation,
   TagDeleteImpact,
   TagSyncStatus,
   WindowDragEvent,
@@ -1194,4 +1211,516 @@ export async function openAboutLink(target: AboutLink, releaseUrl?: string): Pro
     return;
   }
   await invoke("open_about_link", { target, releaseUrl: releaseUrl ?? null });
+}
+
+/* ---------------------------------------------------------------------------
+ * Face analysis and people.
+ *
+ * The browser demo keeps an in-memory model so the review flow can be exercised
+ * without the native analyzer; the desktop path always goes through the Host so
+ * machine output and user decisions stay separated.
+ * ------------------------------------------------------------------------- */
+
+const demoFacePersons: Person[] = [];
+
+let demoFaceClusters: FaceCluster[] = [];
+let demoFaceReview: FaceReviewPage = { items: [], total: 0, nextCursor: null };
+let demoFaceStats: FaceLibraryStats = {
+  analyzedAssets: 0,
+  facesDetected: 0,
+  persons: 0,
+  pendingReviews: 0,
+  unknownFaces: 0,
+  clusters: 0,
+};
+let demoFaceSettings: FaceAnalyzerSettings = {
+  detectionConfidence: 0.9,
+  nmsThreshold: 0.3,
+  maxFacesPerAsset: 64,
+  minFacePixels: 24,
+  detectSmallFaces: true,
+  matchSensitivity: "balanced",
+  matchThreshold: 0.363,
+  clusterThreshold: 0.363,
+};
+
+function demoFaceItem(index: number, state: FaceReviewPage["items"][number]["state"]): FaceReviewPage["items"][number] {
+  const seed = index + 1;
+  const width = 0.18 + (seed % 3) * 0.02;
+  return {
+    observationId: `demo-face-${index}`,
+    assetId: `demo-${index}`,
+    assetPath: `/demo/portrait-${index}.jpg`,
+    bbox: { x: 0.1 + (seed % 4) * 0.12, y: 0.12, width, height: width * 1.3 },
+    detectionScore: 0.97,
+    state,
+  };
+}
+
+/** Builds the demo review queue once, so the people panel has something to show. */
+function ensureDemoFaces(): void {
+  if (demoFaceReview.items.length > 0) return;
+  const states: Array<FaceReviewPage["items"][number]["state"]> = [
+    "pending",
+    "pending",
+    "unknown",
+    "unknown",
+    "unknown",
+  ];
+  const items = states.map((state, index) => {
+    const item = demoFaceItem(index, state);
+    if (state === "pending") {
+      item.candidate = {
+        observationId: item.observationId,
+        personId: "demo-person-1",
+        personName: "Demo Person",
+        similarity: 0.52 - index * 0.05,
+        matcherFingerprint: "demo/matcher",
+      };
+    }
+    return item;
+  });
+  demoFaceReview = { items, total: items.length, nextCursor: null };
+  demoFaceClusters = [
+    {
+      clusterId: "demo-cluster-1",
+      observationIds: ["demo-face-2", "demo-face-3", "demo-face-4"],
+      representativeObservationId: "demo-face-2",
+      memberCount: 3,
+      cohesion: 0.71,
+      outlierObservationIds: ["demo-face-4"],
+    },
+  ];
+  demoFaceStats = {
+    analyzedAssets: 5,
+    facesDetected: items.length,
+    persons: demoFacePersons.length,
+    pendingReviews: items.filter((item) => item.state === "pending").length,
+    unknownFaces: items.filter((item) => item.state === "unknown").length,
+    clusters: demoFaceClusters.length,
+  };
+}
+
+export async function getFaceCapability(): Promise<FaceCapability> {
+  if (!isTauri()) {
+    ensureDemoFaces();
+    return {
+      available: true,
+      running: false,
+      settings: demoFaceSettings,
+      stats: demoFaceStats,
+      peopleStorePath: "demo/people.json",
+    };
+  }
+  return invoke<FaceCapability>("get_face_capability");
+}
+
+/**
+ * Accept/reject score distributions from real decisions, plus a suggested
+ * threshold. `ox-faces` computes the recommendation from this library's data.
+ */
+export async function getFaceCalibration(): Promise<FaceCalibration> {
+  if (!isTauri()) {
+    return {
+      acceptedScores: [],
+      rejectedScores: [],
+      currentThreshold: demoFaceSettings.matchThreshold,
+      separable: false,
+    };
+  }
+  return invoke<FaceCalibration>("get_face_calibration");
+}
+
+export async function updateFaceAnalyzerSettings(
+  settings: FaceAnalyzerSettings,
+): Promise<FaceAnalyzerSettings> {
+  if (!isTauri()) {
+    demoFaceSettings = { ...settings };
+    return demoFaceSettings;
+  }
+  return invoke<FaceAnalyzerSettings>("update_face_analyzer_settings", { settings });
+}
+
+export async function startFaceAnalysis(request: FaceAnalysisRequest = {}): Promise<string> {
+  if (!isTauri()) {
+    ensureDemoFaces();
+    return "demo-face-job";
+  }
+  return invoke<string>("start_face_analysis", {
+    request: {
+      paths: request.paths ?? [],
+      rootPath: request.rootPath ?? null,
+      directory: request.directory ?? null,
+      force: request.force ?? false,
+    },
+  });
+}
+
+export async function cancelFaceAnalysis(jobId: string): Promise<boolean> {
+  if (!isTauri()) return true;
+  return invoke<boolean>("cancel_face_analysis", { jobId });
+}
+
+export async function listPersons(): Promise<Person[]> {
+  if (!isTauri()) {
+    ensureDemoFaces();
+    return [...demoFacePersons];
+  }
+  return invoke<Person[]>("list_persons");
+}
+
+export async function createPerson(
+  personId: string,
+  displayName: string,
+  linkedTagId?: number | null,
+): Promise<Person> {
+  if (!isTauri()) {
+    ensureDemoFaces();
+    const person: Person = {
+      personId,
+      displayName,
+      linkedTagId: linkedTagId ?? undefined,
+      createdAtMs: Date.now(),
+      updatedAtMs: Date.now(),
+      faceCount: 0,
+    };
+    demoFacePersons.push(person);
+    demoFaceStats = { ...demoFaceStats, persons: demoFacePersons.length };
+    return person;
+  }
+  return invoke<Person>("create_person", {
+    personId,
+    displayName,
+    linkedTagId: linkedTagId ?? null,
+  });
+}
+
+export async function renamePerson(personId: string, displayName: string): Promise<void> {
+  if (!isTauri()) {
+    const person = demoFacePersons.find((entry) => entry.personId === personId);
+    if (person) person.displayName = displayName;
+    return;
+  }
+  await invoke("rename_person", { personId, displayName });
+}
+
+export async function linkPersonTag(personId: string, tagId: number | null): Promise<void> {
+  if (!isTauri()) return;
+  await invoke("link_person_tag", { personId, tagId });
+}
+
+/**
+ * Folds one person into another. Every face confirmed for the source now
+ * belongs to the target, so nothing has to be re-confirmed by hand.
+ */
+export async function mergePersons(
+  sourcePersonId: string,
+  targetPersonId: string,
+): Promise<number> {
+  if (!isTauri()) {
+    const source = demoFacePersons.find((entry) => entry.personId === sourcePersonId);
+    const target = demoFacePersons.find((entry) => entry.personId === targetPersonId);
+    if (!source || !target) throw new Error("Unknown person");
+    target.faceCount += source.faceCount;
+    demoFacePersons.splice(demoFacePersons.indexOf(source), 1);
+    demoFaceStats = { ...demoFaceStats, persons: demoFacePersons.length };
+    return source.faceCount;
+  }
+  return invoke<number>("merge_persons", { sourcePersonId, targetPersonId });
+}
+
+/** Detaches faces from a person without touching that person's other photos. */
+export async function removeFacesFromPerson(
+  personId: string,
+  observationIds: string[],
+): Promise<number> {
+  if (!isTauri()) return 0;
+  return invoke<number>("remove_faces_from_person", { personId, observationIds });
+}
+
+/** Confirms faces for a person, replacing any previous answer. */
+export async function assignFacesToPerson(
+  personId: string,
+  observationIds: string[],
+): Promise<number> {
+  if (!isTauri()) return 0;
+  return invoke<number>("assign_faces_to_person", { personId, observationIds });
+}
+
+export async function getPersonUndo(): Promise<UndoableOperation | null> {
+  if (!isTauri()) return null;
+  return invoke<UndoableOperation | null>("get_person_undo");
+}
+
+export async function undoPersonOperation(): Promise<UndoableOperation | null> {
+  if (!isTauri()) return null;
+  return invoke<UndoableOperation | null>("undo_person_operation");
+}
+
+export async function deletePerson(personId: string): Promise<number> {
+  if (!isTauri()) {
+    const index = demoFacePersons.findIndex((entry) => entry.personId === personId);
+    if (index >= 0) demoFacePersons.splice(index, 1);
+    demoFaceStats = { ...demoFaceStats, persons: demoFacePersons.length };
+    return 0;
+  }
+  return invoke<number>("delete_person", { personId });
+}
+
+export async function decideFace(
+  observationId: string,
+  decision: FaceDecision,
+): Promise<void> {
+  if (!isTauri()) {
+    ensureDemoFaces();
+    const item = demoFaceReview.items.find((entry) => entry.observationId === observationId);
+    if (item) {
+      item.state =
+        decision.decision === "confirmPerson"
+          ? "confirmed"
+          : decision.decision === "rejectPerson"
+            ? "rejected"
+            : "notFace";
+      item.confirmedPersonId =
+        decision.decision === "confirmPerson" ? decision.personId : undefined;
+      if (decision.decision === "confirmPerson") {
+        const person = demoFacePersons.find((entry) => entry.personId === decision.personId);
+        item.confirmedPersonName = person?.displayName;
+        if (person) person.faceCount += 1;
+      }
+    }
+    return;
+  }
+  await invoke("decide_face", { observationId, decision });
+}
+
+export async function clearFaceDecision(observationId: string): Promise<void> {
+  if (!isTauri()) {
+    ensureDemoFaces();
+    const item = demoFaceReview.items.find((entry) => entry.observationId === observationId);
+    if (item) {
+      item.state = item.candidate ? "pending" : "unknown";
+      item.confirmedPersonId = undefined;
+      item.confirmedPersonName = undefined;
+    }
+    return;
+  }
+  await invoke("clear_face_decision", { observationId });
+}
+
+export async function getFaceReviewPage(
+  filter: FaceReviewFilter,
+  cursor = 0,
+  pageSize = 200,
+): Promise<FaceReviewPage> {
+  if (!isTauri()) {
+    ensureDemoFaces();
+    const items = demoFaceReview.items.filter((item) => {
+      if (filter === "all") return true;
+      if (filter === "pending") return item.state === "pending";
+      if (filter === "unknown") return item.state === "unknown";
+      if (filter === "confirmed") return item.state === "confirmed";
+      return item.state === "rejected" || item.state === "notFace";
+    });
+    return { items, total: items.length, nextCursor: null };
+  }
+  return invoke<FaceReviewPage>("get_face_review_page", { filter, cursor, pageSize });
+}
+
+export async function getFaceClusters(): Promise<FaceCluster[]> {
+  if (!isTauri()) {
+    ensureDemoFaces();
+    return [...demoFaceClusters];
+  }
+  return invoke<FaceCluster[]>("get_face_clusters");
+}
+
+/**
+ * Crops for the review panel, keyed by observation.
+ *
+ * The backend returns `oxy-media://` resources rather than image bytes, so a
+ * caller must lease each returned resource with `retainMediaResource` and
+ * release it when the crop is no longer displayed.
+ */
+export async function getFaceCrops(
+  observationIds: string[],
+  size = 128,
+): Promise<FaceCropResource[]> {
+  if (!isTauri() || observationIds.length === 0) return [];
+  return invoke<FaceCropResource[]>("get_face_crops", { observationIds, size });
+}
+
+/**
+ * Face boxes for one asset with the user's current answer, so the loupe can
+ * draw and correct them in place.
+ */
+export async function getAssetFaceReviews(path: string): Promise<FaceReviewItem[]> {
+  if (!isTauri()) return [];
+  return invoke<FaceReviewItem[]>("get_asset_face_reviews", { path });
+}
+
+export async function getAssetFaceObservations(path: string): Promise<FaceObservation[]> {
+  if (!isTauri()) return [];
+  return invoke<FaceObservation[]>("get_asset_face_observations", { path });
+}
+
+export async function onFaceAnalysisProgress(
+  callback: (progress: FaceAnalysisProgress) => void,
+): Promise<UnlistenFn> {
+  if (!isTauri()) return () => {};
+  return listen<FaceAnalysisProgress>("face-analysis-progress", (event) => callback(event.payload));
+}
+
+export async function onFaceLibraryUpdated(
+  callback: (stats: FaceLibraryStats) => void,
+): Promise<UnlistenFn> {
+  if (!isTauri()) return () => {};
+  return listen<FaceLibraryStats>("face-library-updated", (event) => callback(event.payload));
+}
+
+/**
+ * The asset one face belongs to, so clicking a crop can reveal the photo.
+ *
+ * `null` is an ordinary answer: a re-analysis can retire the observation a
+ * click refers to, and the caller should say so rather than fail.
+ */
+export async function resolveFaceObservation(
+  observationId: string,
+): Promise<FaceAssetReveal | null> {
+  if (!isTauri()) {
+    ensureDemoFaces();
+    const item = demoFaceReview.items.find((entry) => entry.observationId === observationId);
+    return item
+      ? { observationId: item.observationId, assetId: item.assetId, assetPath: item.assetPath }
+      : null;
+  }
+  return invoke<FaceAssetReveal | null>("resolve_face_observation", { observationId });
+}
+
+// The face workbench runs in its own window. Tauri carries the two messages it
+// needs (browse context out, "show me this photo" back) as events; the browser
+// demo falls back to a BroadcastChannel so the same component works there.
+
+const FACE_WORKBENCH_CHANNEL = "oxyviewer-face-workbench";
+
+type FaceWorkbenchMessage =
+  | { kind: "visibility"; visible: boolean }
+  | { kind: "context"; context: FaceWorkbenchContext }
+  | { kind: "context-request" }
+  | { kind: "reveal"; reveal: FaceAssetReveal };
+
+function postFaceWorkbenchMessage(message: FaceWorkbenchMessage): void {
+  try {
+    const channel = new BroadcastChannel(FACE_WORKBENCH_CHANNEL);
+    channel.postMessage(message);
+    channel.close();
+  } catch {
+    // Without BroadcastChannel the demo's two windows simply stay independent.
+  }
+}
+
+function subscribeFaceWorkbenchMessages(
+  callback: (message: FaceWorkbenchMessage) => void,
+): UnlistenFn {
+  try {
+    const channel = new BroadcastChannel(FACE_WORKBENCH_CHANNEL);
+    channel.addEventListener("message", (event) => callback(event.data as FaceWorkbenchMessage));
+    return () => channel.close();
+  } catch {
+    return () => {};
+  }
+}
+
+export async function openFaceWorkbench(): Promise<void> {
+  if (!isTauri()) {
+    window.open("?workbench=faces", "oxyviewer-face-workbench", "popup,width=1320,height=880");
+    return;
+  }
+  await invoke("open_face_workbench_window");
+}
+
+export async function closeFaceWorkbench(): Promise<void> {
+  if (!isTauri()) {
+    window.close();
+    return;
+  }
+  await invoke("close_face_workbench_window");
+}
+
+export async function isFaceWorkbenchOpen(): Promise<boolean> {
+  if (!isTauri()) return false;
+  return invoke<boolean>("is_face_workbench_window_open");
+}
+
+export async function onFaceWorkbenchVisibility(
+  callback: (visible: boolean) => void,
+): Promise<UnlistenFn> {
+  if (!isTauri()) {
+    return subscribeFaceWorkbenchMessages((message) => {
+      if (message.kind === "visibility") callback(message.visible);
+    });
+  }
+  return listen<boolean>("face-workbench-visibility", (event) => callback(event.payload));
+}
+
+/** Main window → workbench: the browse scope and locale a run may use. */
+export async function publishFaceWorkbenchContext(
+  context: FaceWorkbenchContext,
+): Promise<void> {
+  if (!isTauri()) {
+    postFaceWorkbenchMessage({ kind: "context", context });
+    return;
+  }
+  await invoke("publish_face_workbench_context", { context });
+}
+
+/** Workbench → main window: "I just mounted, publish the current scope". */
+export async function requestFaceWorkbenchContext(): Promise<void> {
+  if (!isTauri()) {
+    postFaceWorkbenchMessage({ kind: "context-request" });
+    return;
+  }
+  await invoke("request_face_workbench_context");
+}
+
+export async function onFaceWorkbenchContext(
+  callback: (context: FaceWorkbenchContext) => void,
+): Promise<UnlistenFn> {
+  if (!isTauri()) {
+    return subscribeFaceWorkbenchMessages((message) => {
+      if (message.kind === "context") callback(message.context);
+    });
+  }
+  return listen<FaceWorkbenchContext>("face-workbench-context", (event) => callback(event.payload));
+}
+
+export async function onFaceWorkbenchContextRequest(
+  callback: () => void,
+): Promise<UnlistenFn> {
+  if (!isTauri()) {
+    return subscribeFaceWorkbenchMessages((message) => {
+      if (message.kind === "context-request") callback();
+    });
+  }
+  return listen("face-workbench-context-request", () => callback());
+}
+
+/** Workbench → main window: show the asset one clicked face came from. */
+export async function notifyFaceAssetReveal(reveal: FaceAssetReveal): Promise<void> {
+  if (!isTauri()) {
+    postFaceWorkbenchMessage({ kind: "reveal", reveal });
+    return;
+  }
+  await invoke("notify_face_asset_reveal", { reveal });
+}
+
+export async function onFaceAssetReveal(
+  callback: (reveal: FaceAssetReveal) => void,
+): Promise<UnlistenFn> {
+  if (!isTauri()) {
+    return subscribeFaceWorkbenchMessages((message) => {
+      if (message.kind === "reveal") callback(message.reveal);
+    });
+  }
+  return listen<FaceAssetReveal>("face-asset-reveal", (event) => callback(event.payload));
 }

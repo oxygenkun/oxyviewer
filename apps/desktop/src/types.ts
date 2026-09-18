@@ -543,3 +543,226 @@ export interface ExternalAppSettings {
 }
 
 export type ExternalOpenResult = "launched" | "cancelled";
+
+/* ---------------------------------------------------------------------------
+ * Face analysis and people.
+ *
+ * Mirrors `oxy-domain::faces`. Machine output (observations, candidates,
+ * clusters) is rebuildable; persons and decisions are user data that a model
+ * change must never destroy.
+ * ------------------------------------------------------------------------- */
+
+export interface NormalizedRect {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+}
+
+export interface NormalizedPoint {
+  x: number;
+  y: number;
+}
+
+/** One detected face. Rebuildable analyzer output. */
+export interface FaceObservation {
+  observationId: string;
+  assetId: string;
+  assetPath: string;
+  sourceRevision: string;
+  localIndex: number;
+  bbox: NormalizedRect;
+  landmarks: NormalizedPoint[];
+  detectionScore: number;
+  detectorFingerprint: string;
+}
+
+export type FaceReviewState = "unknown" | "pending" | "confirmed" | "rejected" | "notFace";
+
+/** A matcher proposal awaiting a user answer. */
+export interface FaceCandidate {
+  observationId: string;
+  personId: string;
+  personName: string;
+  similarity: number;
+  matcherFingerprint: string;
+}
+
+/** A stable person. Renaming never invalidates an assignment. */
+export interface Person {
+  personId: string;
+  displayName: string;
+  linkedTagId?: number;
+  createdAtMs: number;
+  updatedAtMs: number;
+  faceCount: number;
+  coverObservationId?: string;
+}
+
+/** A suggestion that several unknown faces show one person. Cache, not identity. */
+export interface FaceCluster {
+  clusterId: string;
+  observationIds: string[];
+  representativeObservationId: string;
+  memberCount: number;
+  cohesion: number;
+  /** Members that sit far from the rest; leave them unselected on confirm. */
+  outlierObservationIds: string[];
+  suggestedPersonId?: string;
+  suggestedName?: string;
+}
+
+export interface FaceReviewItem {
+  observationId: string;
+  assetId: string;
+  assetPath: string;
+  bbox: NormalizedRect;
+  detectionScore: number;
+  state: FaceReviewState;
+  candidate?: FaceCandidate;
+  clusterId?: string;
+  confirmedPersonId?: string;
+  confirmedPersonName?: string;
+}
+
+export type FaceReviewFilter = "all" | "pending" | "unknown" | "unreviewed" | "confirmed" | "rejected";
+
+export interface FaceReviewPage {
+  items: FaceReviewItem[];
+  total: number;
+  nextCursor: number | null;
+}
+
+/** What the user asserted about one face region. Mirrors the Rust enum tag. */
+export type FaceDecision =
+  | { decision: "confirmPerson"; personId: string }
+  | { decision: "rejectPerson"; personId: string }
+  | { decision: "notFace" };
+
+export type FaceMatchSensitivity = "strict" | "balanced" | "loose" | "custom";
+
+export interface FaceAnalyzerSettings {
+  detectionConfidence: number;
+  nmsThreshold: number;
+  maxFacesPerAsset: number;
+  minFacePixels: number;
+  /** Analyze overlapping tiles as well, to keep small faces detectable. */
+  detectSmallFaces: boolean;
+  matchSensitivity: FaceMatchSensitivity;
+  matchThreshold: number;
+  autoAcceptThreshold?: number;
+  clusterThreshold: number;
+}
+
+export type FaceAnalysisStage =
+  | "idle"
+  | "detecting"
+  | "embedding"
+  | "clustering"
+  | "matching"
+  | "complete"
+  | "failed";
+
+export interface FaceAnalysisProgress {
+  jobId: string;
+  stage: FaceAnalysisStage;
+  processedAssets: number;
+  totalAssets: number;
+  facesDetected: number;
+  pendingReviews: number;
+  /** Files that failed to decode or analyze; they produced no faces. */
+  failedAssets: number;
+  message?: string;
+}
+
+export interface FaceAnalysisRequest {
+  /** Explicit selection; wins over the directory scope. */
+  paths?: string[];
+  /** Browsed directory, as the folder session holds it. */
+  rootPath?: string;
+  directory?: string;
+  force?: boolean;
+}
+
+export interface FaceLibraryStats {
+  analyzedAssets: number;
+  facesDetected: number;
+  persons: number;
+  pendingReviews: number;
+  unknownFaces: number;
+  clusters: number;
+}
+
+export interface FaceCapability {
+  available: boolean;
+  unavailableReason?: string;
+  running: boolean;
+  settings: FaceAnalyzerSettings;
+  stats: FaceLibraryStats;
+  progress?: FaceAnalysisProgress;
+  /** File that holds persons and confirmations; user data, not cache. */
+  peopleStorePath: string;
+}
+
+/**
+ * How the matcher behaves on this library, measured from the user's answers.
+ *
+ * The samples are biased: only faces the current threshold promoted to a
+ * candidate could be accepted or rejected, so this refines the current setting
+ * rather than replacing it outright.
+ */
+export interface FaceCalibration {
+  acceptedScores: number[];
+  rejectedScores: number[];
+  currentThreshold: number;
+  recommendedThreshold?: number;
+  separable: boolean;
+}
+
+/** The newest reversible person operation, if any. */
+export interface UndoableOperation {
+  kind: "mergePersons" | "removeFaces" | "assignFaces" | string;
+  personId: string;
+  faceCount: number;
+  otherPersonName?: string;
+}
+
+/** One face crop delivered as a leaseable media resource. */
+export interface FaceCropResource {
+  observationId: string;
+  descriptor: {
+    resourceId: string;
+    url: string;
+    mediaType: string;
+  };
+}
+
+/**
+ * The asset a face was detected on.
+ *
+ * A crop is keyed by observation, but "show me this photo" needs the asset, so
+ * the workbench resolves one before asking the main window to reveal it.
+ */
+export interface FaceAssetReveal {
+  observationId: string;
+  assetId: string;
+  assetPath: string;
+}
+
+/** One directory the workbench may scope a run to. */
+export interface FaceWorkbenchScope {
+  rootPath: string;
+  directory: string;
+}
+
+/**
+ * What the main window publishes to the face workbench window.
+ *
+ * The workbench has its own store, so the browse scope, the loaded selection,
+ * and the locale cross the window boundary as published state.
+ */
+export interface FaceWorkbenchContext {
+  locale: "zh-CN" | "en";
+  visiblePaths: string[];
+  browseScope?: FaceWorkbenchScope;
+}

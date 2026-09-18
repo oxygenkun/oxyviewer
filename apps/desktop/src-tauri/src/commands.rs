@@ -1,8 +1,10 @@
 mod about;
 mod external_apps;
+mod faces;
 mod folder;
 pub(crate) use about::*;
 pub(crate) use external_apps::*;
+pub(crate) use faces::*;
 mod library;
 mod metadata;
 mod preview;

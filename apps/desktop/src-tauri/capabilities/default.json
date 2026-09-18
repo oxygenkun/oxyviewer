@@ -2,7 +2,7 @@
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "default",
   "description": "Capabilities for the OxyViewer desktop window",
-  "windows": ["main", "debug-queues"],
+  "windows": ["main", "debug-queues", "face-workbench"],
   "permissions": [
     "core:default",
     "dialog:allow-open"

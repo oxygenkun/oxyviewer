@@ -13,6 +13,14 @@ override them.
 - [Folder drag-and-drop import](folder-drop-import-plan.md): implemented in
   0.1.3 (register, index, and status-bar feedback); remaining work is the
   real-device matrix and release-build comparison.
+- [Face recognition and people](face-people-plan.md): the analyzer, persistence
+  split, Host commands, review UI, and the durable non-cache person store are
+  implemented with OpenCV-parity and cache-deletion tests, plus face-crop
+  thumbnails, a loupe overlay for in-place correction, and tiled small-face
+  detection, reversible merge/detach, identity stability across rename, move,
+  and delete, threshold calibration from the user's own decisions, and
+  folder-scoped analysis, source-resolution detection for raster formats, and a
+  cross-language IPC contract test.
 
 Completed implementation plans are archived in
 [archive/plans](../archive/plans/README.md). Dated measurements and diagnoses

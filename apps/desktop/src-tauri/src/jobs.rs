@@ -1,4 +1,5 @@
 pub(crate) mod directory_tree;
+pub(crate) mod faces;
 pub(crate) mod metadata;
 pub(crate) mod preview;
 

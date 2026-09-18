@@ -1,0 +1,29 @@
+[package]
+name = "oxy-faces"
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+version.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+oxy-domain = { path = "../oxy-domain" }
+serde.workspace = true
+serde_json.workspace = true
+sha2.workspace = true
+thiserror.workspace = true
+# Pure-Rust ONNX inference: no system OpenCV, CUDA, or Python runtime is
+# required, and the analyzer stays portable across every supported target.
+tract-onnx = { version = "0.23", default-features = false }
+
+[dev-dependencies]
+image.workspace = true
+# The end-to-end people flow test drives the real persistence layer, so the
+# analyzer is verified against the store the application actually uses.
+oxy-library = { path = "../oxy-library" }
+serde.workspace = true
+serde_json.workspace = true
+sha2.workspace = true
+tempfile.workspace = true

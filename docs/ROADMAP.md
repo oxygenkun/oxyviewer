@@ -130,6 +130,60 @@ now fixture coverage, cancellation, platform packaging, and conflict safety.
 - [ ] Evaluate true reduced-resolution HEVC decode only where the packaged backend
   supports it and measurements beat the current embedded-preview path.
 
+### People and face recognition
+
+First user-facing analyzer-plugin feature; full scope and evidence in the
+[face recognition and people plan](tasks/face-people-plan.md).
+
+- [x] `oxy-domain` face/person contracts: normalized regions, machine
+  observations, clusters, persons, decisions, review queue, and analyzer
+  settings split by recomputation level
+- [x] `oxy-faces` crate: pure-Rust ONNX YuNet detection, 5-landmark alignment,
+  SFace embeddings, unknown-face clustering, and gallery matching, with no system
+  OpenCV/CUDA/Python dependency
+- [x] Pinned face-model downloads (`pnpm faces:prepare`) and OpenCV-generated
+  reference-parity tests for detection, alignment, and embeddings
+- [x] `oxy-library` persistence split: rebuildable observations/embeddings/
+  candidates/clusters versus user-owned persons, decisions, and decision events,
+  with decisions re-bound by region overlap across detector changes
+- [x] `oxy-fs::write_atomic` for crash-safe small user-data writes
+- [x] Background analysis queue with resume checkpoints, foreground yielding,
+  stale-revision rejection, and Tauri commands plus progress events
+- [x] People panel: analysis controls, recognition parameters, person list,
+  similar-face group naming, pending-confirmation queue with confirm/correct/
+  not-a-face, and undo
+- [x] End-to-end flow test over the real persistence layer (detect → label → new
+  asset → candidate → pending → confirm/correct) plus detector-change rebinding
+- [x] Durable non-SQLite user data (`oxy-userdata`, `app_data_dir/people.json`)
+  written atomically and authoritative over the SQLite projection, so
+  confirmations survive deleting the rebuildable cache; `DocumentStore` also
+  carries the cache settings and external-application list under the same
+  version/atomic-write/never-overwrite-an-unknown-file rules
+- [x] Face-crop thumbnails (`oxy-media::face_crop_jpeg` + `oxy-media://` resources with a
+  bounded encoded-byte cache) and a loupe face overlay with in-place
+  confirm / correct / not-a-face
+- [x] Tiled small-face detection with a user-visible toggle, measured against a
+  synthetic group photo (single pass recovers 24/32 faces at 3200 px and 0/72 at
+  4800 px; tiled recovers all)
+- [x] Merge persons, detach faces from a person, and a labelled undo backed by a
+  durable operation journal (`people.json` version 2), all verified across a
+  cache wipe
+- [x] Resume-from-checkpoint and stale-source rejection, the two release gates
+  for this feature, verified with the real models and library
+- [x] Identity stability across rename, move, and delete: face decisions follow
+  the bytes through the durable store and survive a cache wipe
+- [x] Threshold calibration from the user's own accepted/rejected score
+  distribution, with a suggested value and an explicit bias note
+- [x] Folder-scoped analysis: the run enumerates every indexed asset in the
+  browsed directory instead of only the pages the grid has loaded
+- [x] Detection at the source resolution for raster formats (the 512 px preview
+  bound was dropping small faces outright), with EXIF orientation applied and a
+  size cap; measured 24/32 vs 32/32 faces on a synthetic group photo
+- [x] Cross-language IPC contract test: registered commands, invoked commands,
+  emitted events, and listened events are checked against each other
+- [x] Packaged builds bundle the pinned models and their upstream license texts;
+  the runtime rejects an incomplete model pack
+
 ### Secondary-format reliability
 
 - [ ] Implement and validate a TIFF preview backend on Windows and Linux. The

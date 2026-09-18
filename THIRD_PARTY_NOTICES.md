@@ -14,6 +14,9 @@ Native runtime components:
 | libheif 1.23.4 | HEIF/HEIC decoding | Statically linked from the pinned source with the pinned FFmpeg decoder on macOS/Linux, and from the pinned vcpkg revision with the libde265 decoder on Windows; codec licenses reviewed per platform. libheif is LGPL-3.0-only; the MIT terms in its `COPYING` cover only the sample applications and language wrappers, which are not redistributed here |
 | libjpeg-turbo 3.1.3 | JPEG thumbnail decoding and tile coefficient stitching | Pinned upstream Git submodule, statically linked with SIMD; IJG/BSD-3-Clause/zlib notices retained in `3rdpart/libjpeg-turbo/LICENSE.md` and `README.ijg` |
 | ExifTool | Optional metadata compatibility/write worker | Separate process; Artistic/GPL terms reviewed before release |
+| YuNet face detection model 2023mar | Face detection in the optional people feature | Unmodified ONNX model from OpenCV Zoo at a pinned commit, MIT; SHA-256 `8f2383e4dd3cfbb4553ea8718107fc0423210dc964f9f4280604804ed2552fa4` |
+| SFace face recognition model 2021dec | Face embeddings in the optional people feature | Unmodified ONNX model from OpenCV Zoo at a pinned commit, Apache-2.0; SHA-256 `0ba9fbfa01b5270c96627c4ef784da859931e02f04419c829e83484087c34e79` |
+| tract (tract-onnx and its crates) | Pure-Rust ONNX inference for the face models; no native library is linked | Rust dependencies under MIT OR Apache-2.0, pinned in `Cargo.lock` |
 
 OxyViewer does not link Exiv2 because the product must retain the option of
 closed-source commercial distribution.

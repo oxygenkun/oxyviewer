@@ -17,8 +17,12 @@ use std::{
 use thiserror::Error;
 
 mod browsing;
+mod faces;
 mod tags;
 pub use browsing::DirectoryRead;
+pub use faces::{
+    DECISION_REBIND_IOU, FaceAnalysisTarget, StoredDecision, StoredFace, StoredFaceCrop,
+};
 
 const DEFAULT_PAGE_SIZE: usize = 250;
 const MAX_PAGE_SIZE: usize = 1_000;
@@ -47,6 +51,12 @@ pub enum LibraryError {
     TagHierarchyCycle,
     #[error("a tag with this name already exists at this level")]
     DuplicateTagName,
+    #[error("person name must not be empty")]
+    InvalidPersonName,
+    #[error("person was not found: {0}")]
+    MissingPerson(String),
+    #[error("face observation was not found: {0}")]
+    MissingFaceObservation(String),
 }
 
 pub struct Library {
@@ -387,6 +397,7 @@ impl Library {
             )?;
         }
         browsing::ensure_schema(&connection)?;
+        faces::ensure_schema(&connection)?;
         ensure_search_keys(&mut connection)?;
         normalize_root_order(&mut connection)?;
         let open_reader = || -> Result<Mutex<Connection>, rusqlite::Error> {
@@ -522,6 +533,7 @@ impl Library {
             ",
         )?;
         browsing::ensure_schema(&connection)?;
+        faces::ensure_schema(&connection)?;
         ensure_search_keys(&mut connection)?;
         normalize_root_order(&mut connection)?;
         let connection = Arc::new(Mutex::new(connection));

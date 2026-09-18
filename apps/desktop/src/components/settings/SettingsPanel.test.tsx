@@ -14,7 +14,47 @@ vi.mock("./RawDecoderPanel", () => ({
   RawDecoderPanel: () => <div data-testid="raw-decoder">RAW decoder</div>,
 }));
 vi.mock("@/lib/api", () => ({
+  cancelFaceAnalysis: vi.fn().mockResolvedValue(true),
   checkForUpdates: vi.fn(),
+  clearFaceDecision: vi.fn().mockResolvedValue(undefined),
+  createPerson: vi.fn(),
+  decideFace: vi.fn().mockResolvedValue(undefined),
+  deletePerson: vi.fn(),
+  getFaceCapability: vi.fn().mockResolvedValue({
+    available: true,
+    running: false,
+    settings: {
+      detectionConfidence: 0.9,
+      nmsThreshold: 0.3,
+      maxFacesPerAsset: 64,
+      minFacePixels: 24,
+      detectSmallFaces: true,
+      matchSensitivity: "balanced",
+      matchThreshold: 0.363,
+      clusterThreshold: 0.363,
+    },
+    stats: { analyzedAssets: 0, facesDetected: 0, persons: 0, pendingReviews: 0, unknownFaces: 0, clusters: 0 },
+    peopleStorePath: "demo/people.json",
+  }),
+  getFaceClusters: vi.fn().mockResolvedValue([]),
+  getFaceCalibration: vi.fn().mockResolvedValue({
+    acceptedScores: [],
+    rejectedScores: [],
+    currentThreshold: 0.363,
+    separable: false,
+  }),
+  getPersonUndo: vi.fn().mockResolvedValue(null),
+  mergePersons: vi.fn(),
+  removeFacesFromPerson: vi.fn(),
+  assignFacesToPerson: vi.fn(),
+  undoPersonOperation: vi.fn().mockResolvedValue(null),
+  getFaceReviewPage: vi.fn().mockResolvedValue({ items: [], total: 0, nextCursor: null }),
+  listPersons: vi.fn().mockResolvedValue([]),
+  onFaceAnalysisProgress: vi.fn().mockResolvedValue(() => {}),
+  onFaceLibraryUpdated: vi.fn().mockResolvedValue(() => {}),
+  renamePerson: vi.fn(),
+  startFaceAnalysis: vi.fn(),
+  updateFaceAnalyzerSettings: vi.fn(),
   chooseCacheParent: vi.fn().mockResolvedValue(null),
   clearPreviewCache: vi.fn(),
   getAppInfo: vi.fn().mockResolvedValue({
@@ -83,6 +123,11 @@ it("separates settings into tabs and renders only the selected module", async ()
   await clickTab("媒体与缓存");
   expect(host.querySelector("[role=tabpanel]")?.textContent).toContain("预览缓存");
   expect(host.querySelector('[data-testid="raw-decoder"]')).not.toBeNull();
+
+  // The face module is no longer a settings tab; it has its own window, opened
+  // from the sidebar button beside Settings.
+  expect([...host.querySelectorAll("[role=tab]")].some((tab) =>
+    tab.textContent?.includes("人物"))).toBe(false);
 
   await clickTab("外部应用");
   expect(host.querySelector('[data-testid="external-apps"]')).not.toBeNull();

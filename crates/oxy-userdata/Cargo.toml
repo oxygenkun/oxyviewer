@@ -1,0 +1,21 @@
+[package]
+name = "oxy-userdata"
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+version.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+oxy-domain = { path = "../oxy-domain" }
+oxy-fs = { path = "../oxy-fs" }
+parking_lot.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+
+[dev-dependencies]
+oxy-library = { path = "../oxy-library" }
+tempfile.workspace = true

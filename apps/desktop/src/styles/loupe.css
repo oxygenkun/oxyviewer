@@ -443,3 +443,98 @@
 .filmstrip__tags { display: flex; gap: 3px; min-width: 0; overflow: hidden; font-size: 0.5rem; line-height: 12px; }
 .filmstrip__tags:empty { display: none; }
 .filmstrip__tags > span { min-width: 0; overflow: hidden; padding: 0 3px; border-radius: 3px; color: #b4bdaa; background: #242b22; text-overflow: ellipsis; white-space: nowrap; }
+
+/* Face boxes over the loupe image. The container must not swallow pan/zoom, so
+   only the anchor and the action strip accept pointer events. */
+.loupe__face-overlay {
+  position: absolute;
+  z-index: 4;
+  inset: 0;
+  overflow: hidden;
+  pointer-events: none;
+}
+
+.loupe__face-box {
+  position: absolute;
+  box-sizing: border-box;
+  border: 1px solid #4a9eff;
+  filter: drop-shadow(0 0 2px rgb(0 0 0 / 90%));
+}
+
+.loupe__face-box.is-pending { border-color: #d9a441; }
+.loupe__face-box.is-confirmed { border-color: #77df45; }
+.loupe__face-box.is-rejected,
+.loupe__face-box.is-notFace { border-color: #8a8f98; border-style: dashed; }
+.loupe__face-box.is-selected { border-width: 2px; }
+
+.loupe__face-anchor {
+  position: absolute;
+  left: 0;
+  top: -20px;
+  max-width: 100%;
+  overflow: hidden;
+  padding: 1px 5px;
+  border: none;
+  border-radius: 4px;
+  background: rgb(0 0 0 / 72%);
+  color: #f2f4f7;
+  font-size: 11px;
+  line-height: 16px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  pointer-events: auto;
+  cursor: pointer;
+}
+
+.loupe__face-actions {
+  position: absolute;
+  left: 0;
+  top: 100%;
+  z-index: 5;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px;
+  margin-top: 4px;
+  padding: 6px;
+  border: 1px solid var(--border, #2c3440);
+  border-radius: 8px;
+  background: rgb(12 14 18 / 94%);
+  pointer-events: auto;
+}
+
+.loupe__face-actions button {
+  padding: 3px 7px;
+  border: 1px solid var(--border, #2c3440);
+  border-radius: 6px;
+  background: rgb(255 255 255 / 6%);
+  color: inherit;
+  font-size: 11px;
+  cursor: pointer;
+}
+
+.loupe__face-actions button:disabled { opacity: 0.5; cursor: default; }
+
+.loupe__face-actions form {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.loupe__face-actions input {
+  width: 96px;
+  padding: 3px 6px;
+  border: 1px solid var(--border, #2c3440);
+  border-radius: 6px;
+  background: transparent;
+  color: inherit;
+  font-size: 11px;
+}
+
+.loupe__face-crop {
+  display: block;
+  width: 48px;
+  height: 48px;
+  border-radius: 6px;
+  object-fit: cover;
+}

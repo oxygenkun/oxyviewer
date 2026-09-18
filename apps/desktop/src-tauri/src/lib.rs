@@ -151,6 +151,16 @@ pub fn run() {
                 }
                 return;
             }
+            if window.label() == FACE_WORKBENCH_WINDOW_LABEL {
+                // The workbench keeps its split layout and review state across
+                // close/reopen, exactly like the queue window.
+                if let tauri::WindowEvent::CloseRequested { api, .. } = event {
+                    api.prevent_close();
+                    let _ = window.hide();
+                    let _ = window.emit("face-workbench-visibility", false);
+                }
+                return;
+            }
             if window.label() == "main"
                 && matches!(
                     event,
@@ -183,6 +193,10 @@ pub fn run() {
             cache.schedule_prune(None);
             let library = Arc::new(Library::open(&data_dir.join("oxyviewer.sqlite"))?);
             let external_apps = Arc::new(state::external_apps::ExternalAppManager::load(data_dir.join("external-apps.json")));
+            let people = Arc::new(state::people::PeopleService::load(
+                library.clone(),
+                data_dir.join("people.json"),
+            )?);
             let metadata_provider = Arc::new(ProviderManager::load(data_dir));
             let files = Arc::new(FsCatalog::default());
             let directory_tree_queue =
@@ -200,6 +214,25 @@ pub fn run() {
                 cache.clone(),
             );
             let library_index_queue = jobs::LibraryIndexQueue::new(library.clone());
+            let face_models = jobs::faces::resolve_model_paths(app.handle());
+            if face_models.is_none() {
+                eprintln!(
+                    "face models are not installed; the people feature is unavailable until \
+                     `pnpm faces:prepare` runs or the model pack is bundled"
+                );
+            }
+            let face_crops = Arc::new(state::face_crops::FaceCropService::new(
+                library.clone(),
+                cache.clone(),
+                media_resources.clone(),
+            ));
+            let face_queue = jobs::faces::FaceAnalysisQueue::new(
+                app.handle().clone(),
+                library.clone(),
+                cache.clone(),
+                people.clone(),
+                face_models,
+            );
             app.manage(AppState {
                 external_apps,
                 files,
@@ -211,6 +244,9 @@ pub fn run() {
                 metadata,
                 metadata_queue,
                 preview_queue,
+                face_queue,
+                people,
+                face_crops,
                 debug_snapshots: Default::default(),
                 directory_tree_queue,
                 library_index_queue,
@@ -279,9 +315,38 @@ pub fn run() {
             check_for_updates,
             open_about_link,
             get_media_resource_stats,
+            get_face_capability,
+            get_face_calibration,
+            update_face_analyzer_settings,
+            start_face_analysis,
+            cancel_face_analysis,
+            list_persons,
+            create_person,
+            rename_person,
+            link_person_tag,
+            delete_person,
+            decide_face,
+            merge_persons,
+            remove_faces_from_person,
+            assign_faces_to_person,
+            get_person_undo,
+            undo_person_operation,
+            clear_face_decision,
+            get_face_review_page,
+            get_face_crops,
+            get_asset_face_reviews,
+            get_face_clusters,
+            get_asset_face_observations,
+            resolve_face_observation,
             get_debug_queue_snapshot,
             open_debug_queue_window,
             close_debug_queue_window,
+            open_face_workbench_window,
+            close_face_workbench_window,
+            is_face_workbench_window_open,
+            publish_face_workbench_context,
+            request_face_workbench_context,
+            notify_face_asset_reveal,
             write_perf_report
         ])
         .run(tauri::generate_context!())

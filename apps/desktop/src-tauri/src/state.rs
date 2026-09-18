@@ -1,5 +1,7 @@
 pub(crate) mod cache;
 pub(crate) mod external_apps;
+pub(crate) mod face_crops;
+pub(crate) mod people;
 
 use crate::{jobs, providers};
 use oxy_fs::FsCatalog;
@@ -18,6 +20,9 @@ pub(crate) struct AppState {
     pub(crate) metadata: oxy_metadata::MetadataFacade,
     pub(crate) metadata_queue: jobs::metadata::MetadataQueue,
     pub(crate) preview_queue: jobs::preview::PreviewQueue,
+    pub(crate) face_queue: jobs::faces::FaceAnalysisQueue,
+    pub(crate) people: Arc<people::PeopleService>,
+    pub(crate) face_crops: Arc<face_crops::FaceCropService>,
     pub(crate) debug_snapshots: Arc<jobs::DebugSnapshotCache>,
     pub(crate) directory_tree_queue: jobs::directory_tree::DirectoryTreeQueue,
     pub(crate) library_index_queue: jobs::LibraryIndexQueue,

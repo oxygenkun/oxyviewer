@@ -234,6 +234,7 @@ cargo test --workspace
 - [ ] sidecar 是否和源文件保持一致？
 - [ ] 临时文件和失败路径是否可恢复？
 - [ ] 是否把用户数据误当成可重建缓存？
+- [ ] 新的用户数据是否走 `oxy-userdata::DocumentStore`（一域一文件、版本信封、原子写、先持久化后可见），而不是自己 `fs::write`？
 
 ### 验证
 

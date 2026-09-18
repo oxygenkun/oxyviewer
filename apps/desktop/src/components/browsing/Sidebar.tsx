@@ -13,6 +13,7 @@ import {
   LoaderCircle,
   Plus,
   RefreshCw,
+  ScanFace,
   Search,
   Settings,
   Trash2,
@@ -55,6 +56,9 @@ interface SidebarProps {
   isRefreshing: boolean;
   onDismissOnboarding: () => void;
   onSettings: () => void;
+  /** Opens the dedicated face analysis and labeling window. */
+  onFaceWorkbench: () => void;
+  faceWorkbenchOpen: boolean;
   folderSort: FolderSort;
   onFolderSortChange: (sort: FolderSort) => void;
   folderDragEnabled: boolean;
@@ -283,6 +287,8 @@ export function Sidebar({
   isRefreshing,
   onDismissOnboarding,
   onSettings,
+  onFaceWorkbench,
+  faceWorkbenchOpen,
   folderSort,
   onFolderSortChange,
   folderDragEnabled,
@@ -1012,6 +1018,17 @@ export function Sidebar({
       </div>
 
       <div className="sidebar__bottom">
+        {/* One icon button per tool, sized like Settings, so later plugins can
+            join the same row without a layout pass. */}
+        <button
+          className={`sidebar__bottom-btn${faceWorkbenchOpen ? " is-active" : ""}`}
+          title={t("faceWorkbenchOpen")}
+          aria-label={t("faceWorkbenchOpen")}
+          aria-pressed={faceWorkbenchOpen}
+          onClick={onFaceWorkbench}
+        >
+          <ScanFace size={15} />
+        </button>
         <button
           className="sidebar__bottom-btn"
           title={t("settings")}

@@ -34,17 +34,21 @@ RAW/HIF files are not converted or replaced with preview-cache files.
 | `lib/externalApps.ts` | Shared query key and ordering/removal transformations |
 | `lib/api.ts` | All IPC and native program selection wrappers |
 | `oxy-domain::external_apps` | camelCase configuration and launch-result contracts |
-| Tauri `state::external_apps` | Versioned configuration persistence and lookup by ID |
+| Tauri `state::external_apps` | Configuration lookup by ID over `oxy-userdata::DocumentStore` |
 | Tauri `commands::external_apps` | Thin command dispatch to blocking workers |
 | `oxy-fs::external_apps` | Path validation and OS application/chooser launch |
 
 `external-apps.json` lives in the application data directory independently of
-the rebuildable library and preview cache. Version 1 contains `version`, ordered
-`apps` (`id`, `name`, `executablePath`), and nullable `defaultAppId`. Writes use a
-temporary file in the same directory, flush/sync, and atomic replacement. Failed
-writes do not publish new in-memory settings. Concurrent writes are serialized
-separately from the short snapshot read lock. Invalid settings are reported
-rather than overwritten on load.
+the rebuildable library and preview cache, and is written through
+`oxy-userdata::DocumentStore`: the same version envelope, atomic replacement, and
+persist-before-publish rules as `people.json` and `cache-settings.json`. Version 1
+contains `version`, ordered `apps` (`id`, `name`, `executablePath`), and nullable
+`defaultAppId`. An unparseable file is moved aside as `external-apps.json.corrupt`
+and the list starts empty, so recovery never writes over bytes it did not
+understand. A file from a newer build, or a document that fails validation, is
+left exactly as it is and every write is refused until the application is
+upgraded. Invalid settings submitted by the user are reported rather than
+overwritten.
 
 Opening a menu reads already loaded settings, with no executable discovery,
 metadata request or per-program disk checks. Saves validate newly added or

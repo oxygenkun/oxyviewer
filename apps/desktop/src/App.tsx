@@ -14,9 +14,14 @@ import {
   addLibraryRoot,
   chooseFolder,
   copyText,
+  isFaceWorkbenchOpen,
   isTauri,
   listAssets,
   listLibraryRoots,
+  onFaceAssetReveal,
+  onFaceWorkbenchContextRequest,
+  onFaceWorkbenchVisibility,
+  openFaceWorkbench,
   openFolder,
   openInFileManager,
   openAssetWithApplication,
@@ -27,6 +32,7 @@ import {
   onLibraryIndexUpdated,
   onImageProjectionUpdated,
   onMetadataProjectionUpdated,
+  publishFaceWorkbenchContext,
   refreshDirectory,
   requestMetadata,
   removeLibraryRoot,
@@ -67,6 +73,7 @@ import {
   useMetadataProjectionStore,
 } from "@/lib/projection/metadataProjection";
 import { isSameOrDescendantPath, parentFolderPath, relativeFolderPath } from "@/lib/browse/folderPaths";
+import { faceRevealStep } from "@/lib/people/faceReveal";
 import { translate } from "@/lib/i18n";
 import { LAYOUT_SIZE_LIMITS, maxInspectorWidth } from "@/lib/ui/layoutSizing";
 import {
@@ -82,9 +89,18 @@ import {
   saveWorkspace,
 } from "@/lib/browse/workspacePersistence";
 import { useWorkspaceStore } from "./store";
-import type { AssetQuery, DirectoryBrowseProgress, DirectoryTreeSnapshot, FolderSession, MetadataProjection, PerfScenario } from "./types";
+import type { AssetQuery, DirectoryBrowseProgress, DirectoryTreeSnapshot, FaceAssetReveal, FaceWorkbenchContext, FolderSession, MetadataProjection, PerfScenario } from "./types";
 
 const NO_METADATA_RECORDS: Record<string, MetadataProjection> = {};
+
+/**
+ * Upper bound on the loaded selection handed to the face workbench.
+ *
+ * "Analyze what is loaded" means the grid's paged-in assets; past a couple of
+ * thousand the folder or library scope is the honest tool, and this keeps a
+ * cross-window event from growing with the whole directory.
+ */
+const FACE_WORKBENCH_SELECTION_LIMIT = 2000;
 
 /** One status-bar message; the app's single place for transient feedback. */
 interface StatusNotice {
@@ -107,10 +123,12 @@ export function App({ perfScenario }: { perfScenario?: PerfScenario }) {
   const [error, setError] = useState<string>();
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [noticeExpanded, setNoticeExpanded] = useState(false);
+  const [faceWorkbenchOpen, setFaceWorkbenchOpen] = useState(false);
+  const [faceReveal, setFaceReveal] = useState<FaceAssetReveal>();
   const queryClient = useQueryClient();
   const {
     view, thumbnailOrientation, activeId, selectedIds, inspectorOpen, leftPanelOpen, settingsOpen, locale,
-    search, tagIds, tagMatch, clearSearch, kind, minimumRating, colorLabels, pickLabels, sort, direction, clearSelection, select, setThumbnailOrientation, toggleSettings,
+    search, tagIds, tagMatch, clearSearch, kind, minimumRating, colorLabels, pickLabels, sort, direction, clearSelection, select, setThumbnailOrientation, setView, toggleSettings,
     leftPanelWidth, inspectorWidth, setLeftPanelWidth, setInspectorWidth, uiFontScale,
   } = useWorkspaceStore();
   const appShellRef = useRef<HTMLDivElement>(null);
@@ -118,6 +136,37 @@ export function App({ perfScenario }: { perfScenario?: PerfScenario }) {
   const activeDirectoryNoticeRef = useRef<string | undefined>(undefined);
   const filteredFocusRef = useRef<string | undefined>(undefined);
   const t = useCallback((key: Parameters<typeof translate>[1]) => translate(locale, key), [locale]);
+
+  // The face workbench lives in its own window. The main window tracks whether
+  // it is open so it can publish the browse scope the workbench scopes runs to.
+  useEffect(() => {
+    let disposed = false;
+    let unlisten: (() => void) | undefined;
+    void onFaceWorkbenchVisibility(setFaceWorkbenchOpen).then((stop) => {
+      if (disposed) stop();
+      else unlisten = stop;
+    });
+    void isFaceWorkbenchOpen()
+      .then((open) => { if (!disposed) setFaceWorkbenchOpen(open); })
+      .catch(() => undefined);
+    return () => {
+      disposed = true;
+      unlisten?.();
+    };
+  }, []);
+
+  useEffect(() => {
+    let disposed = false;
+    let unlisten: (() => void) | undefined;
+    void onFaceAssetReveal((reveal) => setFaceReveal(reveal)).then((stop) => {
+      if (disposed) stop();
+      else unlisten = stop;
+    });
+    return () => {
+      disposed = true;
+      unlisten?.();
+    };
+  }, []);
 
   useLayoutEffect(() => {
     document.documentElement.style.fontSize = `${uiFontScale * 100}%`;
@@ -450,6 +499,81 @@ export function App({ perfScenario }: { perfScenario?: PerfScenario }) {
     isError: assetsQuery.isError,
     fetchNextPage: assetsQuery.fetchNextPage,
   });
+
+  // The workbench is a separate window with its own store, so the scope it may
+  // run against travels as published state instead of being re-derived there.
+  const faceWorkbenchContext = useMemo<FaceWorkbenchContext>(() => ({
+    locale,
+    visiblePaths: assets
+      .slice(0, FACE_WORKBENCH_SELECTION_LIMIT)
+      .map((asset) => asset.path),
+    browseScope: activeSession && currentPath
+      ? { rootPath: activeSession.rootPath, directory: currentPath }
+      : undefined,
+  }), [activeSession, assets, currentPath, locale]);
+  const faceWorkbenchContextRef = useRef(faceWorkbenchContext);
+  faceWorkbenchContextRef.current = faceWorkbenchContext;
+  useEffect(() => {
+    if (!faceWorkbenchOpen) return;
+    void publishFaceWorkbenchContext(faceWorkbenchContext);
+  }, [faceWorkbenchContext, faceWorkbenchOpen]);
+  useEffect(() => {
+    let disposed = false;
+    let unlisten: (() => void) | undefined;
+    void onFaceWorkbenchContextRequest(() => {
+      // A freshly mounted workbench asks once; answer even if nothing changed.
+      void publishFaceWorkbenchContext(faceWorkbenchContextRef.current);
+    }).then((stop) => {
+      if (disposed) stop();
+      else unlisten = stop;
+    });
+    return () => {
+      disposed = true;
+      unlisten?.();
+    };
+  }, []);
+
+  // "Show me this photo" from the workbench: switch to its folder, wait for the
+  // directory's pages to reach it, then open the loupe on that asset.
+  const revealDirectorySettled = progressivelyFilterMetadata
+    ? !progressiveWorkPending
+    : !assetsQuery.isLoading && !assetsQuery.isFetching && !assetsQuery.hasNextPage;
+  useEffect(() => {
+    if (!faceReveal) return;
+    const step = faceRevealStep({
+      reveal: faceReveal,
+      sessions,
+      activeRoot: workspace.activeRoot,
+      currentDirectory: currentPath,
+      visibleAssetIds: assets.map((asset) => asset.id),
+      directorySettled: revealDirectorySettled,
+      filtersActive: Boolean(search || tagIds.length || metadataFiltersActive),
+    });
+    if (step.kind === "navigate") {
+      notifyActiveDirectory(step.session, step.directory);
+      setWorkspace((current) => ({
+        ...current,
+        activeRoot: step.session.rootPath,
+        currentDirectories: { ...current.currentDirectories, [step.session.rootPath]: step.directory },
+      }));
+      return;
+    }
+    if (step.kind === "select") {
+      select(step.assetId);
+      setView("loupe");
+      setFaceReveal(undefined);
+      return;
+    }
+    if (step.kind === "unresolved") {
+      setError(t(step.reason === "outsideLibrary"
+        ? "faceRevealOutsideLibrary"
+        : step.reason === "filtered" ? "faceRevealFiltered" : "faceRevealNotFound")
+        .replace("{name}", faceReveal.assetPath));
+      setFaceReveal(undefined);
+    }
+  }, [assets, currentPath, faceReveal, metadataFiltersActive, notifyActiveDirectory,
+    revealDirectorySettled, search, select, sessions, setView, t, tagIds, workspace.activeRoot]);
+
   const filteredFocusAction = focusRestoreAction(
     assets,
     filteredFocusRestoreId,
@@ -808,6 +932,18 @@ export function App({ perfScenario }: { perfScenario?: PerfScenario }) {
     }
   }, []);
 
+  /** Opens (or focuses) the dedicated face analysis and labeling window. */
+  const handleOpenFaceWorkbench = useCallback(async () => {
+    setError(undefined);
+    try {
+      await openFaceWorkbench();
+      // Publish immediately rather than waiting for the visibility event.
+      setFaceWorkbenchOpen(true);
+    } catch (cause) {
+      setError(String(cause));
+    }
+  }, []);
+
   return (
     <div
       ref={appShellRef}
@@ -833,6 +969,8 @@ export function App({ perfScenario }: { perfScenario?: PerfScenario }) {
         isRefreshing={isRefreshing}
         onDismissOnboarding={dismissOnboarding}
         onSettings={toggleSettings}
+        onFaceWorkbench={() => void handleOpenFaceWorkbench()}
+        faceWorkbenchOpen={faceWorkbenchOpen}
         folderSort={folderSort}
         onFolderSortChange={handleFolderSortChange}
         folderDragEnabled={folderDragEnabled && !restoringFolders}
@@ -991,7 +1129,12 @@ export function App({ perfScenario }: { perfScenario?: PerfScenario }) {
         itemCount={dropState.itemCount}
         t={t}
       />
-      {settingsOpen ? <SettingsPanel t={t} activeAsset={assets.find((asset) => asset.id === activeId)} /> : null}
+      {settingsOpen ? (
+        <SettingsPanel
+          t={t}
+          activeAsset={assets.find((asset) => asset.id === activeId)}
+        />
+      ) : null}
       {perfScenario ? (
         <PerfHarness
           scenario={perfScenario}

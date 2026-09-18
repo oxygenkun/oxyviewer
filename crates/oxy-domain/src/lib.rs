@@ -7,6 +7,8 @@ mod external_apps;
 pub use external_apps::*;
 mod about;
 pub use about::*;
+mod faces;
+pub use faces::*;
 
 pub type AssetId = String;
 pub type JobId = String;
@@ -333,6 +335,15 @@ pub enum RenderLevel {
     Preview,
     /// Best representation available for pixel inspection.
     Full,
+}
+
+/// Whether [`RenderLevel::Full`] resolves to the source file itself.
+///
+/// True for the rasters whose full image *is* the file, so looking closer costs
+/// one decode and no re-development. RAW, HEIF, and TIFF resolve `Full` to a
+/// development, a tile session, or a system artifact instead.
+pub fn full_resolution_is_the_source(kind: AssetKind) -> bool {
+    matches!(kind, AssetKind::Jpeg | AssetKind::Png | AssetKind::Webp)
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, PartialOrd, Ord)]
