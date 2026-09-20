@@ -35,9 +35,24 @@ export function replacementAssetIdAfterRemoval(
   assets: readonly Pick<AssetSummary, "id">[],
   removedId: string,
 ): string | undefined {
-  const removedIndex = assets.findIndex((asset) => asset.id === removedId);
-  if (removedIndex < 0) return undefined;
-  return assets[removedIndex + 1]?.id ?? assets[removedIndex - 1]?.id;
+  return replacementAssetIdAfterRemovals(assets, [removedId], removedId);
+}
+
+export function replacementAssetIdAfterRemovals(
+  assets: readonly Pick<AssetSummary, "id">[],
+  removedIds: readonly string[],
+  anchorId: string | undefined,
+): string | undefined {
+  const removed = new Set(removedIds);
+  const anchorIndex = anchorId ? assets.findIndex((asset) => asset.id === anchorId) : -1;
+  if (anchorIndex < 0 || !removed.has(assets[anchorIndex].id)) return undefined;
+  for (let index = anchorIndex + 1; index < assets.length; index += 1) {
+    if (!removed.has(assets[index].id)) return assets[index].id;
+  }
+  for (let index = anchorIndex - 1; index >= 0; index -= 1) {
+    if (!removed.has(assets[index].id)) return assets[index].id;
+  }
+  return undefined;
 }
 
 export function gridRowForAsset(assetIndex: number, columns: number): number {

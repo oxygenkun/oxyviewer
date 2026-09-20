@@ -6,6 +6,7 @@ import {
   gridRowCount,
   gridRowForAsset,
   replacementAssetIdAfterRemoval,
+  replacementAssetIdAfterRemovals,
   virtualAssetCount,
 } from "./assetViewPosition";
 
@@ -38,6 +39,9 @@ describe("asset view position", () => {
     expect(replacementAssetIdAfterRemoval(assets, "e")).toBe("d");
     expect(replacementAssetIdAfterRemoval([{ id: "only" }], "only")).toBeUndefined();
     expect(replacementAssetIdAfterRemoval(assets, "missing")).toBeUndefined();
+    expect(replacementAssetIdAfterRemovals(assets, ["b", "c", "d"], "c")).toBe("e");
+    expect(replacementAssetIdAfterRemovals(assets, ["c", "d", "e"], "d")).toBe("b");
+    expect(replacementAssetIdAfterRemovals(assets, assets.map((asset) => asset.id), "c")).toBeUndefined();
   });
 
   it("maps the active asset to its virtual grid row", () => {

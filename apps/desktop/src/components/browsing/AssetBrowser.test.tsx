@@ -21,6 +21,7 @@ const virtual = vi.hoisted(() => ({
 const api = vi.hoisted(() => ({
   scanBurstGroups: vi.fn(),
 }));
+const trashAssets = vi.fn();
 
 vi.mock("@tanstack/react-virtual", () => {
   // Mirror the real hook: the instance is stable while its options change per render.
@@ -57,7 +58,11 @@ vi.mock("@/lib/api", async (importOriginal) => {
   };
 });
 
-vi.mock("./Thumbnail", () => ({ Thumbnail: () => null }));
+vi.mock("./Thumbnail", () => ({
+  Thumbnail: ({ onContextMenu }: { onContextMenu?: React.MouseEventHandler<HTMLSpanElement> }) => (
+    <span className="thumbnail" onContextMenu={onContextMenu} />
+  ),
+}));
 
 class ResizeObserverStub {
   observe() {}
@@ -92,7 +97,7 @@ const render = async (view: ViewMode, renderedAssets = assets) => {
         hasNextPage={false}
         isFetchingNextPage={false}
         fetchNextPage={vi.fn()}
-        onTrashAsset={vi.fn()}
+        onTrashAssets={trashAssets}
         onCopyAssetPath={vi.fn()}
         onOpenInFileManager={vi.fn()}
         onOpenExternal={vi.fn()}
@@ -119,6 +124,7 @@ beforeEach(() => {
   virtual.scrollToIndex.mockClear();
   api.scanBurstGroups.mockReset();
   api.scanBurstGroups.mockResolvedValue([]);
+  trashAssets.mockReset();
   useWorkspaceStore.setState({
     view: "grid",
     thumbnailOrientation: "landscape",
@@ -166,6 +172,48 @@ it("keeps the selected photo in view when the grid orientation changes", async (
   expect(virtual.measure).toHaveBeenCalled();
   expect(virtual.scrollToIndex).toHaveBeenCalledWith(3, { align: "auto" });
   expect(virtual.scrollToIndex).not.toHaveBeenCalledWith(expect.anything(), { align: "center" });
+});
+
+it("supports shift and control multi-selection while styling only the focus as active", async () => {
+  await render("grid");
+  const first = host.querySelector<HTMLButtonElement>('button[title="/demo/a1.jpg"]')!;
+  const fourth = host.querySelector<HTMLButtonElement>('button[title="/demo/a4.jpg"]')!;
+  const sixth = host.querySelector<HTMLButtonElement>('button[title="/demo/a6.jpg"]')!;
+
+  await act(async () => first.click());
+  await act(async () => fourth.dispatchEvent(new MouseEvent("click", { bubbles: true, shiftKey: true })));
+  expect(useWorkspaceStore.getState()).toMatchObject({
+    selectedIds: ["a1", "a2", "a3", "a4"],
+    activeId: "a4",
+  });
+  expect(first.classList.contains("is-selected")).toBe(true);
+  expect(first.classList.contains("is-active")).toBe(false);
+  expect(fourth.classList.contains("is-active")).toBe(true);
+
+  await act(async () => sixth.dispatchEvent(new MouseEvent("click", { bubbles: true, ctrlKey: true })));
+  expect(useWorkspaceStore.getState().selectedIds).toEqual(["a1", "a2", "a3", "a4", "a6"]);
+  expect(sixth.classList.contains("is-active")).toBe(true);
+  expect(fourth.classList.contains("is-active")).toBe(false);
+});
+
+it("deletes the current multi-selection from the context menu", async () => {
+  await render("grid");
+  const first = host.querySelector<HTMLButtonElement>('button[title="/demo/a1.jpg"]')!;
+  const second = host.querySelector<HTMLButtonElement>('button[title="/demo/a2.jpg"]')!;
+  await act(async () => first.click());
+  await act(async () => second.dispatchEvent(new MouseEvent("click", { bubbles: true, ctrlKey: true })));
+  await act(async () => first.querySelector(".thumbnail")?.dispatchEvent(new MouseEvent("contextmenu", { bubbles: true })));
+
+  const deleteButton = [...document.querySelectorAll<HTMLButtonElement>('[role="menuitem"]')]
+    .find((button) => button.textContent === "deleteSelected".replace("{count}", "2"));
+  expect(deleteButton?.textContent).toBe("deleteSelected");
+  await act(async () => deleteButton?.click());
+  expect(document.querySelector('[role="alertdialog"]')?.textContent).toContain("trashConfirmMultipleBody");
+
+  const confirm = [...document.querySelectorAll<HTMLButtonElement>(".trash-confirm-dialog button")]
+    .find((button) => button.textContent === "confirmTrash");
+  await act(async () => confirm?.click());
+  expect(trashAssets).toHaveBeenCalledWith([assets[1], assets[2]]);
 });
 
 it("expands a collapsed burst from its cover and updates the virtual row count", async () => {

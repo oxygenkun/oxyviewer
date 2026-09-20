@@ -28,11 +28,18 @@ interface FilmstripProps {
 export const Filmstrip = memo(function Filmstrip({ active, assets, nearbyPreviewAssets, total, fetchNextPage,
   hasNextPage, isFetchingNextPage, onAssetContextMenu }: FilmstripProps) {
   const select = useWorkspaceStore((state) => state.select);
+  const selectRange = useWorkspaceStore((state) => state.selectRange);
+  const selectedIds = useWorkspaceStore((state) => state.selectedIds);
   const filmstripHeight = useWorkspaceStore((state) => state.filmstripHeight);
   const thumbnailOrientation = useWorkspaceStore((state) => state.thumbnailOrientation);
   const loupeMetadataVisible = useWorkspaceStore((state) => state.loupeMetadataVisible);
   const filmstripRef = useRef<HTMLDivElement>(null);
   const activeIndex = assets.indexOf(active);
+  const assetIds = useMemo(() => assets.map((asset) => asset.id), [assets]);
+  const handleSelect = useCallback((id: string, additive: boolean, range: boolean) => {
+    if (range) selectRange(assetIds, id, additive);
+    else select(id, additive);
+  }, [assetIds, select, selectRange]);
   const [filmstripSchedule] = useState(() => new PreviewScheduleScope("loupe-filmstrip"));
   const filmstripItemSize = filmstripItemWidth(filmstripHeight, thumbnailOrientation);
   const filmstripVirtualizer = useVirtualizer({
@@ -164,7 +171,8 @@ export const Filmstrip = memo(function Filmstrip({ active, assets, nearbyPreview
                 key={asset.id}
                 active={active.id === asset.id}
                 asset={asset}
-                onSelect={select}
+                selected={selectedIds.includes(asset.id)}
+                onSelect={handleSelect}
                 onContextMenu={onAssetContextMenu}
                 rank={viewportRankById.get(asset.id)
                   ?? visibleFilmstripIds.length + Math.abs(item.index - activeIndex)}
@@ -184,7 +192,8 @@ export const Filmstrip = memo(function Filmstrip({ active, assets, nearbyPreview
 interface FilmstripItemProps {
   active: boolean;
   asset: AssetSummary;
-  onSelect: (id: string) => void;
+  selected: boolean;
+  onSelect: (id: string, additive: boolean, range: boolean) => void;
   onContextMenu: (event: React.MouseEvent, asset: AssetSummary) => void;
   rank: number;
   showMetadata: boolean;
@@ -196,6 +205,7 @@ interface FilmstripItemProps {
 const FilmstripItem = memo(function FilmstripItem({
   active,
   asset,
+  selected,
   onSelect,
   onContextMenu,
   rank,
@@ -204,7 +214,9 @@ const FilmstripItem = memo(function FilmstripItem({
   size,
   visible,
 }: FilmstripItemProps) {
-  const onClick = useCallback(() => onSelect(asset.id), [onSelect, asset.id]);
+  const onClick = useCallback((event: React.MouseEvent) => {
+    onSelect(asset.id, event.metaKey || event.ctrlKey, event.shiftKey);
+  }, [onSelect, asset.id]);
   const handleContextMenu = useCallback((event: React.MouseEvent) => onContextMenu(event, asset), [onContextMenu, asset]);
   const style = useMemo(() => ({ transform: `translateX(${start}px)`, width: size }), [start, size]);
   const tagsQuery = useQuery({
@@ -217,7 +229,7 @@ const FilmstripItem = memo(function FilmstripItem({
   return (
     <button
       data-filmstrip-asset-id={asset.id}
-      className={active ? "is-active" : ""}
+      className={`${selected ? "is-selected" : ""}${active ? " is-active" : ""}`}
       onClick={onClick}
       onContextMenu={handleContextMenu}
       style={style}

@@ -375,7 +375,8 @@
 .filmstrip--portrait button { min-width: 48px; aspect-ratio: .68; }
 .filmstrip__metadata { display: flex; align-items: center; justify-content: center; gap: 4px; min-width: 0; height: 14px; overflow: hidden; }
 .filmstrip__metadata .asset-metadata-badges { flex-shrink: 0; gap: 4px; }
-.filmstrip button.is-active { border-color: var(--accent); }
+.filmstrip button.is-selected { border-color: #68734b; border-style: dashed; }
+.filmstrip button.is-active { border-color: var(--accent); border-style: solid; }
 .filmstrip .thumbnail { min-height: 0; height: 100%; }
 .filmstrip .thumbnail__badge, .filmstrip .thumbnail__fallback span { display: none; }
 .filmstrip__name { overflow: hidden; font-size: 0.5rem; line-height: 12px; text-overflow: ellipsis; white-space: nowrap; }

@@ -7,6 +7,7 @@ import type { FileDeletionMode } from "@/types";
 interface ConfirmTrashDialogProps {
   deletionMode: FileDeletionMode;
   itemName: string;
+  itemCount?: number;
   onCancel: () => void;
   onConfirm: () => void;
   t: (key: MessageKey) => string;
@@ -15,11 +16,16 @@ interface ConfirmTrashDialogProps {
 export function ConfirmTrashDialog({
   deletionMode,
   itemName,
+  itemCount = 1,
   onCancel,
   onConfirm,
   t,
 }: ConfirmTrashDialogProps) {
   const permanent = deletionMode === "permanent";
+  const body = itemCount > 1
+    ? t(permanent ? "permanentDeleteConfirmMultipleBody" : "trashConfirmMultipleBody")
+      .replace("{count}", String(itemCount))
+    : t(permanent ? "permanentDeleteConfirmBody" : "trashConfirmBody").replace("{name}", itemName);
   useEffect(() => {
     const cancelOnEscape = (event: KeyboardEvent) => {
       if (event.key === "Escape") onCancel();
@@ -43,9 +49,7 @@ export function ConfirmTrashDialog({
           <strong id="trash-confirm-title">
             {t(permanent ? "permanentDeleteConfirmTitle" : "trashConfirmTitle")}
           </strong>
-          <p id="trash-confirm-body">
-            {t(permanent ? "permanentDeleteConfirmBody" : "trashConfirmBody").replace("{name}", itemName)}
-          </p>
+          <p id="trash-confirm-body">{body}</p>
         </div>
         <div className="trash-confirm-dialog__actions">
           <button autoFocus onClick={onCancel}>{t("cancel")}</button>

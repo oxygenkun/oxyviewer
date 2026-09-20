@@ -11,6 +11,7 @@ interface Props {
   settings?: ExternalAppSettings;
   settingsError?: boolean;
   deletionMode: FileDeletionMode;
+  selectionCount?: number;
   t: (key: MessageKey) => string;
   onDismiss: () => void;
   onOpen: (path: string, appId?: string) => void;
@@ -23,7 +24,7 @@ interface Props {
 const managerLabels = { finder: "openInFinder", windowsExplorer: "openInWindowsExplorer", generic: "openInFileManager" } as const;
 const clamp = (value: number, size: number, limit: number) => Math.max(8, Math.min(value, limit - size - 8));
 
-export function AssetContextMenu({ target, settings, settingsError, deletionMode, t, onDismiss, onOpen, onSettings, onCopy, onReveal, onTrash }: Props) {
+export function AssetContextMenu({ target, settings, settingsError, deletionMode, selectionCount = 1, t, onDismiss, onOpen, onSettings, onCopy, onReveal, onTrash }: Props) {
   const root = useRef<HTMLDivElement>(null);
   const main = useRef<HTMLDivElement>(null);
   const submenu = useRef<HTMLDivElement>(null);
@@ -34,6 +35,10 @@ export function AssetContextMenu({ target, settings, settingsError, deletionMode
   const [subPosition, setSubPosition] = useState({ x: target.x, y: target.y });
   const defaultApp = settings?.apps.find((app) => app.id === settings.defaultAppId);
   const label = (name: string) => t("externalOpenWithName").replace("{name}", name);
+  const deleteLabel = selectionCount > 1
+    ? t(deletionMode === "permanent" ? "deletePermanentlySelected" : "deleteSelected")
+      .replace("{count}", String(selectionCount))
+    : t(deletionMode === "permanent" ? "deletePermanently" : "delete");
   const run = (action: () => void) => { onDismiss(); action(); };
 
   useLayoutEffect(() => {
@@ -110,7 +115,7 @@ export function AssetContextMenu({ target, settings, settingsError, deletionMode
       <button role="menuitem" onPointerEnter={closeSubmenu} onClick={() => run(() => onCopy(target.asset, false))}><Copy size={13} />{t("copyAbsolutePath")}</button>
       <button role="menuitem" onPointerEnter={closeSubmenu} onClick={() => run(() => onReveal(target.asset.path))}><FolderOpen size={13} />{t(managerLabels[platformFileManager()])}</button>
       <div className="asset-context-menu__separator" />
-      <button role="menuitem" className="asset-context-menu__danger" onPointerEnter={closeSubmenu} onClick={() => run(() => onTrash(target.asset))}><Trash2 size={13} />{t(deletionMode === "permanent" ? "deletePermanently" : "delete")}</button>
+      <button role="menuitem" className="asset-context-menu__danger" onPointerEnter={closeSubmenu} onClick={() => run(() => onTrash(target.asset))}><Trash2 size={13} />{deleteLabel}</button>
     </div>
     {expanded ? <div ref={submenu} className="asset-context-menu asset-context-menu--external" role="menu" aria-label={t("externalOpenWith")} style={{ left: subPosition.x, top: subPosition.y }}>
       {settings?.apps.map((app) => <button key={app.id} role="menuitem" title={app.executablePath} onClick={() => run(() => onOpen(target.asset.path, app.id))}><ExternalLink size={13} /><span>{label(app.name)}</span></button>)}

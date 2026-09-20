@@ -83,6 +83,7 @@ interface WorkspaceState {
   forgetThumbnailOrientation: (rootPath: string) => void;
   toggleBurstGrouping: () => void;
   select: (id: string, additive?: boolean) => void;
+  selectRange: (orderedIds: readonly string[], id: string, additive?: boolean) => void;
   clearSelection: () => void;
   toggleInspector: () => void;
   toggleLeftPanel: () => void;
@@ -190,9 +191,23 @@ export const useWorkspaceStore = create<WorkspaceState>((set) => ({
   select: (id, additive = false) =>
     set((state) => {
       if (!additive) return { selectedIds: [id], activeId: id };
-      const selectedIds = state.selectedIds.includes(id)
-        ? state.selectedIds.filter((selected) => selected !== id)
-        : [...state.selectedIds, id];
+      if (!state.selectedIds.includes(id)) {
+        return { selectedIds: [...state.selectedIds, id], activeId: id };
+      }
+      const selectedIds = state.selectedIds.filter((selected) => selected !== id);
+      return { selectedIds, activeId: selectedIds.at(-1) };
+    }),
+  selectRange: (orderedIds, id, additive = false) =>
+    set((state) => {
+      const anchorIndex = state.activeId ? orderedIds.indexOf(state.activeId) : -1;
+      const targetIndex = orderedIds.indexOf(id);
+      if (anchorIndex < 0 || targetIndex < 0) return { selectedIds: [id], activeId: id };
+      const start = Math.min(anchorIndex, targetIndex);
+      const end = Math.max(anchorIndex, targetIndex);
+      const range = orderedIds.slice(start, end + 1);
+      const selectedIds = additive
+        ? [...state.selectedIds, ...range.filter((candidate) => !state.selectedIds.includes(candidate))]
+        : [...range];
       return { selectedIds, activeId: id };
     }),
   clearSelection: () => set({ selectedIds: [], activeId: undefined }),

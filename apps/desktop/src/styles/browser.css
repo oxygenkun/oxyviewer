@@ -231,6 +231,13 @@
 
   &.is-selected {
     border-color: #68734b;
+    border-style: dashed;
+    background: #181d1b;
+  }
+
+  &.is-active {
+    border-color: var(--accent);
+    border-style: solid;
     background: #1b201d;
     box-shadow: 0 0 0 1px rgb(216 255 104 / 5%);
   }
@@ -244,7 +251,12 @@
   &:hover { background: #1d2932; }
 
   &.is-selected {
+    border-style: dashed;
+  }
+
+  &.is-active {
     border-color: var(--accent);
+    border-style: solid;
     background: #202b2a;
   }
 }

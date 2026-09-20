@@ -35,7 +35,7 @@ interface AssetBrowserProps {
   hasNextPage: boolean;
   isFetchingNextPage: boolean;
   fetchNextPage: () => void;
-  onTrashAsset: (asset: AssetSummary) => void;
+  onTrashAssets: (assets: AssetSummary[]) => void;
   onCopyAssetPath: (asset: AssetSummary, relative: boolean) => void;
   onOpenInFileManager: (path: string) => void;
   onOpenExternal: (path: string, appId?: string) => void;
@@ -50,7 +50,8 @@ interface AssetCardProps {
   priority: "nearby" | "visible";
   rank: number;
   selected: boolean;
-  onSelect: (id: string, additive?: boolean) => void;
+  focused: boolean;
+  onSelect: (id: string, additive: boolean, range: boolean) => void;
   onContextMenu: (event: React.MouseEvent, asset: AssetSummary) => void;
   onOpen: (id: string) => void;
   showMetadata: boolean;
@@ -70,6 +71,7 @@ const AssetCard = memo(function AssetCard({
   priority,
   rank,
   selected,
+  focused,
   onSelect,
   onContextMenu,
   onOpen,
@@ -95,7 +97,7 @@ const AssetCard = memo(function AssetCard({
       expandedFromCollapsedAtRef.current = event.timeStamp;
       onToggleBurst?.(burst.representative);
     }
-    onSelect(asset.id, event.metaKey || event.ctrlKey);
+    onSelect(asset.id, event.metaKey || event.ctrlKey, event.shiftKey);
   }, [asset.id, burst, burstExpanded, onSelect, onToggleBurst]);
   const handleOpen = useCallback((event: React.MouseEvent) => {
     const expandedDuringThisDoubleClick = event.timeStamp - expandedFromCollapsedAtRef.current < 500;
@@ -109,7 +111,7 @@ const AssetCard = memo(function AssetCard({
     : "";
   return (
     <button
-      className={`asset-card ${selected ? "is-selected" : ""}${burstClassName}`}
+      className={`asset-card${selected ? " is-selected" : ""}${focused ? " is-active" : ""}${burstClassName}`}
       onClick={handleSelect}
       onDoubleClick={handleOpen}
       title={asset.path}
@@ -145,17 +147,26 @@ export function AssetBrowser(props: AssetBrowserProps) {
   const [contextMenu, setContextMenu] = useState<AssetMenuTarget>();
   const externalApps = useExternalAppSettings();
   const openSettings = useWorkspaceStore((state) => state.openSettings);
+  const select = useWorkspaceStore((state) => state.select);
   const dismissContextMenu = useCallback(() => setContextMenu(undefined), []);
-  const [pendingTrash, setPendingTrash] = useState<AssetSummary>();
+  const [pendingTrash, setPendingTrash] = useState<AssetSummary[]>();
   const showContextMenu = useCallback((event: React.MouseEvent, asset: AssetSummary) => {
     event.preventDefault();
     event.stopPropagation();
+    if (!useWorkspaceStore.getState().selectedIds.includes(asset.id)) select(asset.id);
     setContextMenu({
       asset,
       x: event.clientX,
       y: event.clientY,
     });
-  }, []);
+  }, [select]);
+  const requestTrash = useCallback((asset: AssetSummary) => {
+    const selected = new Set(useWorkspaceStore.getState().selectedIds);
+    const targets = selected.has(asset.id)
+      ? props.assets.filter((candidate) => selected.has(candidate.id))
+      : [asset];
+    setPendingTrash(targets.length ? targets : [asset]);
+  }, [props.assets]);
 
   let content;
   if (props.assets.length === 0) {
@@ -205,17 +216,19 @@ export function AssetBrowser(props: AssetBrowserProps) {
         onSettings={() => openSettings("externalApps")}
         onCopy={props.onCopyAssetPath}
         onReveal={props.onOpenInFileManager}
-        onTrash={setPendingTrash}
+        selectionCount={useWorkspaceStore.getState().selectedIds.length}
+        onTrash={requestTrash}
       /> : null}
       {pendingTrash ? (
         <ConfirmTrashDialog
           deletionMode={props.deletionMode}
-          itemName={pendingTrash.name}
+          itemCount={pendingTrash.length}
+          itemName={pendingTrash[0].name}
           onCancel={() => setPendingTrash(undefined)}
           onConfirm={() => {
-            const asset = pendingTrash;
+            const assets = pendingTrash;
             setPendingTrash(undefined);
-            props.onTrashAsset(asset);
+            props.onTrashAssets(assets);
           }}
           t={props.t}
         />
@@ -242,6 +255,7 @@ function VirtualGrid({
   const activeId = useWorkspaceStore((state) => state.activeId);
   const selectedIds = useWorkspaceStore((state) => state.selectedIds);
   const select = useWorkspaceStore((state) => state.select);
+  const selectRange = useWorkspaceStore((state) => state.selectRange);
   const setView = useWorkspaceStore((state) => state.setView);
   const shortcuts = useWorkspaceStore((state) => state.shortcuts);
   const openAsset = useCallback((id: string) => {
@@ -257,6 +271,11 @@ function VirtualGrid({
     assets,
     burstGroupingEnabled,
   );
+  const gridAssetIds = useMemo(() => gridAssets.map((asset) => asset.id), [gridAssets]);
+  const handleSelect = useCallback((id: string, additive: boolean, range: boolean) => {
+    if (range) selectRange(gridAssetIds, id, additive);
+    else select(id, additive);
+  }, [gridAssetIds, select, selectRange]);
   const usesPortraitThumbnails = thumbnailOrientation === "portrait";
   const rowHeight = usesPortraitThumbnails ? 274 : 194;
   const columns = Math.max(2, Math.floor(width / (usesPortraitThumbnails ? 150 : 190)));
@@ -465,7 +484,8 @@ function VirtualGrid({
                     priority={priority}
                     rank={rank}
                     selected={selectedIds.includes(asset.id)}
-                    onSelect={select}
+                    focused={activeId === asset.id}
+                    onSelect={handleSelect}
                     onContextMenu={onAssetContextMenu}
                     onOpen={openAsset}
                     showMetadata={gridMetadataVisible}

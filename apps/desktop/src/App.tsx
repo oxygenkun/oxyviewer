@@ -56,7 +56,7 @@ import {
 } from "@/lib/browse/folderImport";
 import { folderImportNotice } from "@/lib/browse/folderImportNotice";
 import { useFolderDrop } from "@/lib/hooks/useFolderDrop";
-import { activeAssetOrdinal, focusRestoreAction, replacementAssetIdAfterRemoval } from "@/lib/assets/assetViewPosition";
+import { activeAssetOrdinal, focusRestoreAction, replacementAssetIdAfterRemovals } from "@/lib/assets/assetViewPosition";
 import { setBrowserImageResourceScope } from "@/lib/cache/browserImageCache";
 import { acceptDirectoryTreeSnapshot } from "@/lib/projection/directoryTreeProjection";
 import { acceptImageProjection, invalidateImageAsset, invalidateImageDirectory } from "@/lib/projection/imageProjection";
@@ -736,7 +736,8 @@ export function App({ perfScenario }: { perfScenario?: PerfScenario }) {
     }
   }, [activeSession, currentPath, isRefreshing, queryClient]);
 
-  const handleTrashAsset = useCallback(async (asset: typeof assets[number]) => {
+  const handleTrashAssets = useCallback(async (targets: typeof assets) => {
+    if (!targets.length) return;
     setError(undefined);
     try {
       await Promise.all([
@@ -744,19 +745,26 @@ export function App({ perfScenario }: { perfScenario?: PerfScenario }) {
         queryClient.cancelQueries({ queryKey: ["preload-assets", activeSession?.id, currentPath] }),
         queryClient.cancelQueries({ queryKey: ["progressive-metadata-assets", activeSession?.id, currentPath] }),
       ]);
-      await deletePaths([asset.path], activeSession?.deletionMode ?? "trash");
-      const replacementId = replacementAssetIdAfterRemoval(assets, asset.id);
+      const paths = targets.map((asset) => asset.path);
+      const removedIds = targets.map((asset) => asset.id);
+      await deletePaths(paths, activeSession?.deletionMode ?? "trash");
+      const replacementId = replacementAssetIdAfterRemovals(assets, removedIds, activeId);
       if (replacementId) select(replacementId);
       else clearSelection();
-      queryClient.removeQueries({ queryKey: ["asset-render", asset.id] });
+      for (const asset of targets) queryClient.removeQueries({ queryKey: ["asset-render", asset.id] });
       for (const key of ["assets", "preload-assets", "progressive-metadata-assets"] as const) {
         queryClient.setQueriesData<InfiniteData<Page<AssetSummary>, unknown>>(
           { queryKey: [key, activeSession?.id, currentPath] },
-          (data) => removeAssetFromInfiniteData(data, asset.path),
+          (data) => paths.reduce(
+            (current, path) => removeAssetFromInfiniteData(current, path),
+            data,
+          ),
         );
       }
-      invalidateMetadataAsset(asset.path);
-      invalidateImageAsset(asset.path);
+      for (const path of paths) {
+        invalidateMetadataAsset(path);
+        invalidateImageAsset(path);
+      }
 
       if (activeSession && currentPath) {
         const tree = await refreshDirectory(activeSession.id, currentPath);
@@ -774,7 +782,7 @@ export function App({ perfScenario }: { perfScenario?: PerfScenario }) {
     } catch (cause) {
       setError(String(cause));
     }
-  }, [activeSession, assets, clearSelection, currentPath, queryClient, select]);
+  }, [activeId, activeSession, assets, clearSelection, currentPath, queryClient, select]);
 
   const handleTrashFolder = useCallback(async (session: FolderSession, path: string) => {
     setError(undefined);
@@ -921,7 +929,7 @@ export function App({ perfScenario }: { perfScenario?: PerfScenario }) {
               ? progressiveWorkPending
               : assetsQuery.isFetchingNextPage}
             fetchNextPage={fetchNextAssetsPage}
-            onTrashAsset={(asset) => void handleTrashAsset(asset)}
+            onTrashAssets={(targets) => void handleTrashAssets(targets)}
             onCopyAssetPath={(asset, relative) => void handleCopyPath(activeSession.rootPath, asset.path, relative)}
             onOpenExternal={handleOpenExternal}
             onOpenInFileManager={(path) => void handleOpenInFileManager(path)}
