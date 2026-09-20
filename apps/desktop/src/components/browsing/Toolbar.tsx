@@ -3,14 +3,14 @@ import {
   ArrowDownAZ,
   ArrowDownUp,
   Check,
-  Columns3,
-  Grid3X3,
+  Grid3x2,
   PanelLeftClose,
   PanelLeftOpen,
   PanelRightClose,
   PanelRightOpen,
-  Star,
+  Search,
   SlidersHorizontal,
+  Star,
 } from "lucide-react";
 import type { MessageKey } from "@/lib/i18n";
 import { useWorkspaceStore } from "@/store";
@@ -26,9 +26,9 @@ const pickLabels: Array<[PickLabel, MessageKey]> = [
   ["pending", "flagPending"],
   ["rejected", "flagRejected"],
 ];
-const views: Array<[ViewMode, typeof Grid3X3, MessageKey]> = [
-  ["grid", Grid3X3, "viewGrid"],
-  ["loupe", Columns3, "viewLoupe"],
+const views: Array<[ViewMode, typeof Grid3x2, MessageKey]> = [
+  ["grid", Grid3x2, "viewGrid"],
+  ["loupe", Search, "viewLoupe"],
 ];
 
 interface ToolbarProps {

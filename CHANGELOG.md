@@ -12,6 +12,16 @@ Each release lists the English notes first, followed by the Simplified Chinese n
 
 ## [Unreleased]
 
+### Changed
+
+- Upgraded `lucide-react` from 0.468.0 to 1.47.0 and switched the grid view button to
+  the official `Grid3x2` icon. The loupe view button now uses a magnifier icon.
+
+### 变更
+
+- `lucide-react` 从 0.468.0 升级到 1.47.0，网格视图按钮改用官方 `Grid3x2` 图标；
+  放大视图按钮改用放大镜图标。
+
 ### Removed
 
 - Removed the list browsing view. Browsing now switches between the grid and the loupe only.
