@@ -4,13 +4,16 @@ import {
   loadLoupeControlsAutoHide,
   loadLayoutSize,
   loadMetadataVisibility,
+  loadThumbnailOrientations,
   loadUiFontScale,
+  parseThumbnailOrientations,
   parseWorkspaceSnapshot,
   recoverMissingCurrentDirectory,
   saveFocusAreasVisible,
   saveLoupeControlsAutoHide,
   saveLayoutSize,
   saveMetadataVisibility,
+  saveThumbnailOrientations,
   saveUiFontScale,
 } from "./workspacePersistence";
 
@@ -27,6 +30,19 @@ describe("workspace persistence", () => {
       folderDragEnabled: true,
       currentDirectories: { "/photos": "/photos/2025", "/archive": "/archive" },
     });
+  });
+
+  it("persists valid per-folder thumbnail orientations outside the workspace snapshot", () => {
+    const values = new Map<string, string>();
+    const storage = {
+      getItem: (key: string) => values.get(key) ?? null,
+      setItem: (key: string, value: string) => { values.set(key, value); },
+    };
+    expect(loadThumbnailOrientations(storage)).toEqual({});
+    saveThumbnailOrientations({ "/photos": "portrait", "/archive": "landscape" }, storage);
+    expect(loadThumbnailOrientations(storage)).toEqual({ "/photos": "portrait", "/archive": "landscape" });
+    expect(parseThumbnailOrientations('{"/photos":"portrait","/archive":"square","/empty":null}'))
+      .toEqual({ "/photos": "portrait" });
   });
 
   it("fails closed for malformed or obsolete data", () => {

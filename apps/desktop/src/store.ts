@@ -17,11 +17,13 @@ import {
   loadLayoutSize,
   loadLoupeControlsAutoHide,
   loadMetadataVisibility,
+  loadThumbnailOrientations,
   loadUiFontScale,
   saveFocusAreasVisible,
   saveLayoutSize,
   saveLoupeControlsAutoHide,
   saveMetadataVisibility,
+  saveThumbnailOrientations,
   saveUiFontScale,
   type UiFontScale,
 } from "@/lib/browse/workspacePersistence";
@@ -37,6 +39,7 @@ import type {
 interface WorkspaceState {
   view: ViewMode;
   thumbnailOrientation: ThumbnailOrientation;
+  thumbnailOrientations: Record<string, ThumbnailOrientation>;
   burstGroupingEnabled: boolean;
   selectedIds: string[];
   activeId?: string;
@@ -75,7 +78,9 @@ interface WorkspaceState {
   resetShortcut: (action: ShortcutAction) => void;
   resetShortcuts: () => void;
   setView: (view: ViewMode) => void;
-  setThumbnailOrientation: (orientation: ThumbnailOrientation) => void;
+  setThumbnailOrientation: (orientation: ThumbnailOrientation, rootPath?: string) => void;
+  restoreThumbnailOrientation: (rootPath?: string) => void;
+  forgetThumbnailOrientation: (rootPath: string) => void;
   toggleBurstGrouping: () => void;
   select: (id: string, additive?: boolean) => void;
   clearSelection: () => void;
@@ -109,6 +114,7 @@ export type SettingsSection = "general" | "display" | "media" | "externalApps" |
 export const useWorkspaceStore = create<WorkspaceState>((set) => ({
   view: "grid",
   thumbnailOrientation: "landscape",
+  thumbnailOrientations: loadThumbnailOrientations(),
   burstGroupingEnabled: false,
   selectedIds: [],
   inspectorOpen: true,
@@ -160,7 +166,26 @@ export const useWorkspaceStore = create<WorkspaceState>((set) => ({
     set({ shortcuts });
   },
   setView: (view) => set({ view }),
-  setThumbnailOrientation: (thumbnailOrientation) => set({ thumbnailOrientation }),
+  setThumbnailOrientation: (thumbnailOrientation, rootPath) =>
+    set((state) => {
+      if (!rootPath) return { thumbnailOrientation };
+      const thumbnailOrientations = { ...state.thumbnailOrientations, [rootPath]: thumbnailOrientation };
+      saveThumbnailOrientations(thumbnailOrientations);
+      return { thumbnailOrientation, thumbnailOrientations };
+    }),
+  restoreThumbnailOrientation: (rootPath) =>
+    set((state) => {
+      const thumbnailOrientation = rootPath ? state.thumbnailOrientations[rootPath] : undefined;
+      return thumbnailOrientation ? { thumbnailOrientation } : state;
+    }),
+  forgetThumbnailOrientation: (rootPath) =>
+    set((state) => {
+      if (!(rootPath in state.thumbnailOrientations)) return state;
+      const thumbnailOrientations = { ...state.thumbnailOrientations };
+      delete thumbnailOrientations[rootPath];
+      saveThumbnailOrientations(thumbnailOrientations);
+      return { thumbnailOrientations };
+    }),
   toggleBurstGrouping: () => set((state) => ({ burstGroupingEnabled: !state.burstGroupingEnabled })),
   select: (id, additive = false) =>
     set((state) => {

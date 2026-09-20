@@ -1,11 +1,13 @@
 import type { FolderSort } from "./folderOrdering";
 import { clampLayoutSize, LAYOUT_SIZE_LIMITS, type LayoutRegion } from "@/lib/ui/layoutSizing";
+import type { ThumbnailOrientation } from "@/types";
 
 const WORKSPACE_KEY = "oxyviewer.workspace.v1";
 const ONBOARDING_KEY = "oxyviewer.folder-onboarding.v1";
 const FOCUS_AREAS_KEY = "oxyviewer.focus-areas-visible.v1";
 const LOUPE_CONTROLS_AUTO_HIDE_KEY = "oxyviewer.loupe-controls-auto-hide.v1";
 const UI_FONT_SCALE_KEY = "oxyviewer.ui-font-scale.v1";
+const THUMBNAIL_ORIENTATIONS_KEY = "oxyviewer.thumbnail-orientations.v1";
 export const UI_FONT_SCALES = [0.8, 1, 1.25, 1.5, 1.75] as const;
 export type UiFontScale = (typeof UI_FONT_SCALES)[number];
 const LAYOUT_SIZE_KEYS: Record<LayoutRegion, string> = {
@@ -87,6 +89,45 @@ export function hasSeenFolderOnboarding(storage: StorageLike = window.localStora
 
 export function completeFolderOnboarding(storage: StorageLike = window.localStorage): void {
   storage.setItem(ONBOARDING_KEY, "done");
+}
+
+export function parseThumbnailOrientations(value: string | null): Record<string, ThumbnailOrientation> {
+  if (!value) return {};
+  try {
+    const parsed: unknown = JSON.parse(value);
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return {};
+    return Object.fromEntries(
+      Object.entries(parsed).filter(
+        (entry): entry is [string, ThumbnailOrientation] =>
+          entry[1] === "landscape" || entry[1] === "portrait",
+      ),
+    );
+  } catch {
+    return {};
+  }
+}
+
+export function loadThumbnailOrientations(storage?: StorageLike): Record<string, ThumbnailOrientation> {
+  const resolved = storage ?? (typeof window === "undefined" ? undefined : window.localStorage);
+  if (!resolved) return {};
+  try {
+    return parseThumbnailOrientations(resolved.getItem(THUMBNAIL_ORIENTATIONS_KEY));
+  } catch {
+    return {};
+  }
+}
+
+export function saveThumbnailOrientations(
+  orientations: Record<string, ThumbnailOrientation>,
+  storage?: StorageLike,
+): void {
+  const resolved = storage ?? (typeof window === "undefined" ? undefined : window.localStorage);
+  if (!resolved) return;
+  try {
+    resolved.setItem(THUMBNAIL_ORIENTATIONS_KEY, JSON.stringify(orientations));
+  } catch {
+    // Display preferences must never prevent the viewer from opening.
+  }
 }
 
 export function loadFocusAreasVisible(storage?: StorageLike): boolean {

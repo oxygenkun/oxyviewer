@@ -112,7 +112,7 @@ export function App({ perfScenario }: { perfScenario?: PerfScenario }) {
   const queryClient = useQueryClient();
   const {
     view, thumbnailOrientation, burstGroupingEnabled, activeId, selectedIds, inspectorOpen, leftPanelOpen, settingsOpen, locale,
-    search, tagIds, tagMatch, clearSearch, kind, minimumRating, colorLabels, pickLabels, sort, direction, clearSelection, select, setThumbnailOrientation, toggleBurstGrouping, toggleSettings,
+    search, tagIds, tagMatch, clearSearch, kind, minimumRating, colorLabels, pickLabels, sort, direction, clearSelection, select, setThumbnailOrientation, restoreThumbnailOrientation, forgetThumbnailOrientation, toggleBurstGrouping, toggleSettings,
     leftPanelWidth, inspectorWidth, setLeftPanelWidth, setInspectorWidth, uiFontScale,
   } = useWorkspaceStore();
   const appShellRef = useRef<HTMLDivElement>(null);
@@ -174,11 +174,15 @@ export function App({ perfScenario }: { perfScenario?: PerfScenario }) {
     state.status === "restoring");
   const activeSession = sessions.find((item) => item.rootPath === workspace.activeRoot) ??
     (activeRootRestoring ? undefined : sortedSessions[0]);
+  const activeRootPath = activeSession?.rootPath;
   useEffect(() => {
     if (activeSession && activeSession.rootPath !== workspace.activeRoot) {
       setWorkspace((current) => ({ ...current, activeRoot: activeSession.rootPath }));
     }
   }, [activeSession, workspace.activeRoot]);
+  useLayoutEffect(() => {
+    restoreThumbnailOrientation(activeRootPath);
+  }, [activeRootPath, restoreThumbnailOrientation]);
   const currentPath = activeSession
     ? workspace.currentDirectories[activeSession.rootPath] ?? activeSession.rootPath
     : undefined;
@@ -658,10 +662,11 @@ export function App({ perfScenario }: { perfScenario?: PerfScenario }) {
           : current.activeRoot;
         return { ...current, activeRoot, currentDirectories };
       });
+      forgetThumbnailOrientation(session.rootPath);
     } catch (cause) {
       setError(String(cause));
     }
-  }, [clearSelection, queryClient]);
+  }, [clearSelection, forgetThumbnailOrientation, queryClient]);
 
   const handleFolderSortChange = useCallback((nextSort: FolderSort) => {
     setWorkspace((current) => ({
@@ -978,7 +983,7 @@ export function App({ perfScenario }: { perfScenario?: PerfScenario }) {
             >
               <button
                 className={thumbnailOrientation === "landscape" ? "is-active" : ""}
-                onClick={() => setThumbnailOrientation("landscape")}
+                onClick={() => setThumbnailOrientation("landscape", activeRootPath)}
                 title={t("landscapePriority")}
                 aria-label={t("landscapePriority")}
               >
@@ -986,7 +991,7 @@ export function App({ perfScenario }: { perfScenario?: PerfScenario }) {
               </button>
               <button
                 className={thumbnailOrientation === "portrait" ? "is-active" : ""}
-                onClick={() => setThumbnailOrientation("portrait")}
+                onClick={() => setThumbnailOrientation("portrait", activeRootPath)}
                 title={t("portraitPriority")}
                 aria-label={t("portraitPriority")}
               >
