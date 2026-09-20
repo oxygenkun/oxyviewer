@@ -103,6 +103,24 @@ export function invalidateImageDirectory(directory: string) {
   useImageProjectionStore.getState().invalidateDirectory(directory);
 }
 
+/** Releases only one removed asset while preserving the current folder's decoded thumbnails. */
+export function invalidateImageAsset(path: string) {
+  sharedThumbnailRequests.invalidatePath(path);
+  const records = { ...useImageProjectionStore.getState().records };
+  let changed = false;
+  for (const [key, projection] of Object.entries(records)) {
+    if (projection.path !== path) continue;
+    const id = projection.result?.resource?.resourceId;
+    if (id) releaseUnretainedMediaResource(id);
+    discardBrowserImageResource(projection.result?.url);
+    retiredSources.delete(key);
+    delete records[key];
+    changed = true;
+  }
+  discardFolderThumbnail(path);
+  if (changed) useImageProjectionStore.setState({ records });
+}
+
 export function clearImageProjections() {
   retiredSources.clear();
   sharedThumbnailRequests.invalidate();

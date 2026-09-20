@@ -5,6 +5,7 @@ import {
   acceptImageProjection,
   clearImageProjections,
   imageProjectionKey,
+  invalidateImageAsset,
   invalidateImageDirectory,
   invalidateImageProjection,
   useImageProjectionStore,
@@ -85,6 +86,15 @@ describe("image projection mirror", () => {
     invalidateImageDirectory("C:\\photos");
 
     expect(useImageProjectionStore.getState().records).toEqual({});
+  });
+
+  it("drops only the removed asset's mirrors", () => {
+    acceptImageProjection(projection(1));
+    acceptImageProjection({ ...projection(1), path: "C:\\photos\\two.HIF" });
+    invalidateImageAsset(projection(1).path);
+
+    expect(useImageProjectionStore.getState().records[imageProjectionKey(projection(1).path, "thumbnail")]).toBeUndefined();
+    expect(useImageProjectionStore.getState().records[imageProjectionKey("C:\\photos\\two.HIF", "thumbnail")]).toBeDefined();
   });
 
   it("drops all artifact mirrors when the preview cache is cleared", () => {

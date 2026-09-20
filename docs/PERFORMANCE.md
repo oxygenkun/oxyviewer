@@ -63,6 +63,12 @@ descriptor. Loupe can reuse this base while loading full detail separately.
 Folder changes and explicit image-cache invalidation release the copies and
 revoke Blob URLs. Source revision changes invalidate the affected thumbnail;
 generation checks discard asynchronous copies finishing after invalidation.
+Deleting one asset removes it optimistically from every cached listing and
+invalidates only that asset's metadata, image projections, decoded thumbnail,
+and in-flight thumbnail request. The authoritative directory snapshot and index
+still refresh in the background, but deletion does not clear or restart media
+work for the remaining folder. An explicit directory refresh retains its full
+directory invalidation semantics.
 Memory use grows with directory size: decoded 120x160 thumbnails use about
 75 KiB each before Blob/browser overhead; 512x384 copies use about 768 KiB each.
 Full-size/loupe resources keep their existing bounded cache. JPEG thumbnail

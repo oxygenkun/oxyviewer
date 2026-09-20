@@ -120,3 +120,13 @@ export function invalidateMetadataDirectory(directory: string) {
   }
   useMetadataProjectionStore.getState().invalidateDirectory(directory);
 }
+
+export function invalidateMetadataAsset(path: string) {
+  pendingNotifications.delete(path);
+  useMetadataProjectionStore.setState((state) => {
+    if (!state.records[path]) return state;
+    const records = { ...state.records };
+    delete records[path];
+    return { records };
+  });
+}

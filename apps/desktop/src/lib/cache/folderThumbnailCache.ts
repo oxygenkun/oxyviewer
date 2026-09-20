@@ -80,16 +80,20 @@ export function clearFolderThumbnails(): void {
 }
 
 export function discardFolderThumbnail(path: string): void {
-  generation += 1;
   const thumbnail = thumbnails.get(path);
   if (thumbnail) release(thumbnail);
   thumbnails.delete(path);
   latestKeys.delete(path);
-  retentions.clear();
-  for (const load of loads.values()) load.controller.abort();
-  loads.clear();
+  const keyPrefix = `${path}\0`;
+  for (const key of retentions.keys()) {
+    if (key.startsWith(keyPrefix)) retentions.delete(key);
+  }
+  for (const [key, load] of loads) {
+    if (!key.startsWith(keyPrefix)) continue;
+    load.controller.abort();
+    loads.delete(key);
+  }
   listeners.get(path)?.forEach((listener) => listener());
-  resetListeners.forEach((listener) => listener());
 }
 
 function loadImage(url: string, signal?: AbortSignal): Promise<HTMLImageElement> {

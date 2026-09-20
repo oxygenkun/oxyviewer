@@ -1,4 +1,4 @@
-import { useInfiniteQuery, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useInfiniteQuery, useQuery, useQueryClient, type InfiniteData } from "@tanstack/react-query";
 import { Aperture, CircleAlert, FolderPlus, Layers2, RectangleHorizontal, RectangleVertical } from "lucide-react";
 import { useCallback, useDeferredValue, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties } from "react";
 import { AssetBrowser } from "@/components/browsing/AssetBrowser";
@@ -37,6 +37,7 @@ import {
 import { filterAndSortAssets } from "@/lib/assets/assetFiltering";
 import { recordBrowseTiming } from "@/lib/diagnostics/browseDiagnostics";
 import { firstBrowseCursor, nextBrowseCursor } from "@/lib/browse/browsePagination";
+import { removeAssetFromInfiniteData } from "@/lib/browse/assetQueryCache";
 import { useBackgroundAssetPagination } from "@/lib/hooks/useBackgroundAssetPagination";
 import { insertRestoredFolder, restoreFoldersProgressively, type FolderRestoreState } from "@/lib/browse/folderRestoration";
 import {
@@ -58,10 +59,11 @@ import { useFolderDrop } from "@/lib/hooks/useFolderDrop";
 import { activeAssetOrdinal, focusRestoreAction, replacementAssetIdAfterRemoval } from "@/lib/assets/assetViewPosition";
 import { setBrowserImageResourceScope } from "@/lib/cache/browserImageCache";
 import { acceptDirectoryTreeSnapshot } from "@/lib/projection/directoryTreeProjection";
-import { acceptImageProjection, invalidateImageDirectory } from "@/lib/projection/imageProjection";
+import { acceptImageProjection, invalidateImageAsset, invalidateImageDirectory } from "@/lib/projection/imageProjection";
 import {
   queueMetadataProjection,
   acceptMetadataProjections,
+  invalidateMetadataAsset,
   invalidateMetadataDirectory,
   projectAssetMetadata,
   useMetadataProjectionStore,
@@ -82,7 +84,7 @@ import {
   saveWorkspace,
 } from "@/lib/browse/workspacePersistence";
 import { useWorkspaceStore } from "./store";
-import type { AssetQuery, DirectoryBrowseProgress, DirectoryTreeSnapshot, FolderSession, MetadataProjection, PerfScenario } from "./types";
+import type { AssetQuery, AssetSummary, DirectoryBrowseProgress, DirectoryTreeSnapshot, FolderSession, MetadataProjection, Page, PerfScenario } from "./types";
 
 const NO_METADATA_RECORDS: Record<string, MetadataProjection> = {};
 
@@ -732,16 +734,42 @@ export function App({ perfScenario }: { perfScenario?: PerfScenario }) {
   const handleTrashAsset = useCallback(async (asset: typeof assets[number]) => {
     setError(undefined);
     try {
+      await Promise.all([
+        queryClient.cancelQueries({ queryKey: ["assets", activeSession?.id, currentPath] }),
+        queryClient.cancelQueries({ queryKey: ["preload-assets", activeSession?.id, currentPath] }),
+        queryClient.cancelQueries({ queryKey: ["progressive-metadata-assets", activeSession?.id, currentPath] }),
+      ]);
       await deletePaths([asset.path], activeSession?.deletionMode ?? "trash");
       const replacementId = replacementAssetIdAfterRemoval(assets, asset.id);
       if (replacementId) select(replacementId);
       else clearSelection();
       queryClient.removeQueries({ queryKey: ["asset-render", asset.id] });
-      await handleRefresh();
+      for (const key of ["assets", "preload-assets", "progressive-metadata-assets"] as const) {
+        queryClient.setQueriesData<InfiniteData<Page<AssetSummary>, unknown>>(
+          { queryKey: [key, activeSession?.id, currentPath] },
+          (data) => removeAssetFromInfiniteData(data, asset.path),
+        );
+      }
+      invalidateMetadataAsset(asset.path);
+      invalidateImageAsset(asset.path);
+
+      if (activeSession && currentPath) {
+        const tree = await refreshDirectory(activeSession.id, currentPath);
+        queryClient.setQueryData<DirectoryTreeSnapshot>(
+          ["directory-tree", activeSession.id],
+          (current) => acceptDirectoryTreeSnapshot(current, tree),
+        );
+        await Promise.all([
+          queryClient.invalidateQueries({ queryKey: ["assets", activeSession.id, currentPath] }),
+          queryClient.invalidateQueries({ queryKey: ["preload-assets", activeSession.id, currentPath] }),
+          queryClient.invalidateQueries({ queryKey: ["progressive-metadata-assets", activeSession.id, currentPath] }),
+          queryClient.invalidateQueries({ queryKey: ["directory-search", activeSession.id] }),
+        ]);
+      }
     } catch (cause) {
       setError(String(cause));
     }
-  }, [activeSession?.deletionMode, assets, clearSelection, handleRefresh, queryClient, select]);
+  }, [activeSession, assets, clearSelection, currentPath, queryClient, select]);
 
   const handleTrashFolder = useCallback(async (session: FolderSession, path: string) => {
     setError(undefined);

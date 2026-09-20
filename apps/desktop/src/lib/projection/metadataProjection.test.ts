@@ -5,6 +5,7 @@ import {
   acceptMetadataProjection,
   acceptMetadataProjections,
   applyMetadataProjectionPatch,
+  invalidateMetadataAsset,
   invalidateMetadataDirectory,
   projectAssetMetadata,
   queueMetadataProjection,
@@ -120,5 +121,14 @@ describe("metadata projection mirror", () => {
     invalidateMetadataDirectory("C:\\photos");
 
     expect(useMetadataProjectionStore.getState().records).toEqual({});
+  });
+
+  it("drops only a deleted asset's display mirror", () => {
+    acceptMetadataProjection(projection(1, 4));
+    acceptMetadataProjection({ ...projection(1, 2), path: "C:\\photos\\two.jpg" });
+    invalidateMetadataAsset(asset.path);
+
+    expect(useMetadataProjectionStore.getState().records[asset.path]).toBeUndefined();
+    expect(useMetadataProjectionStore.getState().records["C:\\photos\\two.jpg"]).toBeDefined();
   });
 });

@@ -177,6 +177,21 @@ it("does not serve old pixels for a modified asset and revokes replaced Blob URL
   expect(revokeUrl).toHaveBeenCalledWith(after?.url);
 });
 
+it("discarding one asset does not cancel another asset's in-flight retention", async () => {
+  let finish!: (value: Blob) => void;
+  vi.stubGlobal("fetch", vi.fn().mockResolvedValue({
+    ok: true,
+    blob: () => new Promise<Blob>((resolve) => { finish = resolve; }),
+  }));
+  const warming = preloadFolderThumbnail(asset("warming"), "https://media/thumbnail");
+  await Promise.resolve();
+
+  discardFolderThumbnail(asset("deleted").path);
+  finish(new Blob(["jpeg"]));
+  await expect(warming).resolves.toBeUndefined();
+  expect(getFolderThumbnail(asset("warming"))).toBeDefined();
+});
+
 it("uses the retained HIF loupe base even after its native thumbnail descriptor expires", async () => {
   const file = asset("loupe-base");
   const retained = await retainFolderThumbnail(file, input(120, 160));

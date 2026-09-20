@@ -81,6 +81,12 @@ class SharedThumbnailRequests {
     }
   }
 
+  invalidatePath(path: string): void {
+    for (const request of this.requests.values()) {
+      if (request.path === path) this.cancel(request);
+    }
+  }
+
   private cancel(request: Request): void {
     if (request.settled) return;
     const error = new DOMException("Thumbnail request cancelled", "AbortError");
