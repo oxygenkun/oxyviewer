@@ -9,7 +9,6 @@ describe("translate", () => {
 
   it("localizes view mode labels", () => {
     expect(translate("zh-CN", "viewGrid")).toBe("网格");
-    expect(translate("zh-CN", "viewList")).toBe("列表");
     expect(translate("zh-CN", "viewLoupe")).toBe("放大查看");
   });
 });

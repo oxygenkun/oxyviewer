@@ -28,7 +28,7 @@ flowchart TD
 
 `useWorkspaceStore` 保存：
 
-- grid/list/loupe 视图与网格偏好；
+- grid/loupe 视图与网格偏好；
 - selected IDs 和 active ID；
 - 左侧栏、Inspector、Settings、Navigator 的开关；
 - locale 和显示锐化偏好；

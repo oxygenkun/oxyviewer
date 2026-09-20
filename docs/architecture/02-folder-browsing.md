@@ -220,9 +220,8 @@ rating/color 过滤仍需要读取元数据，因此与名称搜索组合时暂�
 
 `AssetBrowser` 使用 TanStack Virtual：
 
-- 网格按“虚拟行”计算，只渲染可视区域和 3 行 overscan；
-- 列表按单行计算，只渲染可视区域和 8 行 overscan；
-- 网格接近最后 2 行、列表接近最后 10 项时触发 `fetchNextPage`；
+- 网格按“虚拟行”计算，只渲染可视区域和 overscan 行；
+- 网格接近最后 2 行时触发 `fetchNextPage`；
 - 行是否真正进入视口还会决定缩略图优先级是 `visible` 还是 `nearby`。
 
 ```mermaid

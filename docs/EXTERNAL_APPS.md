@@ -1,6 +1,6 @@
 # Open images in external applications
 
-The image context menu is shared by grid/list thumbnails, the Loupe image
+The image context menu is shared by grid thumbnails, the Loupe image
 (including HEIF canvas presentation), and the filmstrip. It always targets the
 image that was right-clicked, even when another image or multiple images are
 selected. External applications receive the original `AssetSummary.path`;

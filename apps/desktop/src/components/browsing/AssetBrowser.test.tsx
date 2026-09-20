@@ -10,7 +10,6 @@ import type { AssetSummary, ViewMode } from "@/types";
 interface VirtualOptions {
   count: number;
   estimateSize: (index: number) => number;
-  paddingStart?: number;
 }
 
 const virtual = vi.hoisted(() => ({
@@ -159,20 +158,4 @@ it("keeps the selected photo in view when the grid orientation changes", async (
   expect(virtual.measure).toHaveBeenCalled();
   expect(virtual.scrollToIndex).toHaveBeenCalledWith(3, { align: "auto" });
   expect(virtual.scrollToIndex).not.toHaveBeenCalledWith(expect.anything(), { align: "center" });
-});
-
-it("keeps the selected photo in view when the list orientation changes", async () => {
-  useWorkspaceStore.setState({ activeId: "a20", selectedIds: ["a20"] });
-  await render("list");
-  // The frozen column header is reserved inside the virtualizer, not as scroll
-  // container padding, so its offsets match the scroll element.
-  expect(virtual.options.paddingStart).toBe(29);
-  expect(virtual.scrollToIndex).toHaveBeenCalledWith(20, { align: "center" });
-  virtual.scrollToIndex.mockClear();
-  virtual.measure.mockClear();
-
-  await switchOrientation("portrait");
-
-  expect(virtual.measure).toHaveBeenCalled();
-  expect(virtual.scrollToIndex).toHaveBeenCalledWith(20, { align: "auto" });
 });

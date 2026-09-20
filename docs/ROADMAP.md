@@ -33,8 +33,8 @@ not by basic UI construction.
   shared domain contracts, and macOS/Windows/Linux CI builds
 - [x] Native folder picker and cheap, non-recursive folder sessions
 - [x] Paged asset queries with search, type/rating/color/flag filters, sorting, and
-  virtualized grid/list rendering
-- [x] Grid, list, progressive loupe, filmstrip, multi-selection, and keyboard navigation
+  virtualized grid rendering
+- [x] Grid, progressive loupe, filmstrip, multi-selection, and keyboard navigation
 - [x] Rust-owned, revisioned directory trees with on-demand child loading and
   active-directory priority scheduling
 - [x] Persistent, reorderable library roots and background SQLite WAL indexing

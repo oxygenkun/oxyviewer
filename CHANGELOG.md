@@ -12,6 +12,14 @@ Each release lists the English notes first, followed by the Simplified Chinese n
 
 ## [Unreleased]
 
+### Removed
+
+- Removed the list browsing view. Browsing now switches between the grid and the loupe only.
+
+### 移除
+
+- 移除列表浏览视图，浏览区现在只在网格与放大视图之间切换。
+
 ## [0.1.3] - 2026-09-17
 
 ### Added

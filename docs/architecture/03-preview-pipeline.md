@@ -29,7 +29,7 @@ HEVC 解码器或操作系统预览服务。即使原文件可解码，也不应
 | HEIF/HIF | 内嵌 160×120 JPEG | 复用同一内嵌 JPEG | 源 HEIF 直接转换的完整 JPEG |
 | TIFF | macOS ImageIO JPEG 512；Windows/Linux 暂不支持 | macOS ImageIO JPEG 512；Windows/Linux 暂不支持 | macOS ImageIO JPEG 4096；Windows/Linux 暂不支持 |
 
-交互图不随格式改变：网格/列表只进入 `thumbnail`；放大镜请求 `full`，复用已有 thumbnail 底图。
+交互图不随格式改变：网格只进入 `thumbnail`；放大镜请求 `full`，复用已有 thumbnail 底图。
 前端 `renderPlan(kind, surface, platform)` 把等级映射到 renderer 类；后端
 `pipeline::dispatcher` 直接按 `AssetKind + RenderLevel` 分派，再由格式 executor 选择后端与
 fallback。多个等级可以指向同一产物。
@@ -94,7 +94,7 @@ embedded 快速探测和 tile session 保持各自原有资源隔离。
 
 `Thumbnail` 组件只解释固定等级图：
 
-1. 网格/列表请求 `thumbnail`；
+1. 网格请求 `thumbnail`；
 2. 放大镜立即请求 `full`，被动复用已有 `thumbnail` 作为底图，不主动请求或等待缩略图；
 3. renderer profile 决定等级是原图、生成图、tile session，还是另一个等级的复用；
 4. 组件选择当前最高可用且未加载失败的 URL；
@@ -127,10 +127,10 @@ tier 2  nearby          overscan 预加载
 tier 3  preload         视口外缓存预热
 ```
 
-Grid、list 和 loupe filmstrip 各自持有 viewport scope；稳定的已加载资产集合持有 background
+Grid 和 loupe filmstrip 各自持有 viewport scope；稳定的已加载资产集合持有 background
 scope。viewport 随虚拟列表产生的视窗快照提交有界全量 reconcile，background 只在分页、排序或选择变化时
 更新。`epoch` 拒绝乱序到达的旧视窗快照。选中图排在 tier 0；可见图按选择或视窗中心产生 rank；
-附近项进入 tier 2；grid/list 选中项离开真实可见区后按 nearby/离屏规则处理。Loupe filmstrip
+附近项进入 tier 2；grid 选中项离开真实可见区后按 nearby/离屏规则处理。Loupe filmstrip
 仍保留当前大图的 thumbnail tier 0，并为全部可见项和 overscan 提交位置，滑入 overscan 的旧可见项
 因此可以降级。离屏后
 viewport intent 被释放；已有 consumer 的任务按其余 scope 降级，没有 consumer 且尚未开始的任务
@@ -141,7 +141,7 @@ viewport intent 被释放；已有 consumer 的任务按其余 scope 降级，�
 最多保留一个进行中的 IPC，后续更新继续在前端合并，从而让 native bridge 反压而不是堆积请求。
 单个 Thumbnail 不再随 queueOrder 变化发送独立提权 IPC；可见项优先级统一由 viewport scope 更新。
 滚动期间持续提交 viewport 快照，同时加载可见项和 overscan；不再等待 160 ms 滚动停稳。
-Grid 预取前后 6 行、list 前后 16 项、filmstrip 前后 12 项。离开窗口的请求取消订阅，
+Grid 预取前后 6 行、filmstrip 前后 12 项。离开窗口的请求取消订阅，
 仍在新旧窗口交集中的 filmstrip 预加载保持进行，不因组件重复 render 重启。
 
 具体任务身份由 canonical path、source revision 和 semantic level 组成；相同请求无论尚在等待

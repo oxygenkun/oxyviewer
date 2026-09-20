@@ -211,10 +211,10 @@ node tests/perf/perf-e2e.mjs --update-baseline
 
 ```bash
 pnpm tauri build --no-bundle
-node tests/perf/perf-e2e.mjs --scenario resource-stress-grid --scenario resource-stress-list --scenario resource-stress-hif --runs 1
+node tests/perf/perf-e2e.mjs --scenario resource-stress-grid --scenario resource-stress-hif --runs 1
 ```
 
-grid/list 各生成 600 个独立路径的 JPEG，使用生产的高密度竖图网格/列表和固定 overscan，逐视口滚动，
+grid 生成 600 个独立路径的 JPEG，使用生产的高密度竖图网格和固定 overscan，逐视口滚动，
 要求至少 500 个不同文件实际触发 image onLoad。HIF 使用真实 fixture 的 80 个独立路径，先每 120 ms
 切换选择，再要求末尾 8 张各自 Full 实际显示。测试不更改照片内容；生成的路径位于 ignored perf fixture
 目录，hardlink 只用于复用输入字节。

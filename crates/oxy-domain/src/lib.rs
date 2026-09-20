@@ -327,7 +327,7 @@ pub enum MetadataRequestPriority {
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, PartialOrd, Ord, Hash)]
 #[serde(rename_all = "camelCase")]
 pub enum RenderLevel {
-    /// Fastest representation used by grids, lists, and filmstrips.
+    /// Fastest representation used by grids and filmstrips.
     Thumbnail,
     /// Stable fit-to-window representation shown when entering loupe.
     Preview,

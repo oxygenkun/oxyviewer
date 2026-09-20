@@ -178,24 +178,6 @@
       "coldCache": true,
       "timeoutMs": 180000
     },
-    "resource-stress-list": {
-      "fixture": {
-        "type": "synthetic",
-        "format": "jpeg",
-        "count": 600,
-        "width": 1600,
-        "height": 1200
-      },
-      "resourceStress": "list",
-      "enterLoupe": false,
-      "awaitMarks": [
-        "resource:stress-complete"
-      ],
-      "budgets": {},
-      "runs": 1,
-      "coldCache": true,
-      "timeoutMs": 180000
-    },
     "resource-stress-hif": {
       "fixture": {
         "type": "file",

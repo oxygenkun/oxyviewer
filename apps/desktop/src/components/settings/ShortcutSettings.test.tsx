@@ -55,7 +55,7 @@ const clickSlot = async (actionLabel: string, slot: 0 | 1) => {
 it("lists the default bindings grouped by view", () => {
   const text = host.textContent;
   expect(text).toContain("Loupe 视图");
-  expect(text).toContain("网格与列表视图");
+  expect(text).toContain("网格视图");
   expect(text).toContain("上一张");
   expect(text).toContain("选区下移");
   expect(text).toContain("设为 5 星");

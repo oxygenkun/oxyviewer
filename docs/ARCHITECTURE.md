@@ -194,7 +194,7 @@ sequenceDiagram
 
 ```mermaid
 flowchart LR
-    thumbnail["网格 / 列表 / filmstrip 请求 thumbnail"] --> thumbnailQueue["thumbnail 队列 + CPU 数 worker"]
+    thumbnail["网格 / filmstrip 请求 thumbnail"] --> thumbnailQueue["thumbnail 队列 + CPU 数 worker"]
     loupe["当前放大镜请求 full"] --> fullQueue["loupe 队列 + 2 个 worker"]
     thumbnailQueue --> embedded["优先内嵌小图 / 格式回退"]
     fullQueue --> full["完整 artifact / HEIF tile session"]

@@ -5,7 +5,6 @@ import {
   Check,
   Columns3,
   Grid3X3,
-  List,
   PanelLeftClose,
   PanelLeftOpen,
   PanelRightClose,
@@ -29,7 +28,6 @@ const pickLabels: Array<[PickLabel, MessageKey]> = [
 ];
 const views: Array<[ViewMode, typeof Grid3X3, MessageKey]> = [
   ["grid", Grid3X3, "viewGrid"],
-  ["list", List, "viewList"],
   ["loupe", Columns3, "viewLoupe"],
 ];
 

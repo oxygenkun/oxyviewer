@@ -434,58 +434,6 @@
 }
 .loading-more { position: sticky; bottom: 8px; width: fit-content; margin: auto; padding: 4px 9px; border-radius: 20px; color: var(--accent); background: #181d19; font-size: 0.5625rem; }
 
-/* The header's 29px are reserved by the list virtualizer's paddingStart, which
-   keeps its scroll offsets aligned with this element. */
-.list-header {
-  position: absolute;
-  z-index: 2;
-  top: 0;
-  right: 0;
-  left: 0;
-  display: grid;
-  grid-template-columns: minmax(200px, 1fr) 72px 100px 120px 150px;
-  height: 29px;
-  padding: 0 14px 0 58px;
-  border-bottom: 1px solid var(--line);
-  color: var(--faint);
-  background: var(--panel);
-  font-size: 0.5rem;
-  letter-spacing: .8px;
-  line-height: 29px;
-  text-transform: uppercase;
-}
-.virtual-list { position: relative; }
-.asset-list-row {
-  position: absolute;
-  top: 0;
-  left: 0;
-  display: grid;
-  grid-template-columns: 36px minmax(200px, 1fr) 72px 100px 120px 150px;
-  align-items: center;
-  gap: 8px;
-  width: 100%;
-  height: 58px;
-  padding: 5px 14px;
-  border-bottom: 1px solid var(--surface-muted);
-  color: #8f969c;
-  background: transparent;
-  font-size: 0.625rem;
-  text-align: left;
-}
-.asset-list-row:hover { background: #15181b; }
-.asset-list-row.is-selected { color: #cdd0ca; background: #1a201c; box-shadow: inset 2px 0 var(--accent); }
-.asset-list-row--placeholder {
-  background: linear-gradient(90deg, transparent 14px, var(--surface-muted) 14px, var(--surface-muted) 52%, transparent 52%);
-  opacity: .5;
-}
-.asset-list-row .thumbnail { width: 36px; height: 36px; }
-.virtual-list--landscape .list-header { padding-left: 74px; }
-.virtual-list--landscape .asset-list-row { grid-template-columns: 52px minmax(200px, 1fr) 72px 100px 120px 150px; }
-.virtual-list--landscape .asset-list-row .thumbnail { width: 52px; height: 34px; }
-.virtual-list--portrait .asset-list-row .thumbnail { width: 34px; height: 52px; }
-.asset-list-row > .asset-metadata-badges { justify-content: flex-start; }
-.asset-list-row strong { overflow: hidden; color: #d4d5d0; text-overflow: ellipsis; white-space: nowrap; }
-
 /* The outer thumbnail keeps its existing grid/filmstrip dimensions. Container
    units fit the logical image without per-thumbnail ResizeObservers. */
 .thumbnail__content-host {
