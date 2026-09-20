@@ -1899,7 +1899,25 @@ impl Library {
         offset: usize,
         limit: usize,
     ) -> Result<FaceReviewPage, LibraryError> {
-        self.face_review_page_filtered(filter, offset, limit, 0.0, 0, 0.0)
+        self.face_review_page_filtered_in_directory(filter, offset, limit, (0.0, 0, 0.0), None)
+    }
+
+    /// Builds one review page from assets indexed directly in one directory.
+    pub fn face_review_page_for_directory(
+        &self,
+        filter: FaceReviewFilter,
+        root_path: &Path,
+        directory: &Path,
+        offset: usize,
+        limit: usize,
+    ) -> Result<FaceReviewPage, LibraryError> {
+        self.face_review_page_filtered_in_directory(
+            filter,
+            offset,
+            limit,
+            (0.0, 0, 0.0),
+            Some((root_path, directory)),
+        )
     }
 
     pub fn face_review_page_filtered(
@@ -1911,8 +1929,27 @@ impl Library {
         min_face_pixels: u32,
         min_clarity: f32,
     ) -> Result<FaceReviewPage, LibraryError> {
+        self.face_review_page_filtered_in_directory(
+            filter,
+            offset,
+            limit,
+            (min_detection_score, min_face_pixels, min_clarity),
+            None,
+        )
+    }
+
+    fn face_review_page_filtered_in_directory(
+        &self,
+        filter: FaceReviewFilter,
+        offset: usize,
+        limit: usize,
+        quality: (f32, u32, f32),
+        directory_scope: Option<(&Path, &Path)>,
+    ) -> Result<FaceReviewPage, LibraryError> {
         let mut reader = self.read_connection();
         let connection = reader.transaction()?;
+        let (min_detection_score, min_face_pixels, min_clarity) = quality;
+        let (root_path, directory) = directory_scope.unzip();
         let min_detection_score = if min_detection_score.is_finite() {
             min_detection_score.clamp(0.0, 1.0)
         } else {
@@ -1924,7 +1961,11 @@ impl Library {
             0.0
         };
         let predicate = format!(
-            "({}) AND o.detection_score_micro >= {} AND o.face_pixels >= {} AND o.clarity_score_micro >= {}",
+            "({}) AND o.detection_score_micro >= {} AND o.face_pixels >= {} AND o.clarity_score_micro >= {}
+             AND (?1 IS NULL OR EXISTS (
+                SELECT 1 FROM indexed_assets a
+                WHERE a.path = o.asset_path AND a.root_path = ?1 AND a.parent_path = ?2
+             ))",
             filter_predicate(filter),
             to_micro(min_detection_score),
             min_face_pixels,
@@ -1936,7 +1977,10 @@ impl Library {
                  LEFT JOIN face_decisions d ON d.observation_id = o.observation_id
                  WHERE {predicate}"
             ),
-            [],
+            params![
+                root_path.map(|path| path.to_string_lossy().to_string()),
+                directory.map(|path| path.to_string_lossy().to_string()),
+            ],
             |row| row.get(0),
         )?;
         let mut statement = connection.prepare(&format!(
@@ -1951,24 +1995,32 @@ impl Library {
              LEFT JOIN persons p ON p.person_id = d.person_id
              WHERE {predicate}
              ORDER BY o.asset_path COLLATE NOCASE, o.local_index
-             LIMIT ?1 OFFSET ?2"
+             LIMIT ?3 OFFSET ?4"
         ))?;
         let rows = statement
-            .query_map(params![limit as i64, offset as i64], |row| {
-                Ok((
-                    row.get::<_, FaceObservationId>(0)?,
-                    row.get::<_, AssetId>(1)?,
-                    row.get::<_, String>(2)?,
-                    rect_from_row(row, 3)?,
-                    from_micro(row.get::<_, i64>(7)?),
-                    row.get::<_, i64>(8)? as u32,
-                    from_micro(row.get::<_, i64>(9)?),
-                    row.get::<_, Option<String>>(10)?,
-                    row.get::<_, Option<String>>(11)?,
-                    row.get::<_, Option<String>>(12)?,
-                    row.get::<_, Option<String>>(13)?,
-                ))
-            })?
+            .query_map(
+                params![
+                    root_path.map(|path| path.to_string_lossy().to_string()),
+                    directory.map(|path| path.to_string_lossy().to_string()),
+                    limit as i64,
+                    offset as i64,
+                ],
+                |row| {
+                    Ok((
+                        row.get::<_, FaceObservationId>(0)?,
+                        row.get::<_, AssetId>(1)?,
+                        row.get::<_, String>(2)?,
+                        rect_from_row(row, 3)?,
+                        from_micro(row.get::<_, i64>(7)?),
+                        row.get::<_, i64>(8)? as u32,
+                        from_micro(row.get::<_, i64>(9)?),
+                        row.get::<_, Option<String>>(10)?,
+                        row.get::<_, Option<String>>(11)?,
+                        row.get::<_, Option<String>>(12)?,
+                        row.get::<_, Option<String>>(13)?,
+                    ))
+                },
+            )?
             .collect::<Result<Vec<_>, _>>()?;
 
         let mut items = Vec::with_capacity(rows.len());
@@ -3112,6 +3164,58 @@ mod tests {
             first.items[0].observation_id,
             second.items[0].observation_id
         );
+    }
+
+    #[test]
+    fn review_paging_is_scoped_to_the_indexed_directory() {
+        let library = Library::in_memory().unwrap();
+        library.connection.lock().execute_batch(
+            "INSERT INTO indexed_assets(root_path,path,parent_path,id,name,extension,kind,modified_at_ms,size_bytes,has_sidecar,scan_id)
+             VALUES
+               ('/photos','/photos/trip/a.jpg','/photos/trip','asset-trip','a.jpg','jpg','jpeg',1,1,0,1),
+               ('/photos','/photos/other/b.jpg','/photos/other','asset-other','b.jpg','jpg','jpeg',1,1,0,1);",
+        ).unwrap();
+
+        let mut trip_face = face("trip-face", 0, rect(0.1, 0.1, 0.2, 0.2), "rev-1");
+        trip_face.observation.asset_id = "asset-trip".into();
+        trip_face.observation.asset_path = "/photos/trip/a.jpg".into();
+        library
+            .replace_asset_faces(
+                Path::new("/photos/trip/a.jpg"),
+                "asset-trip",
+                "rev-1",
+                DETECTOR,
+                EMBEDDER,
+                &[trip_face],
+            )
+            .unwrap();
+
+        let mut other_face = face("other-face", 0, rect(0.1, 0.1, 0.2, 0.2), "rev-1");
+        other_face.observation.asset_id = "asset-other".into();
+        other_face.observation.asset_path = "/photos/other/b.jpg".into();
+        library
+            .replace_asset_faces(
+                Path::new("/photos/other/b.jpg"),
+                "asset-other",
+                "rev-1",
+                DETECTOR,
+                EMBEDDER,
+                &[other_face],
+            )
+            .unwrap();
+
+        let page = library
+            .face_review_page_for_directory(
+                FaceReviewFilter::All,
+                Path::new("/photos"),
+                Path::new("/photos/trip"),
+                0,
+                10,
+            )
+            .unwrap();
+        assert_eq!(page.total, 1);
+        assert_eq!(page.items[0].observation_id, "trip-face");
+        assert_eq!(page.next_cursor, None);
     }
 
     #[test]

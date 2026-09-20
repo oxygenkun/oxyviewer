@@ -1633,13 +1633,25 @@ export async function clearFaceDecision(observationId: string): Promise<void> {
 export async function getFaceReviewPage(
   cursor = 0,
   pageSize = 200,
+  rootPath?: string,
+  directory?: string,
 ): Promise<FaceReviewPage> {
   if (!isTauri()) {
     ensureDemoFaces();
-    const items = demoFaceReview.items;
+    const items = rootPath && directory
+      ? demoFaceReview.items.filter((item) => {
+        const separator = item.assetPath.includes("\\") ? "\\" : "/";
+        return item.assetPath.slice(0, item.assetPath.lastIndexOf(separator)) === directory;
+      })
+      : demoFaceReview.items;
     return { items: structuredClone(items.slice(cursor, cursor + pageSize)), total: items.length, nextCursor: cursor + pageSize < items.length ? cursor + pageSize : null };
   }
-  return invoke<FaceReviewPage>("get_face_review_page", { cursor, pageSize });
+  return invoke<FaceReviewPage>("get_face_review_page", {
+    cursor,
+    pageSize,
+    rootPath: rootPath ?? null,
+    directory: directory ?? null,
+  });
 }
 
 export async function getFaceClusters(): Promise<FaceCluster[]> {

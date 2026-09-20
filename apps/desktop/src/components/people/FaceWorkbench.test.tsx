@@ -50,7 +50,6 @@ const api = vi.hoisted(() => ({
   assignFacesToPerson: vi.fn(),
   context: {
     locale: "zh-CN",
-    visiblePaths: ["/photos/a.jpg"],
     browseScope: { rootPath: "/photos", directory: "/photos/trip" },
   } as FaceWorkbenchContext,
 }));
@@ -296,7 +295,6 @@ beforeEach(() => {
   api.assignFacesToPerson.mockResolvedValue(0);
   api.context = {
     locale: "zh-CN",
-    visiblePaths: ["/photos/a.jpg"],
     browseScope: { rootPath: "/photos", directory: "/photos/trip" },
   };
   client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
@@ -310,25 +308,16 @@ afterEach(async () => {
   vi.unstubAllGlobals();
 });
 
-it("scopes 'analyze this folder' to the directory, not the loaded pages", async () => {
+it("keeps analysis and review resources scoped to the selected folder", async () => {
   await render();
-  const folder = [...host.querySelectorAll<HTMLButtonElement>("button")].find((button) =>
-    button.textContent?.includes("peopleAnalyzeFolder"),
-  )!;
-  expect(folder.disabled).toBe(false);
-  await act(async () => folder.click());
-  // One asset is loaded, but the directory may hold hundreds: the run must be
-  // scoped by folder so the background job enumerates what the grid cannot.
+  await clickButton("peopleAnalyzeStart");
   expect(api.startFaceAnalysis).toHaveBeenCalledWith({
     rootPath: "/photos",
     directory: "/photos/trip",
   });
-
-  await clickButton("peopleAnalyzeSelection");
-  expect(api.startFaceAnalysis).toHaveBeenCalledWith({ paths: ["/photos/a.jpg"] });
-
-  await clickButton("peopleAnalyzeLibrary");
-  expect(api.startFaceAnalysis).toHaveBeenCalledWith({ force: false });
+  expect(api.review).toHaveBeenCalledWith(0, 200, "/photos", "/photos/trip");
+  expect(host.textContent).not.toContain("peopleAnalyzeSelection");
+  expect(host.textContent).not.toContain("peopleAnalyzeLibrary");
 });
 
 it("starts the big launch button on the folder scope when one is known", async () => {
@@ -401,15 +390,15 @@ it("adds committed detections to the workbench before the scan completes", async
   expect(api.decideFace).toHaveBeenCalledWith("face-live", { decision: "notFace" });
 });
 
-it("falls back to the whole library when no folder scope was published", async () => {
-  api.context = { locale: "zh-CN", visiblePaths: [] };
+it("does not load or analyze library resources without a selected folder", async () => {
+  api.context = { locale: "zh-CN" };
   await render();
-  const selection = [...host.querySelectorAll<HTMLButtonElement>("button")].find((button) =>
-    button.textContent?.includes("peopleAnalyzeSelection"),
+  const start = [...host.querySelectorAll<HTMLButtonElement>("button")].find((button) =>
+    button.textContent?.includes("peopleAnalyzeStart"),
   )!;
-  expect(selection.disabled).toBe(true);
-  await clickButton("peopleAnalyzeStart");
-  expect(api.startFaceAnalysis).toHaveBeenCalledWith({ force: false });
+  expect(start.disabled).toBe(true);
+  expect(api.review).not.toHaveBeenCalled();
+  expect(api.startFaceAnalysis).not.toHaveBeenCalled();
 });
 
 it("merges two names for the same person through the durable operation", async () => {
@@ -503,10 +492,6 @@ it("disables analysis when no face models are installed", async () => {
   });
   await render();
   expect(host.textContent).toContain("models missing");
-  const analyze = [...host.querySelectorAll<HTMLButtonElement>("button")].find((button) =>
-    button.textContent?.includes("peopleAnalyzeLibrary"),
-  )!;
-  expect(analyze.disabled).toBe(true);
   const primary = [...host.querySelectorAll<HTMLButtonElement>("button")].find((button) =>
     button.textContent?.includes("peopleAnalyzeStart"),
   )!;
@@ -596,7 +581,7 @@ it("shows why a run failed instead of leaving the panel empty", async () => {
 it("starts with all photos and shares one card across faces in a photo", async () => {
   api.review.mockResolvedValue({ items: [pendingItem, { ...unknownItem, assetPath: pendingItem.assetPath }], total: 2, nextCursor: null });
   await render();
-  expect(api.review).toHaveBeenCalledWith(0, 200);
+  expect(api.review).toHaveBeenCalledWith(0, 200, "/photos", "/photos/trip");
   expect(host.querySelectorAll(".face-photo")).toHaveLength(1);
   expect(host.querySelectorAll(".face-photo__face")).toHaveLength(2);
 });

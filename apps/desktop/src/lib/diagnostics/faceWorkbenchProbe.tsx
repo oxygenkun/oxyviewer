@@ -34,7 +34,7 @@ export async function runFaceWorkbenchProbe(assets: AssetSummary[], signal: Abor
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   try {
     const started = performance.now();
-    root.render(<QueryClientProvider client={client}><FacePhotoReview persons={persons} clusters={clusters} t={(key) => translate("en", key)} onReveal={() => {}} invalidate={() => {}} /></QueryClientProvider>);
+    root.render(<QueryClientProvider client={client}><FacePhotoReview persons={persons} clusters={clusters} rootPath={folder} directory={folder} t={(key) => translate("en", key)} onReveal={() => {}} invalidate={() => {}} /></QueryClientProvider>);
     await until(() => [...host.querySelectorAll<HTMLImageElement>(".face-photo__canvas img")].some((image) => image.complete && image.naturalWidth > 0)
       && host.querySelectorAll(".face-photo__region").length >= 2);
     const elapsedMs = performance.now() - started;

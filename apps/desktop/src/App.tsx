@@ -94,15 +94,6 @@ import type { AssetQuery, DirectoryBrowseProgress, DirectoryTreeSnapshot, FaceAs
 
 const NO_METADATA_RECORDS: Record<string, MetadataProjection> = {};
 
-/**
- * Upper bound on the loaded selection handed to the face workbench.
- *
- * "Analyze what is loaded" means the grid's paged-in assets; past a couple of
- * thousand the folder or library scope is the honest tool, and this keeps a
- * cross-window event from growing with the whole directory.
- */
-const FACE_WORKBENCH_SELECTION_LIMIT = 2000;
-
 /** One status-bar message; the app's single place for transient feedback. */
 interface StatusNotice {
   kind: "error" | "status";
@@ -516,13 +507,10 @@ export function App({ perfScenario }: { perfScenario?: PerfScenario }) {
   // run against travels as published state instead of being re-derived there.
   const faceWorkbenchContext = useMemo<FaceWorkbenchContext>(() => ({
     locale,
-    visiblePaths: assets
-      .slice(0, FACE_WORKBENCH_SELECTION_LIMIT)
-      .map((asset) => asset.path),
     browseScope: activeSession && currentPath
       ? { rootPath: activeSession.rootPath, directory: currentPath }
       : undefined,
-  }), [activeSession, assets, currentPath, locale]);
+  }), [activeSession, currentPath, locale]);
   const faceWorkbenchContextRef = useRef(faceWorkbenchContext);
   faceWorkbenchContextRef.current = faceWorkbenchContext;
   useEffect(() => {

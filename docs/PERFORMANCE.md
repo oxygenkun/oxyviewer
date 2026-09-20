@@ -1071,6 +1071,8 @@ protocol, with display-normalized boxes over the content rectangle. It never
 requests Full for review cards. Only consumers within 200px of the viewport are
 mounted; leaving that area cancels waiting queries and releases their resource
 leases. Repeated photo cards share a query by path. Review observations remain
-paged (200 per page), and filters/group counts explicitly describe loaded rows.
+paged (200 per page) and are selected in SQLite from the folder currently
+browsed by the main window; other folders never cross the workbench IPC
+boundary. Filters/group counts explicitly describe loaded rows.
 The Release real-photo interaction probe and its warm-cache limits are recorded
 in [workbench verification](research/face-workbench-review-2026-09-19.md).

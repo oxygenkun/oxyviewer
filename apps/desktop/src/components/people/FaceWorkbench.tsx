@@ -7,9 +7,6 @@ import { FaceSyncPanel } from "./FaceSyncPanel";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
-  FolderOpen,
-  Images,
-  Library,
   Loader2,
   Play,
   RefreshCw,
@@ -84,7 +81,6 @@ export function FaceWorkbench({ t: tOverride, locale: localeOverride }: FaceWork
     [locale, tOverride],
   );
 
-  const visiblePaths = context?.visiblePaths ?? [];
   const browseScope = context?.browseScope;
 
   const capability = useQuery({ queryKey: ["face-capability"], queryFn: getFaceCapability });
@@ -282,11 +278,8 @@ export function FaceWorkbench({ t: tOverride, locale: localeOverride }: FaceWork
   }, [capability.data, progress, t]);
 
   const startScoped = () => {
-    if (browseScope) {
-      start.mutate({ rootPath: browseScope.rootPath, directory: browseScope.directory });
-      return;
-    }
-    start.mutate({ force: false });
+    if (!browseScope) return;
+    start.mutate({ rootPath: browseScope.rootPath, directory: browseScope.directory });
   };
 
   const revealFace = (observationId: string) => reveal.mutate(observationId);
@@ -332,7 +325,7 @@ export function FaceWorkbench({ t: tOverride, locale: localeOverride }: FaceWork
 
             <button
               className="face-launch__primary"
-              disabled={!available || running}
+              disabled={!available || running || !browseScope}
               onClick={startScoped}
               type="button"
             >
@@ -371,36 +364,6 @@ export function FaceWorkbench({ t: tOverride, locale: localeOverride }: FaceWork
                 {runSummary.text}
               </p>
             ) : null}
-
-            <div className="face-launch__scopes">
-              <button
-                disabled={!available || running || !browseScope}
-                onClick={() => browseScope && start.mutate({
-                  rootPath: browseScope.rootPath,
-                  directory: browseScope.directory,
-                })}
-                title={t("peopleAnalyzeFolderHint")}
-                type="button"
-              >
-                <FolderOpen size={14} /> {t("peopleAnalyzeFolder")}
-              </button>
-              <button
-                disabled={!available || running || visiblePaths.length === 0}
-                onClick={() => start.mutate({ paths: visiblePaths })}
-                title={t("faceWorkbenchSelectionHint").replace("{count}", String(visiblePaths.length))}
-                type="button"
-              >
-                <Images size={14} /> {t("peopleAnalyzeSelection")}
-                {visiblePaths.length > 0 ? <em>{visiblePaths.length.toLocaleString()}</em> : null}
-              </button>
-              <button
-                disabled={!available || running}
-                onClick={() => start.mutate({ force: false })}
-                type="button"
-              >
-                <Library size={14} /> {t("peopleAnalyzeLibrary")}
-              </button>
-            </div>
 
             {stats ? (
               <dl className="face-launch__stats">
@@ -509,7 +472,15 @@ export function FaceWorkbench({ t: tOverride, locale: localeOverride }: FaceWork
               t={t}
             />
 
-            <FacePhotoReview persons={personList} clusters={clusters.data ?? []} t={t} onReveal={revealFace} invalidate={invalidate} />
+            <FacePhotoReview
+              persons={personList}
+              clusters={clusters.data ?? []}
+              directory={browseScope?.directory}
+              rootPath={browseScope?.rootPath}
+              t={t}
+              onReveal={revealFace}
+              invalidate={invalidate}
+            />
           </div>
         </main>
       </div>

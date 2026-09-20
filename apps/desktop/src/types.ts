@@ -787,12 +787,11 @@ export interface FaceWorkbenchScope {
 /**
  * What the main window publishes to the face workbench window.
  *
- * The workbench has its own store, so the browse scope, the loaded selection,
- * and the locale cross the window boundary as published state.
+ * The workbench has its own store, so the browse scope and locale cross the
+ * window boundary as published state.
  */
 export interface FaceWorkbenchContext {
   locale: "zh-CN" | "en";
-  visiblePaths: string[];
   browseScope?: FaceWorkbenchScope;
 }
 

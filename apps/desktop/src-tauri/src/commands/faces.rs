@@ -314,12 +314,23 @@ pub(crate) fn clear_face_decision(
 pub(crate) fn get_face_review_page(
     cursor: usize,
     page_size: usize,
+    root_path: Option<PathBuf>,
+    directory: Option<PathBuf>,
     state: State<'_, AppState>,
 ) -> Result<FaceReviewPage, String> {
-    let mut page = state
-        .library
-        .face_review_page(FaceReviewFilter::All, cursor, page_size.clamp(1, 500))
-        .map_err(|error| error.to_string())?;
+    let mut page = match (root_path, directory) {
+        (Some(root_path), Some(directory)) => state.library.face_review_page_for_directory(
+            FaceReviewFilter::All,
+            &root_path,
+            &directory,
+            cursor,
+            page_size.clamp(1, 500),
+        ),
+        _ => state
+            .library
+            .face_review_page(FaceReviewFilter::All, cursor, page_size.clamp(1, 500)),
+    }
+    .map_err(|error| error.to_string())?;
     state.people.apply_clarity_marks(&mut page.items);
     Ok(page)
 }

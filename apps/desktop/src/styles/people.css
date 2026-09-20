@@ -359,26 +359,6 @@
   .face-launch__meter.is-indeterminate span { animation: none; }
 }
 
-.face-launch__scopes {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-}
-
-.face-launch__scopes button {
-  justify-content: flex-start;
-  width: 100%;
-  text-align: left;
-}
-
-.face-launch__scopes em {
-  margin-left: auto;
-  color: var(--faint);
-  font-size: 0.6875rem;
-  font-style: normal;
-  font-variant-numeric: tabular-nums;
-}
-
 .face-launch__stats {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));

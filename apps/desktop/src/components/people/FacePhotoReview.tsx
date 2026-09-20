@@ -21,8 +21,9 @@ function PhotoSelection({ ids, selected, disabled, label, onChange }: {
   </label>;
 }
 
-export function FacePhotoReview({ persons, clusters, t, onReveal, invalidate }: {
+export function FacePhotoReview({ persons, clusters, rootPath, directory, t, onReveal, invalidate }: {
   persons: Person[]; clusters: FaceCluster[]; t: (key: MessageKey) => string;
+  rootPath?: string; directory?: string;
   onReveal: (id: string) => void; invalidate: () => void;
 }) {
   const client = useQueryClient();
@@ -42,9 +43,10 @@ export function FacePhotoReview({ persons, clusters, t, onReveal, invalidate }: 
   const [batchSnapshot, setBatchSnapshot] = useState<FaceReviewItem[]>();
   const resetSelection = () => { setSelected([]); anchor.current = undefined; };
   const review = useInfiniteQuery({
-    queryKey: ["face-review", "photos"], initialPageParam: 0,
-    queryFn: ({ pageParam }) => getFaceReviewPage(pageParam, 200),
+    queryKey: ["face-review", "photos", rootPath, directory], initialPageParam: 0,
+    queryFn: ({ pageParam }) => getFaceReviewPage(pageParam, 200, rootPath, directory),
     getNextPageParam: (page) => page.nextCursor ?? undefined,
+    enabled: Boolean(rootPath && directory),
   });
   const loadedItems = useMemo(() => {
     const unique = new Map<string, FaceReviewItem>();

@@ -736,16 +736,13 @@ pub struct FaceWorkbenchScope {
 
 /// What the main window tells the face workbench window about itself.
 ///
-/// The workbench is a separate window with its own store, so the browse scope,
-/// the loaded selection, and the UI locale cross the window boundary as
-/// published state instead of being re-derived (or re-implemented) there.
+/// The workbench is a separate window with its own store, so the browse scope
+/// and UI locale cross the window boundary as published state instead of being
+/// re-derived (or re-implemented) there.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct FaceWorkbenchContext {
     pub locale: String,
-    /// Assets the browser currently shows, for an explicit-selection run.
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub visible_paths: Vec<PathBuf>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub browse_scope: Option<FaceWorkbenchScope>,
 }
