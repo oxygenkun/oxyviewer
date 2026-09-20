@@ -12,34 +12,30 @@ Each release lists the English notes first, followed by the Simplified Chinese n
 
 ## [Unreleased]
 
+## [0.1.4] - 2026-09-21
+
 ### Added
 
-- Sony bursts are grouped in the grid. `ReleaseMode` and `SequenceNumber` maker notes are
-  read for ARW and HIF files, each run collapses to its first frame with a `×N` badge, and
-  clicking the badge expands the run in place.
+- Removed the list view mode.
+- The grid supports grouping Sony burst shots for viewing.
+- The grid and filmstrip support deleting multiple selected assets.
+- Thumbnail orientation preferences are remembered separately for each library folder.
+
+### Fixed
+
+- Fixed the UI breaking when assets are deleted.
 
 ### 新增
 
-- 网格支持 Sony 连拍成组：读取 ARW 与 HIF 的 `ReleaseMode`、`SequenceNumber` maker note，
-  每组折叠为首张并显示 `×N` 角标，点击角标可就地展开。
+- 移除列表查看模式
+- 网格支持 Sony 连拍合并查看
+- 网格与胶片条支持多选删除
+- 缩略图方向偏好会按图库文件夹分别记忆。
 
-### Changed
+### 修复
 
-- Upgraded `lucide-react` from 0.468.0 to 1.47.0 and switched the grid view button to
-  the official `Grid3x2` icon. The loupe view button now uses a magnifier icon.
+- 修复资源删除时界面崩坏问题
 
-### 变更
-
-- `lucide-react` 从 0.468.0 升级到 1.47.0，网格视图按钮改用官方 `Grid3x2` 图标；
-  放大视图按钮改用放大镜图标。
-
-### Removed
-
-- Removed the list browsing view. Browsing now switches between the grid and the loupe only.
-
-### 移除
-
-- 移除列表浏览视图，浏览区现在只在网格与放大视图之间切换。
 
 ## [0.1.3] - 2026-09-17
 
@@ -123,7 +119,8 @@ Each release lists the English notes first, followed by the Simplified Chinese n
 - 可重建的媒体与图库缓存，支持可配置的存储管理和队列诊断。
 - macOS 与 Linux 安装包，以及双语 Windows NSIS EXE 和便携 ZIP 包，内置固定版本的 FFmpeg 工具；对应的 FFmpeg 源码作为独立发布资源提供。
 
-[Unreleased]: https://github.com/oxygenkun/oxyviewer/compare/v0.1.3...HEAD
+[Unreleased]: https://github.com/oxygenkun/oxyviewer/compare/v0.1.4...HEAD
+[0.1.4]: https://github.com/oxygenkun/oxyviewer/compare/v0.1.3...v0.1.4
 [0.1.3]: https://github.com/oxygenkun/oxyviewer/compare/v0.1.2...v0.1.3
 [0.1.2]: https://github.com/oxygenkun/oxyviewer/compare/v0.1.1...v0.1.2
 [0.1.1]: https://github.com/oxygenkun/oxyviewer/compare/v0.1.0...v0.1.1
