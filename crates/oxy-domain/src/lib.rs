@@ -3,6 +3,8 @@ use std::path::{Path, PathBuf};
 
 mod raw;
 pub use raw::*;
+mod burst;
+pub use burst::*;
 mod external_apps;
 pub use external_apps::*;
 mod about;
@@ -259,6 +261,12 @@ pub struct CaptureMetadata {
     pub color_temperature: Option<String>,
     pub tint: Option<String>,
     pub dynamic_range_optimizer: Option<String>,
+    /// Drive mode the shot was taken in, for example `Continuous`.
+    pub release_mode: Option<String>,
+    /// 1-based index of the frame inside its burst, when the camera recorded
+    /// one. `None` means the frame is not part of a burst (single shot, or the
+    /// camera did not report an index).
+    pub sequence_number: Option<u32>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]

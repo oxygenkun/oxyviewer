@@ -406,63 +406,336 @@ fn detect_canon_fix_base(mnr: &MakerNoteRef<'_>) -> (i64, Option<bool>) {
     (fix, Some(footer_be))
 }
 
+/// One maker note dispatch rule.
+///
+/// Mirrors exiftool's `MakerNotes.pm` dispatch: rules are evaluated in order
+/// and the first match wins, and every predicate of a rule must hold (AND).
+/// Rules exiftool writes as a disjunction - for example `Make=~/^SONY/ or
+/// (Make=~/^HASSELBLAD/ and Model=~/^(HV|Stellar|Lusso|Lunar)/)` - are split
+/// into separate rules sharing one vendor, which is equivalent under
+/// first-match evaluation.
+///
+/// This decides the *vendor* only. The payload layout (header size, whether
+/// value offsets are absolute) is decided separately by
+/// `tiff::exif::detect_maker_note_format`, so a newly added magic prefix has
+/// to be taught there too, otherwise the maker note is parsed with the wrong
+/// offsets.
+#[derive(Clone, Copy)]
+struct VendorRule {
+    vendor: Vendor,
+    /// Payload must start with one of these (empty = no constraint).
+    magic: &'static [&'static [u8]],
+    /// Payload must not start with any of these.
+    magic_not: &'static [&'static [u8]],
+    /// EXIF `Make` (0x010F) must start with one of these, ASCII case-insensitive.
+    make: &'static [&'static str],
+    /// EXIF `Model` (0x0110) must start with one of these.
+    model: &'static [&'static str],
+    /// EXIF `Model` must not start with any of these.
+    model_not: &'static [&'static str],
+}
+
+impl VendorRule {
+    const EMPTY: VendorRule = VendorRule {
+        vendor: Vendor::Unknown,
+        magic: &[],
+        magic_not: &[],
+        make: &[],
+        model: &[],
+        model_not: &[],
+    };
+}
+
+/// Maker note dispatch table, in exiftool's evaluation order.
+static VENDOR_RULES: &[VendorRule] = &[
+    // MakerNoteApple
+    VendorRule {
+        vendor: Vendor::Apple,
+        magic: &[b"Apple iOS\0"],
+        ..VendorRule::EMPTY
+    },
+    // MakerNoteNikon3 / MakerNoteNikon2
+    VendorRule {
+        vendor: Vendor::Nikon,
+        magic: &[b"Nikon\0\x02"],
+        ..VendorRule::EMPTY
+    },
+    VendorRule {
+        vendor: Vendor::Nikon,
+        magic: &[b"Nikon\0\x01"],
+        ..VendorRule::EMPTY
+    },
+    // MakerNoteCanon
+    VendorRule {
+        vendor: Vendor::Canon,
+        make: &["canon"],
+        ..VendorRule::EMPTY
+    },
+    // MakerNoteCasio / MakerNoteCasio2
+    VendorRule {
+        vendor: Vendor::Casio,
+        make: &["casio"],
+        ..VendorRule::EMPTY
+    },
+    VendorRule {
+        vendor: Vendor::Casio,
+        magic: &[b"QVC\0\0\0"],
+        ..VendorRule::EMPTY
+    },
+    // MakerNoteFujifilm. exiftool also accepts `GENERALE` (General Electric
+    // rebadges); that prefix has no layout rule yet, so it only resolves the
+    // vendor.
+    VendorRule {
+        vendor: Vendor::Fujifilm,
+        magic: &[b"FUJIFILM", b"GENERALE"],
+        ..VendorRule::EMPTY
+    },
+    // MakerNoteGE. exiftool is stricter: `^GE(\0\0|NIC\0)`.
+    VendorRule {
+        vendor: Vendor::Ge,
+        magic: &[b"GE\0", b"GENIC\0"],
+        ..VendorRule::EMPTY
+    },
+    // MakerNoteJVC / MakerNoteJVC2 (Victor)
+    VendorRule {
+        vendor: Vendor::Jvc,
+        magic: &[b"JVC "],
+        ..VendorRule::EMPTY
+    },
+    VendorRule {
+        vendor: Vendor::Jvc,
+        magic: &[b"VER:"],
+        make: &["jvc", "victor"],
+        ..VendorRule::EMPTY
+    },
+    // MakerNoteKodak*: KDK payloads under an `EASTMAN KODAK` Make. The plain
+    // Make rule keeps `AOC\0` payloads for Pentax, like exiftool does.
+    VendorRule {
+        vendor: Vendor::Kodak,
+        magic: &[b"KDK"],
+        make: &["eastman kodak"],
+        ..VendorRule::EMPTY
+    },
+    VendorRule {
+        vendor: Vendor::Kodak,
+        magic_not: &[b"AOC\0"],
+        make: &["kodak"],
+        ..VendorRule::EMPTY
+    },
+    // MakerNoteMinolta
+    VendorRule {
+        vendor: Vendor::Minolta,
+        magic: &[b"MLT0"],
+        ..VendorRule::EMPTY
+    },
+    VendorRule {
+        vendor: Vendor::Minolta,
+        make: &["konica minolta", "minolta"],
+        ..VendorRule::EMPTY
+    },
+    // MakerNoteOlympus / MakerNoteOlympus2 / OM System
+    VendorRule {
+        vendor: Vendor::Olympus,
+        magic: &[b"OLYMP\0", b"EPSON\0"],
+        ..VendorRule::EMPTY
+    },
+    VendorRule {
+        vendor: Vendor::Olympus,
+        magic: &[b"OLYMPUS\0"],
+        ..VendorRule::EMPTY
+    },
+    VendorRule {
+        vendor: Vendor::Olympus,
+        magic: &[b"OM SYSTEM\0"],
+        ..VendorRule::EMPTY
+    },
+    // MakerNotePanasonic, plus Leica rebadges that share the Panasonic tags
+    VendorRule {
+        vendor: Vendor::Panasonic,
+        magic: &[b"Panasonic\0"],
+        ..VendorRule::EMPTY
+    },
+    VendorRule {
+        vendor: Vendor::Panasonic,
+        magic: &[b"MKE"],
+        make: &["panasonic"],
+        ..VendorRule::EMPTY
+    },
+    VendorRule {
+        vendor: Vendor::Panasonic,
+        make: &["leica"],
+        ..VendorRule::EMPTY
+    },
+    // MakerNotePentax. The Optio 330RS/430RS carry an `AOC\0` payload but a
+    // Casio-style body, which exiftool excludes here.
+    VendorRule {
+        vendor: Vendor::Pentax,
+        magic: &[b"AOC\0"],
+        model_not: &["pentax optio 330rs", "pentax optio 430rs"],
+        ..VendorRule::EMPTY
+    },
+    VendorRule {
+        vendor: Vendor::Pentax,
+        magic: &[b"PENTAX \0"],
+        ..VendorRule::EMPTY
+    },
+    VendorRule {
+        vendor: Vendor::Pentax,
+        make: &["asahi", "pentax"],
+        ..VendorRule::EMPTY
+    },
+    // MakerNoteSamsung
+    VendorRule {
+        vendor: Vendor::Samsung,
+        magic: &[b"STMN"],
+        ..VendorRule::EMPTY
+    },
+    // MakerNoteSanyo. exiftool splits on `Model` (C4/J*/S*) to pick between
+    // two Sanyo tables; we only have one, so the split is not represented.
+    VendorRule {
+        vendor: Vendor::Sanyo,
+        magic: &[b"SANYO\0"],
+        ..VendorRule::EMPTY
+    },
+    VendorRule {
+        vendor: Vendor::Sanyo,
+        make: &["sanyo"],
+        ..VendorRule::EMPTY
+    },
+    // MakerNoteSony: 12-byte `SONY DSC \0\0\0` and friends. Only `SONY DSC `
+    // has a layout rule, the others still resolve the vendor.
+    VendorRule {
+        vendor: Vendor::Sony,
+        magic: &[
+            b"SONY DSC ",
+            b"SONY CAM ",
+            b"SONY MOBILE",
+            b"\0\0SONY PIC\0",
+            b"VHAB     \0",
+        ],
+        ..VendorRule::EMPTY
+    },
+    // MakerNoteSony5 / MakerNoteSonySRF: headerless SR2 and ARW payloads.
+    VendorRule {
+        vendor: Vendor::Sony,
+        make: &["sony"],
+        ..VendorRule::EMPTY
+    },
+    // Sony-built Hasselblad rebadges (HV / Stellar / Lusso / Lunar).
+    VendorRule {
+        vendor: Vendor::Sony,
+        make: &["hasselblad"],
+        model: &["hv", "stellar", "lusso", "lunar"],
+        ..VendorRule::EMPTY
+    },
+    // MakerNoteSigma
+    VendorRule {
+        vendor: Vendor::Sigma,
+        magic: &[b"SIGMA\0\0\0", b"FOVEON\0\0"],
+        ..VendorRule::EMPTY
+    },
+    // MakerNoteMotorola
+    VendorRule {
+        vendor: Vendor::Motorola,
+        magic: &[b"MOT\0"],
+        ..VendorRule::EMPTY
+    },
+    // MakerNoteReconyx, plus the HyperFire `01 F1` magic
+    VendorRule {
+        vendor: Vendor::Reconyx,
+        magic: &[
+            b"RECONYXUF\0",
+            b"RECONYXH2\0",
+            b"RECONYXMF\0",
+            b"RECONYXHF4K\0",
+        ],
+        ..VendorRule::EMPTY
+    },
+    VendorRule {
+        vendor: Vendor::Reconyx,
+        magic: &[b"\x01\xf1"],
+        ..VendorRule::EMPTY
+    },
+    // MakerNoteRicoh. exiftool routes `RICOH\0(II|MM)` payloads to the Pentax
+    // table (GR III); we keep them under Ricoh.
+    VendorRule {
+        vendor: Vendor::Ricoh,
+        magic: &[b"Ricoh", b"RICOH"],
+        ..VendorRule::EMPTY
+    },
+    VendorRule {
+        vendor: Vendor::Ricoh,
+        make: &["ricoh", "pentax ricoh"],
+        ..VendorRule::EMPTY
+    },
+    // MakerNoteFLIR
+    VendorRule {
+        vendor: Vendor::Flir,
+        make: &["flir systems", "teledyne flir"],
+        ..VendorRule::EMPTY
+    },
+];
+
+fn starts_with_ignore_case(value: &str, lower_prefix: &str) -> bool {
+    value.len() >= lower_prefix.len()
+        && value.as_bytes()[..lower_prefix.len()].eq_ignore_ascii_case(lower_prefix.as_bytes())
+}
+
+/// A `Make`/`Model` predicate holds when it is empty, or when the tag is
+/// present and starts with one of the prefixes.
+fn tag_starts_with(value: Option<&str>, prefixes: &[&str]) -> bool {
+    match value {
+        Some(value) => {
+            prefixes.is_empty() || prefixes.iter().any(|p| starts_with_ignore_case(value, p))
+        }
+        None => prefixes.is_empty(),
+    }
+}
+
+fn rule_matches(rule: &VendorRule, data: &[u8], make: Option<&str>, model: Option<&str>) -> bool {
+    if !rule.magic.is_empty() && !rule.magic.iter().any(|magic| data.starts_with(magic)) {
+        return false;
+    }
+    if rule.magic_not.iter().any(|magic| data.starts_with(magic)) {
+        return false;
+    }
+    if !tag_starts_with(make, rule.make) {
+        return false;
+    }
+    if !tag_starts_with(model, rule.model) {
+        return false;
+    }
+    if rule
+        .model_not
+        .iter()
+        .any(|prefix| model.is_some_and(|model| starts_with_ignore_case(model, prefix)))
+    {
+        return false;
+    }
+    true
+}
+
 /// Detect vendor from raw maker note data.
+///
+/// Payload-only form of [`resolve_vendor`]: rules that need `Make` or `Model`
+/// cannot match, so only the magic prefixes are considered.
 pub fn detect_vendor(data: &[u8]) -> Vendor {
-    if data.len() < 4 {
-        return Vendor::Unknown;
+    resolve_vendor(data, None, None)
+}
+
+/// Detect vendor from maker note data plus the EXIF `Make` (0x010F) and
+/// `Model` (0x0110) strings.
+///
+/// Rules are evaluated in order and the first match wins. Anything the table
+/// misses falls through to [`vendor_from_make`], which is broader (substring
+/// match) and keeps vendors with no maker note header working.
+pub fn resolve_vendor(data: &[u8], make: Option<&str>, model: Option<&str>) -> Vendor {
+    for rule in VENDOR_RULES {
+        if rule_matches(rule, data, make, model) {
+            return rule.vendor;
+        }
     }
-    if data.starts_with(b"Nikon\0") {
-        return Vendor::Nikon;
-    }
-    if data.starts_with(b"FUJIFILM") {
-        return Vendor::Fujifilm;
-    }
-    if data.starts_with(b"OLYMP") {
-        return Vendor::Olympus;
-    }
-    if data.starts_with(b"Panasonic\0") {
-        return Vendor::Panasonic;
-    }
-    if data.starts_with(b"Apple iOS\0") {
-        return Vendor::Apple;
-    }
-    if data.starts_with(b"STMN") {
-        return Vendor::Samsung;
-    }
-    if data.starts_with(b"AOC\0") {
-        return Vendor::Pentax;
-    }
-    if data.starts_with(b"QVC\0\0\0") {
-        return Vendor::Casio;
-    }
-    if data.starts_with(b"MLT0") {
-        return Vendor::Minolta;
-    }
-    if data.starts_with(b"SANYO\0") {
-        return Vendor::Sanyo;
-    }
-    if data.starts_with(b"MOT\0") {
-        return Vendor::Motorola;
-    }
-    if data.starts_with(b"JVC ") || data.starts_with(b"VER:") {
-        return Vendor::Jvc;
-    }
-    // Reconyx HyperFire: starts with 0x01 0xF1
-    if data.len() > 4 && data[0] == 0x01 && data[1] == 0xF1 {
-        return Vendor::Reconyx;
-    }
-    if data.starts_with(b"Ricoh") || data.starts_with(b"RICOH") {
-        return Vendor::Ricoh;
-    }
-    if data.starts_with(b"GE\0") || data.starts_with(b"GENIC\0") {
-        return Vendor::Ge;
-    }
-    if data.starts_with(b"SIGMA\0\0\0") || data.starts_with(b"FOVEON\0\0") {
-        return Vendor::Sigma;
-    }
-    // Canon, Sony, Kodak, some Casio/Minolta have no header - need EXIF Make tag to distinguish.
-    // Default to Unknown (caller can set vendor from Make tag).
-    Vendor::Unknown
+    vendor_from_make(make.unwrap_or(""))
 }
 
 /// Identify vendor from the EXIF Make string.
@@ -13263,7 +13536,7 @@ static NIKON_TAGS: [(u16, &str); 99] = [
 
 // -- MN4: Sony tag table -------------------------------------------------
 
-static SONY_TAGS: [(u16, &str); 32] = [
+static SONY_TAGS: [(u16, &str); 34] = [
     (0x0102, "Quality"),
     (0x0104, "FlashExposureComp"),
     (0x0105, "Teleconverter"),
@@ -13296,6 +13569,12 @@ static SONY_TAGS: [(u16, &str); 32] = [
     (0xB027, "LensType"),
     (0xB028, "MinFocalLength"),
     (0xB029, "MaxFocalLength"),
+    // Continuous-shooting (burst) tags. Values stay raw: `ReleaseMode` is
+    // 0 = Normal, 2 = Continuous, 5 = Exposure Bracketing, 6 = White Balance
+    // Bracketing, 8 = DRO Bracketing, 65535 = n/a, and `SequenceNumber` is the
+    // 1-based frame index inside the burst (0 = single shot, 65535 = n/a).
+    (0xB049, "ReleaseMode"),
+    (0xB04A, "SequenceNumber"),
 ];
 
 // -- MN5: Fujifilm tag table ---------------------------------------------
@@ -19698,7 +19977,86 @@ mod tests {
         assert_eq!(detect_vendor(b"Panasonic\0\0\0"), Vendor::Panasonic);
         assert_eq!(detect_vendor(b"Apple iOS\0\x01\x01"), Vendor::Apple);
         assert_eq!(detect_vendor(b"STMN\0\0\0\0"), Vendor::Samsung);
+        assert_eq!(detect_vendor(b"SONY DSC \0\0\0"), Vendor::Sony);
         assert_eq!(detect_vendor(b"\x05\0"), Vendor::Unknown);
+    }
+
+    #[test]
+    fn mn1_detect_vendor_ignores_make_predicates() {
+        // Rules that need `Make` cannot match without it, so a headerless
+        // Canon payload stays unknown until the Make tag is supplied.
+        let payload = b"\x0c\0\x01\0\x03\0\x01\0\0\0";
+        assert_eq!(detect_vendor(payload), Vendor::Unknown);
+        assert_eq!(resolve_vendor(payload, Some("Canon"), None), Vendor::Canon);
+        assert_eq!(
+            resolve_vendor(payload, None, Some("EOS R5")),
+            Vendor::Unknown
+        );
+    }
+
+    #[test]
+    fn mn1_resolve_vendor_sony_signatures() {
+        // exiftool accepts every one of these with a 12-byte header.
+        for payload in [
+            &b"SONY DSC \0\0\0"[..],
+            &b"SONY CAM \0\0\0"[..],
+            &b"SONY MOBILE\0"[..],
+            &b"\0\0SONY PIC\0"[..],
+            &b"VHAB     \0"[..],
+        ] {
+            assert_eq!(resolve_vendor(payload, None, None), Vendor::Sony);
+        }
+        // Headerless SR2/ARW payloads resolve through the Make tag.
+        let arw = b"\x01\x00\x00\x00IFD\0\0";
+        assert_eq!(resolve_vendor(arw, Some("SONY"), None), Vendor::Sony);
+    }
+
+    #[test]
+    fn mn1_resolve_vendor_hasselblad_rebadge_is_sony() {
+        // Sony-built Hasselblad bodies carry Sony maker notes.
+        let payload = b"\x0a\0\x01\0\x02\0\x01\0\0\0";
+        assert_eq!(
+            resolve_vendor(payload, Some("HASSELBLAD"), Some("Lusso")),
+            Vendor::Sony
+        );
+        // A Hasselblad body outside the Sony-built range is not claimed.
+        assert_eq!(
+            resolve_vendor(payload, Some("HASSELBLAD"), Some("X2D 100C")),
+            Vendor::Unknown
+        );
+    }
+
+    #[test]
+    fn mn1_resolve_vendor_payload_beats_make() {
+        // exiftool keeps `AOC\0` payloads for Pentax even when Make says Kodak.
+        let aoc = b"AOC\0II\x2a\0\x08\0\0\0";
+        assert_eq!(
+            resolve_vendor(aoc, Some("EASTMAN KODAK"), None),
+            Vendor::Pentax
+        );
+        // ... except for the Optio 330RS/430RS, whose body is Casio-style.
+        assert_eq!(
+            resolve_vendor(aoc, None, Some("PENTAX Optio 430RS")),
+            Vendor::Unknown
+        );
+    }
+
+    #[test]
+    fn mn1_resolve_vendor_mixed_predicates() {
+        // JVC/Victor text maker notes need both the Make and the payload.
+        let ver = b"VER:1.00\0\0";
+        assert_eq!(resolve_vendor(ver, None, None), Vendor::Unknown);
+        assert_eq!(resolve_vendor(ver, Some("JVC"), None), Vendor::Jvc);
+        assert_eq!(
+            resolve_vendor(ver, Some("Victor Company"), None),
+            Vendor::Jvc
+        );
+        // Leica shares the Panasonic tag table.
+        let payload = b"\x0c\0\x01\0\x03\0\x01\0\0\0";
+        assert_eq!(
+            resolve_vendor(payload, Some("LEICA"), Some("Q3")),
+            Vendor::Panasonic
+        );
     }
 
     #[test]
@@ -19764,6 +20122,46 @@ mod tests {
     fn mn4_sony_tag_names() {
         assert_eq!(maker_tag_name(0x0102, Vendor::Sony), "Quality");
         assert_eq!(maker_tag_name(0x0114, Vendor::Sony), "CameraSettings");
+    }
+
+    #[test]
+    fn mn4_sony_burst_tag_names() {
+        assert_eq!(maker_tag_name(0xB049, Vendor::Sony), "ReleaseMode");
+        assert_eq!(maker_tag_name(0xB04A, Vendor::Sony), "SequenceNumber");
+    }
+
+    #[test]
+    fn mn4_sony_decodes_burst_sequence() {
+        // Sony maker notes start with a 12-byte header and keep absolute
+        // value offsets, so the IFD is parsed against the parent TIFF data.
+        let mut mn_data = b"SONY DSC \0\0\0".to_vec();
+        mn_data.extend_from_slice(&build_ifd_data(
+            &[
+                (0xB049, 3, 1, 2u16.to_le_bytes().to_vec()), // ReleaseMode = Continuous
+                (0xB04A, 3, 1, 4u16.to_le_bytes().to_vec()), // SequenceNumber = 4th frame
+            ],
+            false,
+        ));
+
+        let mnr = MakerNoteRef {
+            data: &mn_data,
+            offset: 0,
+            format: MakerNoteFormat::HeaderIfd {
+                header_size: 12,
+                relative_offsets: false,
+            },
+        };
+        let mn = parse_maker_note(&mnr, &mn_data, false).unwrap();
+        assert_eq!(mn.vendor, Vendor::Sony);
+
+        let tags = decode_maker_tags(&mn);
+        let value = |name: &str| {
+            tags.iter()
+                .find(|tag| tag.name == name)
+                .map(|tag| tag.value.as_str())
+        };
+        assert_eq!(value("ReleaseMode"), Some("2"));
+        assert_eq!(value("SequenceNumber"), Some("4"));
     }
 
     #[test]

@@ -145,6 +145,18 @@ export interface CaptureMetadata {
   colorTemperature?: string;
   tint?: string;
   dynamicRangeOptimizer?: string;
+  releaseMode?: string;
+  /** 1-based index inside a burst; absent for single shots. */
+  sequenceNumber?: number;
+}
+
+/** A run of frames shot in one continuous burst, in shooting order. */
+export interface BurstGroup {
+  /** First frame of the run: the tile the grid keeps visible when collapsed. */
+  representative: string;
+  /** Every frame of the run, including the representative. */
+  members: string[];
+  releaseMode?: string;
 }
 
 export interface AssetDetails {

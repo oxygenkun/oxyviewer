@@ -39,6 +39,16 @@ coordinates to a differently shaped preview. A dashed frame indicates an
 estimated size when only the exact focus center is recorded. This behavior follows
 [Sony Imaging Edge Viewer's focus-frame model](https://support.d-imaging.sony.co.jp/app/imagingedge/en/instruction/2_1_viewer_display.php): show the shooting focus frame in green only when supported capture metadata exists.
 
+Sony ARW and HEIF/HIF files carry the burst values used for grid grouping:
+MakerNote `ReleaseMode` (`0 = Normal`, `2 = Continuous`, `5 = Exposure
+Bracketing`, `6 = White Balance Bracketing`, `8 = DRO Bracketing`) and
+`SequenceNumber` (1-based index inside a burst; `0` marks a single shot).
+Both survive the HIF container, so ARW and HIF group identically. Runs are
+detected in `oxy_domain::group_bursts`: the index must increase by one and the
+timestamps stay within 10 seconds, so a counter reset, a long pause or a
+bracketing drive mode ends a run. The grid collapses each run to its first
+frame with a `×N` badge; clicking the badge expands it in place.
+
 Custom hierarchical tags use the Lightroom-compatible
 `lr:hierarchicalSubject` path syntax (`parent|child`) together with leaf values
 in `dc:subject`. Adjacent XMP sidecar keywords and hierarchical paths reconcile

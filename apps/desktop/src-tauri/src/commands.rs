@@ -1,7 +1,9 @@
 mod about;
+mod burst;
 mod external_apps;
 mod folder;
 pub(crate) use about::*;
+pub(crate) use burst::*;
 pub(crate) use external_apps::*;
 mod library;
 mod metadata;

@@ -199,7 +199,8 @@ pub fn run() {
                 library.clone(),
                 cache.clone(),
             );
-            let library_index_queue = jobs::LibraryIndexQueue::new(library.clone());
+            let library_index_queue =
+                jobs::LibraryIndexQueue::new(library.clone(), files.clone());
             app.manage(AppState {
                 external_apps,
                 files,
@@ -215,6 +216,7 @@ pub fn run() {
                 directory_tree_queue,
                 library_index_queue,
                 metadata_provider,
+                burst_scan: Default::default(),
             });
 
             create_debug_queue_window(app.handle())?;
@@ -239,6 +241,7 @@ pub fn run() {
             refresh_directory,
             get_asset_details,
             request_metadata,
+            scan_burst_groups,
             get_preview,
             cancel_preview_request,
             renew_media_resource,

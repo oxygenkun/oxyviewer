@@ -18,6 +18,10 @@ const virtual = vi.hoisted(() => ({
   scrollToIndex: vi.fn(),
 }));
 
+const api = vi.hoisted(() => ({
+  scanBurstGroups: vi.fn(),
+}));
+
 vi.mock("@tanstack/react-virtual", () => {
   // Mirror the real hook: the instance is stable while its options change per render.
   const instance = {
@@ -45,6 +49,7 @@ vi.mock("@/lib/api", async (importOriginal) => {
   return {
     ...original,
     requestMetadata: vi.fn(() => Promise.resolve([])),
+    scanBurstGroups: api.scanBurstGroups,
     reconcilePreviewSchedule: vi.fn(() => Promise.resolve()),
     releasePreviewSchedule: vi.fn(() => Promise.resolve()),
     upsertPreviewSchedule: vi.fn(() => Promise.resolve()),
@@ -78,12 +83,12 @@ let root: Root;
 let host: HTMLDivElement;
 let client: QueryClient;
 
-const render = async (view: ViewMode) => {
+const render = async (view: ViewMode, renderedAssets = assets) => {
   await act(async () => root.render(
     <QueryClientProvider client={client}>
       <AssetBrowser
-        assets={assets}
-        total={assets.length}
+        assets={renderedAssets}
+        total={renderedAssets.length}
         hasNextPage={false}
         isFetchingNextPage={false}
         fetchNextPage={vi.fn()}
@@ -112,9 +117,12 @@ beforeEach(() => {
   vi.stubGlobal("ResizeObserver", ResizeObserverStub);
   virtual.measure.mockClear();
   virtual.scrollToIndex.mockClear();
+  api.scanBurstGroups.mockReset();
+  api.scanBurstGroups.mockResolvedValue([]);
   useWorkspaceStore.setState({
     view: "grid",
     thumbnailOrientation: "landscape",
+    burstGroupingEnabled: true,
     activeId: undefined,
     selectedIds: [],
     settingsOpen: false,
@@ -158,4 +166,104 @@ it("keeps the selected photo in view when the grid orientation changes", async (
   expect(virtual.measure).toHaveBeenCalled();
   expect(virtual.scrollToIndex).toHaveBeenCalledWith(3, { align: "auto" });
   expect(virtual.scrollToIndex).not.toHaveBeenCalledWith(expect.anything(), { align: "center" });
+});
+
+it("expands a collapsed burst from its cover and updates the virtual row count", async () => {
+  api.scanBurstGroups.mockResolvedValue([{
+    representative: "/demo/a0.jpg",
+    members: Array.from({ length: 6 }, (_, index) => `/demo/a${index}.jpg`),
+  }]);
+  await render("grid");
+  await act(async () => undefined);
+
+  // Six frames collapse to one tile: 24 - 5 = 19 visible items, or five rows.
+  expect(virtual.options.count).toBe(5);
+  expect(host.querySelector('button[title="/demo/a1.jpg"]')).toBeNull();
+
+  const cover = host.querySelector<HTMLButtonElement>('button[title="/demo/a0.jpg"]');
+  expect(cover).not.toBeNull();
+  const expandClick = new MouseEvent("click", { bubbles: true });
+  Object.defineProperty(expandClick, "timeStamp", { value: 100 });
+  await act(async () => cover?.dispatchEvent(expandClick));
+
+  const initialDoubleClick = new MouseEvent("dblclick", { bubbles: true });
+  Object.defineProperty(initialDoubleClick, "timeStamp", { value: 200 });
+  await act(async () => cover?.dispatchEvent(initialDoubleClick));
+  expect(useWorkspaceStore.getState().view).toBe("grid");
+
+  expect(virtual.options.count).toBe(6);
+  const secondFrame = host.querySelector<HTMLButtonElement>('button[title="/demo/a1.jpg"]');
+  expect(secondFrame).not.toBeNull();
+  expect(host.querySelectorAll(".asset-card.is-burst-expanded")).toHaveLength(6);
+  await act(async () => secondFrame?.click());
+  expect(useWorkspaceStore.getState().activeId).toBe("a1");
+
+  virtual.scrollToIndex.mockClear();
+  const collapse = secondFrame?.querySelector<HTMLElement>(".asset-card__burst");
+  expect(collapse).not.toBeNull();
+  await act(async () => collapse?.click());
+  expect(virtual.options.count).toBe(5);
+  expect(useWorkspaceStore.getState().activeId).toBe("a0");
+  expect(virtual.scrollToIndex).toHaveBeenCalledWith(0, { align: "start" });
+});
+
+it("keeps the collapsed representative in place when it remains visible", async () => {
+  api.scanBurstGroups.mockResolvedValue([{
+    representative: "/demo/a0.jpg",
+    members: Array.from({ length: 6 }, (_, index) => `/demo/a${index}.jpg`),
+  }]);
+  await render("grid");
+  await act(async () => undefined);
+  const scroll = host.querySelector<HTMLElement>(".asset-scroll");
+  Object.defineProperty(scroll, "clientHeight", { value: 500 });
+
+  const cover = host.querySelector<HTMLButtonElement>('button[title="/demo/a0.jpg"]');
+  await act(async () => cover?.click());
+  virtual.scrollToIndex.mockClear();
+  const secondFrame = host.querySelector<HTMLButtonElement>('button[title="/demo/a1.jpg"]');
+  const collapse = secondFrame?.querySelector<HTMLElement>(".asset-card__burst");
+  await act(async () => collapse?.click());
+
+  expect(virtual.scrollToIndex).not.toHaveBeenCalled();
+});
+
+it("opens loupe only when a burst was already expanded before the double click", async () => {
+  api.scanBurstGroups.mockResolvedValue([{
+    representative: "/demo/a0.jpg",
+    members: ["/demo/a0.jpg", "/demo/a1.jpg"],
+  }]);
+  await render("grid");
+  await act(async () => undefined);
+  const cover = host.querySelector<HTMLButtonElement>('button[title="/demo/a0.jpg"]');
+
+  const expandClick = new MouseEvent("click", { bubbles: true });
+  Object.defineProperty(expandClick, "timeStamp", { value: 100 });
+  await act(async () => cover?.dispatchEvent(expandClick));
+  const expandedDoubleClick = new MouseEvent("dblclick", { bubbles: true });
+  Object.defineProperty(expandedDoubleClick, "timeStamp", { value: 1_000 });
+  await act(async () => cover?.dispatchEvent(expandedDoubleClick));
+
+  expect(useWorkspaceStore.getState().view).toBe("loupe");
+});
+
+it("publishes the first burst groups before the remaining paths finish scanning", async () => {
+  const manyAssets = Array.from({ length: 100 }, (_, index) => asset(index));
+  let finishSecondBatch: ((groups: []) => void) | undefined;
+  api.scanBurstGroups
+    .mockResolvedValueOnce([{
+      representative: "/demo/a0.jpg",
+      members: ["/demo/a0.jpg", "/demo/a1.jpg"],
+    }])
+    .mockImplementationOnce(() => new Promise((resolve) => {
+      finishSecondBatch = resolve;
+    }));
+
+  await render("grid", manyAssets);
+  await act(async () => undefined);
+
+  expect(api.scanBurstGroups.mock.calls[0]?.[0]).toHaveLength(24);
+  expect(api.scanBurstGroups.mock.calls[1]?.[0]).toHaveLength(88);
+  expect(host.querySelector('button[title="/demo/a1.jpg"]')).toBeNull();
+
+  await act(async () => finishSecondBatch?.([]));
 });

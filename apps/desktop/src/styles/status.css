@@ -9,6 +9,28 @@
   font: 0.625rem ui-monospace, monospace;
 }
 .statusbar span:first-child { margin-right: auto; }
+.statusbar__thumbnail-controls {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  height: 22px;
+}
+.statusbar__burst-toggle {
+  display: grid;
+  place-items: center;
+  flex: 0 0 24px;
+  width: 24px;
+  height: 22px;
+  padding: 0;
+  border: 1px solid #282e32;
+  border-radius: 4px;
+  color: #626a70;
+  background: var(--surface-input);
+  line-height: 0;
+}
+.statusbar__burst-toggle svg { display: block; }
+.statusbar__burst-toggle:hover { color: var(--text); background: #1c2125; }
+.statusbar__burst-toggle.is-active { color: var(--accent); background: #252b2e; }
 .statusbar__thumbnail-orientation {
   display: flex;
   gap: 1px;

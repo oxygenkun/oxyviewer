@@ -12,6 +12,17 @@ Each release lists the English notes first, followed by the Simplified Chinese n
 
 ## [Unreleased]
 
+### Added
+
+- Sony bursts are grouped in the grid. `ReleaseMode` and `SequenceNumber` maker notes are
+  read for ARW and HIF files, each run collapses to its first frame with a `×N` badge, and
+  clicking the badge expands the run in place.
+
+### 新增
+
+- 网格支持 Sony 连拍成组：读取 ARW 与 HIF 的 `ReleaseMode`、`SequenceNumber` maker note，
+  每组折叠为首张并显示 `×N` 角标，点击角标可就地展开。
+
 ### Changed
 
 - Upgraded `lucide-react` from 0.468.0 to 1.47.0 and switched the grid view button to

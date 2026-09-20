@@ -54,6 +54,8 @@ pub struct FsCatalog {
     sessions: RwLock<HashMap<String, PathBuf>>,
     asset_cache: RwLock<HashMap<PathBuf, Arc<Vec<AssetSummary>>>>,
     directory_cache: RwLock<HashMap<PathBuf, Arc<Vec<DirectorySummary>>>>,
+    directory_cache_generation: AtomicU64,
+    directory_scan_gates: Mutex<HashMap<PathBuf, Arc<Mutex<()>>>>,
     directory_trees: RwLock<HashMap<String, Arc<Mutex<DirectoryTreeState>>>>,
     next_directory_tree_revision: AtomicU64,
 }
@@ -249,7 +251,7 @@ impl FsCatalog {
                 return Err(error);
             }
         };
-        let directories = match list_directories(&directory) {
+        let directories = match self.cached_directories(&directory) {
             Ok(directories) => directories,
             Err(error) => {
                 self.fail_directory_load(session_id, &directory, generation)?;
@@ -262,7 +264,7 @@ impl FsCatalog {
         }
         let node = find_tree_node_mut(&mut state.snapshot.root, &directory)
             .ok_or_else(|| FsError::InvalidFolder(directory.clone()))?;
-        replace_tree_children(node, &directories);
+        replace_tree_children(node, directories.as_ref());
         state.scanned_directories.insert(directory);
         state.snapshot.revision = self.next_tree_revision();
         Ok(state.snapshot.clone())
@@ -275,7 +277,10 @@ impl FsCatalog {
         session_id: &str,
         directory: &Path,
     ) -> Result<(DirectoryTreeSnapshot, Vec<PathBuf>), FsError> {
-        self.prefetch_directory_children_with(session_id, directory, list_directories)
+        self.prefetch_directory_children_with(session_id, directory, |directory| {
+            self.cached_directories(directory)
+                .map(|directories| directories.as_ref().clone())
+        })
     }
 
     fn prefetch_directory_children_with(
@@ -328,6 +333,7 @@ impl FsCatalog {
         session_id: &str,
         directory: Option<&Path>,
     ) -> Result<DirectoryTreeSnapshot, FsError> {
+        let root = self.session_root(session_id)?;
         let directory = self.resolve_session_directory(session_id, directory)?;
         let tree = self.directory_tree_state(session_id)?;
         // Keep the visible tree and expansion intent while background discovery
@@ -340,14 +346,21 @@ impl FsCatalog {
             state.scan_generation
         };
         self.asset_cache.write().remove(&directory);
-        self.directory_cache.write().remove(&directory);
-        let directories = list_directories(&directory)?;
+        // Refresh rebuilds the whole root index and tree in the background.
+        // Do not let descendants republish directory entries from the previous
+        // generation into either consumer.
+        self.directory_cache
+            .write()
+            .retain(|cached, _| !cached.starts_with(&root));
+        self.directory_cache_generation
+            .fetch_add(1, AtomicOrdering::AcqRel);
+        let directories = self.cached_directories(&directory)?;
         let mut state = tree.lock();
         if state.scan_generation != generation {
             return Ok(state.snapshot.clone());
         }
         if let Some(node) = find_tree_node_mut(&mut state.snapshot.root, &directory) {
-            replace_tree_children(node, &directories);
+            replace_tree_children(node, directories.as_ref());
             state.scanned_directories.insert(directory);
         }
         state.snapshot.revision = self.next_tree_revision();
@@ -357,6 +370,24 @@ impl FsCatalog {
     pub fn invalidate_directory(&self, directory: &Path) {
         self.asset_cache.write().remove(directory);
         self.directory_cache.write().remove(directory);
+        self.directory_cache_generation
+            .fetch_add(1, AtomicOrdering::AcqRel);
+    }
+
+    /// Shares one immediate-child directory enumeration between the tree and
+    /// the background library index. The per-path gate prevents the two
+    /// workers from reading the same directory concurrently.
+    pub fn scan_index_directories_cached(
+        &self,
+        directory: &Path,
+        checkpoint: impl FnMut(),
+    ) -> Result<Vec<DirectorySummary>, FsError> {
+        self.cached_directories_with(directory, |directory| {
+            let mut directories = scan_index_directories_with_checkpoint(directory, checkpoint)?;
+            sort_directories(&mut directories);
+            Ok(directories)
+        })
+        .map(|directories| directories.as_ref().clone())
     }
 
     pub fn get_asset(&self, path: impl AsRef<Path>) -> Result<AssetSummary, FsError> {
@@ -414,11 +445,40 @@ impl FsCatalog {
     }
 
     fn cached_directories(&self, directory: &Path) -> Result<Arc<Vec<DirectorySummary>>, FsError> {
+        self.cached_directories_with(directory, list_directories)
+    }
+
+    fn cached_directories_with(
+        &self,
+        directory: &Path,
+        scan: impl FnOnce(&Path) -> Result<Vec<DirectorySummary>, FsError>,
+    ) -> Result<Arc<Vec<DirectorySummary>>, FsError> {
         if let Some(directories) = self.directory_cache.read().get(directory).cloned() {
             return Ok(directories);
         }
 
-        let directories = Arc::new(list_directories(directory)?);
+        let gate = self
+            .directory_scan_gates
+            .lock()
+            .entry(directory.to_owned())
+            .or_insert_with(|| Arc::new(Mutex::new(())))
+            .clone();
+        let _scan = gate.lock();
+        if let Some(directories) = self.directory_cache.read().get(directory).cloned() {
+            return Ok(directories);
+        }
+
+        let generation = self
+            .directory_cache_generation
+            .load(AtomicOrdering::Acquire);
+        let directories = Arc::new(scan(directory)?);
+        if self
+            .directory_cache_generation
+            .load(AtomicOrdering::Acquire)
+            != generation
+        {
+            return Ok(directories);
+        }
         let mut cache = self.directory_cache.write();
         Ok(cache
             .entry(directory.to_owned())
@@ -614,13 +674,17 @@ pub fn scan_index_assets(root: &Path) -> Result<Vec<AssetSummary>, FsError> {
 
 pub fn list_directories(root: &Path) -> Result<Vec<DirectorySummary>, FsError> {
     let mut directories = scan_index_directories(root)?;
+    sort_directories(&mut directories);
+    Ok(directories)
+}
+
+fn sort_directories(directories: &mut [DirectorySummary]) {
     directories.sort_unstable_by(|left, right| {
         left.name
             .to_ascii_lowercase()
             .cmp(&right.name.to_ascii_lowercase())
             .then_with(|| left.name.cmp(&right.name))
     });
-    Ok(directories)
 }
 
 pub fn scan_directory(
@@ -1377,6 +1441,59 @@ mod tests {
             catalog.list_directories(&session.id, None).unwrap().len(),
             1
         );
+    }
+
+    #[test]
+    fn directory_tree_reuses_the_index_directory_enumeration() {
+        let root = tempdir().unwrap();
+        fs::create_dir(root.path().join("first")).unwrap();
+        let catalog = FsCatalog::default();
+        let session = catalog.open_folder(root.path()).unwrap();
+        let canonical_root = session.root_path.clone();
+
+        let indexed = catalog
+            .scan_index_directories_cached(&canonical_root, || {})
+            .unwrap();
+        assert_eq!(indexed.len(), 1);
+        fs::create_dir(root.path().join("added-after-index-scan")).unwrap();
+
+        let (_, should_load) = catalog
+            .set_directory_expanded(&session.id, &canonical_root, true)
+            .unwrap();
+        assert!(should_load);
+        let tree = catalog
+            .load_directory_children(&session.id, &canonical_root)
+            .unwrap();
+        assert_eq!(tree.root.children.unwrap().len(), 1);
+
+        catalog.invalidate_directory(&canonical_root);
+        let refreshed = catalog
+            .refresh_directory(&session.id, Some(&canonical_root))
+            .unwrap();
+        assert_eq!(refreshed.root.children.unwrap().len(), 2);
+    }
+
+    #[test]
+    fn invalidation_during_a_shared_scan_prevents_stale_cache_publication() {
+        let root = tempdir().unwrap();
+        fs::create_dir(root.path().join("first")).unwrap();
+        let catalog = FsCatalog::default();
+        let canonical_root = root.path().canonicalize().unwrap();
+
+        let stale = catalog
+            .cached_directories_with(&canonical_root, |directory| {
+                let directories = list_directories(directory)?;
+                catalog.invalidate_directory(directory);
+                Ok(directories)
+            })
+            .unwrap();
+        assert_eq!(stale.len(), 1);
+
+        fs::create_dir(root.path().join("second")).unwrap();
+        let current = catalog
+            .scan_index_directories_cached(&canonical_root, || {})
+            .unwrap();
+        assert_eq!(current.len(), 2);
     }
 
     #[test]

@@ -22,6 +22,8 @@ use std::{
 };
 use thiserror::Error;
 
+mod burst;
+pub use burst::*;
 mod capture;
 mod engine;
 

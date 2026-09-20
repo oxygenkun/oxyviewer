@@ -873,6 +873,21 @@ impl Library {
         root: &Path,
         mut report_progress: impl FnMut(IndexProgress),
     ) -> Result<Option<IndexStats>, LibraryError> {
+        self.index_root_with_progress_and_directory_scan(root, &mut report_progress, |directory| {
+            oxy_fs::scan_index_directories_with_checkpoint(directory, || {
+                self.foreground.wait_for_background();
+            })
+        })
+    }
+
+    /// Rebuilds an index while allowing the application-owned filesystem
+    /// catalog to share immediate-child directory scans with its tree worker.
+    pub fn index_root_with_progress_and_directory_scan(
+        &self,
+        root: &Path,
+        mut report_progress: impl FnMut(IndexProgress),
+        mut scan_directories: impl FnMut(&Path) -> Result<Vec<DirectorySummary>, oxy_fs::FsError>,
+    ) -> Result<Option<IndexStats>, LibraryError> {
         let root = root.canonicalize()?;
         {
             let mut active = self.indexing_roots.lock();
@@ -881,7 +896,7 @@ impl Library {
             }
         }
         let _gate = self.index_gate.lock();
-        let result = self.index_root_inner(&root, &mut report_progress);
+        let result = self.index_root_inner(&root, &mut report_progress, &mut scan_directories);
         self.indexing_roots.lock().remove(&root);
         result.map(Some)
     }
@@ -1095,7 +1110,9 @@ impl Library {
         &self,
         root: &Path,
         report_progress: &mut impl FnMut(IndexProgress),
+        scan_directories: &mut impl FnMut(&Path) -> Result<Vec<DirectorySummary>, oxy_fs::FsError>,
     ) -> Result<IndexStats, LibraryError> {
+        let index_started = Instant::now();
         let scan_id = self.next_scan_id()?;
         let mut queue = DirectoryPriorityQueue::new(root.to_owned());
         let mut discovered_directories = Vec::new();
@@ -1124,9 +1141,7 @@ impl Library {
             // unreadable. Publishing a partial scan as complete would turn a
             // transient permission or volume error into false deletions.
             self.foreground.wait_for_background();
-            let directories = oxy_fs::scan_index_directories_with_checkpoint(&directory, || {
-                self.foreground.wait_for_background();
-            })?;
+            let directories = scan_directories(&directory)?;
             let safe_directories = queue.enqueue_children(depth, directories);
             directory_count += safe_directories.len();
             self.write_directory_index_batch(root, &directory, scan_id, &safe_directories)?;
@@ -1164,11 +1179,17 @@ impl Library {
                 });
             }
             self.foreground.wait_for_background();
-            let assets = oxy_fs::scan_assets_with_progress(directory, |_| {
-                self.foreground.wait_for_background();
-            })?;
+            let assets = if let Some(assets) =
+                self.validated_directory_assets(root, directory, index_started)
+            {
+                assets
+            } else {
+                Arc::new(oxy_fs::scan_assets_with_progress(directory, |_| {
+                    self.foreground.wait_for_background();
+                })?)
+            };
             asset_count += assets.len();
-            self.write_asset_index_batch(root, directory, scan_id, &assets)?;
+            self.write_asset_index_batch(root, directory, scan_id, assets.as_ref())?;
             report_progress(IndexProgress {
                 root_path: root.to_owned(),
                 current_directory: directory.clone(),
@@ -2401,6 +2422,41 @@ mod tests {
         assert_eq!(completed.asset_count, 2);
         assert_eq!(completed.directory_count, 1);
         assert_eq!(completed.pending_directory_count, 0);
+    }
+
+    #[test]
+    fn index_reuses_a_browse_snapshot_created_during_its_generation() {
+        let library = Library::in_memory().unwrap();
+        let root = tempdir().unwrap();
+        let photo = root.path().join("shared.jpg");
+        std::fs::write(&photo, b"jpeg").unwrap();
+        library.add_root(root.path()).unwrap();
+        let canonical_root = root.path().canonicalize().unwrap();
+
+        library
+            .index_root_with_progress_and_directory_scan(
+                &canonical_root,
+                |_| {},
+                |directory| {
+                    // Simulate the foreground first page winning while the
+                    // index is still discovering directories. Removing the
+                    // file afterwards proves the asset phase reused that exact
+                    // generation instead of enumerating the directory again.
+                    library
+                        .browse_directory(&canonical_root, directory, |_| {})
+                        .unwrap();
+                    std::fs::remove_file(&photo).unwrap();
+                    oxy_fs::scan_index_directories(directory)
+                },
+            )
+            .unwrap();
+
+        let page = library
+            .list_assets(&canonical_root, &canonical_root, &query(None), 0)
+            .unwrap()
+            .unwrap();
+        assert_eq!(page.total, 1);
+        assert_eq!(page.items[0].name, "shared.jpg");
     }
 
     #[test]

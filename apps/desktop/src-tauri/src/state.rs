@@ -22,4 +22,6 @@ pub(crate) struct AppState {
     pub(crate) directory_tree_queue: jobs::directory_tree::DirectoryTreeQueue,
     pub(crate) library_index_queue: jobs::LibraryIndexQueue,
     pub(crate) metadata_provider: Arc<providers::exiftool::ProviderManager>,
+    /// Caches burst values so growing listings are grouped without re-reading files.
+    pub(crate) burst_scan: Arc<oxy_metadata::BurstScanner>,
 }

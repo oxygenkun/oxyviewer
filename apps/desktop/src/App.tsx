@@ -1,5 +1,5 @@
 import { useInfiniteQuery, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Aperture, CircleAlert, FolderPlus, RectangleHorizontal, RectangleVertical } from "lucide-react";
+import { Aperture, CircleAlert, FolderPlus, Layers2, RectangleHorizontal, RectangleVertical } from "lucide-react";
 import { useCallback, useDeferredValue, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties } from "react";
 import { AssetBrowser } from "@/components/browsing/AssetBrowser";
 import { BackgroundPreviewPreloader } from "@/components/loupe/BackgroundPreviewPreloader";
@@ -109,8 +109,8 @@ export function App({ perfScenario }: { perfScenario?: PerfScenario }) {
   const [noticeExpanded, setNoticeExpanded] = useState(false);
   const queryClient = useQueryClient();
   const {
-    view, thumbnailOrientation, activeId, selectedIds, inspectorOpen, leftPanelOpen, settingsOpen, locale,
-    search, tagIds, tagMatch, clearSearch, kind, minimumRating, colorLabels, pickLabels, sort, direction, clearSelection, select, setThumbnailOrientation, toggleSettings,
+    view, thumbnailOrientation, burstGroupingEnabled, activeId, selectedIds, inspectorOpen, leftPanelOpen, settingsOpen, locale,
+    search, tagIds, tagMatch, clearSearch, kind, minimumRating, colorLabels, pickLabels, sort, direction, clearSelection, select, setThumbnailOrientation, toggleBurstGrouping, toggleSettings,
     leftPanelWidth, inspectorWidth, setLeftPanelWidth, setInspectorWidth, uiFontScale,
   } = useWorkspaceStore();
   const appShellRef = useRef<HTMLDivElement>(null);
@@ -933,27 +933,38 @@ export function App({ perfScenario }: { perfScenario?: PerfScenario }) {
             </span>
           ) : null}
           <span>{assetsLoading || !activeSession && restoringFolders ? t("loading") : `${activeOrdinal === undefined ? "–" : activeOrdinal.toLocaleString()} / ${total.toLocaleString()} ${t("photos")}`}</span>
-          <span
-            className="statusbar__thumbnail-orientation"
-            role="group"
-            aria-label={t("thumbnailOrientation")}
-          >
+          <span className="statusbar__thumbnail-controls">
             <button
-              className={thumbnailOrientation === "landscape" ? "is-active" : ""}
-              onClick={() => setThumbnailOrientation("landscape")}
-              title={t("landscapePriority")}
-              aria-label={t("landscapePriority")}
+              className={`statusbar__burst-toggle ${burstGroupingEnabled ? "is-active" : ""}`}
+              onClick={toggleBurstGrouping}
+              title={t(burstGroupingEnabled ? "disableBurstGrouping" : "enableBurstGrouping")}
+              aria-label={t("burstGrouping")}
+              aria-pressed={burstGroupingEnabled}
             >
-              <RectangleHorizontal size={14} />
+              <Layers2 size={14} />
             </button>
-            <button
-              className={thumbnailOrientation === "portrait" ? "is-active" : ""}
-              onClick={() => setThumbnailOrientation("portrait")}
-              title={t("portraitPriority")}
-              aria-label={t("portraitPriority")}
+            <span
+              className="statusbar__thumbnail-orientation"
+              role="group"
+              aria-label={t("thumbnailOrientation")}
             >
-              <RectangleVertical size={14} />
-            </button>
+              <button
+                className={thumbnailOrientation === "landscape" ? "is-active" : ""}
+                onClick={() => setThumbnailOrientation("landscape")}
+                title={t("landscapePriority")}
+                aria-label={t("landscapePriority")}
+              >
+                <RectangleHorizontal size={14} />
+              </button>
+              <button
+                className={thumbnailOrientation === "portrait" ? "is-active" : ""}
+                onClick={() => setThumbnailOrientation("portrait")}
+                title={t("portraitPriority")}
+                aria-label={t("portraitPriority")}
+              >
+                <RectangleVertical size={14} />
+              </button>
+            </span>
           </span>
           <span>{selectedIds.length} {t("selected")}</span>
         </footer>

@@ -3,6 +3,7 @@ pub(crate) mod metadata;
 pub(crate) mod preview;
 
 use oxy_domain::{DebugQueueItem, DebugQueueState, LibraryIndexUpdate};
+use oxy_fs::FsCatalog;
 use oxy_library::{IndexProgress, IndexStage, Library};
 use std::{
     collections::HashMap,
@@ -47,6 +48,7 @@ impl DebugSnapshotCache {
 #[derive(Clone)]
 pub(crate) struct LibraryIndexQueue {
     library: Arc<Library>,
+    files: Arc<FsCatalog>,
     work: Arc<Mutex<LibraryIndexWork>>,
 }
 
@@ -57,9 +59,10 @@ struct LibraryIndexWork {
 }
 
 impl LibraryIndexQueue {
-    pub(crate) fn new(library: Arc<Library>) -> Self {
+    pub(crate) fn new(library: Arc<Library>, files: Arc<FsCatalog>) -> Self {
         Self {
             library,
+            files,
             work: Arc::new(Mutex::new(LibraryIndexWork::default())),
         }
     }
@@ -88,20 +91,28 @@ impl LibraryIndexQueue {
             queue.library.foreground.wait_for_background();
             let directory_event_app = app.clone();
             let mut directory_event_sent = false;
-            let result = queue.library.index_root_with_progress(&root, |progress| {
-                if progress.stage == IndexStage::Assets && !directory_event_sent {
-                    directory_event_sent = true;
-                    let _ = directory_event_app.emit(
-                        LIBRARY_DIRECTORY_INDEX_UPDATED_EVENT,
-                        LibraryIndexUpdate {
-                            root_path: progress.root_path.clone(),
-                            asset_count: progress.asset_count,
-                            directory_count: progress.directory_count,
-                        },
-                    );
-                }
-                queue.update_progress(progress);
-            });
+            let result = queue.library.index_root_with_progress_and_directory_scan(
+                &root,
+                |progress| {
+                    if progress.stage == IndexStage::Assets && !directory_event_sent {
+                        directory_event_sent = true;
+                        let _ = directory_event_app.emit(
+                            LIBRARY_DIRECTORY_INDEX_UPDATED_EVENT,
+                            LibraryIndexUpdate {
+                                root_path: progress.root_path.clone(),
+                                asset_count: progress.asset_count,
+                                directory_count: progress.directory_count,
+                            },
+                        );
+                    }
+                    queue.update_progress(progress);
+                },
+                |directory| {
+                    queue.files.scan_index_directories_cached(directory, || {
+                        queue.library.foreground.wait_for_background();
+                    })
+                },
+            );
             queue.finish(&root);
             match result {
                 Ok(Some(stats)) => {
@@ -225,7 +236,7 @@ mod tests {
         let root = tempdir().unwrap();
         let root = root.path().canonicalize().unwrap();
         let library = Arc::new(Library::open(&state.path().join("library.sqlite")).unwrap());
-        let queue = LibraryIndexQueue::new(library);
+        let queue = LibraryIndexQueue::new(library, Arc::new(FsCatalog::default()));
         queue.work.lock().unwrap().pending.push(root.clone());
 
         let pending = queue.debug_snapshot().unwrap();

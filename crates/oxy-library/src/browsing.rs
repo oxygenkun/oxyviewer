@@ -10,6 +10,7 @@ use std::{
         mpsc::{self, SyncSender},
     },
     thread::{self, JoinHandle},
+    time::Instant,
 };
 
 type DirectoryKey = (PathBuf, PathBuf);
@@ -60,6 +61,7 @@ struct SnapshotState {
     epoch: u64,
     loaded: bool,
     validated: bool,
+    validated_at: Option<Instant>,
     validating: bool,
     error: Option<String>,
     revision: u64,
@@ -121,6 +123,23 @@ impl DirectorySnapshots {
             .sender
             .send(PersistenceMessage::Persist(slot))
             .map_err(|error| error.to_string())
+    }
+
+    fn validated_assets(
+        &self,
+        root: &Path,
+        directory: &Path,
+        not_older_than: Instant,
+    ) -> Option<Arc<Vec<AssetSummary>>> {
+        let slot = self
+            .slots
+            .lock()
+            .get(&(root.to_owned(), directory.to_owned()))
+            .cloned()?;
+        let state = slot.state.lock();
+        (state.validated && state.validated_at.is_some_and(|at| at >= not_older_than))
+            .then(|| state.assets.clone())
+            .flatten()
     }
 }
 
@@ -199,6 +218,16 @@ pub(super) fn ensure_schema(connection: &Connection) -> Result<(), rusqlite::Err
 }
 
 impl Library {
+    pub(super) fn validated_directory_assets(
+        &self,
+        root: &Path,
+        directory: &Path,
+        not_older_than: Instant,
+    ) -> Option<Arc<Vec<AssetSummary>>> {
+        self.directory_snapshots
+            .validated_assets(root, directory, not_older_than)
+    }
+
     fn directory_slot(&self, root: &Path, directory: &Path) -> Result<Arc<Slot>, LibraryError> {
         if !directory.starts_with(root)
             || directory
@@ -394,6 +423,7 @@ impl Library {
             state.assets = Some(assets.clone());
             state.loaded = true;
             state.validated = true;
+            state.validated_at = Some(Instant::now());
             state.validating = false;
             state.error = None;
             state.persistence_error = None;

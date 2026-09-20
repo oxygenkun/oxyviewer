@@ -37,6 +37,7 @@ import type {
 interface WorkspaceState {
   view: ViewMode;
   thumbnailOrientation: ThumbnailOrientation;
+  burstGroupingEnabled: boolean;
   selectedIds: string[];
   activeId?: string;
   inspectorOpen: boolean;
@@ -75,6 +76,7 @@ interface WorkspaceState {
   resetShortcuts: () => void;
   setView: (view: ViewMode) => void;
   setThumbnailOrientation: (orientation: ThumbnailOrientation) => void;
+  toggleBurstGrouping: () => void;
   select: (id: string, additive?: boolean) => void;
   clearSelection: () => void;
   toggleInspector: () => void;
@@ -107,6 +109,7 @@ export type SettingsSection = "general" | "display" | "media" | "externalApps" |
 export const useWorkspaceStore = create<WorkspaceState>((set) => ({
   view: "grid",
   thumbnailOrientation: "landscape",
+  burstGroupingEnabled: false,
   selectedIds: [],
   inspectorOpen: true,
   leftPanelOpen: true,
@@ -158,6 +161,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set) => ({
   },
   setView: (view) => set({ view }),
   setThumbnailOrientation: (thumbnailOrientation) => set({ thumbnailOrientation }),
+  toggleBurstGrouping: () => set((state) => ({ burstGroupingEnabled: !state.burstGroupingEnabled })),
   select: (id, additive = false) =>
     set((state) => {
       if (!additive) return { selectedIds: [id], activeId: id };

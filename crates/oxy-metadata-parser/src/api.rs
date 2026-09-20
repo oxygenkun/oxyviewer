@@ -1833,21 +1833,15 @@ fn emit_exif_from_tiff(tiff_data: &[u8], tiff_base: usize, tags: &mut Vec<Tag>) 
     if let Some(ref mnr) = exif.maker_note {
         use crate::tiff::maker_notes;
 
-        // Determine vendor from Make tag in IFD0
-        let mut vendor = maker_notes::detect_vendor(mnr.data);
-        if vendor == maker_notes::Vendor::Unknown {
-            // Try to identify from EXIF Make string
-            for entry in &exif.ifd0.entries {
-                if entry.tag == 0x010F {
-                    // Make tag
-                    if let Some(val) = TagValue::from_entry(entry, be) {
-                        let make_str = val.display();
-                        vendor = maker_notes::vendor_from_make(&make_str);
-                    }
-                    break;
-                }
-            }
-        }
+        // Vendor dispatch mirrors exiftool: an ordered rule table that may
+        // combine the maker note payload with the EXIF Make/Model tags.
+        let ifd0_string = |tag: u16| -> Option<String> {
+            let entry = exif.ifd0.entry(tag)?;
+            TagValue::from_entry(entry, be).map(|value| value.display())
+        };
+        let make = ifd0_string(0x010F);
+        let model = ifd0_string(0x0110);
+        let vendor = maker_notes::resolve_vendor(mnr.data, make.as_deref(), model.as_deref());
 
         if let Some(mut mn) = maker_notes::parse_maker_note(mnr, tiff_data, be) {
             // Set vendor if it was Unknown from header detection

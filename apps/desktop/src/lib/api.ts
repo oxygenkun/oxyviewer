@@ -16,6 +16,7 @@ import type {
   AssetKind,
   AssetQuery,
   AssetSummary,
+  BurstGroup,
   CacheSettings,
   DirectorySearchMatch,
   DirectoryBrowseProgress,
@@ -546,6 +547,18 @@ export async function requestMetadata(
     }));
   }
   return invoke<MetadataProjection[]>("request_metadata", { paths, priority });
+}
+
+/**
+ * Groups the given assets into continuous-shooting bursts.
+ *
+ * Pass the whole current listing in browse order: the scanner parses only the
+ * paths it has not seen, so each call costs just the newest page.
+ */
+export async function scanBurstGroups(paths: string[]): Promise<BurstGroup[]> {
+  // The browser demo has no maker notes to read.
+  if (!isTauri() || !paths.length) return [];
+  return invoke<BurstGroup[]>("scan_burst_groups", { paths });
 }
 
 export async function onMetadataProjectionUpdated(
