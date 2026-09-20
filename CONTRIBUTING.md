@@ -62,20 +62,20 @@ pnpm native:prepare
 then the pinned libheif with `WITH_FFMPEG_DECODER=ON`. It is cached under
 `target/` and safe to re-run. Windows skips the libheif step and uses vcpkg.
 
-The optional face analyzer needs its pinned ONNX models. They are downloaded
-inputs rather than native builds, so they are a separate, network-dependent
-step:
+The optional face analyzer worker is a separate first-party executable:
 
 ```bash
-pnpm faces:prepare
+pnpm faces:pack --debug
 ```
 
-It verifies each model and its upstream license text against the SHA-256 in
-`3rdpart/face-models/source.json`, writes them to `target/native/face-models`,
-and stages copies under `apps/desktop/src-tauri/resources/face-models/` so a
-release package bundles them (`pnpm tauri build` runs this step itself). Face tests skip with a message when the models are
-absent, so a media-only checkout still runs `cargo test`. Set
-`OXY_FACE_MODEL_DIR` to load them from elsewhere.
+`faces:pack` builds and hashes the first-party worker; omit `--debug` for release.
+Tauri dev/build runs the matching worker build automatically.
+
+SCRFD-10G KPS and AdaFace IR-101 are not bundled. Users download each model from
+the People workbench, where progress, license summaries, checksum verification,
+and atomic installation are handled by the app. The single pinned manifest is
+`3rdpart/face-models/managed.json`. Model-backed tests skip when files are absent;
+set `OXY_FACE_MODEL_DIR` to a directory containing the managed pair to run them.
 
 If you already cloned the repository without submodules, initialize them with:
 

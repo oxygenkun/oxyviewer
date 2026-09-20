@@ -210,14 +210,14 @@ impl ArtifactEncoding {
 
 impl ArtifactCache {
     pub(crate) fn new(path: &Path, cache_dir: &Path) -> Result<Self, MediaError> {
-        Self::for_source_revision(SourceRevision::observe(path)?, cache_dir)
+        Self::for_source_revision(oxy_fs::observe_source_revision(path)?, cache_dir)
     }
 
     pub(crate) fn for_source_revision(
         source: SourceRevision,
         cache_dir: &Path,
     ) -> Result<Self, MediaError> {
-        if SourceRevision::observe(&source.canonical_path)? != source {
+        if oxy_fs::observe_source_revision(&source.canonical_path)? != source {
             return Err(MediaError::StaleSourceRevision);
         }
         let async_publication = APP_PUBLICATION.with(Cell::get);
@@ -570,7 +570,7 @@ impl ArtifactCache {
         let mut facts = facts;
         crate::media_source::bind_facts(&mut facts, &self.source)?;
         let dimensions = facts.display_dimensions.0;
-        let observed = SourceRevision::observe(&self.source.canonical_path)?;
+        let observed = oxy_fs::observe_source_revision(&self.source.canonical_path)?;
         if observed != self.source {
             return Err(MediaError::StaleSourceRevision);
         }
@@ -669,7 +669,7 @@ impl ArtifactCache {
         let mut facts = facts;
         crate::media_source::bind_facts(&mut facts, &self.source)?;
         let dimensions = facts.display_dimensions.0;
-        let observed = SourceRevision::observe(&self.source.canonical_path)?;
+        let observed = oxy_fs::observe_source_revision(&self.source.canonical_path)?;
         if observed != self.source {
             return Err(MediaError::StaleSourceRevision);
         }

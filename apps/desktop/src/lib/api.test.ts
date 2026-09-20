@@ -24,7 +24,7 @@ vi.mock("@/lib/diagnostics/previewDebug", () => ({
   beginPreviewDebug: mocks.beginPreviewDebug,
 }));
 
-import { deletePaths, generatedPreview, heifTileUrl, startHeifFull } from "./api";
+import { deletePaths, faceWorkbenchPreview, generatedPreview, heifTileUrl, startHeifFull } from "./api";
 import {
   acceptImageProjection,
   clearImageProjections,
@@ -63,6 +63,15 @@ describe("generated preview cancellation", () => {
     mocks.listen.mockReset();
     mocks.beginPreviewDebug.mockClear();
     vi.unstubAllGlobals();
+  });
+
+  it("uses the existing encoded thumbnail request for workbench photos", async () => {
+    vi.stubGlobal("window", { __TAURI_INTERNALS__: {} });
+    mocks.invoke.mockResolvedValue(thumbnailProjection("workbench-jpeg"));
+    const result = await faceWorkbenchPreview(asset.path, new AbortController().signal);
+    expect(mocks.invoke).toHaveBeenCalledWith("get_preview", expect.objectContaining({ path: asset.path, level: "thumbnail", priority: "visible" }));
+    expect(result?.resource?.mediaType).toBe("image/jpeg");
+    expect(result?.url).toContain("oxy-media");
   });
 
   it("does not dispatch a thumbnail abandoned in the same turn", async () => {
@@ -497,4 +506,20 @@ describe("HEIF full delivery", () => {
       session: { id: "heif-1" },
     });
   });
+});
+
+it("projects confirmed demo people into hierarchical tags and preserves manual assignments", async () => {
+  vi.stubGlobal("window", {});
+  const api = await import("./api");
+  const person = await api.createPerson("tag-demo-alice", "Alice");
+  await api.setPersonTagPath(person.personId, "人物|家人|Alice");
+  const face = (await api.getFaceReviewPage()).items[0];
+  await api.decideFace(face.observationId, { decision: "confirmPerson", personId: person.personId });
+  const assigned = (await api.getAssetTagAssignments([face.assetPath])).filter((item) => item.assignedCount > 0);
+  expect(assigned.map((item) => item.tag.path)).toContain("人物|家人|Alice");
+  const tag = assigned.find((item) => item.tag.path === "人物|家人|Alice")!.tag;
+  await api.setAssetCustomTag([face.assetPath], tag.id, true);
+  await api.clearFaceDecision(face.observationId);
+  expect((await api.getAssetTagAssignments([face.assetPath])).find((item) => item.tag.id === tag.id)?.assignedCount).toBe(1);
+  vi.unstubAllGlobals();
 });

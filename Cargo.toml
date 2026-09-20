@@ -3,6 +3,7 @@ resolver = "2"
 members = [
   "apps/desktop/src-tauri",
   "crates/oxy-domain",
+  "crates/oxy-analyzer-host",
   "crates/oxy-faces",
   "crates/oxy-fs",
   "crates/oxy-library",
@@ -57,6 +58,7 @@ thiserror = "2.0"
 tokio = { version = "1.47", features = ["process", "io-util", "sync", "rt-multi-thread", "macros"] }
 trash = "5.2"
 walkdir = "2.5"
+uuid = { version = "1", features = ["v4"] }
 windows = "0.61"
 
 # Media decoding, pixel conversion, and JPEG encoding are intentionally hot

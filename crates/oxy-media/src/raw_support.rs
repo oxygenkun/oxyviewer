@@ -86,7 +86,7 @@ mod windows {
     }
 
     pub(super) fn request_retry(path: &Path) -> Result<(), MediaError> {
-        let revision = SourceRevision::observe(path)?.revision_id;
+        let revision = oxy_fs::observe_source_revision(path)?.revision_id;
         let nonce = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .map_err(|error| MediaError::CacheArtifact(error.to_string()))?
@@ -114,7 +114,7 @@ mod windows {
     }
 
     pub(super) fn status(path: Option<&Path>, refresh: bool) -> RawDecoderStatus {
-        let revision = path.and_then(|path| SourceRevision::observe(path).ok());
+        let revision = path.and_then(|path| oxy_fs::observe_source_revision(path).ok());
         let (catalog, epoch) = {
             let mut state = state()
                 .lock()
@@ -194,7 +194,7 @@ mod windows {
         if cancellation.is_cancelled() {
             return Err(MediaError::Cancelled);
         }
-        let revision = SourceRevision::observe(path)?;
+        let revision = oxy_fs::observe_source_revision(path)?;
         let epoch = {
             let state = state()
                 .lock()

@@ -2,6 +2,7 @@ import { clearPreviewCache, getMediaResourceStats, updateCacheSettings } from "@
 import { clearImageProjections } from "@/lib/projection/imageProjection";
 import { onPerfMark, perfMark, perfSnapshot } from "./perfProbe";
 import { useWorkspaceStore } from "@/store";
+import { runFaceBrowsingProbe } from "./faceBrowsingProbe";
 import { runLoupeZoomProbe } from "./loupeZoomProbe";
 import { runNavigationCacheProbe } from "./navigationCacheProbe";
 import { runGridScrollProbe } from "./gridScrollProbe";
@@ -15,6 +16,8 @@ export async function runResourceStress(
   signal: AbortSignal,
   expectedAssets?: number,
 ): Promise<void> {
+  if (mode === "faces-workbench") return (await import("./faceWorkbenchProbe")).runFaceWorkbenchProbe(assets(), signal);
+  if (mode === "faces-browsing") return runFaceBrowsingProbe(assets(), signal);
   if (mode === "loupe-zoom") return runLoupeZoomProbe(assets(), signal);
   if (mode === "folder-thumbnails") return runFolderThumbnailProbe(assets, signal, expectedAssets);
   if (mode === "grid-scroll") return runGridScrollProbe(signal);

@@ -1,3 +1,4 @@
+import { RegionOverlay } from "@/components/analyzers/RegionOverlay";
 import type { DisplayedPreviewSize } from "@/lib/preview/previewGeometry";
 import { RawDecoderPanel } from "@/components/settings/RawDecoderPanel";
 import {
@@ -511,20 +512,10 @@ export function Loupe({
               <FaceOverlay asset={active} enabled={faceBoxesVisible} t={t} />
             ) : null}
             {showFocusAreas && Boolean(currentNaturalSize || currentHeifSize) && mappedFocusRegions.length > 0 ? (
-              <div className="loupe__focus-overlay" aria-hidden="true">
-                {mappedFocusRegions.map((region, index) => (
-                  <i
-                    key={index}
-                    className={`loupe__focus-frame ${region.syntheticFrame ? "is-estimated" : ""}`}
-                  style={{
-                    left: `${region.left * 100}%`,
-                    top: `${region.top * 100}%`,
-                    width: `${region.width * 100}%`,
-                    height: `${region.height * 100}%`,
-                  }}
-                  />
-                ))}
-              </div>
+              <RegionOverlay hidden className="loupe__focus-overlay"
+                descriptor={{ id: "focus.overlay", coordinateSpace: "displayNormalized", items: mappedFocusRegions.map((region, index) => ({ id: String(index), rect: { x: region.left, y: region.top, width: region.width, height: region.height }, state: region.syntheticFrame ? "estimated" : "known" })) }}
+                regionClassName={(region) => `loupe__focus-frame ${region.state === "estimated" ? "is-estimated" : ""}`}
+              />
             ) : null}
           </div>
         </div>

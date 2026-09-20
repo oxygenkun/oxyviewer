@@ -21,7 +21,8 @@ mod faces;
 mod tags;
 pub use browsing::DirectoryRead;
 pub use faces::{
-    DECISION_REBIND_IOU, FaceAnalysisTarget, StoredDecision, StoredFace, StoredFaceCrop,
+    DECISION_REBIND_IOU, FaceAnalysisTarget, FaceResultWrite, FaceRunCheckpoint, StoredDecision,
+    StoredFace, StoredFaceCrop,
 };
 
 const DEFAULT_PAGE_SIZE: usize = 250;
@@ -31,6 +32,8 @@ const INDEX_WRITE_TIME_SLICE: Duration = Duration::from_millis(8);
 
 #[derive(Debug, Error)]
 pub enum LibraryError {
+    #[error("face result belongs to an invalidated request")]
+    StaleFaceResult,
     #[error("directory snapshot changed; reload the first page")]
     StaleDirectorySnapshot,
     #[error(transparent)]

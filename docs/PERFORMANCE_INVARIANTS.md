@@ -115,3 +115,14 @@ HIF 小 JPEG 的准备成本可能大于真正提取字节的成本。当前把�
 
 详细证据见 [优化与复测](research/hif-thumbnail-optimization-2026-09-12.md) 和
 [优化前的锁竞争分析](research/hif-thumbnail-contention-2026-09-12/README.md)。
+
+## Background analyzers
+
+Face analysis has one admitted job at a time, independent of the image worker
+count. It waits on the cancellable foreground gate before each asset and asks
+for Full at Preload priority. Folder opening never starts model inference.
+Targets use 256-item keyset pages with a persisted index generation and cursor;
+per-asset checkpoints survive interrupted pages. Expensive clustering/matching
+loops check cancellation internally and publish their derived tables together.
+The first-party worker has cooperative cancellation plus bounded termination;
+shutdown uses the shared JobRegistry. See the [local qualification](research/face-analyzer-host-2026-09-19.md).

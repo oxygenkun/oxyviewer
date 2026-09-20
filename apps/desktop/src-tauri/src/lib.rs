@@ -130,7 +130,16 @@ pub fn run() {
             },
         )
         .plugin(tauri_plugin_dialog::init())
-        .plugin(tauri_plugin_log::Builder::new().build())
+        .plugin(
+            tauri_plugin_log::Builder::new()
+                // `ureq` emits request/connection internals at trace level.
+                // Model downloads report actionable failures through the
+                // command result, so keep transport chatter out of stdout and
+                // the persistent application log.
+                .level_for("ureq", tauri_plugin_log::log::LevelFilter::Warn)
+                .level_for("ureq_proto", tauri_plugin_log::log::LevelFilter::Warn)
+                .build(),
+        )
         .on_page_load(|webview, _payload| {
             let window = webview.window();
             // Dev reloads can occasionally leave the webview underneath the native title bar.
@@ -216,27 +225,26 @@ pub fn run() {
             let library_index_queue = jobs::LibraryIndexQueue::new(library.clone());
             let face_models = jobs::faces::resolve_model_paths(app.handle());
             if face_models.is_none() {
-                eprintln!(
-                    "face models are not installed; the people feature is unavailable until \
-                     `pnpm faces:prepare` runs or the model pack is bundled"
-                );
+                eprintln!("face models are not installed; download them from the People workbench");
             }
             let face_crops = Arc::new(state::face_crops::FaceCropService::new(
                 library.clone(),
-                cache.clone(),
                 media_resources.clone(),
             ));
+            let job_registry = Arc::new(JobRegistry::default());
+            people.start_sync(Arc::clone(&job_registry), Arc::clone(&files), metadata.clone(), app.handle().clone())?;
             let face_queue = jobs::faces::FaceAnalysisQueue::new(
                 app.handle().clone(),
                 library.clone(),
                 cache.clone(),
                 people.clone(),
                 face_models,
+                Arc::clone(&job_registry),
             );
             app.manage(AppState {
                 external_apps,
                 files,
-                jobs: JobRegistry::default(),
+                jobs: job_registry,
                 library,
                 cache,
                 heif,
@@ -316,7 +324,12 @@ pub fn run() {
             open_about_link,
             get_media_resource_stats,
             get_face_capability,
+            install_face_model,
             get_face_calibration,
+            get_face_sync_status,
+            clear_face_analysis_data,
+            delete_people_annotations,
+            resolve_face_sync_conflict,
             update_face_analyzer_settings,
             start_face_analysis,
             cancel_face_analysis,
@@ -324,6 +337,7 @@ pub fn run() {
             create_person,
             rename_person,
             link_person_tag,
+            set_person_tag_path,
             delete_person,
             decide_face,
             merge_persons,
@@ -332,6 +346,7 @@ pub fn run() {
             get_person_undo,
             undo_person_operation,
             clear_face_decision,
+            set_face_clarity,
             get_face_review_page,
             get_face_crops,
             get_asset_face_reviews,
@@ -349,6 +364,11 @@ pub fn run() {
             notify_face_asset_reveal,
             write_perf_report
         ])
-        .run(tauri::generate_context!())
-        .expect("error while running OxyViewer");
+        .build(tauri::generate_context!())
+        .expect("error while building OxyViewer")
+        .run(|app, event| {
+            if matches!(event, tauri::RunEvent::Exit)
+                && !app.state::<AppState>().jobs.shutdown_and_wait(std::time::Duration::from_secs(5))
+            { eprintln!("background workers did not finish before shutdown deadline"); }
+        });
 }

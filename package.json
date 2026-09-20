@@ -7,7 +7,6 @@
   "scripts": {
     "ffmpeg:prepare": "node 3rdpart/ffmpeg/prepare.mjs",
     "heif:prepare": "node 3rdpart/libheif/prepare.mjs",
-    "faces:prepare": "node 3rdpart/face-models/prepare.mjs",
     "native:prepare": "pnpm ffmpeg:prepare && pnpm heif:prepare",
     "release:check": "node scripts/release/check-release-version.mjs",
     "icons": "pnpm --filter @oxyviewer/desktop icons",
@@ -16,7 +15,8 @@
     "check": "pnpm --filter @oxyviewer/desktop check",
     "test": "pnpm --filter @oxyviewer/desktop test",
     "perf:e2e": "node tests/perf/perf-e2e.mjs",
-    "tauri": "pnpm --filter @oxyviewer/desktop tauri"
+    "tauri": "pnpm --filter @oxyviewer/desktop tauri",
+    "faces:pack": "node apps/desktop/scripts/prepare-face-pack.mjs"
   },
   "pnpm": {
     "onlyBuiltDependencies": [

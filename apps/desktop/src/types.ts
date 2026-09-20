@@ -500,7 +500,7 @@ export interface PerfScenario {
   selectName?: string;
   enterLoupe?: boolean;
   scrollToEnd?: boolean;
-  resourceStress?: "loupe-zoom" | "grid" | "list" | "loupe" | "grid-scroll" | "filmstrip-scroll" | "navigation-cache" | "folder-thumbnails";
+  resourceStress?: "faces-workbench" | "faces-browsing" | "loupe-zoom" | "grid" | "list" | "loupe" | "grid-scroll" | "filmstrip-scroll" | "navigation-cache" | "folder-thumbnails";
   awaitMarks: string[];
   timeoutMs?: number;
   reportPath: string;
@@ -610,6 +610,14 @@ export interface FaceCluster {
   outlierObservationIds: string[];
   suggestedPersonId?: string;
   suggestedName?: string;
+  memberQuality?: FaceQuality[];
+}
+
+export interface FaceQuality {
+  observationId: string;
+  facePixels: number;
+  clarity: number;
+  detectionScore: number;
 }
 
 export interface FaceReviewItem {
@@ -618,14 +626,15 @@ export interface FaceReviewItem {
   assetPath: string;
   bbox: NormalizedRect;
   detectionScore: number;
+  facePixels?: number;
+  clarity?: number;
+  manualBlurry?: boolean;
   state: FaceReviewState;
   candidate?: FaceCandidate;
   clusterId?: string;
   confirmedPersonId?: string;
   confirmedPersonName?: string;
 }
-
-export type FaceReviewFilter = "all" | "pending" | "unknown" | "unreviewed" | "confirmed" | "rejected";
 
 export interface FaceReviewPage {
   items: FaceReviewItem[];
@@ -700,8 +709,28 @@ export interface FaceCapability {
   settings: FaceAnalyzerSettings;
   stats: FaceLibraryStats;
   progress?: FaceAnalysisProgress;
+  models: FaceModelStatus[];
   /** File that holds persons and confirmations; user data, not cache. */
   peopleStorePath: string;
+}
+
+export interface FaceModelStatus {
+  id: "scrfd-10g-kps" | "adaface-ir101" | string;
+  displayName: string;
+  installed: boolean;
+  sizeBytes: number;
+  downloadSizeBytes: number;
+  licenseSummary: string;
+}
+
+export type FaceModelDownloadStage = "downloading" | "verifying" | "installing" | "complete" | "failed";
+
+export interface FaceModelDownloadProgress {
+  modelId: string;
+  stage: FaceModelDownloadStage;
+  downloadedBytes: number;
+  totalBytes: number;
+  message?: string;
 }
 
 /**
@@ -765,4 +794,43 @@ export interface FaceWorkbenchContext {
   locale: "zh-CN" | "en";
   visiblePaths: string[];
   browseScope?: FaceWorkbenchScope;
+}
+
+export interface OverlayRegion {
+  id: string;
+  rect: { x: number; y: number; width: number; height: number };
+  label?: string;
+  state?: string;
+  actionRef?: string;
+}
+export interface OverlayDescriptor {
+  id: string;
+  coordinateSpace: "displayNormalized";
+  items: OverlayRegion[];
+}
+export interface CollectionViewDescriptor {
+  id: string;
+  source: string;
+  selection: "single" | "multi";
+  fields: Array<{ key: string; label: string; kind: "text" | "percent" }>;
+  actions: string[];
+}
+export interface SettingsDescriptor {
+  id: string;
+  fields: Array<{ key: string; label: string; recompute: "detection" | "matching" | "clustering" } & (
+    { type: "number"; min: number; max: number; step: number } | { type: "boolean" } | { type: "enum"; values: string[] }
+  )>;
+}
+export interface PortableFaceFact {
+  personTagPath?: string;
+  id: string;
+  revision: string;
+  region: NormalizedRect;
+  decision?: FaceDecision | null;
+  personName?: string | null;
+}
+export interface FaceSyncStatus {
+  path: string; pending: boolean; conflict: boolean; lastError?: string | null;
+  localFacts?: { facts: PortableFaceFact[] } | null;
+  remoteFacts?: { facts: PortableFaceFact[] } | null;
 }

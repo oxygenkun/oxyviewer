@@ -38,6 +38,8 @@
 //! recompute — face embeddings, the tag/XMP queue, directory snapshots — stays
 //! in the cache even when it feels user-facing.
 
+mod face_sync;
+pub use face_sync::merge_face_facts;
 mod document;
 mod people;
 

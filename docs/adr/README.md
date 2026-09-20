@@ -14,6 +14,7 @@ should not be renumbered.
 | [0008](0008-rust-owned-resource-projections.md) | Rust-owned versioned resource projections |
 | [0009](0009-scoped-multilevel-work-scheduling.md) | Scoped multi-level work scheduling |
 | [0010](0010-explicit-release-check.md) | Explicit-only release check in the About panel |
+| [0011](0011-first-party-analyzer-host.md) | First-party analyzer host and portable human face facts |
 
 Implementation status belongs in the roadmap or an active task plan; dated
 validation evidence belongs under `docs/research`.

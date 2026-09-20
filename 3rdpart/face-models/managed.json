@@ -1,0 +1,26 @@
+{
+  "detectorInputSize": 640,
+  "models": [
+    {
+      "id": "scrfd-10g-kps",
+      "displayName": "SCRFD-10G KPS",
+      "file": "scrfd_10g_kps.onnx",
+      "archiveUrl": "https://github.com/deepinsight/insightface/releases/download/model-zoo/buffalo_l.zip",
+      "archiveSha256": "80ffe37d8a5940d59a7384c201a2a38d4741f2f3c51eef46ebb28218a7b0ca2f",
+      "archiveSizeBytes": 288621354,
+      "archiveEntry": "det_10g.onnx",
+      "sha256": "5838f7fe053675b1c7a08b633df49e7af5495cee0493c7dcf6697200b85b5b91",
+      "sizeBytes": 16923827,
+      "licenseSummary": "仅限非商业研究；商业使用需要 InsightFace 单独授权。"
+    },
+    {
+      "id": "adaface-ir101",
+      "displayName": "AdaFace IR-101",
+      "file": "adaface_ir_101.onnx",
+      "url": "https://github.com/yakhyo/adaface-onnx/releases/download/weights/adaface_ir_101.onnx",
+      "sha256": "f2eb07d03de0af560a82e1214df799fec5e09375d43521e2868f9dc387e5a43e",
+      "sizeBytes": 260704652,
+      "licenseSummary": "权重的分发与商业使用许可需由使用者确认。"
+    }
+  ]
+}

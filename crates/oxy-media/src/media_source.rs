@@ -156,7 +156,7 @@ pub(crate) fn preview_result(
         display,
     );
     facts.byte_integrity = oxy_domain::ByteIntegrity::SourceFile;
-    facts.source.revision_id = crate::cache::SourceRevision::observe(&path)?.revision_id;
+    facts.source.revision_id = oxy_fs::observe_source_revision(&path)?.revision_id;
     let size = display.0;
     Ok(PreviewResult {
         image_facts: Some(facts),

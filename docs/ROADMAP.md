@@ -132,17 +132,17 @@ now fixture coverage, cancellation, platform packaging, and conflict safety.
 
 ### People and face recognition
 
-First user-facing analyzer-plugin feature; full scope and evidence in the
+First-party face Analyzer implementation; full scope and evidence in the
 [face recognition and people plan](tasks/face-people-plan.md).
 
 - [x] `oxy-domain` face/person contracts: normalized regions, machine
   observations, clusters, persons, decisions, review queue, and analyzer
   settings split by recomputation level
-- [x] `oxy-faces` crate: pure-Rust ONNX YuNet detection, 5-landmark alignment,
-  SFace embeddings, unknown-face clustering, and gallery matching, with no system
+- [x] `oxy-faces` crate: pure-Rust ONNX SCRFD-10G KPS detection, 5-landmark alignment,
+  AdaFace IR-101 embeddings, unknown-face clustering, and gallery matching, with no system
   OpenCV/CUDA/Python dependency
-- [x] Pinned face-model downloads (`pnpm faces:prepare`) and OpenCV-generated
-  reference-parity tests for detection, alignment, and embeddings
+- [x] Explicit in-app model downloads with live progress, pinned SHA-256 verification,
+  atomic installation, and one shared managed-model manifest
 - [x] `oxy-library` persistence split: rebuildable observations/embeddings/
   candidates/clusters versus user-owned persons, decisions, and decision events,
   with decisions re-bound by region overlap across detector changes
@@ -166,7 +166,7 @@ First user-facing analyzer-plugin feature; full scope and evidence in the
   synthetic group photo (single pass recovers 24/32 faces at 3200 px and 0/72 at
   4800 px; tiled recovers all)
 - [x] Merge persons, detach faces from a person, and a labelled undo backed by a
-  durable operation journal (`people.json` version 2), all verified across a
+  durable operation journal (`people.json`), all verified across a
   cache wipe
 - [x] Resume-from-checkpoint and stale-source rejection, the two release gates
   for this feature, verified with the real models and library
@@ -181,8 +181,19 @@ First user-facing analyzer-plugin feature; full scope and evidence in the
   size cap; measured 24/32 vs 32/32 faces on a synthetic group photo
 - [x] Cross-language IPC contract test: registered commands, invoked commands,
   emitted events, and listened events are checked against each other
-- [x] Packaged builds bundle the pinned models and their upstream license texts;
-  the runtime rejects an incomplete model pack
+- [x] Packaged builds exclude optional model weights; runtime enables analysis only
+  after both user-downloaded managed files pass verification
+
+- [x] Shared Analyzer RGB boundary, first-party subprocess pack, binary transport,
+  model/binary hash validation, cooperative cancellation and bounded child reaping
+- [x] Registry-owned analysis/refresh, 256-item keyset scanning with persistent
+  generation/cursor, canonical media source revision, atomic face projections
+- [x] Structured human-fact XMP, durable pending/conflicts/tombstones, explicit
+  conflict resolution, linked-person tag projection and separate cache clearing
+- [x] Shared region renderer, paginated collection selection and registered batch
+  actions, descriptor-based settings in the first-party host
+- [ ] Cross-platform packaged worker qualification and continuous external XMP watching
+- [ ] Open third-party pack installation, independent signing and OS sandboxing
 
 ### Secondary-format reliability
 

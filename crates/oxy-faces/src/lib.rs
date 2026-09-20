@@ -10,33 +10,39 @@
 //! Two ONNX models are used, both executed by the pure-Rust `tract` runtime so
 //! no system OpenCV, CUDA, or Python installation is required:
 //!
-//! * YuNet — face detection (`FaceDetectorYN`-compatible postprocessing).
-//! * SFace — 128-dimensional embeddings over a 5-landmark aligned crop.
+//! * SCRFD-10G KPS — face detection and five landmarks.
+//! * AdaFace IR-101 — 512-dimensional identity embeddings.
 //!
 //! The postprocessing, alignment, and preprocessing mirror OpenCV's
 //! `objdetect` implementation so results are reproducible against the
 //! reference. See `tests/reference_parity.rs`.
 
+mod adaface;
 mod align;
 mod analyzer;
 mod calibration;
 mod cluster;
+mod detection;
 mod image;
+mod managed_models;
 mod matcher;
-mod sface;
-mod yunet;
+mod scrfd;
 
+pub use adaface::AdaFaceEmbedder;
 pub use align::{REFERENCE_LANDMARKS_112, SimilarityTransform, align_face};
 pub use analyzer::{AnalyzedFace, FaceAnalyzer, FaceModelPaths};
 pub use calibration::{MIN_SAMPLES_PER_CLASS, populations_separate, recommend_threshold};
-pub use cluster::{ClusterInput, cluster_embeddings};
+pub use cluster::{ClusterInput, cluster_embeddings, cluster_embeddings_cancellable};
+pub use detection::DetectedFace;
 pub use image::{ChannelOrder, Letterboxed, RgbImage, letterbox, resize_bilinear};
-pub use matcher::{
-    PersonGallery, PersonMatch, match_person, normalize_embedding, similarity,
-    similarity_normalized,
+pub use managed_models::{
+    ManagedModelManifest, ManagedModelSpec, managed_model_manifest, managed_model_paths,
 };
-pub use sface::SFaceEmbedder;
-pub use yunet::{DetectedFace, YuNetDetector};
+pub use matcher::{
+    PersonGallery, PersonMatch, match_person, match_person_cancellable, normalize_embedding,
+    similarity, similarity_normalized,
+};
+pub use scrfd::ScrfdDetector;
 
 use thiserror::Error;
 
@@ -44,6 +50,8 @@ use thiserror::Error;
 /// a broken or missing model only invalidates rebuildable machine output.
 #[derive(Debug, Error)]
 pub enum FaceError {
+    #[error("face analysis cancelled")]
+    Cancelled,
     #[error("invalid RGB image: {width}x{height} with {bytes} bytes")]
     InvalidImage {
         width: u32,
@@ -87,4 +95,12 @@ pub enum FaceError {
 
 pub(crate) fn inference_error(error: impl std::fmt::Display) -> FaceError {
     FaceError::Inference(error.to_string())
+}
+
+pub(crate) fn check_cancelled(cancelled: &impl Fn() -> bool) -> Result<(), FaceError> {
+    if cancelled() {
+        Err(FaceError::Cancelled)
+    } else {
+        Ok(())
+    }
 }

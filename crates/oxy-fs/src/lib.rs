@@ -25,7 +25,7 @@ mod bulk_attributes;
 pub mod external_apps;
 mod identity;
 
-pub use identity::{FileObservation, observe_file};
+pub use identity::{FileObservation, observe_file, observe_source_revision};
 
 const DEFAULT_PAGE_SIZE: usize = 250;
 const MAX_PAGE_SIZE: usize = 1_000;
@@ -362,6 +362,20 @@ impl FsCatalog {
 
     pub fn get_asset(&self, path: impl AsRef<Path>) -> Result<AssetSummary, FsError> {
         summary_for_path(path.as_ref())?.ok_or(FsError::InvalidFileName)
+    }
+
+    /// Authorizes a file or directory against an already trusted canonical root.
+    /// Call again at I/O time: queued paths are not durable capabilities.
+    pub fn authorize_path(root: &Path, path: &Path) -> Result<PathBuf, FsError> {
+        let current_root = root.canonicalize()?;
+        if current_root != root || !current_root.is_dir() {
+            return Err(FsError::OutsideSessionRoot(path.to_owned()));
+        }
+        let canonical = path.canonicalize()?;
+        if !canonical.starts_with(&current_root) {
+            return Err(FsError::OutsideSessionRoot(path.to_owned()));
+        }
+        Ok(canonical)
     }
 
     pub fn session_root(&self, session_id: &str) -> Result<PathBuf, FsError> {
@@ -1233,6 +1247,29 @@ mod tests {
     use oxy_domain::PickLabel;
     use std::fs::File;
     use tempfile::tempdir;
+
+    #[test]
+    fn authorization_rechecks_replaced_symlinks() {
+        let root = tempfile::tempdir().unwrap();
+        let outside = tempfile::tempdir().unwrap();
+        let root = root.path().canonicalize().unwrap();
+        let inside = root.join("photo.jpg");
+        fs::write(&inside, b"inside").unwrap();
+        let external = outside.path().join("photo.jpg");
+        fs::write(&external, b"outside").unwrap();
+        assert_eq!(FsCatalog::authorize_path(&root, &inside).unwrap(), inside);
+        assert!(FsCatalog::authorize_path(&root, &external).is_err());
+        assert!(FsCatalog::authorize_path(&root, &root.join("../outside.jpg")).is_err());
+        #[cfg(unix)]
+        {
+            let link = root.join("link.jpg");
+            std::os::unix::fs::symlink(&inside, &link).unwrap();
+            assert!(FsCatalog::authorize_path(&root, &link).is_ok());
+            fs::remove_file(&link).unwrap();
+            std::os::unix::fs::symlink(&external, &link).unwrap();
+            assert!(FsCatalog::authorize_path(&root, &link).is_err());
+        }
+    }
 
     #[test]
     fn write_atomic_creates_parents_and_replaces_without_leaving_temporaries() {

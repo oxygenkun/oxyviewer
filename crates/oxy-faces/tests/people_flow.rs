@@ -12,7 +12,7 @@
 //! machine output is replaced freely, user decisions are not, and an
 //! undecided face never becomes an assertion.
 //!
-//! Needs the pinned models (`pnpm faces:prepare`); skips when they are absent.
+//! Needs the user-managed SCRFD/AdaFace models; skips when they are absent.
 
 use std::path::{Path, PathBuf};
 
@@ -44,9 +44,7 @@ fn model_paths() -> Option<FaceModelPaths> {
         || manifest_dir().join("../../target/native/face-models"),
         PathBuf::from,
     );
-    let detector = directory.join("face_detection_yunet_2023mar.onnx");
-    let embedder = directory.join("face_recognition_sface_2021dec.onnx");
-    (detector.is_file() && embedder.is_file()).then(|| FaceModelPaths::new(detector, embedder, 640))
+    oxy_faces::managed_model_paths(&directory)
 }
 
 fn load_fixture() -> RgbImage {
@@ -60,20 +58,39 @@ fn load_image_at(path: &Path) -> RgbImage {
     RgbImage::new(image.width(), image.height(), image.into_raw()).expect("RGB8 buffer")
 }
 
+// Host-side source guard: the pixel analyzer never observes a source path.
+fn analyze_verified(
+    analyzer: &FaceAnalyzer,
+    asset_id: &str,
+    path: &Path,
+    revision: &str,
+    image: &RgbImage,
+) -> Result<Option<Vec<oxy_faces::AnalyzedFace>>, oxy_faces::FaceError> {
+    let result = analyzer.analyze(asset_id, path, revision, image)?;
+    let current = face_source_revision_for_path(path).expect("source revision");
+    Ok((current == revision).then_some(result))
+}
+
 /// One asset's analysis, reproducing exactly what the background queue does:
 /// read the revision, decode, analyze with the stale-source guard, then store.
 fn analyze_file(library: &Library, rig: &Rig, path: &Path) -> Option<usize> {
     let revision = face_source_revision_for_path(path).expect("revision");
     let image = load_image_at(path);
-    let analyzed = rig
-        .analyzer
-        .analyze_verified(&path.to_string_lossy(), path, &revision, &image)
-        .expect("analysis succeeds")?;
+    let analyzed = analyze_verified(
+        &rig.analyzer,
+        &path.to_string_lossy(),
+        path,
+        &revision,
+        &image,
+    )
+    .expect("analysis succeeds")?;
     let faces: Vec<StoredFace> = analyzed
         .into_iter()
         .map(|face| StoredFace {
             observation: face.observation,
             embedding: face.embedding,
+            face_pixels: 128,
+            clarity: 0.8,
         })
         .collect();
     let count = faces.len();
@@ -115,10 +132,11 @@ fn rig() -> Option<Rig> {
     let analyzer = FaceAnalyzer::load(
         &paths,
         FaceAnalyzerSettings {
-            detection_confidence: 0.9,
+            detection_confidence: 0.5,
             nms_threshold: 0.3,
             max_faces_per_asset: 5000,
             min_face_pixels: 8,
+            detect_small_faces: false,
             ..FaceAnalyzerSettings::default()
         },
     )
@@ -147,6 +165,8 @@ fn analyze_into(
         .map(|face| StoredFace {
             observation: face.observation,
             embedding: face.embedding,
+            face_pixels: 128,
+            clarity: 0.8,
         })
         .collect();
     library
@@ -170,7 +190,7 @@ fn gallery_for(library: &Library, rig: &Rig, person_id: &str, name: &str) -> Per
 #[test]
 fn detect_label_then_confirm_or_correct_a_new_asset() {
     let Some(rig) = rig() else {
-        eprintln!("skipping: run `pnpm faces:prepare` to enable this test");
+        eprintln!("skipping: set OXY_FACE_MODEL_DIR to enable this test");
         return;
     };
     let image = load_fixture();
@@ -380,7 +400,7 @@ fn detect_label_then_confirm_or_correct_a_new_asset() {
 #[test]
 fn clustering_groups_repeat_faces_and_marks_boundaries() {
     let Some(rig) = rig() else {
-        eprintln!("skipping: run `pnpm faces:prepare` to enable this test");
+        eprintln!("skipping: set OXY_FACE_MODEL_DIR to enable this test");
         return;
     };
     let image = load_fixture();
@@ -408,6 +428,7 @@ fn clustering_groups_repeat_faces_and_marks_boundaries() {
         .into_iter()
         .map(|(observation_id, embedding)| ClusterInput {
             observation_id,
+            asset_id: None,
             embedding,
         })
         .collect();
@@ -452,7 +473,7 @@ fn clustering_groups_repeat_faces_and_marks_boundaries() {
 #[test]
 fn a_detector_change_rebinds_confirmations_and_keeps_the_person() {
     let Some(rig) = rig() else {
-        eprintln!("skipping: run `pnpm faces:prepare` to enable this test");
+        eprintln!("skipping: set OXY_FACE_MODEL_DIR to enable this test");
         return;
     };
     let image = load_fixture();
@@ -486,10 +507,12 @@ fn a_detector_change_rebinds_confirmations_and_keeps_the_person() {
                     face.observation.bbox.width + 0.006,
                     face.observation.bbox.height + 0.005,
                 ),
-                detector_fingerprint: "yunet/next/detect-v2".into(),
+                detector_fingerprint: "scrfd/next/detect-v2".into(),
                 ..face.observation.clone()
             },
             embedding: face.embedding.clone(),
+            face_pixels: face.face_pixels,
+            clarity: face.clarity,
         })
         .collect();
     library
@@ -497,7 +520,7 @@ fn a_detector_change_rebinds_confirmations_and_keeps_the_person() {
             Path::new("/photos/a.jpg"),
             "/photos/a.jpg",
             "100:200:faces-v1",
-            "yunet/next/detect-v2",
+            "scrfd/next/detect-v2",
             &rig.embedder,
             &nudged,
         )
@@ -532,7 +555,7 @@ fn a_detector_change_rebinds_confirmations_and_keeps_the_person() {
 #[test]
 fn analysis_resumes_from_checkpoints_without_duplicates() {
     let Some(rig) = rig() else {
-        eprintln!("skipping: run `pnpm faces:prepare` to enable this test");
+        eprintln!("skipping: set OXY_FACE_MODEL_DIR to enable this test");
         return;
     };
     let fixture = manifest_dir().join("tests/data/fixtures/two_people.jpg");
@@ -603,7 +626,7 @@ fn analysis_resumes_from_checkpoints_without_duplicates() {
 #[test]
 fn a_result_is_discarded_when_the_source_changed_during_analysis() {
     let Some(rig) = rig() else {
-        eprintln!("skipping: run `pnpm faces:prepare` to enable this test");
+        eprintln!("skipping: set OXY_FACE_MODEL_DIR to enable this test");
         return;
     };
     let fixture = manifest_dir().join("tests/data/fixtures/two_people.jpg");
@@ -624,10 +647,8 @@ fn a_result_is_discarded_when_the_source_changed_during_analysis() {
     replaced.extend_from_slice(b"\n<!-- replaced while analyzing -->");
     std::fs::write(&path, &replaced).expect("replace");
 
-    let discarded = rig
-        .analyzer
-        .analyze_verified("asset", &path, &revision, &image)
-        .expect("analysis runs");
+    let discarded =
+        analyze_verified(&rig.analyzer, "asset", &path, &revision, &image).expect("analysis runs");
     assert!(
         discarded.is_none(),
         "a result computed from bytes that no longer exist must be discarded"
@@ -658,10 +679,8 @@ fn a_result_is_discarded_when_the_source_changed_during_analysis() {
     // With the revision of the bytes actually on disk, the result is accepted.
     let current = face_source_revision_for_path(&path).expect("revision");
     assert_ne!(current, revision);
-    let accepted = rig
-        .analyzer
-        .analyze_verified("asset", &path, &current, &image)
-        .expect("analysis runs");
+    let accepted =
+        analyze_verified(&rig.analyzer, "asset", &path, &current, &image).expect("analysis runs");
     assert!(accepted.is_some(), "a current revision must be accepted");
 }
 

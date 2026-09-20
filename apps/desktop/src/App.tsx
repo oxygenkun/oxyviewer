@@ -19,6 +19,7 @@ import {
   listAssets,
   listLibraryRoots,
   onFaceAssetReveal,
+  onFaceLibraryUpdated,
   onFaceWorkbenchContextRequest,
   onFaceWorkbenchVisibility,
   openFaceWorkbench,
@@ -167,6 +168,17 @@ export function App({ perfScenario }: { perfScenario?: PerfScenario }) {
       unlisten?.();
     };
   }, []);
+
+  useEffect(() => {
+    let disposed = false;
+    let unlisten: (() => void) | undefined;
+    void onFaceLibraryUpdated(() => {
+      for (const key of ["custom-tags", "asset-tag-assignments", "asset-tag-assignments-by-path", "tag-sync-status", "asset-face-reviews", "assets"]) {
+        void queryClient.invalidateQueries({ queryKey: [key] });
+      }
+    }).then((stop) => { if (disposed) stop(); else unlisten = stop; });
+    return () => { disposed = true; unlisten?.(); };
+  }, [queryClient]);
 
   useLayoutEffect(() => {
     document.documentElement.style.fontSize = `${uiFontScale * 100}%`;

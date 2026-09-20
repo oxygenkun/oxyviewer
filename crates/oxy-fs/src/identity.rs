@@ -1,3 +1,4 @@
+use sha2::{Digest, Sha256};
 use std::{fs, io, path::Path, path::PathBuf};
 
 /// A point-in-time observation of one filesystem object.
@@ -68,9 +69,68 @@ fn platform_modified(metadata: &fs::Metadata) -> String {
     metadata.last_write_time().to_string()
 }
 
+/// Observe the same canonical source identity used by media and analyzers.
+pub fn observe_source_revision(path: &Path) -> io::Result<oxy_domain::SourceRevision> {
+    let observed = observe_file(path)?;
+    let mut hasher = Sha256::new();
+    hasher.update(b"oxy-media-source-revision-v2\0");
+    update_path(&mut hasher, &observed.canonical_path);
+    hasher.update(observed.file_identity.as_bytes());
+    hasher.update([0]);
+    hasher.update(observed.size_bytes.to_le_bytes());
+    hasher.update(observed.modified.as_bytes());
+    let revision_id = format!("{:x}", hasher.finalize());
+    Ok(oxy_domain::SourceRevision {
+        canonical_path: observed.canonical_path,
+        file_identity: observed.file_identity,
+        size_bytes: observed.size_bytes,
+        modified: observed.modified,
+        revision_id,
+    })
+}
+
+#[cfg(unix)]
+fn update_path(hasher: &mut Sha256, path: &std::path::Path) {
+    use std::os::unix::ffi::OsStrExt;
+    hasher.update(path.as_os_str().as_bytes());
+    hasher.update([0]);
+}
+
+#[cfg(windows)]
+fn update_path(hasher: &mut Sha256, path: &std::path::Path) {
+    use std::os::windows::ffi::OsStrExt;
+    for code_unit in path.as_os_str().encode_wide() {
+        hasher.update(code_unit.to_le_bytes());
+    }
+    hasher.update([0, 0]);
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn replacement_with_preserved_length_and_mtime_changes_revision() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("photo.jpg");
+        fs::write(&path, b"original").unwrap();
+        let old = observe_source_revision(&path).unwrap();
+        let times =
+            fs::FileTimes::new().set_modified(fs::metadata(&path).unwrap().modified().unwrap());
+        let replacement = directory.path().join("replacement.jpg");
+        fs::write(&replacement, b"replaced").unwrap();
+        fs::File::options()
+            .write(true)
+            .open(&replacement)
+            .unwrap()
+            .set_times(times)
+            .unwrap();
+        fs::rename(&replacement, &path).unwrap();
+        let new = observe_source_revision(&path).unwrap();
+        assert_eq!(old.modified, new.modified);
+        assert_eq!(old.size_bytes, new.size_bytes);
+        assert_ne!(old.revision_id, new.revision_id);
+    }
 
     #[test]
     fn hard_links_share_file_identity() {

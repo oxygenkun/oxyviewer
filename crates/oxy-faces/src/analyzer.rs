@@ -8,16 +8,15 @@ use std::path::{Path, PathBuf};
 
 use oxy_domain::{
     FaceAnalyzerSettings, FaceObservation, NormalizedPoint, NormalizedRect, PixelSize,
-    face_source_revision_for_path,
 };
 use sha2::{Digest, Sha256};
 
 use crate::FaceError;
+use crate::adaface::{ALIGNED_SIZE, AdaFaceEmbedder};
 use crate::align::align_face;
 use crate::image::{RgbImage, analysis_views};
 use crate::matcher::normalize_embedding;
-use crate::sface::{ALIGNED_SIZE, EMBEDDING_DIM, SFaceEmbedder};
-use crate::yunet::YuNetDetector;
+use crate::scrfd::ScrfdDetector;
 
 /// Where the analyzer finds its models.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -46,14 +45,14 @@ impl FaceModelPaths {
 #[derive(Debug, Clone, PartialEq)]
 pub struct AnalyzedFace {
     pub observation: FaceObservation,
-    /// Raw (unnormalized) SFace embedding. Persisted as a BLOB, never as JSON.
+    /// L2-normalized identity embedding. Persisted as a BLOB, never as JSON.
     pub embedding: Vec<f32>,
 }
 
 /// Detects faces and extracts embeddings from decoded pixels.
 pub struct FaceAnalyzer {
-    detector: YuNetDetector,
-    embedder: SFaceEmbedder,
+    detector: ScrfdDetector,
+    embedder: AdaFaceEmbedder,
     settings: FaceAnalyzerSettings,
 }
 
@@ -73,8 +72,8 @@ impl FaceAnalyzer {
     pub fn load(paths: &FaceModelPaths, settings: FaceAnalyzerSettings) -> Result<Self, FaceError> {
         let settings = settings.sanitized();
         Ok(Self {
-            detector: YuNetDetector::load(&paths.detector, paths.detector_input_size)?,
-            embedder: SFaceEmbedder::load(&paths.embedder)?,
+            detector: ScrfdDetector::load(&paths.detector, paths.detector_input_size)?,
+            embedder: AdaFaceEmbedder::load(&paths.embedder)?,
             settings,
         })
     }
@@ -87,14 +86,7 @@ impl FaceAnalyzer {
     /// changing the confidence threshold invalidates stored detections while
     /// changing only the match threshold does not.
     pub fn detector_fingerprint(&self) -> String {
-        format!(
-            "{}/full-v1/conf{:.3}/nms{:.3}/minpx{}/tiles{}",
-            self.detector.fingerprint(),
-            self.settings.detection_confidence,
-            self.settings.nms_threshold,
-            self.settings.min_face_pixels,
-            u8::from(self.settings.detect_small_faces),
-        )
+        detection_fingerprint(self.detector.fingerprint(), &self.settings)
     }
 
     pub fn embedder_fingerprint(&self) -> &str {
@@ -102,43 +94,10 @@ impl FaceAnalyzer {
     }
 
     pub fn embedding_dim(&self) -> usize {
-        EMBEDDING_DIM
+        crate::adaface::EMBEDDING_DIM
     }
 
-    /// Analyzes one decoded image.
-    ///
-    /// `source_revision` identifies the exact asset revision the pixels came
-    /// from. It is stored on every observation so the Host can reject a result
-    /// whose asset changed mid-analysis instead of overwriting newer work.
-    /// Analyzes an image and refuses the result if the source changed meanwhile.
-    ///
-    /// `revision` is what the caller observed *before* decoding, so the pixels
-    /// and the revision describe the same bytes. This runs the analysis and then
-    /// re-reads the file: if it changed, `Ok(None)` means "discard this result"
-    /// rather than storing observations for bytes that no longer exist.
-    ///
-    /// The check lives here rather than in the caller so the guarantee travels
-    /// with the analyzer instead of being re-implemented by every host.
-    pub fn analyze_verified(
-        &self,
-        asset_id: &str,
-        asset_path: &Path,
-        revision: &str,
-        image: &RgbImage,
-    ) -> Result<Option<Vec<AnalyzedFace>>, FaceError> {
-        let analyzed = self.analyze(asset_id, asset_path, revision, image)?;
-        let current = face_source_revision_for_path(asset_path).map_err(|error| {
-            FaceError::SourceRevision {
-                path: asset_path.to_path_buf(),
-                message: error.to_string(),
-            }
-        })?;
-        if current != revision {
-            return Ok(None);
-        }
-        Ok(Some(analyzed))
-    }
-
+    /// Analyze pixels supplied by the host. Source validation belongs to the host.
     pub fn analyze(
         &self,
         asset_id: &str,
@@ -146,6 +105,19 @@ impl FaceAnalyzer {
         source_revision: &str,
         image: &RgbImage,
     ) -> Result<Vec<AnalyzedFace>, FaceError> {
+        self.analyze_cancellable(asset_id, asset_path, source_revision, image, || false)
+    }
+
+    /// Checks cancellation between detector views and face embeddings.
+    pub fn analyze_cancellable(
+        &self,
+        asset_id: &str,
+        asset_path: &Path,
+        source_revision: &str,
+        image: &RgbImage,
+        cancelled: impl Fn() -> bool,
+    ) -> Result<Vec<AnalyzedFace>, FaceError> {
+        crate::check_cancelled(&cancelled)?;
         let views = analysis_views(
             image,
             self.detector.input_size(),
@@ -162,6 +134,7 @@ impl FaceAnalyzer {
         // reduced to one observation with the best score.
         let mut candidates: Vec<Candidate> = Vec::new();
         for view in &views {
+            crate::check_cancelled(&cancelled)?;
             let detections = self.detector.detect(&view.boxed, &self.settings)?;
             for detection in detections {
                 let (x, y, width, height) = view.to_source_rect(
@@ -195,17 +168,18 @@ impl FaceAnalyzer {
 
         let mut analyzed = Vec::with_capacity(merged.len());
         for (index, candidate) in merged.iter().enumerate() {
+            crate::check_cancelled(&cancelled)?;
             // Alignment runs on the full-resolution source, not a view, so a
             // small face is not embedded from an upscaled crop.
             let Some(aligned) = align_face(image, &candidate.landmarks, ALIGNED_SIZE) else {
                 continue;
             };
             let embedding = self.embedder.embed(&aligned)?;
-            if embedding.len() != EMBEDDING_DIM {
+            if embedding.len() != crate::adaface::EMBEDDING_DIM {
                 return Err(FaceError::UnexpectedEmbedding {
                     observation_id: format!("{asset_id}#{index}"),
                     found: embedding.len(),
-                    expected: EMBEDDING_DIM,
+                    expected: crate::adaface::EMBEDDING_DIM,
                 });
             }
 
@@ -246,6 +220,19 @@ impl FaceAnalyzer {
         }
         Ok(analyzed)
     }
+}
+
+/// Lossless identity for the effective detector settings, independent of models on disk.
+fn detection_fingerprint(model: &str, settings: &FaceAnalyzerSettings) -> String {
+    let settings = settings.sanitized();
+    format!(
+        "{model}/full-v2/conf{:08x}/nms{:08x}/minpx{}/max{}/tiles{}",
+        settings.detection_confidence.to_bits(),
+        settings.nms_threshold.to_bits(),
+        settings.min_face_pixels,
+        settings.max_faces_per_asset,
+        u8::from(settings.detect_small_faces),
+    )
 }
 
 /// One detection in normalized source coordinates.
@@ -460,5 +447,49 @@ mod tests {
         assert_ne!(first, observation_id("other", "rev", "detector", 3));
         assert_ne!(first, observation_id("asset", "rev", "detector-v2", 3));
         assert!(first.starts_with("face-"));
+    }
+}
+
+#[cfg(test)]
+mod fingerprint_tests {
+    use super::*;
+
+    #[test]
+    fn every_detection_setting_changes_identity_without_float_rounding() {
+        let base = FaceAnalyzerSettings::default();
+        let fingerprint = detection_fingerprint("model", &base);
+        for changed in [
+            FaceAnalyzerSettings {
+                detection_confidence: f32::from_bits(base.detection_confidence.to_bits() + 1),
+                ..base
+            },
+            FaceAnalyzerSettings {
+                nms_threshold: f32::from_bits(base.nms_threshold.to_bits() + 1),
+                ..base
+            },
+            FaceAnalyzerSettings {
+                max_faces_per_asset: base.max_faces_per_asset + 1,
+                ..base
+            },
+            FaceAnalyzerSettings {
+                min_face_pixels: base.min_face_pixels + 1,
+                ..base
+            },
+            FaceAnalyzerSettings {
+                detect_small_faces: !base.detect_small_faces,
+                ..base
+            },
+        ] {
+            assert_ne!(fingerprint, detection_fingerprint("model", &changed));
+        }
+        let matching = FaceAnalyzerSettings {
+            match_sensitivity: oxy_domain::FaceMatchSensitivity::Loose,
+            match_threshold: 0.8,
+            cluster_threshold: 0.5,
+            auto_accept_threshold: Some(0.9),
+            ..base
+        };
+        assert_eq!(fingerprint, detection_fingerprint("model", &matching));
+        assert_ne!(fingerprint, detection_fingerprint("other-model", &base));
     }
 }

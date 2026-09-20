@@ -2,7 +2,7 @@
 //!
 //! The transform is the least-squares similarity (rotation, uniform scale,
 //! translation) that maps detected landmarks onto the canonical ArcFace
-//! positions used by SFace. This reproduces the result of OpenCV's
+//! positions used by ArcFace-family embedders. This reproduces the result of OpenCV's
 //! `FaceRecognizerSF::alignCrop`, which estimates the same transform and then
 //! applies `warpAffine(..., INTER_LINEAR)`.
 

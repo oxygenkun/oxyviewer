@@ -27,7 +27,7 @@ pub(crate) fn thumbnail(
     priority: DecodePriority,
     cancellation: &CancellationToken,
 ) -> Result<PreviewResult, MediaError> {
-    let source = SourceRevision::observe(path)?;
+    let source = oxy_fs::observe_source_revision(path)?;
     let artifacts = ArtifactCache::for_source_revision(source.clone(), cache_dir)?;
     let request = planner::thumbnail_request(&artifacts);
     if let Some(result) = artifacts.lookup(&request, level)? {
@@ -192,7 +192,7 @@ fn check_source(
     if cancellation.is_cancelled() {
         return Err(MediaError::Cancelled);
     }
-    if SourceRevision::observe(path)? != *source {
+    if oxy_fs::observe_source_revision(path)? != *source {
         return Err(MediaError::StaleSourceRevision);
     }
     Ok(())

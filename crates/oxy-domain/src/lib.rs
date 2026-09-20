@@ -7,6 +7,12 @@ mod external_apps;
 pub use external_apps::*;
 mod about;
 pub use about::*;
+mod analyzer;
+pub use analyzer::*;
+mod descriptors;
+pub use descriptors::*;
+mod source;
+pub use source::*;
 mod faces;
 pub use faces::*;
 

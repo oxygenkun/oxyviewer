@@ -45,7 +45,7 @@ impl ProjectionSourceRevision {
         level: RenderLevel,
     ) -> Result<Self, String> {
         let media_revision =
-            oxy_media::SourceRevision::observe(path).map_err(|error| error.to_string())?;
+            oxy_fs::observe_source_revision(path).map_err(|error| error.to_string())?;
         let policy_revision = oxy_media::preview_policy_revision(kind, level);
         let mut hasher = Sha256::new();
         hasher.update(PROJECTION_SOURCE_REVISION_VERSION.as_bytes());
@@ -589,7 +589,7 @@ impl RenderQueue {
         else {
             return Ok(None);
         };
-        let observed = oxy_media::SourceRevision::observe(path).map_err(|error| error.to_string());
+        let observed = oxy_fs::observe_source_revision(path).map_err(|error| error.to_string());
         if observed.as_ref().ok() != Some(&revision.media_revision) {
             if let Some(resource) = &result.resource {
                 oxy_media::shared_resource_registry().release(&resource.resource_id);
@@ -2449,7 +2449,7 @@ mod tests {
         let directory = tempfile::tempdir().unwrap();
         let path = directory.path().join("source.arw");
         std::fs::write(&path, b"source").unwrap();
-        let source = oxy_media::SourceRevision::observe(&path).unwrap();
+        let source = oxy_fs::observe_source_revision(&path).unwrap();
         let cache = oxy_media::DiskMediaCache::new(directory.path(), 8).unwrap();
         let png: &[u8] = &[
             137, 80, 78, 71, 13, 10, 26, 10, 0, 0, 0, 13, 73, 72, 68, 82, 0, 0, 0, 1, 0, 0, 0, 1,
@@ -2709,7 +2709,7 @@ mod tests {
         let directory = tempfile::tempdir().unwrap();
         let path = directory.path().join("source.hif");
         std::fs::write(&path, b"source revision").unwrap();
-        let media_revision = oxy_media::SourceRevision::observe(&path).unwrap();
+        let media_revision = oxy_fs::observe_source_revision(&path).unwrap();
         let revision = ProjectionSourceRevision::observe(
             &path,
             std::path::Path::new("cache"),

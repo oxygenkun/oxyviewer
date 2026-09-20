@@ -544,7 +544,13 @@ pub struct JobTicket {
 
 impl JobTicket {
     pub fn is_cancelled(&self) -> bool {
-        self.cancelled.load(Ordering::Relaxed)
+        self.cancelled.load(Ordering::Acquire)
+    }
+
+    pub fn cancellation_token(&self) -> CancellationToken {
+        CancellationToken {
+            cancelled: Arc::clone(&self.cancelled),
+        }
     }
 }
 
@@ -552,13 +558,16 @@ impl JobTicket {
 pub struct JobRegistry {
     next_id: AtomicU64,
     jobs: RwLock<HashMap<JobId, Arc<AtomicBool>>>,
+    shutting_down: AtomicBool,
+    workers: RwLock<HashMap<JobId, std::thread::JoinHandle<()>>>,
 }
 
 impl JobRegistry {
     pub fn register(&self, priority: JobPriority) -> JobTicket {
         let id = format!("job-{}", self.next_id.fetch_add(1, Ordering::Relaxed));
-        let cancelled = Arc::new(AtomicBool::new(false));
-        self.jobs.write().insert(id.clone(), cancelled.clone());
+        let mut jobs = self.jobs.write();
+        let cancelled = Arc::new(AtomicBool::new(self.shutting_down.load(Ordering::Acquire)));
+        jobs.insert(id.clone(), Arc::clone(&cancelled));
         JobTicket {
             id,
             priority,
@@ -571,18 +580,96 @@ impl JobRegistry {
         let Some(flag) = jobs.get(id) else {
             return false;
         };
-        flag.store(true, Ordering::Relaxed);
+        flag.store(true, Ordering::Release);
         true
     }
 
     pub fn finish(&self, id: &str) {
         self.jobs.write().remove(id);
     }
+
+    /// Cancels existing jobs and prevents later registration from escaping shutdown.
+    pub fn shutdown(&self) {
+        let jobs = self.jobs.write();
+        self.shutting_down.store(true, Ordering::Release);
+        for flag in jobs.values() {
+            flag.store(true, Ordering::Release);
+        }
+    }
+
+    pub fn track_worker(&self, id: JobId, worker: std::thread::JoinHandle<()>) {
+        let finished: Vec<_> = {
+            let mut workers = self.workers.write();
+            let ids: Vec<_> = workers
+                .iter()
+                .filter(|(_, worker)| worker.is_finished())
+                .map(|(id, _)| id.clone())
+                .collect();
+            let finished = ids
+                .into_iter()
+                .filter_map(|id| workers.remove(&id))
+                .collect();
+            workers.insert(id, worker);
+            finished
+        };
+        for worker in finished {
+            let _ = worker.join();
+        }
+    }
+
+    /// Bounded shutdown: native filesystem calls may not be interruptible.
+    pub fn shutdown_and_wait(&self, timeout: std::time::Duration) -> bool {
+        self.shutdown();
+        let deadline = std::time::Instant::now() + timeout;
+        loop {
+            let finished: Vec<_> = {
+                let mut workers = self.workers.write();
+                let ids: Vec<_> = workers
+                    .iter()
+                    .filter(|(_, worker)| worker.is_finished())
+                    .map(|(id, _)| id.clone())
+                    .collect();
+                ids.into_iter()
+                    .filter_map(|id| workers.remove(&id))
+                    .collect()
+            };
+            for worker in finished {
+                let _ = worker.join();
+            }
+            if self.workers.read().is_empty() {
+                return true;
+            }
+            if std::time::Instant::now() >= deadline {
+                return false;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(25));
+        }
+    }
+
+    pub fn is_shutting_down(&self) -> bool {
+        self.shutting_down.load(Ordering::Acquire)
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn registry_tokens_share_cancel_and_shutdown_blocks_late_work() {
+        let registry = JobRegistry::default();
+        let first = registry.register(JobPriority::LibraryIndex);
+        let token = first.cancellation_token();
+        assert!(!token.is_cancelled());
+        assert!(registry.cancel(&first.id));
+        assert!(token.is_cancelled());
+        registry.finish(&first.id);
+        assert!(!registry.cancel(&first.id));
+        let second = registry.register(JobPriority::LibraryIndex);
+        registry.shutdown();
+        assert!(second.is_cancelled());
+        assert!(registry.register(JobPriority::LibraryIndex).is_cancelled());
+    }
 
     #[test]
     fn scoped_scheduler_aggregates_consumers_and_rejects_stale_epochs() {

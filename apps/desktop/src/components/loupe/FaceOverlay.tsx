@@ -1,3 +1,4 @@
+import { RegionOverlay } from "@/components/analyzers/RegionOverlay";
 import { useEffect, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
@@ -82,22 +83,16 @@ export function FaceOverlay({ asset, t, enabled }: FaceOverlayProps) {
   };
 
   return (
-    <div className="loupe__face-overlay">
-      {reviews.data.map((item) => {
+    <RegionOverlay
+      descriptor={{ id: "faces.overlay", coordinateSpace: "displayNormalized", items: reviews.data.map((item) => ({ id: item.observationId, rect: item.bbox, state: item.state, label: label(item) })) }}
+      className="loupe__face-overlay"
+      testIdPrefix="face-box-"
+      regionClassName={(region) => `loupe__face-box is-${region.state}${selected === region.id ? " is-selected" : ""}`}
+      renderRegion={(region) => {
+        const item = reviews.data!.find((item) => item.observationId === region.id)!;
         const isSelected = selected === item.observationId;
         const crop = crops.byObservation.get(item.observationId);
-        return (
-          <div
-            className={`loupe__face-box is-${item.state}${isSelected ? " is-selected" : ""}`}
-            data-testid={`face-box-${item.observationId}`}
-            key={item.observationId}
-            style={{
-              left: `${item.bbox.x * 100}%`,
-              top: `${item.bbox.y * 100}%`,
-              width: `${item.bbox.width * 100}%`,
-              height: `${item.bbox.height * 100}%`,
-            }}
-          >
+        return <>
             <button
               className="loupe__face-anchor"
               onClick={() =>
@@ -187,9 +182,8 @@ export function FaceOverlay({ asset, t, enabled }: FaceOverlayProps) {
                 </button>
               </div>
             ) : null}
-          </div>
-        );
-      })}
-    </div>
+          </>;
+      }}
+    />
   );
 }

@@ -17,6 +17,7 @@ serde_json.workspace = true
 tauri-build = { version = "2", features = [] }
 
 [dependencies]
+oxy-analyzer-host = { path = "../../../crates/oxy-analyzer-host" }
 oxy-domain = { path = "../../../crates/oxy-domain" }
 oxy-faces = { path = "../../../crates/oxy-faces" }
 oxy-fs = { path = "../../../crates/oxy-fs" }
@@ -35,10 +36,10 @@ tauri-plugin-dialog = "2"
 tauri-plugin-log = "2"
 tar = "0.4"
 ureq = { version = "3.4", default-features = false, features = ["native-tls"] }
+zip = { version = "2.4", default-features = false, features = ["deflate"] }
 
 [target.'cfg(windows)'.dependencies]
 windows = { workspace = true, features = ["Win32_UI_Shell", "Win32_UI_WindowsAndMessaging"] }
-zip = { version = "2.4", default-features = false, features = ["deflate"] }
 
 [dev-dependencies]
 tempfile.workspace = true

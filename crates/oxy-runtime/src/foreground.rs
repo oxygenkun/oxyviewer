@@ -25,6 +25,20 @@ impl Default for ForegroundGate {
 }
 
 impl ForegroundGate {
+    /// Bounded waits let cancelled background jobs exit while foreground stays busy.
+    pub fn wait_for_background_cancellable(&self, token: &crate::CancellationToken) -> bool {
+        let mut state = self.state.lock();
+        loop {
+            if token.is_cancelled() {
+                return false;
+            }
+            if state.active == 0 && Instant::now() >= state.quiet_after {
+                return true;
+            }
+            self.changed.wait_for(&mut state, Duration::from_millis(25));
+        }
+    }
+
     pub fn enter(&self) -> ForegroundGuard<'_> {
         self.state.lock().active += 1;
         ForegroundGuard(self)
@@ -64,6 +78,19 @@ impl Drop for ForegroundGuard<'_> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn cancellation_releases_background_while_foreground_remains_active() {
+        let gate = ForegroundGate::default();
+        let _foreground = gate.enter();
+        let token = crate::CancellationToken::default();
+        std::thread::scope(|scope| {
+            let waiter = scope.spawn(|| gate.wait_for_background_cancellable(&token));
+            token.cancel();
+            assert!(!waiter.join().unwrap());
+        });
+        assert!(gate.is_busy());
+    }
+
     #[test]
     fn background_waits_for_all_foreground_consumers() {
         let gate = ForegroundGate::default();

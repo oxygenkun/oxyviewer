@@ -1056,3 +1056,21 @@ Existing rating/color/flag filters still use their metadata path. Query identity
 selected IDs and match mode; the UI retains the last successful same-directory result
 while updating or reporting an error. Full large-directory tag-toggle and queue-count
 qualification remains pending; this is not a new performance-budget claim.
+
+## Background face analysis
+
+The [2026-09-19 first-party analyzer qualification](research/face-analyzer-host-2026-09-19.md)
+records Release loupe paints while a real model subprocess is active, plus
+cancellation and bounded SQL enumeration. It is scoped to its local macOS
+fixtures and does not change the 100k first-page qualification above.
+
+### Unified face workbench photo previews (2026-09-19)
+
+The review contact sheet uses the existing encoded `thumbnail` request and media
+protocol, with display-normalized boxes over the content rectangle. It never
+requests Full for review cards. Only consumers within 200px of the viewport are
+mounted; leaving that area cancels waiting queries and releases their resource
+leases. Repeated photo cards share a query by path. Review observations remain
+paged (200 per page), and filters/group counts explicitly describe loaded rows.
+The Release real-photo interaction probe and its warm-cache limits are recorded
+in [workbench verification](research/face-workbench-review-2026-09-19.md).

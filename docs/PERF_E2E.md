@@ -256,3 +256,18 @@ WebView can clamp timers; such runs are not valid fast-scroll measurements.
 该探针只证明 DOM 几何正确，不能证明最终绘制的像素比例。macOS WKWebView
 曾在 DOM 完全正确时将 `object-fit: contain` 的大图拉伸；必须另外在 Release
 窗口检查 73% 前后及 100% / 200% 的实际画面，并与同图低倍率的细节比例对照。
+
+## 人脸后台分析与浏览
+
+`--scenario faces-browsing` 使用仓库真实双人照片的 64 个测试路径，在隔离资料库中
+索引并启动实际模型子进程。首个分析结果后连续切换 8 张 loupe，要求每次仍在分析且
+paint 在 800 ms 冷预览预算内；最后要求 5 秒内取消。每次 paint 与取消耗时写入
+`faces:loupe-painted` / `faces:cancelled`。不会写人工标注。运行前使用包含 worker
+资源的 Release 构建；macOS 可将 runner 指向 bundle 内的 executable。
+
+### 人脸工作台卡片验证
+
+`faces-workbench` 使用 12 份双人 JPEG 夹具，在真实分析完成后挂载工作台照片复核组件，
+验证压缩整图、人脸框、跨视图清空选择，以及从卡片批量创建身份后 24 条确认的持久化。
+此场景共享分析阶段已生成的缩略图，800ms 检查是暖缓存保护线，不是冷解码资格测试。
+执行 `node tests/perf/perf-e2e.mjs --scenario faces-workbench --runs 1 --app target/release/oxyviewer`。

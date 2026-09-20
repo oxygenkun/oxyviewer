@@ -1,41 +1,9 @@
-use crate::MediaError;
-use oxy_fs::observe_file;
 use serde::{Deserialize, Serialize};
-use sha2::{Digest, Sha256};
 use std::path::PathBuf;
 
 pub const MEDIA_CACHE_POLICY_REVISION: u32 = 3;
 
-#[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct SourceRevision {
-    pub canonical_path: PathBuf,
-    pub file_identity: String,
-    pub size_bytes: u64,
-    pub modified: String,
-    pub revision_id: String,
-}
-
-impl SourceRevision {
-    pub fn observe(path: &std::path::Path) -> Result<Self, MediaError> {
-        let observed = observe_file(path)?;
-        let mut hasher = Sha256::new();
-        hasher.update(b"oxy-media-source-revision-v2\0");
-        update_path(&mut hasher, &observed.canonical_path);
-        hasher.update(observed.file_identity.as_bytes());
-        hasher.update([0]);
-        hasher.update(observed.size_bytes.to_le_bytes());
-        hasher.update(observed.modified.as_bytes());
-        let revision_id = format!("{:x}", hasher.finalize());
-        Ok(Self {
-            canonical_path: observed.canonical_path,
-            file_identity: observed.file_identity,
-            size_bytes: observed.size_bytes,
-            modified: observed.modified,
-            revision_id,
-        })
-    }
-}
+pub use oxy_domain::SourceRevision;
 
 pub use oxy_domain::PixelDimensions;
 
@@ -256,22 +224,6 @@ fn long_edge(dimensions: PixelDimensions) -> u32 {
     dimensions.width.max(dimensions.height)
 }
 
-#[cfg(unix)]
-fn update_path(hasher: &mut Sha256, path: &std::path::Path) {
-    use std::os::unix::ffi::OsStrExt;
-    hasher.update(path.as_os_str().as_bytes());
-    hasher.update([0]);
-}
-
-#[cfg(windows)]
-fn update_path(hasher: &mut Sha256, path: &std::path::Path) {
-    use std::os::windows::ffi::OsStrExt;
-    for code_unit in path.as_os_str().encode_wide() {
-        hasher.update(code_unit.to_le_bytes());
-    }
-    hasher.update([0, 0]);
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -281,7 +233,7 @@ mod tests {
         let source = tempfile::tempdir().unwrap();
         let path = source.path().join("source.jpg");
         fs::write(&path, b"source").unwrap();
-        let source_revision = SourceRevision::observe(&path).unwrap();
+        let source_revision = oxy_fs::observe_source_revision(&path).unwrap();
         let mut facts = crate::media_source::test_facts(origin, dimensions, false);
         crate::media_source::bind_facts(&mut facts, &source_revision).unwrap();
         MediaArtifact {

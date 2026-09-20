@@ -9,6 +9,7 @@ version.workspace = true
 workspace = true
 
 [dependencies]
+quick-xml = "0.38.4"
 oxy-domain = { path = "../oxy-domain" }
 oxy-fs = { path = "../oxy-fs" }
 oxy-metadata-parser = { path = "../oxy-metadata-parser" }

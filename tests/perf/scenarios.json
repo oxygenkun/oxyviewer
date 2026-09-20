@@ -2,6 +2,24 @@
   "$comment": "E2E performance scenarios for tests/perf/perf-e2e.mjs. Budgets mirror docs/PERFORMANCE.md; see docs/PERF_E2E.md. Metrics without a budget are recorded and regression-checked against baseline.json.",
   "regressionFactor": 1.2,
   "scenarios": {
+    "faces-workbench": {
+      "fixture": { "type": "file", "path": "crates/oxy-faces/tests/data/fixtures/two_people.jpg", "count": 12 },
+      "resourceStress": "faces-workbench",
+      "awaitMarks": ["resource:stress-complete"],
+      "coldCache": true,
+      "runs": 1,
+      "timeoutMs": 180000,
+      "budgets": {}
+    },
+    "faces-browsing": {
+      "fixture": { "type": "file", "path": "crates/oxy-faces/tests/data/fixtures/two_people.jpg", "count": 64 },
+      "resourceStress": "faces-browsing",
+      "awaitMarks": ["resource:stress-complete"],
+      "coldCache": true,
+      "runs": 3,
+      "timeoutMs": 120000,
+      "budgets": {}
+    },
     "folder-thumbnail-retention-hif": {
       "fixture": { "type": "file", "path": "tests/fixtures/DSC00449.HIF", "count": 1100 },
       "resourceStress": "folder-thumbnails",

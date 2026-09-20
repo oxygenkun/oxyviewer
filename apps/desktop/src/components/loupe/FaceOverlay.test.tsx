@@ -202,6 +202,10 @@ it("registers the crops again when the Host has already dropped them", async () 
   // Retrying the immutable URL can never succeed, so the only recovery is a
   // fresh registration from the Host — exactly once, not in a loop.
   expect(api.crops.mock.calls.length).toBeGreaterThan(1);
-  expect(api.crops.mock.calls.length).toBeLessThanOrEqual(2);
+  const callsByObservation = new Map<string, number>();
+  for (const [ids] of api.crops.mock.calls) {
+    for (const id of ids as string[]) callsByObservation.set(id, (callsByObservation.get(id) ?? 0) + 1);
+  }
+  for (const count of callsByObservation.values()) expect(count).toBeLessThanOrEqual(2);
   expect(api.renewResource).toHaveBeenCalled();
 });

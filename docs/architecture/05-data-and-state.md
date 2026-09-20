@@ -315,7 +315,7 @@ session/root policy 显式加入 command 契约并增加符号链接测试。
 
 人脸功能把「机器观测」和「用户事实」拆成两张表族：`face_observations` /
 `face_embeddings` / `face_crops` / `face_candidates` / `face_clusters` 与其它 projection 一样是可重建
-缓存；`persons` / `face_decisions` / `face_decision_events` 是用户数据。检测器升级时，
+缓存；`persons` / `face_decisions` / `face_decision_events` 镜像耐久用户数据。检测器升级时，
 人工决策按归一化区域重叠（IoU ≥ 0.5）重新绑定到新的观测，因此换模型不会让已确认的人物
 消失。
 
@@ -359,3 +359,72 @@ Workspace 的 `tagIds` 和 `tagMatch` 是同步 UI 查询意图，不持久化�
 
 React Query 的完整 query key 包含标签 ID 与模式，旧请求不能覆盖新查询；同目录请求等待
 或失败时保留最近成功结果并显示更新状态/错误。最近成功结果不跨目录展示。
+
+## 人脸 Analyzer 的运行与持久化边界
+
+第一方 `oxy-analyzer-host::Analyzer` 接收 display-oriented RGB、asset ID 和统一
+`SourceRevision`；源路径、解码和提交前 revision 验证留在 Host。媒体与分析都调用
+`oxy_fs::observe_source_revision`，使用 canonical path、文件身份、长度和高精度 mtime。
+同尺寸、同 mtime 的文件替换仍因文件身份变化而失效；同一 inode 原地改写且人为恢复
+mtime 不是内容哈希能识别的情形，此 revision 不宣称覆盖它。
+
+默认 SCRFD-10G KPS 与 AdaFace IR-101 不随应用打包。用户在人脸工作台分别触发下载，Host
+流式写入应用数据目录、验证固定 SHA-256 并原子安装；只有两个校验回执都存在时才构造分析器。
+模型替换会使 analyzer fingerprint 变化并清除检测、embedding、裁切、聚类与建议缓存，但不
+删除人物或人工决策。SCRFD/AdaFace 是唯一生产组合，其 URL、文件名、尺寸、SHA-256 与许可摘要
+只定义在 `3rdpart/face-models/managed.json`。Host 总是通过已校验的第一方 analyzer 子进程执行
+纯 Rust `tract` 推理；没有应用内推理或旧模型回退。子进程提供故障隔离，**不是 OS 文件系统
+沙箱**。RGB 和 embedding 经有界二进制帧传输，JSON 只载控制与几何。Cancel 控制消息触发
+协作取消；2 秒内未结束则终止并回收子进程，单请求上限 120 秒。
+
+`FaceAnalysisQueue` 保留领域调度，但 ID、取消和退出回收由共享 `JobRegistry` 持有。
+同一时刻一项 face 工作，逐资产等待 foreground gate，Full 使用 Preload 优先级。
+refresh 同样是可取消 job；clustering 和 matching 的内部循环检查取消。精确聚类超过
+20,000 个 unknown 或 matching 超过 50,000 个 unresolved 时显式失败，不提交截断结果。
+聚类不再把全局阈值边直接做单链接连通分量：先保留 exact reciprocal-kNN 局部边，再按相似度
+从高到低做平均链接合并；任意两个 component 含同一 asset 的不同人脸时禁止合并。这样低置信度
+边不能把两个稠密身份簇桥接成一个人物建议，同照片约束也会随 component 传播，而不只过滤直接边。
+
+目标按 path keyset 每页 256 项，`face_runs` 保存 cursor 和索引 generation；generation
+变化重新遍历并复用已完成 per-asset checkpoints。命令入口只接受已注册的 canonical
+library roots，路径和目录经过 `oxy-fs` 边界验证；处理和写 sidecar 前再次验证。
+这不是任意路径授权，也不保证抵抗另一个进程在最后一次验证之后恶意替换路径。
+
+`resource_projections` 的 `faces:v1` 是每资产 ready/error、source revision 和请求
+validAt/stateRevision 的入口；提交与 observations、embedding、crop、scan 同事务。
+机器表的 schema owner 是 faces v1。清除人脸缓存保留人物与人工决策；更强的删除人物
+与标注操作独立确认，并为已知 sidecar 事实保留删除 tombstones。
+启动时将缺少 `policy_version` 的旧 `face_crops` 表原子重建为按渲染策略区分的缓存；
+仅丢弃无法验证策略的旧头像，保留 observations、人物与人工决策。
+
+人物持久化增加双向 XMP 通道：`people.json` v4 保存本地事实、base/desired、冲突与重试
+状态，SQLite 仍是镜像。`https://oxyviewer.app/ns/faces/1.0/` 只存 stable fact/person ID、
+随机 revision、display-normalized region、人工决策和人物名称；不含 observation ID、
+embedding、crop、score 或 cluster。文件原子替换、读回一致后才确认同步；与普通 XMP
+编辑共用进程内 sidecar 锁。不同事实可三方合并，同一事实分歧、区域冲突或已有人物名称
+分歧保留双方供用户选择；不用时钟决定覆盖。离线/只读失败持久重试，未来版本拒绝覆盖。
+后台导入按索引 generation 分页；未重新索引且没有本地编辑的外部 sidecar 变化不会
+实时推送。人物默认关联 `人物|姓名` 标签，工作台可编辑为 `人物|家人|姓名` 等多级
+分类。`PersonRecord.tagPath` 持久化路径，`linkedTagId` 仅是可重建的本地映射；启动时
+为旧人物补齐路径，并在 SQLite 重建后按路径恢复标签，避免复用 ID 指向其他标签。
+标签树中的移动/改名也回写人物路径。人物改名更新路径末级，正向确认投影到关联标签，
+后台同步标准 `dc:subject` 和 `lr:hierarchicalSubject`；未确认或否定结果不产生人物关键词。
+投影单独记录所有权，撤销确认、改名或更换分类时移除旧的自动关联，保留手动标签。
+主窗口监听人物更新事件刷新标签、照片标签分配和筛选结果；现有标签子树筛选包含
+分类下的所有人物。分类路径同时写入结构化人工事实的可选 `personTagPath` 属性，
+便于从 XMP 恢复人物资料；路径分歧与姓名分歧采用同样的显式冲突处理。
+
+Host 的 `RegionOverlay`、`AssetCollectionView`、`SettingsRenderer` 共用声明式契约。
+face 与 focus 共用几何 renderer。人脸工作台通过专用照片卡片组合整图、区域和身份操作，
+复用既有复核分页与白名单 API；通用 `AssetCollectionView` 仍用于声明式集合。
+现阶段 descriptor 由第一方 Host adapter 构造，不加载第三方 UI 或任意 RPC 名称。
+
+### 人脸手动清晰度
+
+`FaceReviewItem.manualBlurry` 是可选布尔值：true 表示手动模糊，false 表示手动清晰，缺省
+使用机器 clarity 与视图阈值。`set_face_clarity(observationIds, blurry)` 接收布尔值或 null
+（恢复自动）；Host 在 blocking worker 中解析全部观测后，由 `oxy-userdata::PersonStore`
+一次原子写入 people.json v4 的 `clarityMarks`。身份决定、机器分数和相似簇不受修改。
+读复核列表和单图复核时按路径/区域重叠填充字段；区域匹配沿用身份重绑定的 0.5 IoU 门槛。
+标记随文件移动、复制、删除；缓存清理保留，删除人工标注清除。旧版 v3 文档以空标记迁移，
+旧应用拒绝写入 v4，避免丢失新字段。此字段暂不加入 XMP 身份同步协议。

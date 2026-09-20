@@ -101,6 +101,14 @@ impl NormalizedRect {
         values.iter().all(|value| value.is_finite()) && self.width > 0.0 && self.height > 0.0
     }
 
+    pub fn is_display_normalized(self) -> bool {
+        self.is_valid()
+            && self.x >= 0.0
+            && self.y >= 0.0
+            && self.x + self.width <= 1.0
+            && self.y + self.height <= 1.0
+    }
+
     /// Clamps the rectangle to `0.0..=1.0`, returning `None` when nothing is
     /// left. Analyzer output is untrusted input and must pass through this
     /// before it is stored.
@@ -307,6 +315,31 @@ pub struct FaceCluster {
     pub suggested_person_id: Option<PersonId>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub suggested_name: Option<String>,
+    /// Cheap review metrics for every member. These are rebuildable machine
+    /// facts and let the UI filter a cluster without decoding its crops.
+    #[serde(default)]
+    pub member_quality: Vec<FaceQuality>,
+}
+
+/// Post-detection quality used only to filter review surfaces.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct FaceQuality {
+    pub observation_id: FaceObservationId,
+    /// Shorter side of the detected face in display-oriented source pixels.
+    pub face_pixels: u32,
+    /// Normalized Laplacian-variance heuristic in `0.0..=1.0`.
+    pub clarity: f32,
+    pub detection_score: f32,
+}
+
+/// Local manual quality judgement, independent of identity and machine scores.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct FaceClarityMark {
+    pub asset_path: PathBuf,
+    pub region: NormalizedRect,
+    pub blurry: bool,
 }
 
 /// One row of the review queue. Combined view of machine output and the
@@ -319,6 +352,12 @@ pub struct FaceReviewItem {
     pub asset_path: PathBuf,
     pub bbox: NormalizedRect,
     pub detection_score: f32,
+    #[serde(default)]
+    pub face_pixels: u32,
+    #[serde(default)]
+    pub clarity: f32,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub manual_blurry: Option<bool>,
     pub state: FaceReviewState,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub candidate: Option<FaceCandidate>,
@@ -399,6 +438,9 @@ pub struct FaceDecisionRecord {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct PersonRecord {
+    /// Durable classification path; tag IDs alone cannot survive a cache rebuild.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tag_path: Option<String>,
     pub person_id: PersonId,
     pub display_name: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -410,6 +452,7 @@ pub struct PersonRecord {
 impl From<&Person> for PersonRecord {
     fn from(person: &Person) -> Self {
         Self {
+            tag_path: None,
             person_id: person.person_id.clone(),
             display_name: person.display_name.clone(),
             linked_tag_id: person.linked_tag_id,
@@ -493,7 +536,7 @@ pub enum FaceMatchSensitivity {
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct FaceAnalyzerSettings {
-    /// Minimum YuNet score. Affects detection output only.
+    /// Minimum SCRFD score. Affects detection output only.
     pub detection_confidence: f32,
     /// IoU threshold used to merge overlapping detections.
     pub nms_threshold: f32,
@@ -507,7 +550,7 @@ pub struct FaceAnalyzerSettings {
     /// the small faces that matter most there. Tiling keeps the effective
     /// resolution up at the cost of extra inference passes, so it is a user
     /// choice rather than a silent default.
-    #[serde(default = "default_true")]
+    #[serde(default)]
     pub detect_small_faces: bool,
     pub match_sensitivity: FaceMatchSensitivity,
     /// Similarity above which a known person becomes a pending candidate.
@@ -523,11 +566,11 @@ pub struct FaceAnalyzerSettings {
 impl Default for FaceAnalyzerSettings {
     fn default() -> Self {
         Self {
-            detection_confidence: 0.9,
+            detection_confidence: 0.5,
             nms_threshold: 0.3,
             max_faces_per_asset: 64,
             min_face_pixels: 24,
-            detect_small_faces: true,
+            detect_small_faces: false,
             match_sensitivity: FaceMatchSensitivity::Balanced,
             match_threshold: FaceMatchSensitivity::Balanced.threshold(),
             auto_accept_threshold: None,
@@ -537,9 +580,8 @@ impl Default for FaceAnalyzerSettings {
 }
 
 impl FaceMatchSensitivity {
-    /// SFace cosine presets. These are starting points measured on public
-    /// benchmarks, not universal constants; a real library should be calibrated
-    /// from its own accepted/rejected score distribution.
+    /// Compatibility starting points. They are not universal constants; a real
+    /// library should be calibrated from its own accepted/rejected scores.
     pub fn threshold(self) -> f32 {
         match self {
             Self::Strict => 0.50,
@@ -562,6 +604,20 @@ impl FaceAnalyzerSettings {
 
     /// Clamps untrusted settings before they reach the analyzer.
     pub fn sanitized(mut self) -> Self {
+        let defaults = Self::default();
+        for (value, fallback) in [
+            (
+                &mut self.detection_confidence,
+                defaults.detection_confidence,
+            ),
+            (&mut self.nms_threshold, defaults.nms_threshold),
+            (&mut self.match_threshold, defaults.match_threshold),
+            (&mut self.cluster_threshold, defaults.cluster_threshold),
+        ] {
+            if !value.is_finite() {
+                *value = fallback;
+            }
+        }
         self.detection_confidence = self.detection_confidence.clamp(0.01, 0.99);
         self.nms_threshold = self.nms_threshold.clamp(0.0, 1.0);
         self.max_faces_per_asset = self.max_faces_per_asset.clamp(1, 512);
@@ -570,6 +626,7 @@ impl FaceAnalyzerSettings {
         self.cluster_threshold = self.cluster_threshold.clamp(0.0, 1.0);
         self.auto_accept_threshold = self
             .auto_accept_threshold
+            .filter(|value| value.is_finite())
             .map(|value| value.clamp(self.effective_match_threshold(), 1.0));
         self
     }
@@ -736,10 +793,6 @@ pub struct FaceLibraryStats {
     pub clusters: u64,
 }
 
-fn default_true() -> bool {
-    true
-}
-
 /// Which rows of the review queue to return.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -785,6 +838,98 @@ pub struct FaceReviewPage {
     pub next_cursor: Option<usize>,
 }
 
+/// Portable user facts. No model output, source path, or observation id is serialized.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PortableFaceFact {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub person_tag_path: Option<String>,
+    pub id: String,
+    pub revision: String,
+    pub region: NormalizedRect,
+    pub decision: Option<FaceDecision>,
+    pub person_name: Option<String>,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PortableFaceFacts {
+    pub facts: Vec<PortableFaceFact>,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct FaceSidecarState {
+    pub base: PortableFaceFacts,
+    pub desired: PortableFaceFacts,
+    pub conflict: Option<PortableFaceFacts>,
+    pub last_error: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct FaceSyncStatus {
+    pub path: PathBuf,
+    pub pending: bool,
+    pub conflict: bool,
+    pub last_error: Option<String>,
+    pub local_facts: Option<PortableFaceFacts>,
+    pub remote_facts: Option<PortableFaceFacts>,
+}
+
+/// One optional face-analysis model managed in the application's data directory.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct FaceModelStatus {
+    pub id: String,
+    pub display_name: String,
+    pub installed: bool,
+    pub size_bytes: u64,
+    pub download_size_bytes: u64,
+    pub license_summary: String,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum FaceModelDownloadStage {
+    Downloading,
+    Verifying,
+    Installing,
+    Complete,
+    Failed,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct FaceModelDownloadProgress {
+    pub model_id: String,
+    pub stage: FaceModelDownloadStage,
+    pub downloaded_bytes: u64,
+    pub total_bytes: u64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub message: Option<String>,
+}
+
+/// Feature availability plus the effective settings, so the UI can disable the
+/// people entry point without probing the filesystem.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct FaceCapability {
+    pub available: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub unavailable_reason: Option<String>,
+    pub running: bool,
+    pub settings: FaceAnalyzerSettings,
+    pub stats: FaceLibraryStats,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub progress: Option<FaceAnalysisProgress>,
+    /// Detector and embedder are downloaded independently and become usable
+    /// only after both verified files are installed.
+    pub models: Vec<FaceModelStatus>,
+    /// File that holds persons and confirmations. It is user data, not cache.
+    pub people_store_path: String,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -799,7 +944,7 @@ mod tests {
             bbox,
             landmarks: vec![NormalizedPoint::new(0.2, 0.2); 5],
             detection_score: 0.95,
-            detector_fingerprint: "yunet-2023mar".into(),
+            detector_fingerprint: "scrfd-10g-kps".into(),
         }
     }
 
@@ -883,16 +1028,15 @@ mod tests {
     }
 
     #[test]
-    fn small_face_tiling_defaults_on_and_decodes_absent_fields_as_on() {
-        assert!(FaceAnalyzerSettings::default().detect_small_faces);
-        // An older stored settings blob has no field and must keep the default.
+    fn small_face_tiling_is_an_explicit_quality_mode() {
+        assert!(!FaceAnalyzerSettings::default().detect_small_faces);
         let decoded: FaceAnalyzerSettings = serde_json::from_str(
             r#"{"detectionConfidence":0.9,"nmsThreshold":0.3,
                 "maxFacesPerAsset":64,"minFacePixels":24,"matchSensitivity":"balanced",
                 "matchThreshold":0.363,"clusterThreshold":0.363}"#,
         )
         .unwrap();
-        assert!(decoded.detect_small_faces);
+        assert!(!decoded.detect_small_faces);
     }
 
     #[test]

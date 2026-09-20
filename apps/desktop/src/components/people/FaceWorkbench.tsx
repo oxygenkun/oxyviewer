@@ -1,121 +1,50 @@
+import { FacePhotoReview } from "./FacePhotoReview";
+import { FaceModelPanel } from "./FaceModelPanel";
+import { PersonManager } from "./PersonManager";
+import { SettingsRenderer } from "@/components/analyzers/SettingsRenderer";
+import { faceSettingsDescriptor } from "./faceDescriptors";
+import { FaceSyncPanel } from "./FaceSyncPanel";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
-  Check,
   FolderOpen,
   Images,
-  Layers,
   Library,
-  ListChecks,
   Loader2,
   Play,
   RefreshCw,
   ScanFace,
   SlidersHorizontal,
   Square,
-  Trash2,
-  UserPlus,
-  Users,
   X,
 } from "lucide-react";
 
 import {
   cancelFaceAnalysis,
-  clearFaceDecision,
   closeFaceWorkbench,
-  createPerson,
-  decideFace,
-  deletePerson,
   getFaceCalibration,
   getFaceCapability,
   getFaceClusters,
-  getFaceReviewPage,
-  getPersonUndo,
   listPersons,
-  mergePersons,
+  installFaceModel,
   notifyFaceAssetReveal,
   onFaceAnalysisProgress,
   onFaceLibraryUpdated,
+  onFaceModelDownloadProgress,
   onFaceWorkbenchContext,
-  removeFacesFromPerson,
-  renamePerson,
   requestFaceWorkbenchContext,
   resolveFaceObservation,
   startFaceAnalysis,
-  undoPersonOperation,
   updateFaceAnalyzerSettings,
 } from "@/lib/api";
 import type {
   FaceAnalysisProgress,
   FaceAnalysisRequest,
-  FaceCluster,
-  FaceMatchSensitivity,
-  FaceReviewFilter,
-  FaceReviewItem,
+  FaceModelDownloadProgress,
   FaceWorkbenchContext,
-  Person,
-  UndoableOperation,
 } from "@/types";
-import { RevealableFaceCrop, useFaceCrops } from "@/components/people/FaceCrop";
 import { translate, type Locale, type MessageKey } from "@/lib/i18n";
-
-/** Faces shown per cluster before the remainder is summarized as "+N". */
-const CLUSTER_PREVIEW_LIMIT = 12;
-
-const SENSITIVITIES: FaceMatchSensitivity[] = ["strict", "balanced", "loose"];
-
-type WorkbenchTab = "clusters" | "persons" | "review";
-
-const TABS: Array<{ id: WorkbenchTab; label: MessageKey; icon: typeof Layers }> = [
-  { id: "clusters", label: "peopleClustersShort", icon: Layers },
-  { id: "persons", label: "peoplePersons", icon: Users },
-  { id: "review", label: "peopleReview", icon: ListChecks },
-];
-
-/**
- * Human-readable description of the pending person operation.
- *
- * The undo button must say what it will undo: "merge" and "detach" are both
- * destructive-looking, and an unlabelled undo invites the wrong click.
- */
-function undoLabel(
-  operation: UndoableOperation,
-  t: (key: MessageKey) => string,
-): string {
-  if (operation.kind === "mergePersons") {
-    return t("peopleUndoMerge")
-      .replace("{name}", operation.otherPersonName ?? "")
-      .replace("{count}", String(operation.faceCount));
-  }
-  if (operation.kind === "assignFaces") {
-    return t("peopleUndoAssign").replace("{count}", String(operation.faceCount));
-  }
-  return t("peopleUndoDetach").replace("{count}", String(operation.faceCount));
-}
-
-/**
- * Members worth showing first: the representative, then the members the user is
- * expected to confirm, then the boundary members. Truncating by this order
- * means a 200-member cluster still shows a recognizable sample instead of 12
- * arbitrary faces.
- */
-function orderedClusterFaces(cluster: FaceCluster, limit: number): string[] {
-  const outliers = new Set(cluster.outlierObservationIds);
-  const ordered = [
-    cluster.representativeObservationId,
-    ...cluster.observationIds.filter((id) => !outliers.has(id) && id !== cluster.representativeObservationId),
-    ...cluster.observationIds.filter((id) => outliers.has(id)),
-  ];
-  const seen = new Set<string>();
-  const unique: string[] = [];
-  for (const id of ordered) {
-    if (seen.has(id)) continue;
-    seen.add(id);
-    unique.push(id);
-    if (unique.length === limit) break;
-  }
-  return unique;
-}
+import { invalidateFaceQueries } from "./faceQueryInvalidation";
 
 function fileName(path: string): string {
   return path.split(/[\\/]/).at(-1) ?? path;
@@ -143,16 +72,9 @@ interface FaceWorkbenchProps {
 export function FaceWorkbench({ t: tOverride, locale: localeOverride }: FaceWorkbenchProps = {}) {
   const queryClient = useQueryClient();
   const [context, setContext] = useState<FaceWorkbenchContext>();
-  const [tab, setTab] = useState<WorkbenchTab>("clusters");
-  // Faces the user has not answered yet, not just the ones the matcher had an
-  // opinion about: on a library with no named people every face is `unknown`,
-  // so a `pending` default would show an empty queue right after analysis.
-  const [filter, setFilter] = useState<FaceReviewFilter>("unreviewed");
+  const [personsOpen, setPersonsOpen] = useState(false);
   const [progress, setProgress] = useState<FaceAnalysisProgress | undefined>();
-  const [draftNames, setDraftNames] = useState<Record<string, string>>({});
-  const [renaming, setRenaming] = useState<string | null>(null);
-  const [renameValue, setRenameValue] = useState("");
-  const [mergeSource, setMergeSource] = useState("");
+  const [modelProgress, setModelProgress] = useState<FaceModelDownloadProgress | undefined>();
   const [revealNotice, setRevealNotice] = useState<{ kind: "ok" | "error"; text: string }>();
   const [parametersOpen, setParametersOpen] = useState(false);
 
@@ -168,22 +90,23 @@ export function FaceWorkbench({ t: tOverride, locale: localeOverride }: FaceWork
   const capability = useQuery({ queryKey: ["face-capability"], queryFn: getFaceCapability });
   const persons = useQuery({ queryKey: ["face-persons"], queryFn: listPersons });
   const clusters = useQuery({ queryKey: ["face-clusters"], queryFn: getFaceClusters });
-  const review = useQuery({
-    queryKey: ["face-review", filter],
-    queryFn: () => getFaceReviewPage(filter),
-    enabled: tab === "review",
-  });
-  const undoState = useQuery({ queryKey: ["face-undo"], queryFn: getPersonUndo });
   const calibration = useQuery({ queryKey: ["face-calibration"], queryFn: getFaceCalibration });
 
   const invalidate = useCallback(() => {
-    void queryClient.invalidateQueries({ queryKey: ["face-capability"] });
-    void queryClient.invalidateQueries({ queryKey: ["face-persons"] });
-    void queryClient.invalidateQueries({ queryKey: ["face-clusters"] });
-    void queryClient.invalidateQueries({ queryKey: ["face-review"] });
-    void queryClient.invalidateQueries({ queryKey: ["face-undo"] });
-    void queryClient.invalidateQueries({ queryKey: ["face-calibration"] });
-    void queryClient.invalidateQueries({ queryKey: ["asset-face-reviews"] });
+    invalidateFaceQueries(queryClient, "people");
+  }, [queryClient]);
+
+  const invalidateAnalysis = useCallback(() => {
+    invalidateFaceQueries(queryClient, "analysis");
+  }, [queryClient]);
+
+  // Detection commits each asset independently, so the review surface can
+  // expose those observations while the rest of the folder is still running.
+  // Keep this refresh deliberately narrow: clusters and candidates are only
+  // published by the later derived pass, and refetching every workbench query
+  // for each progress tick would make the controls jump under the user.
+  const invalidateIncrementalResults = useCallback(() => {
+    invalidateFaceQueries(queryClient, "incremental");
   }, [queryClient]);
 
   // The main window owns the browse scope; this window asks for it once and
@@ -206,10 +129,34 @@ export function FaceWorkbench({ t: tOverride, locale: localeOverride }: FaceWork
     let disposed = false;
     let stopProgress: (() => void) | undefined;
     let stopLibrary: (() => void) | undefined;
+    let activeJob = "";
+    let lastProcessed = 0;
+    let refreshQueued = false;
+    let refreshCooldown: number | undefined;
+    const refreshIncrementally = () => {
+      invalidateIncrementalResults();
+      refreshCooldown = window.setTimeout(() => {
+        refreshCooldown = undefined;
+        if (refreshQueued) {
+          refreshQueued = false;
+          refreshIncrementally();
+        }
+      }, 400);
+    };
+    const requestIncrementalRefresh = () => {
+      if (refreshCooldown === undefined) refreshIncrementally();
+      else refreshQueued = true;
+    };
     void onFaceAnalysisProgress((next) => {
       setProgress(next);
-      // A finished run changed observations, clusters, and candidates.
-      if (next.stage === "complete" || next.stage === "failed") invalidate();
+      if (next.jobId !== activeJob) {
+        activeJob = next.jobId;
+        lastProcessed = 0;
+      }
+      if (next.stage === "detecting" && next.processedAssets > lastProcessed) {
+        lastProcessed = next.processedAssets;
+        requestIncrementalRefresh();
+      }
     }).then((unlisten) => {
       if (disposed) unlisten();
       else stopProgress = unlisten;
@@ -220,10 +167,24 @@ export function FaceWorkbench({ t: tOverride, locale: localeOverride }: FaceWork
     });
     return () => {
       disposed = true;
+      if (refreshCooldown !== undefined) window.clearTimeout(refreshCooldown);
       stopProgress?.();
       stopLibrary?.();
     };
-  }, [invalidate]);
+  }, [invalidate, invalidateIncrementalResults]);
+
+  useEffect(() => {
+    let disposed = false;
+    let stop: (() => void) | undefined;
+    void onFaceModelDownloadProgress((next) => setModelProgress(next)).then((unlisten) => {
+      if (disposed) unlisten();
+      else stop = unlisten;
+    });
+    return () => {
+      disposed = true;
+      stop?.();
+    };
+  }, []);
 
   useEffect(() => {
     if (!revealNotice) return;
@@ -233,59 +194,21 @@ export function FaceWorkbench({ t: tOverride, locale: localeOverride }: FaceWork
 
   const start = useMutation({
     mutationFn: (request: FaceAnalysisRequest) => startFaceAnalysis(request),
-    onSuccess: invalidate,
+    onSuccess: invalidateAnalysis,
   });
   const stop = useMutation({
     mutationFn: (jobId: string) => cancelFaceAnalysis(jobId),
-    onSuccess: invalidate,
+    onSuccess: invalidateAnalysis,
   });
   const updateSettings = useMutation({
     mutationFn: updateFaceAnalyzerSettings,
-    onSuccess: invalidate,
+    onSuccess: invalidateAnalysis,
   });
-  const decide = useMutation({
-    mutationFn: ({ observationId, decision }: { observationId: string; decision: Parameters<typeof decideFace>[1] }) =>
-      decideFace(observationId, decision),
-    onSuccess: invalidate,
-  });
-  const undoDecision = useMutation({ mutationFn: clearFaceDecision, onSuccess: invalidate });
-  const create = useMutation({
-    mutationFn: ({ name, observationIds }: { name: string; observationIds: string[] }) =>
-      createPerson(crypto.randomUUID(), name).then(async (person) => {
-        for (const observationId of observationIds) {
-          await decideFace(observationId, { decision: "confirmPerson", personId: person.personId });
-        }
-        return person;
-      }),
-    onSuccess: (_person, variables) => {
-      setDraftNames((current) => {
-        const next = { ...current };
-        for (const observationId of variables.observationIds) delete next[observationId];
-        return next;
-      });
-      invalidate();
-    },
-  });
-  const removePerson = useMutation({ mutationFn: deletePerson, onSuccess: invalidate });
-  const merge = useMutation({
-    mutationFn: ({ source, target }: { source: string; target: string }) =>
-      mergePersons(source, target),
-    onSuccess: () => {
-      setMergeSource("");
-      invalidate();
-    },
-  });
-  const detach = useMutation({
-    mutationFn: ({ personId, observationIds }: { personId: string; observationIds: string[] }) =>
-      removeFacesFromPerson(personId, observationIds),
-    onSuccess: invalidate,
-  });
-  const undo = useMutation({ mutationFn: undoPersonOperation, onSuccess: invalidate });
-  const rename = useMutation({
-    mutationFn: ({ personId, name }: { personId: string; name: string }) => renamePerson(personId, name),
-    onSuccess: () => {
-      setRenaming(null);
-      invalidate();
+  const installModel = useMutation({
+    mutationFn: installFaceModel,
+    onSuccess: (next) => {
+      queryClient.setQueryData(["face-capability"], next);
+      invalidateAnalysis();
     },
   });
   const reveal = useMutation({
@@ -304,28 +227,6 @@ export function FaceWorkbench({ t: tOverride, locale: localeOverride }: FaceWork
     },
   });
 
-  // Load only the visible section, in small independent batches. Full decodes
-  // can be slow, so the first completed faces should appear without waiting
-  // for every member of a large cluster.
-  const clusterFaceIds = useMemo(() => {
-    const ids: string[] = [];
-    for (const cluster of clusters.data ?? []) {
-      ids.push(...orderedClusterFaces(cluster, CLUSTER_PREVIEW_LIMIT));
-    }
-    return ids;
-  }, [clusters.data]);
-  const clusterCrops = useFaceCrops(tab === "clusters" ? clusterFaceIds : []);
-  const reviewFaceIds = useMemo(
-    () => (review.data?.items ?? []).map((item) => item.observationId),
-    [review.data],
-  );
-  const reviewCrops = useFaceCrops(tab === "review" ? reviewFaceIds : []);
-  const personCoverIds = useMemo(
-    () => (persons.data ?? []).flatMap((person) => person.coverObservationId ? [person.coverObservationId] : []),
-    [persons.data],
-  );
-  const personCovers = useFaceCrops(tab === "persons" ? personCoverIds : []);
-
   const activeJob = progress?.jobId ?? capability.data?.progress?.jobId;
   const running = capability.data?.running || start.isPending;
   const available = capability.data?.available ?? true;
@@ -333,8 +234,6 @@ export function FaceWorkbench({ t: tOverride, locale: localeOverride }: FaceWork
   const settings = capability.data?.settings;
   const pendingCount = stats?.pendingReviews ?? 0;
   const unknownCount = stats?.unknownFaces ?? 0;
-  const clusterCount = clusters.data?.length ?? 0;
-
   const processed = progress?.processedAssets ?? capability.data?.progress?.processedAssets ?? 0;
   const analyzedTotal = progress?.totalAssets ?? capability.data?.progress?.totalAssets ?? 0;
   const progressPercent = analyzedTotal > 0
@@ -392,15 +291,7 @@ export function FaceWorkbench({ t: tOverride, locale: localeOverride }: FaceWork
 
   const revealFace = (observationId: string) => reveal.mutate(observationId);
   const revealTitle = t("faceWorkbenchRevealHint");
-  const reviewItems = review.data?.items ?? [];
-  const clusterList = clusters.data ?? [];
   const personList = persons.data ?? [];
-
-  const tabCount: Record<WorkbenchTab, number> = {
-    clusters: clusterCount,
-    persons: personList.length,
-    review: pendingCount,
-  };
 
   return (
     <div className="face-workbench">
@@ -523,6 +414,18 @@ export function FaceWorkbench({ t: tOverride, locale: localeOverride }: FaceWork
             ) : null}
           </section>
 
+          <FaceModelPanel
+            available={available}
+            error={installModel.error}
+            installing={installModel.isPending}
+            installingId={installModel.variables}
+            models={capability.data?.models ?? []}
+            onInstall={(modelId) => installModel.mutate(modelId)}
+            progress={modelProgress}
+            running={running}
+            t={t}
+          />
+
           {settings ? (
             <section className="face-launch__block">
               <button
@@ -536,56 +439,13 @@ export function FaceWorkbench({ t: tOverride, locale: localeOverride }: FaceWork
               </button>
               {parametersOpen ? (
                 <div className="face-launch__parameters">
-                  <label className="people-panel__field">
-                    <span>{t("peopleMatchSensitivity")}</span>
-                    <select
-                      onChange={(event) =>
-                        updateSettings.mutate({ ...settings, matchSensitivity: event.target.value as FaceMatchSensitivity })
-                      }
-                      value={settings.matchSensitivity}
-                    >
-                      {SENSITIVITIES.map((value) => (
-                        <option key={value} value={value}>
-                          {t(`peopleSensitivity_${value}` as MessageKey)}
-                        </option>
-                      ))}
-                    </select>
-                  </label>
-                  <label className="people-panel__field">
-                    <span>{t("peopleDetectionConfidence")}</span>
-                    <input
-                      max={0.99}
-                      min={0.3}
-                      onChange={(event) => updateSettings.mutate({ ...settings, detectionConfidence: Number(event.target.value) })}
-                      step={0.01}
-                      type="range"
-                      value={settings.detectionConfidence}
-                    />
-                    <output>{settings.detectionConfidence.toFixed(2)}</output>
-                  </label>
-                  <label className="people-panel__toggle">
-                    <input
-                      checked={settings.detectSmallFaces}
-                      onChange={(event) =>
-                        updateSettings.mutate({ ...settings, detectSmallFaces: event.target.checked })
-                      }
-                      type="checkbox"
-                    />
-                    <span>{t("peopleDetectSmallFaces")}</span>
-                  </label>
+                  <SettingsRenderer descriptor={faceSettingsDescriptor(t)} values={{ ...settings }} disabled={updateSettings.isPending}
+                    valueLabel={(_key, value) => ({ strict: t("peopleSensitivity_strict"), balanced: t("peopleSensitivity_balanced"), loose: t("peopleSensitivity_loose"), custom: t("faceMatchThreshold") }[value] ?? value)}
+                    onChange={(key, value) => {
+                      if (!faceSettingsDescriptor(t).fields.some((field) => field.key === key)) return;
+                      updateSettings.mutate({ ...settings, [key]: value });
+                    }} />
                   <p className="people-panel__hint">{t("peopleDetectSmallFacesHint")}</p>
-                  <label className="people-panel__field">
-                    <span>{t("peopleClusterThreshold")}</span>
-                    <input
-                      max={0.9}
-                      min={0.1}
-                      onChange={(event) => updateSettings.mutate({ ...settings, clusterThreshold: Number(event.target.value) })}
-                      step={0.01}
-                      type="range"
-                      value={settings.clusterThreshold}
-                    />
-                    <output>{settings.clusterThreshold.toFixed(2)}</output>
-                  </label>
                   {calibration.data ? (
                     <div className="people-panel__calibration">
                       <span className="settings-panel__label">{t("peopleCalibration")}</span>
@@ -629,6 +489,7 @@ export function FaceWorkbench({ t: tOverride, locale: localeOverride }: FaceWork
             </section>
           ) : null}
 
+          <FaceSyncPanel t={t} />
           {capability.data?.peopleStorePath ? (
             <p className="face-launch__store" title={capability.data.peopleStorePath}>
               {t("peopleStorePath").replace("{path}", capability.data.peopleStorePath)}
@@ -637,343 +498,18 @@ export function FaceWorkbench({ t: tOverride, locale: localeOverride }: FaceWork
         </aside>
 
         <main className="face-workbench__classification">
-          <nav aria-label={t("faceWorkbenchTitle")} className="face-workbench__tabs" role="tablist">
-            {TABS.map(({ id, label, icon: Icon }) => (
-              <button
-                aria-selected={tab === id}
-                className={tab === id ? "is-active" : ""}
-                key={id}
-                onClick={() => setTab(id)}
-                role="tab"
-                type="button"
-              >
-                <Icon size={15} />
-                <span>{t(label)}</span>
-                <em>{tabCount[id].toLocaleString()}</em>
-              </button>
-            ))}
-          </nav>
-
           <div className="face-workbench__panel">
-            {tab === "clusters" ? (
-              <section className="face-workbench__section">
-                <header className="face-workbench__section-head">
-                  <h2>{t("peopleClusters").replace("{count}", String(clusterCount))}</h2>
-                  <p>{t("faceWorkbenchClustersHint")}</p>
-                </header>
-                {clusterList.length ? (
-                  <ul className="people-panel__clusters">
-                    {clusterList.map((cluster: FaceCluster) => (
-                      <li key={cluster.clusterId}>
-                        <div className="people-panel__cluster-faces">
-                          {orderedClusterFaces(cluster, CLUSTER_PREVIEW_LIMIT).map((observationId) => {
-                            const outlier = cluster.outlierObservationIds.includes(observationId);
-                            return (
-                              <RevealableFaceCrop
-                                crop={clusterCrops.byObservation.get(observationId)}
-                                key={observationId}
-                                label={outlier ? t("peopleClusterOutlierFace") : t("peopleClusterMemberFace")}
-                                outlier={outlier}
-                                onReveal={() => revealFace(observationId)}
-                                revealTitle={revealTitle}
-                                size={72}
-                              />
-                            );
-                          })}
-                          {cluster.memberCount > CLUSTER_PREVIEW_LIMIT ? (
-                            <span className="people-panel__badge">
-                              {t("peopleClusterMore").replace(
-                                "{count}",
-                                String(cluster.memberCount - CLUSTER_PREVIEW_LIMIT),
-                              )}
-                            </span>
-                          ) : null}
-                        </div>
-                        <div className="people-panel__cluster-summary">
-                          <strong>{t("peopleClusterMembers").replace("{count}", String(cluster.memberCount))}</strong>
-                          <span>{t("peopleClusterCohesion").replace("{value}", cluster.cohesion.toFixed(2))}</span>
-                          {cluster.outlierObservationIds.length > 0 ? (
-                            <span className="people-panel__badge">
-                              {t("peopleClusterOutliers").replace(
-                                "{count}",
-                                String(cluster.outlierObservationIds.length),
-                              )}
-                            </span>
-                          ) : null}
-                        </div>
-                        <div className="people-panel__cluster-actions">
-                          <input
-                            onChange={(event) =>
-                              setDraftNames((current) => ({ ...current, [cluster.clusterId]: event.target.value }))
-                            }
-                            placeholder={t("peopleNamePlaceholder")}
-                            value={draftNames[cluster.clusterId] ?? ""}
-                          />
-                          <button
-                            disabled={!draftNames[cluster.clusterId]?.trim() || create.isPending}
-                            onClick={() =>
-                              create.mutate({
-                                name: draftNames[cluster.clusterId].trim(),
-                                // Outliers stay unconfirmed: they are the
-                                // members a reviewer should look at, not the
-                                // members to accept.
-                                observationIds: cluster.observationIds.filter(
-                                  (id) => !cluster.outlierObservationIds.includes(id),
-                                ),
-                              })
-                            }
-                            type="button"
-                          >
-                            <UserPlus size={14} /> {t("peopleConfirmCluster")}
-                          </button>
-                        </div>
-                      </li>
-                    ))}
-                  </ul>
-                ) : (
-                  <p className="people-panel__empty">{t("peopleNoClusters")}</p>
-                )}
-              </section>
-            ) : null}
+            <PersonManager
+              invalidate={invalidate}
+              onReveal={revealFace}
+              open={personsOpen}
+              persons={personList}
+              revealTitle={revealTitle}
+              setOpen={setPersonsOpen}
+              t={t}
+            />
 
-            {tab === "persons" ? (
-              <section className="face-workbench__section">
-                <header className="face-workbench__section-head">
-                  <h2>{t("peoplePersons")}</h2>
-                  <p>{t("faceWorkbenchPersonsHint")}</p>
-                </header>
-                {undoState.data ? (
-                  <div className="people-panel__undo">
-                    <button disabled={undo.isPending} onClick={() => undo.mutate()} type="button">
-                      ↶ {undoLabel(undoState.data, t)}
-                    </button>
-                  </div>
-                ) : null}
-                {personList.length ? (
-                  <ul className="people-panel__persons">
-                    {personList.map((person: Person) => (
-                      <li key={person.personId}>
-                        {person.coverObservationId ? (
-                          <RevealableFaceCrop
-                            crop={personCovers.byObservation.get(person.coverObservationId)}
-                            label={person.displayName}
-                            onReveal={() => revealFace(person.coverObservationId!)}
-                            revealTitle={revealTitle}
-                            size={42}
-                          />
-                        ) : null}
-                        {renaming === person.personId ? (
-                          <>
-                            <input
-                              autoFocus
-                              onChange={(event) => setRenameValue(event.target.value)}
-                              onKeyDown={(event) => {
-                                if (event.key === "Enter" && renameValue.trim()) {
-                                  rename.mutate({ personId: person.personId, name: renameValue });
-                                }
-                                if (event.key === "Escape") setRenaming(null);
-                              }}
-                              value={renameValue}
-                            />
-                            <button
-                              aria-label={t("peopleRenameConfirm")}
-                              disabled={!renameValue.trim() || rename.isPending}
-                              onClick={() => rename.mutate({ personId: person.personId, name: renameValue })}
-                              type="button"
-                            >
-                              <Check size={14} />
-                            </button>
-                          </>
-                        ) : (
-                          <>
-                            <button
-                              className="people-panel__person-name"
-                              onClick={() => {
-                                setRenaming(person.personId);
-                                setRenameValue(person.displayName);
-                              }}
-                              type="button"
-                            >
-                              {person.displayName}
-                            </button>
-                            <span className="people-panel__badge">
-                              {t("peoplePersonFaces").replace("{count}", String(person.faceCount))}
-                            </span>
-                            <button
-                              aria-label={t("peopleDeletePerson").replace("{name}", person.displayName)}
-                              onClick={() => removePerson.mutate(person.personId)}
-                              type="button"
-                            >
-                              <Trash2 size={14} />
-                            </button>
-                          </>
-                        )}
-                      </li>
-                    ))}
-                  </ul>
-                ) : (
-                  <p className="people-panel__empty">{t("peopleNoPersons")}</p>
-                )}
-                {personList.length > 1 ? (
-                  <label className="people-panel__field">
-                    <span>{t("peopleMergeHint")}</span>
-                    <select onChange={(event) => setMergeSource(event.target.value)} value={mergeSource}>
-                      <option value="">{t("peopleMergeChoose")}</option>
-                      {personList.map((person: Person) => (
-                        <option key={person.personId} value={person.personId}>
-                          {person.displayName}
-                        </option>
-                      ))}
-                    </select>
-                    <select
-                      disabled={!mergeSource}
-                      onChange={(event) => {
-                        if (!event.target.value) return;
-                        merge.mutate({ source: mergeSource, target: event.target.value });
-                      }}
-                      value=""
-                    >
-                      <option value="">{t("peopleMergeInto")}</option>
-                      {personList
-                        .filter((person: Person) => person.personId !== mergeSource)
-                        .map((person: Person) => (
-                          <option key={person.personId} value={person.personId}>
-                            {person.displayName}
-                          </option>
-                        ))}
-                    </select>
-                  </label>
-                ) : null}
-              </section>
-            ) : null}
-
-            {tab === "review" ? (
-              <section className="face-workbench__section">
-                <header className="face-workbench__section-head">
-                  <h2>{t("peopleReview")}</h2>
-                  <p>{t("faceWorkbenchReviewHint")}</p>
-                </header>
-                <div className="people-panel__filters">
-                  {(["unreviewed", "pending", "unknown", "confirmed", "rejected", "all"] as FaceReviewFilter[]).map((value) => (
-                    <button
-                      className={filter === value ? "is-active" : ""}
-                      key={value}
-                      onClick={() => setFilter(value)}
-                      type="button"
-                    >
-                      {t(`peopleFilter_${value}` as MessageKey)}
-                    </button>
-                  ))}
-                </div>
-                {review.isLoading ? (
-                  <p className="people-panel__empty">
-                    <Loader2 className="is-spinning" size={14} /> {t("peopleReviewLoading")}
-                  </p>
-                ) : reviewItems.length ? (
-                  <ul className="people-panel__review">
-                    {reviewItems.map((item: FaceReviewItem) => (
-                      <li key={item.observationId}>
-                        <div className="people-panel__review-head">
-                          <RevealableFaceCrop
-                            crop={reviewCrops.byObservation.get(item.observationId)}
-                            label={fileName(item.assetPath)}
-                            onReveal={() => revealFace(item.observationId)}
-                            revealTitle={revealTitle}
-                            size={64}
-                          />
-                          <div className="people-panel__review-meta">
-                            <span title={item.assetPath}>{fileName(item.assetPath)}</span>
-                            <span className="people-panel__badge">
-                              {t("peopleDetectionScore").replace("{value}", item.detectionScore.toFixed(2))}
-                            </span>
-                            {item.candidate ? (
-                              <span className="people-panel__badge">
-                                {t("peopleCandidate")
-                                  .replace("{name}", item.candidate.personName)
-                                  .replace("{value}", item.candidate.similarity.toFixed(2))}
-                              </span>
-                            ) : null}
-                            {item.confirmedPersonName ? (
-                              <span className="people-panel__badge is-confirmed">{item.confirmedPersonName}</span>
-                            ) : null}
-                            <span className="people-panel__state">{t(`peopleState_${item.state}` as MessageKey)}</span>
-                          </div>
-                        </div>
-                        <div className="people-panel__review-actions">
-                          {item.candidate ? (
-                            <button
-                              disabled={decide.isPending}
-                              onClick={() =>
-                                decide.mutate({
-                                  observationId: item.observationId,
-                                  decision: { decision: "confirmPerson", personId: item.candidate!.personId },
-                                })
-                              }
-                              title={t("peopleConfirmMatch")}
-                              type="button"
-                            >
-                              <Check size={14} />
-                            </button>
-                          ) : null}
-                          {item.candidate ? (
-                            <button
-                              disabled={decide.isPending}
-                              onClick={() =>
-                                decide.mutate({
-                                  observationId: item.observationId,
-                                  decision: { decision: "rejectPerson", personId: item.candidate!.personId },
-                                })
-                              }
-                              title={t("peopleRejectMatch")}
-                              type="button"
-                            >
-                              <X size={14} />
-                            </button>
-                          ) : null}
-                          <button
-                            disabled={decide.isPending}
-                            onClick={() =>
-                              decide.mutate({ observationId: item.observationId, decision: { decision: "notFace" } })
-                            }
-                            title={t("peopleNotFace")}
-                            type="button"
-                          >
-                            ⊘
-                          </button>
-                          {item.state === "confirmed" && item.confirmedPersonId ? (
-                            <button
-                              disabled={detach.isPending}
-                              onClick={() =>
-                                detach.mutate({
-                                  personId: item.confirmedPersonId!,
-                                  observationIds: [item.observationId],
-                                })
-                              }
-                              title={t("peopleDetachFace").replace("{name}", item.confirmedPersonName ?? "")}
-                              type="button"
-                            >
-                              ⤫ {t("peopleDetach")}
-                            </button>
-                          ) : null}
-                          {item.state !== "unknown" && item.state !== "pending" ? (
-                            <button
-                              disabled={decide.isPending}
-                              onClick={() => undoDecision.mutate(item.observationId)}
-                              title={t("peopleUndo")}
-                              type="button"
-                            >
-                              ↺
-                            </button>
-                          ) : null}
-                        </div>
-                      </li>
-                    ))}
-                  </ul>
-                ) : (
-                  <p className="people-panel__empty">{t("peopleReviewEmpty")}</p>
-                )}
-              </section>
-            ) : null}
+            <FacePhotoReview persons={personList} clusters={clusters.data ?? []} t={t} onReveal={revealFace} invalidate={invalidate} />
           </div>
         </main>
       </div>

@@ -395,7 +395,7 @@ impl DiskMediaCache {
                     artifact.facts.source.revision_id != expected_source.revision_id
                 })
                 || validate_source_revision(&manifest.source_revision).is_err()
-                || SourceRevision::observe(&manifest.source_revision.canonical_path)?
+                || oxy_fs::observe_source_revision(&manifest.source_revision.canonical_path)?
                     != manifest.source_revision
             {
                 return Ok(None);
@@ -506,7 +506,7 @@ impl DiskMediaCache {
             FileExt::unlock(&cache_lock)?;
             return Err(MediaError::StaleCacheGeneration);
         }
-        if SourceRevision::observe(&pending.source_revision.canonical_path)?
+        if oxy_fs::observe_source_revision(&pending.source_revision.canonical_path)?
             != pending.source_revision
         {
             FileExt::unlock(&cache_lock)?;
@@ -542,7 +542,7 @@ impl DiskMediaCache {
             return Err(error);
         }
         let byte_size = fs::metadata(&destination)?.len();
-        if SourceRevision::observe(&pending.source_revision.canonical_path)?
+        if oxy_fs::observe_source_revision(&pending.source_revision.canonical_path)?
             != pending.source_revision
         {
             if created {
@@ -978,7 +978,7 @@ impl MediaCache for DiskMediaCache {
             FileExt::unlock(&cache_lock)?;
             return Err(MediaError::StaleCacheGeneration);
         }
-        let observed = SourceRevision::observe(&pending.source_revision.canonical_path)?;
+        let observed = oxy_fs::observe_source_revision(&pending.source_revision.canonical_path)?;
         if observed != pending.source_revision {
             FileExt::unlock(&cache_lock)?;
             return Err(MediaError::StaleSourceRevision);
@@ -1019,7 +1019,7 @@ impl MediaCache for DiskMediaCache {
             return Err(error);
         }
         let byte_size = fs::metadata(&destination)?.len();
-        let observed = SourceRevision::observe(&pending.source_revision.canonical_path)?;
+        let observed = oxy_fs::observe_source_revision(&pending.source_revision.canonical_path)?;
         if observed != pending.source_revision {
             if created {
                 let _ = fs::remove_file(&destination);
@@ -1774,7 +1774,7 @@ mod tests {
         let directory = tempfile::tempdir().unwrap();
         let source = directory.path().join("source.jpg");
         DynamicImage::new_rgb8(16, 12).save(&source).unwrap();
-        let revision = SourceRevision::observe(&source).unwrap();
+        let revision = oxy_fs::observe_source_revision(&source).unwrap();
         (directory, revision)
     }
 
@@ -1978,7 +1978,7 @@ mod tests {
         let (directory, source_a) = fixture();
         let source_b_path = directory.path().join("source-b.jpg");
         DynamicImage::new_rgb8(16, 8).save(&source_b_path).unwrap();
-        let source_b = SourceRevision::observe(&source_b_path).unwrap();
+        let source_b = oxy_fs::observe_source_revision(&source_b_path).unwrap();
         let cache = DiskMediaCache::new(directory.path(), 8).unwrap();
         let publication = cache
             .publish(pending(&source_a, 512, cache.generation().unwrap()))

@@ -123,7 +123,7 @@ impl HeifDecodeService {
         }
         // Capture the identity before any source probing or decode. Session
         // pixels may be persisted after a dwell, but always retain this fence.
-        let source_revision = crate::cache::SourceRevision::observe(path)?;
+        let source_revision = oxy_fs::observe_source_revision(path)?;
         let display_sharpening =
             crate::formats::heif::quirks::sony::display_sharpening(path, display_sharpening);
         let size = libheif::dimensions(path)?;
@@ -240,7 +240,7 @@ impl HeifDecodeService {
         if cancelled.load(Ordering::Acquire) {
             return Err(MediaError::Cancelled);
         }
-        if crate::cache::SourceRevision::observe(&path)? != source_revision {
+        if oxy_fs::observe_source_revision(&path)? != source_revision {
             return Err(MediaError::StaleSourceRevision);
         }
         let decode_started = Instant::now();
@@ -691,7 +691,7 @@ fn cache_session_artifact_if_stable(
         std::thread::sleep(std::time::Duration::from_millis(20));
     };
     if cancelled.load(Ordering::Acquire)
-        || crate::cache::SourceRevision::observe(&source_revision.canonical_path)
+        || oxy_fs::observe_source_revision(&source_revision.canonical_path)
             .map_or(true, |revision| revision != *source_revision)
     {
         return false;
@@ -981,7 +981,7 @@ mod tests {
         let directory = tempfile::tempdir().unwrap();
         let source = directory.path().join("cancelled.hif");
         std::fs::write(&source, b"source identity").unwrap();
-        let revision = crate::cache::SourceRevision::observe(&source).unwrap();
+        let revision = oxy_fs::observe_source_revision(&source).unwrap();
         assert!(!cache_session_artifact_if_stable(
             &AtomicBool::new(true),
             &revision,
@@ -1035,7 +1035,7 @@ mod tests {
         let cache = directory.path().join("previews");
         std::fs::write(&source, b"cache identity fixture").unwrap();
         let cancelled = AtomicBool::new(true);
-        let source_revision = crate::cache::SourceRevision::observe(&source).unwrap();
+        let source_revision = oxy_fs::observe_source_revision(&source).unwrap();
 
         assert!(!cache_session_image_if_stable(
             &cancelled,
@@ -1060,7 +1060,7 @@ mod tests {
         let directory = tempfile::tempdir().unwrap();
         let source = directory.path().join("replacement.HIF");
         std::fs::copy(&fixture, &source).unwrap();
-        let revision = crate::cache::SourceRevision::observe(&source).unwrap();
+        let revision = oxy_fs::observe_source_revision(&source).unwrap();
         let dimensions = libheif::dimensions(&source).unwrap();
         let image = DynamicImage::new_rgb8(dimensions.width, dimensions.height);
         let cache = directory.path().join("previews");

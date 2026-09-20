@@ -172,6 +172,7 @@ pub(crate) fn update_custom_tag(
         .library
         .update_custom_tag(id, parent_id, &name)
         .map_err(|error| error.to_string())?;
+    state.people.capture_tag_paths()?;
     start_sync(&state);
     Ok(tag)
 }
@@ -242,5 +243,103 @@ mod tests {
             ),
             ["external", "new"]
         );
+    }
+    #[test]
+    fn confirmed_person_writes_standard_xmp_keywords_and_updates_them() {
+        use super::*;
+        use oxy_domain::{FaceDecision, FaceObservation, NormalizedRect};
+        let directory = tempfile::tempdir().unwrap();
+        let asset = directory.path().join("portrait.jpg");
+        std::fs::write(
+            &asset,
+            include_bytes!("../../../../../crates/oxy-faces/tests/data/fixtures/two_people.jpg"),
+        )
+        .unwrap();
+        let library = Arc::new(Library::in_memory().unwrap());
+        let people = crate::state::people::PeopleService::load(
+            Arc::clone(&library),
+            directory.path().join("people.json"),
+        )
+        .unwrap();
+        let metadata = MetadataFacade::new(None);
+        let files = FsCatalog::default();
+        metadata
+            .patch_metadata(
+                &asset,
+                oxy_domain::AssetKind::Jpeg,
+                &MetadataPatch {
+                    keywords: Some(vec!["external".into()]),
+                    ..Default::default()
+                },
+            )
+            .unwrap();
+        library
+            .replace_asset_faces(
+                &asset,
+                "asset",
+                "revision",
+                "detector",
+                "embedder",
+                &[oxy_library::StoredFace {
+                    observation: FaceObservation {
+                        observation_id: "face".into(),
+                        asset_id: "asset".into(),
+                        asset_path: asset.clone(),
+                        source_revision: "revision".into(),
+                        local_index: 0,
+                        bbox: NormalizedRect {
+                            x: 0.1,
+                            y: 0.1,
+                            width: 0.2,
+                            height: 0.2,
+                        },
+                        landmarks: vec![],
+                        detection_score: 0.99,
+                        detector_fingerprint: "detector".into(),
+                    },
+                    embedding: vec![1.0, 0.0],
+                    face_pixels: 100,
+                    clarity: 1.0,
+                }],
+            )
+            .unwrap();
+        people.create_person("alice", "Alice", None).unwrap();
+        people
+            .set_person_tag_path("alice", "人物|家人|Alice")
+            .unwrap();
+        people
+            .decide(
+                "face",
+                &FaceDecision::ConfirmPerson {
+                    person_id: "alice".into(),
+                },
+            )
+            .unwrap();
+        library.refresh_person_tag_projection().unwrap();
+        drain_tag_xmp_sync(&library, &files, &metadata).unwrap();
+        let read = metadata
+            .read_metadata(&asset, oxy_domain::AssetKind::Jpeg)
+            .unwrap();
+        assert!(read.keywords.contains(&"Alice".into()));
+        assert!(read.keywords.contains(&"external".into()));
+        assert_eq!(read.hierarchical_keywords, ["人物|家人|Alice"]);
+        let xml = std::fs::read_to_string(oxy_fs::sidecar_path(&asset)).unwrap();
+        assert!(xml.contains("dc:subject") && xml.contains("lr:hierarchicalSubject"));
+        people.rename_person("alice", "Alicia").unwrap();
+        library.refresh_person_tag_projection().unwrap();
+        drain_tag_xmp_sync(&library, &files, &metadata).unwrap();
+        let read = metadata
+            .read_metadata(&asset, oxy_domain::AssetKind::Jpeg)
+            .unwrap();
+        assert!(!read.keywords.contains(&"Alice".into()));
+        assert_eq!(read.hierarchical_keywords, ["人物|家人|Alicia"]);
+        people.clear_decision("face").unwrap();
+        library.refresh_person_tag_projection().unwrap();
+        drain_tag_xmp_sync(&library, &files, &metadata).unwrap();
+        let read = metadata
+            .read_metadata(&asset, oxy_domain::AssetKind::Jpeg)
+            .unwrap();
+        assert_eq!(read.keywords, ["external"]);
+        assert!(read.hierarchical_keywords.is_empty());
     }
 }

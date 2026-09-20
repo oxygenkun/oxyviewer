@@ -43,8 +43,8 @@ use crate::document::{DocumentStore, StoreError, StoreOrigin, UserDocument};
 ///
 /// Version 2 adds the undo journal. A version 1 file still loads (the journal
 /// defaults to empty), but an older build refuses a version 2 file instead of
-/// rewriting it without the journal.
-pub const STORE_VERSION: u32 = 2;
+/// rewriting it without the journal. Version 4 adds independent manual clarity marks.
+pub const STORE_VERSION: u32 = 4;
 
 /// How many person operations stay undoable. This is a journal for correcting a
 /// misclick, not a history feature, so it is deliberately short.
@@ -105,9 +105,13 @@ pub struct PeopleDocument {
     pub persons: Vec<PersonRecord>,
     #[serde(default)]
     pub decisions: Vec<DecisionRecord>,
+    #[serde(default)]
+    pub clarity_marks: Vec<oxy_domain::FaceClarityMark>,
     /// Append-only journal of reversible person operations, oldest first.
     #[serde(default)]
     pub operations: Vec<PersonOperation>,
+    #[serde(default)]
+    pub sidecars: std::collections::BTreeMap<PathBuf, oxy_domain::FaceSidecarState>,
 }
 
 impl UserDocument for PeopleDocument {
@@ -176,6 +180,8 @@ impl Default for PeopleDocument {
             persons: Vec::new(),
             decisions: Vec::new(),
             operations: Vec::new(),
+            clarity_marks: Vec::new(),
+            sidecars: Default::default(),
         }
     }
 }
@@ -214,12 +220,165 @@ impl PersonStore {
         self.document.path()
     }
 
+    /// One durable batch. Identity decisions and measured clarity are untouched.
+    /// A null override restores the analyzer judgement for those regions.
+    pub fn set_clarity_marks(
+        &self,
+        regions: &[(PathBuf, NormalizedRect)],
+        blurry: Option<bool>,
+    ) -> Result<(), PeopleError> {
+        if regions.iter().any(|(_, region)| !region.is_valid()) {
+            return Err(PeopleError::Refused("invalid face quality region".into()));
+        }
+        self.document.update(|document| {
+            for (path, region) in regions {
+                document
+                    .clarity_marks
+                    .retain(|mark| mark.asset_path != *path || mark.region.iou(*region) < 0.5);
+                if let Some(blurry) = blurry {
+                    document.clarity_marks.push(oxy_domain::FaceClarityMark {
+                        asset_path: path.clone(),
+                        region: *region,
+                        blurry,
+                    });
+                }
+            }
+        })?;
+        Ok(())
+    }
+
+    /// Rebind by path and region after reanalysis, just like identity decisions.
+    pub fn apply_clarity_marks(&self, items: &mut [oxy_domain::FaceReviewItem]) {
+        self.document.with(|document| {
+            let mut by_path: std::collections::HashMap<&Path, Vec<&oxy_domain::FaceClarityMark>> =
+                std::collections::HashMap::new();
+            for mark in &document.clarity_marks {
+                by_path.entry(&mark.asset_path).or_default().push(mark);
+            }
+            for item in items {
+                item.manual_blurry = by_path.get(item.asset_path.as_path()).and_then(|marks| {
+                    marks
+                        .iter()
+                        .map(|mark| (mark, mark.region.iou(item.bbox)))
+                        .filter(|(_, overlap)| *overlap >= 0.5)
+                        .max_by(|a, b| a.1.total_cmp(&b.1))
+                        .map(|(mark, _)| mark.blurry)
+                });
+            }
+        });
+    }
+
+    pub fn sidecar_states(
+        &self,
+    ) -> std::collections::BTreeMap<PathBuf, oxy_domain::FaceSidecarState> {
+        self.document.with(|document| document.sidecars.clone())
+    }
+
+    pub fn sidecar_state(&self, path: &Path) -> Option<oxy_domain::FaceSidecarState> {
+        self.document
+            .with(|document| document.sidecars.get(path).cloned())
+    }
+
+    pub fn merge_sidecar(
+        &self,
+        path: &Path,
+        remote: oxy_domain::PortableFaceFacts,
+    ) -> Result<bool, PeopleError> {
+        if self.document.with(|document| {
+            document
+                .sidecars
+                .get(path)
+                .map_or(remote.facts.is_empty(), |state| {
+                    state.base == remote && state.conflict.is_none() && state.last_error.is_none()
+                })
+        }) {
+            return Ok(false);
+        }
+        Ok(self
+            .document
+            .update(|document| crate::face_sync::merge_remote(document, path, remote))?)
+    }
+
+    pub fn acknowledge_sidecar(
+        &self,
+        path: &Path,
+        written: oxy_domain::PortableFaceFacts,
+    ) -> Result<(), PeopleError> {
+        self.document.update(|document| {
+            let state = document.sidecars.entry(path.into()).or_default();
+            state.base = written;
+            state.last_error = None;
+        })?;
+        Ok(())
+    }
+
+    pub fn sidecar_error(&self, path: &Path, code: &str) -> Result<(), PeopleError> {
+        if self.document.with(|document| {
+            document
+                .sidecars
+                .get(path)
+                .is_some_and(|state| state.last_error.as_deref() == Some(code))
+        }) {
+            return Ok(());
+        }
+        self.document.update(|document| {
+            document.sidecars.entry(path.into()).or_default().last_error = Some(code.into());
+        })?;
+        Ok(())
+    }
+
+    pub fn resolve_sidecar(&self, path: &Path, use_remote: bool) -> Result<(), PeopleError> {
+        self.document.update(|document| {
+            let Some(state) = document.sidecars.get_mut(path) else {
+                return;
+            };
+            let Some(remote) = state.conflict.take() else {
+                return;
+            };
+            state.base = remote.clone();
+            if use_remote {
+                state.desired = remote.clone();
+                crate::face_sync::import_facts(document, path, &remote);
+                crate::face_sync::refresh_desired(document);
+            }
+        })?;
+        Ok(())
+    }
+
+    pub fn sidecar_status(&self) -> Vec<oxy_domain::FaceSyncStatus> {
+        self.document.with(|document| {
+            document
+                .sidecars
+                .iter()
+                .filter(|(_, state)| {
+                    crate::face_sync::pending(state)
+                        || state.conflict.is_some()
+                        || state.last_error.is_some()
+                })
+                .map(|(path, state)| oxy_domain::FaceSyncStatus {
+                    path: path.clone(),
+                    pending: crate::face_sync::pending(state),
+                    conflict: state.conflict.is_some(),
+                    last_error: state.last_error.clone(),
+                    local_facts: state.conflict.as_ref().map(|_| state.desired.clone()),
+                    remote_facts: state.conflict.clone(),
+                })
+                .collect()
+        })
+    }
+
+    /// One consistent snapshot for rebuilding a queryable projection.
+    pub fn user_data(&self) -> (Vec<PersonRecord>, Vec<DecisionRecord>) {
+        self.document
+            .with(|document| (document.persons.clone(), document.decisions.clone()))
+    }
+
     pub fn persons(&self) -> Vec<PersonRecord> {
-        self.document.read().persons
+        self.document.with(|document| document.persons.clone())
     }
 
     pub fn decisions(&self) -> Vec<DecisionRecord> {
-        self.document.read().decisions
+        self.document.with(|document| document.decisions.clone())
     }
 
     pub fn person(&self, person_id: &str) -> Option<PersonRecord> {
@@ -719,6 +878,14 @@ impl PersonStore {
         let source_string = source.to_string_lossy().to_string();
         let mut moved = 0usize;
         self.mutate(|document| {
+            if let Some(state) = document.sidecars.remove(source) {
+                document.sidecars.insert(destination.into(), state);
+            }
+            for mark in &mut document.clarity_marks {
+                if mark.asset_path == source {
+                    mark.asset_path = destination.into();
+                }
+            }
             for record in document.decisions.iter_mut() {
                 if record.asset_path.to_string_lossy() != source_string {
                     continue;
@@ -744,6 +911,21 @@ impl PersonStore {
         let source_string = source.to_string_lossy().to_string();
         let mut copied = 0usize;
         self.mutate(|document| {
+            // The file service copies the sidecar too; keep its fact IDs so
+            // the first synchronization does not invent overlapping facts.
+            if let Some(state) = document.sidecars.get(source).cloned() {
+                document.sidecars.insert(destination.into(), state);
+            }
+            let marks: Vec<_> = document
+                .clarity_marks
+                .iter()
+                .filter(|mark| mark.asset_path == source)
+                .map(|mark| oxy_domain::FaceClarityMark {
+                    asset_path: destination.into(),
+                    ..mark.clone()
+                })
+                .collect();
+            document.clarity_marks.extend(marks);
             let clones: Vec<DecisionRecord> = document
                 .decisions
                 .iter()
@@ -769,6 +951,12 @@ impl PersonStore {
         let path_string = path.to_string_lossy().to_string();
         let mut removed = 0usize;
         self.mutate(|document| {
+            // Intentional file deletion also removes its sidecar. Do not queue
+            // a write forever to a photo that the user has just deleted.
+            document.sidecars.remove(path);
+            document
+                .clarity_marks
+                .retain(|mark| mark.asset_path != path);
             let before = document.decisions.len();
             document
                 .decisions
@@ -780,6 +968,25 @@ impl PersonStore {
 
     /// Rewrites the durable file with the given data. Used once, when an
     /// existing cache is migrated into a store that did not exist yet.
+    pub fn delete_all_annotations(&self) -> Result<(), PeopleError> {
+        self.mutate(|document| {
+            document.clarity_marks.clear();
+            document.persons.clear();
+            document.decisions.clear();
+            document.operations.clear();
+            for state in document.sidecars.values_mut() {
+                if let Some(remote) = state.conflict.take() {
+                    for fact in &remote.facts {
+                        if !state.desired.facts.iter().any(|local| local.id == fact.id) {
+                            state.desired.facts.push(fact.clone());
+                        }
+                    }
+                    state.base = remote;
+                }
+            }
+        })
+    }
+
     pub fn replace_all(
         &self,
         persons: Vec<PersonRecord>,
@@ -797,7 +1004,10 @@ impl PersonStore {
     /// cannot be persisted never becomes visible: without that order the caller
     /// would project a decision that is lost on the next start.
     fn mutate(&self, change: impl FnOnce(&mut PeopleDocument)) -> Result<(), PeopleError> {
-        self.document.update(change)?;
+        self.document.update(|document| {
+            change(document);
+            crate::face_sync::refresh_desired(document);
+        })?;
         Ok(())
     }
 }
@@ -898,6 +1108,7 @@ mod tests {
 
     fn person(id: &str, name: &str) -> PersonRecord {
         PersonRecord {
+            tag_path: None,
             person_id: id.into(),
             display_name: name.into(),
             linked_tag_id: None,
@@ -916,6 +1127,85 @@ mod tests {
             created_at_ms: 1,
             proposed_similarity: None,
         }
+    }
+
+    fn quality_item(path: &str) -> oxy_domain::FaceReviewItem {
+        oxy_domain::FaceReviewItem {
+            observation_id: "new-observation".into(),
+            asset_id: "asset".into(),
+            asset_path: path.into(),
+            bbox: NormalizedRect::new(0.1, 0.1, 0.2, 0.2),
+            detection_score: 0.9,
+            face_pixels: 64,
+            clarity: 0.8,
+            manual_blurry: None,
+            state: oxy_domain::FaceReviewState::Confirmed,
+            candidate: None,
+            cluster_id: None,
+            confirmed_person_id: Some("p1".into()),
+            confirmed_person_name: Some("Alice".into()),
+        }
+    }
+
+    #[test]
+    fn manual_quality_survives_reload_and_keeps_identity_and_scores() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("people.json");
+        std::fs::write(&path, r#"{"version":3,"persons":[],"decisions":[]}"#).unwrap();
+        let (store, _) = PersonStore::load(&path).unwrap();
+        let mut rows = vec![quality_item("/photo.jpg")];
+        let regions = vec![(rows[0].asset_path.clone(), rows[0].bbox)];
+        store.set_clarity_marks(&regions, Some(true)).unwrap();
+        let (store, _) = PersonStore::load(&path).unwrap();
+        store.apply_clarity_marks(&mut rows);
+        assert_eq!(rows[0].manual_blurry, Some(true));
+        assert_eq!(rows[0].clarity, 0.8);
+        assert_eq!(rows[0].confirmed_person_id.as_deref(), Some("p1"));
+        store.set_clarity_marks(&regions, Some(false)).unwrap();
+        store.apply_clarity_marks(&mut rows);
+        assert_eq!(rows[0].manual_blurry, Some(false));
+        store.set_clarity_marks(&regions, None).unwrap();
+        store.apply_clarity_marks(&mut rows);
+        assert_eq!(rows[0].manual_blurry, None);
+        let document: PeopleDocument =
+            serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+        assert_eq!(document.version, 4);
+    }
+
+    #[test]
+    fn manual_quality_follows_file_operations_but_not_other_faces() {
+        let directory = tempfile::tempdir().unwrap();
+        let (store, _) = PersonStore::load(directory.path().join("people.json")).unwrap();
+        let row = quality_item("/source.jpg");
+        store
+            .set_clarity_marks(&[(row.asset_path.clone(), row.bbox)], Some(true))
+            .unwrap();
+        store
+            .copy_decisions(Path::new("/source.jpg"), Path::new("/copy.jpg"), "copy")
+            .unwrap();
+        store
+            .move_decisions(Path::new("/source.jpg"), Path::new("/moved.jpg"), "moved")
+            .unwrap();
+        let mut rows = vec![
+            quality_item("/source.jpg"),
+            quality_item("/copy.jpg"),
+            quality_item("/moved.jpg"),
+        ];
+        store.apply_clarity_marks(&mut rows);
+        assert_eq!(
+            rows.iter().map(|row| row.manual_blurry).collect::<Vec<_>>(),
+            [None, Some(true), Some(true)]
+        );
+        rows[2].bbox = NormalizedRect::new(0.7, 0.7, 0.1, 0.1);
+        store.remove_decisions(Path::new("/copy.jpg")).unwrap();
+        store.apply_clarity_marks(&mut rows);
+        assert!(rows.iter().all(|row| row.manual_blurry.is_none()));
+        store.delete_all_annotations().unwrap();
+        assert!(
+            store
+                .document
+                .with(|document| document.clarity_marks.is_empty())
+        );
     }
 
     #[test]
@@ -1152,6 +1442,8 @@ mod tests {
         let mut document = PeopleDocument {
             version: STORE_VERSION,
             operations: Vec::new(),
+            clarity_marks: Vec::new(),
+            sidecars: Default::default(),
             persons: vec![person("p1", "Alice")],
             decisions: vec![
                 decision(
@@ -1200,6 +1492,7 @@ mod operation_tests {
 
     fn person(id: &str, name: &str) -> PersonRecord {
         PersonRecord {
+            tag_path: None,
             person_id: id.into(),
             display_name: name.into(),
             linked_tag_id: None,
@@ -1474,6 +1767,7 @@ mod file_move_tests {
 
     fn person(id: &str, name: &str) -> PersonRecord {
         PersonRecord {
+            tag_path: None,
             person_id: id.into(),
             display_name: name.into(),
             linked_tag_id: None,

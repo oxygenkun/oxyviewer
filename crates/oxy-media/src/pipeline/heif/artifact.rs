@@ -552,7 +552,7 @@ pub(crate) fn cache_full_output(
     if cancelled() {
         return Err(MediaError::Cancelled);
     }
-    if crate::cache::SourceRevision::observe(path)? != *source_revision {
+    if oxy_fs::observe_source_revision(path)? != *source_revision {
         return Err(MediaError::StaleSourceRevision);
     }
     let artifacts = ArtifactCache::for_source_revision(source_revision.clone(), cache_dir)?;
@@ -714,7 +714,7 @@ mod delivery_tests {
 
         let source_path = directory.path().join("wide-gamut.heif");
         std::fs::write(&source_path, b"wide-gamut source identity").unwrap();
-        let source_revision = crate::cache::SourceRevision::observe(&source_path).unwrap();
+        let source_revision = oxy_fs::observe_source_revision(&source_path).unwrap();
         let artifact = crate::cache::MediaArtifact {
             artifact_id: "fallback".into(),
             source_revision: source_revision.clone(),
@@ -792,7 +792,7 @@ mod delivery_tests {
         assert!(cached.resource.is_some());
         assert!(full_uses_artifact(&source, directory.path(), true).unwrap());
         let path = cache_full_image_from(
-            &crate::cache::SourceRevision::observe(&source).unwrap(),
+            &oxy_fs::observe_source_revision(&source).unwrap(),
             directory.path(),
             presentation,
             "test decoder",
@@ -809,7 +809,7 @@ mod delivery_tests {
         let directory = tempfile::tempdir().unwrap();
         let source = directory.path().join("cancelled.heif");
         std::fs::write(&source, b"source revision fixture").unwrap();
-        let revision = crate::cache::SourceRevision::observe(&source).unwrap();
+        let revision = oxy_fs::observe_source_revision(&source).unwrap();
         let partial = std::cell::RefCell::new(PathBuf::new());
         let result = cache_full_output(
             &revision,

@@ -59,6 +59,63 @@ fn enqueue_paths(transaction: &Transaction<'_>, paths: &[String]) -> Result<(), 
 }
 
 impl Library {
+    /// Positive confirmations project onto linked tags, with separate ownership
+    /// so withdrawing a face never deletes a manually assigned tag.
+    pub fn refresh_person_tag_projection(&self) -> Result<bool, LibraryError> {
+        let mut connection = self.connection.lock();
+        let transaction = connection.transaction()?;
+        let desired: std::collections::BTreeSet<(String, i64)> = {
+            let mut statement = transaction.prepare("SELECT DISTINCT d.asset_path, p.linked_tag_id FROM face_decisions d JOIN persons p ON p.person_id=d.person_id JOIN custom_tags t ON t.id=p.linked_tag_id WHERE d.decision_kind='confirm_person'")?;
+            statement
+                .query_map([], |row| Ok((row.get(0)?, row.get(1)?)))?
+                .collect::<Result<_, _>>()?
+        };
+        let existing: Vec<(String, i64, bool)> = {
+            let mut statement = transaction
+                .prepare("SELECT asset_path, tag_id, owned FROM face_tag_assignments")?;
+            statement
+                .query_map([], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)))?
+                .collect::<Result<_, _>>()?
+        };
+        let mut affected = std::collections::BTreeSet::new();
+        for (path, tag, owned) in &existing {
+            if !desired.contains(&(path.clone(), *tag)) {
+                if *owned {
+                    transaction.execute(
+                        "DELETE FROM asset_tags WHERE asset_path=?1 AND tag_id=?2",
+                        params![path, tag],
+                    )?;
+                }
+                transaction.execute(
+                    "DELETE FROM face_tag_assignments WHERE asset_path=?1 AND tag_id=?2",
+                    params![path, tag],
+                )?;
+                affected.insert(path.clone());
+            }
+        }
+        for (path, tag) in desired {
+            if existing
+                .iter()
+                .any(|(old_path, old_tag, _)| old_path == &path && *old_tag == tag)
+            {
+                continue;
+            }
+            let added = transaction.execute(
+                "INSERT OR IGNORE INTO asset_tags(asset_path,tag_id) VALUES(?1,?2)",
+                params![path, tag],
+            )? > 0;
+            transaction.execute(
+                "INSERT INTO face_tag_assignments(asset_path,tag_id,owned) VALUES(?1,?2,?3)",
+                params![path, tag, added],
+            )?;
+            affected.insert(path);
+        }
+        let affected: Vec<_> = affected.into_iter().collect();
+        enqueue_paths(&transaction, &affected)?;
+        transaction.commit()?;
+        Ok(!affected.is_empty())
+    }
+
     /// Match explicit assignments against selected subtrees in one SQLite read.
     /// Only the supplied directory snapshot participates; no index or metadata is needed.
     pub fn filter_assets_by_tags(
@@ -135,6 +192,35 @@ impl Library {
                 sort_order,
             })
             .collect())
+    }
+
+    /// Resolve a classification path without depending on cache-local tag IDs.
+    pub fn ensure_custom_tag_path(&self, path: &str) -> Result<CustomTag, LibraryError> {
+        let segments = path
+            .split('|')
+            .map(normalize_name)
+            .collect::<Result<Vec<_>, _>>()?;
+        let mut connection = self.connection.lock();
+        let transaction = connection.transaction()?;
+        let mut parent = None;
+        for (name, key) in segments {
+            transaction.execute(
+                "INSERT OR IGNORE INTO custom_tags(parent_id,name,name_key,sort_order)
+                 VALUES(?1,?2,?3,(SELECT COALESCE(MAX(sort_order),-1)+1 FROM custom_tags WHERE parent_id IS ?1))",
+                params![parent, name, key],
+            )?;
+            parent = Some(transaction.query_row(
+                "SELECT id FROM custom_tags WHERE parent_id IS ?1 AND name_key=?2",
+                params![parent, key],
+                |row| row.get::<_, i64>(0),
+            )?);
+        }
+        transaction.commit()?;
+        drop(connection);
+        self.custom_tags()?
+            .into_iter()
+            .find(|tag| Some(tag.id) == parent)
+            .ok_or(LibraryError::InvalidTagName)
     }
 
     pub fn create_custom_tag(
@@ -351,12 +437,20 @@ impl Library {
         for path in &path_strings {
             if assigned {
                 transaction.execute(
+                    "UPDATE face_tag_assignments SET owned=0 WHERE asset_path=?1 AND tag_id=?2",
+                    params![path, tag_id],
+                )?;
+                transaction.execute(
                     "INSERT OR IGNORE INTO asset_tags(asset_path, tag_id) VALUES (?1, ?2)",
                     params![path, tag_id],
                 )?;
             } else {
                 transaction.execute(
-                    "DELETE FROM asset_tags WHERE asset_path = ?1 AND tag_id = ?2",
+                    "UPDATE face_tag_assignments SET owned=1 WHERE asset_path=?1 AND tag_id=?2",
+                    params![path, tag_id],
+                )?;
+                transaction.execute(
+                    "DELETE FROM asset_tags WHERE asset_path = ?1 AND tag_id = ?2 AND NOT EXISTS(SELECT 1 FROM face_tag_assignments f WHERE f.asset_path=?1 AND f.tag_id=?2)",
                     params![path, tag_id],
                 )?;
             }
@@ -551,7 +645,7 @@ impl Library {
         for tag_id in existing_tag_ids {
             if !desired_tag_ids.contains(&tag_id) {
                 transaction.execute(
-                    "DELETE FROM asset_tags WHERE asset_path = ?1 AND tag_id = ?2",
+                    "DELETE FROM asset_tags WHERE asset_path = ?1 AND tag_id = ?2 AND NOT EXISTS(SELECT 1 FROM face_tag_assignments f WHERE f.asset_path=?1 AND f.tag_id=?2)",
                     params![path.to_string_lossy(), tag_id],
                 )?;
             }

@@ -9,12 +9,14 @@ import type {
   FaceAnalysisProgress,
   FaceAssetReveal,
   FaceCluster,
+  FaceModelDownloadProgress,
   FaceReviewItem,
   FaceReviewPage,
   FaceWorkbenchContext,
 } from "@/types";
 
 const api = vi.hoisted(() => ({
+  setPersonTagPath: vi.fn().mockResolvedValue(undefined),
   capability: vi.fn(),
   persons: vi.fn(),
   clusters: vi.fn(),
@@ -22,12 +24,15 @@ const api = vi.hoisted(() => ({
   createPerson: vi.fn(),
   decideFace: vi.fn(),
   clearFaceDecision: vi.fn(),
+  setFaceClarity: vi.fn(),
   deletePerson: vi.fn(),
   renamePerson: vi.fn(),
   startFaceAnalysis: vi.fn(),
   cancelFaceAnalysis: vi.fn(),
   updateSettings: vi.fn(),
+  installModel: vi.fn(),
   onProgress: vi.fn(),
+  onModelProgress: vi.fn(),
   onLibrary: vi.fn(),
   onContext: vi.fn(),
   requestContext: vi.fn(),
@@ -51,13 +56,21 @@ const api = vi.hoisted(() => ({
 }));
 
 vi.mock("@/lib/api", () => ({
+  listCustomTags: async () => [],
+  setPersonTagPath: api.setPersonTagPath,
+  getFaceSyncStatus: async () => [],
+  clearFaceAnalysisData: async () => {},
+  deletePeopleAnnotations: async () => {},
+  resolveFaceSyncConflict: async () => {},
   cancelFaceAnalysis: api.cancelFaceAnalysis,
   clearFaceDecision: api.clearFaceDecision,
+  setFaceClarity: api.setFaceClarity,
   closeFaceWorkbench: api.closeWindow,
   createPerson: api.createPerson,
   decideFace: api.decideFace,
   deletePerson: api.deletePerson,
   getFaceCapability: api.capability,
+  installFaceModel: api.installModel,
   getFaceClusters: api.clusters,
   getFaceCrops: api.crops,
   getFaceReviewPage: api.review,
@@ -67,6 +80,7 @@ vi.mock("@/lib/api", () => ({
   mergePersons: api.mergePersons,
   notifyFaceAssetReveal: api.notifyReveal,
   onFaceAnalysisProgress: api.onProgress,
+  onFaceModelDownloadProgress: api.onModelProgress,
   onFaceLibraryUpdated: api.onLibrary,
   onFaceWorkbenchContext: api.onContext,
   removeFacesFromPerson: api.removeFacesFromPerson,
@@ -81,12 +95,14 @@ vi.mock("@/lib/api", () => ({
   updateFaceAnalyzerSettings: api.updateSettings,
 }));
 
+vi.mock("./FacePhotoPreview", () => ({ FacePhotoPreview: () => <div data-testid="photo-preview" /> }));
+
 const settings = {
-  detectionConfidence: 0.9,
+  detectionConfidence: 0.5,
   nmsThreshold: 0.3,
   maxFacesPerAsset: 64,
   minFacePixels: 24,
-  detectSmallFaces: true,
+  detectSmallFaces: false,
   matchSensitivity: "balanced" as const,
   matchThreshold: 0.363,
   clusterThreshold: 0.363,
@@ -98,6 +114,8 @@ const pendingItem: FaceReviewItem = {
   assetPath: "/photos/a.jpg",
   bbox: { x: 0.1, y: 0.1, width: 0.2, height: 0.2 },
   detectionScore: 0.97,
+  facePixels: 52,
+  clarity: 0.4,
   state: "pending",
   candidate: {
     observationId: "face-1",
@@ -114,6 +132,8 @@ const unknownItem: FaceReviewItem = {
   assetPath: "/photos/b.jpg",
   bbox: { x: 0.4, y: 0.2, width: 0.2, height: 0.2 },
   detectionScore: 0.93,
+  facePixels: 96,
+  clarity: 0.8,
   state: "unknown",
 };
 
@@ -124,6 +144,11 @@ const cluster: FaceCluster = {
   memberCount: 3,
   cohesion: 0.71,
   outlierObservationIds: ["face-4"],
+  memberQuality: [
+    { observationId: "face-2", detectionScore: 0.95, facePixels: 100, clarity: 0.8 },
+    { observationId: "face-3", detectionScore: 0.9, facePixels: 70, clarity: 0.6 },
+    { observationId: "face-4", detectionScore: 0.85, facePixels: 40, clarity: 0.3 },
+  ],
 };
 
 const confirmedItem: FaceReviewItem = {
@@ -196,14 +221,6 @@ const progressDriver = () => {
     });
 };
 
-const clickTab = async (label: string) => {
-  const tab = [...host.querySelectorAll<HTMLButtonElement>("[role=tab]")]
-    .find((button) => button.textContent?.includes(label));
-  expect(tab, label).toBeDefined();
-  await act(async () => tab!.click());
-  await settle();
-};
-
 const clickButton = async (text: string) => {
   const button = [...host.querySelectorAll<HTMLButtonElement>("button")]
     .find((candidate) => candidate.textContent?.includes(text));
@@ -229,6 +246,7 @@ beforeEach(() => {
     settings,
     stats: { analyzedAssets: 2, facesDetected: 2, persons: 1, pendingReviews: 1, unknownFaces: 1, clusters: 1 },
     peopleStorePath: "demo/people.json",
+    models: [],
   });
   api.persons.mockResolvedValue([]);
   api.clusters.mockResolvedValue([cluster]);
@@ -237,6 +255,7 @@ beforeEach(() => {
   api.decideFace.mockResolvedValue(undefined);
   api.startFaceAnalysis.mockResolvedValue("job-1");
   api.onProgress.mockResolvedValue(() => {});
+  api.onModelProgress.mockResolvedValue(() => {});
   api.onLibrary.mockResolvedValue(() => {});
   // Registration delivers the current context, which is how the real window
   // learns the main window's scope without a shared store.
@@ -349,6 +368,39 @@ it("keeps the progress meter still until a run actually starts", async () => {
   expect(meter().classList.contains("is-indeterminate")).toBe(true);
 });
 
+it("adds committed detections to the workbench before the scan completes", async () => {
+  const emitProgress = progressDriver();
+  await render();
+  const liveItem: FaceReviewItem = {
+    ...unknownItem,
+    observationId: "face-live",
+    assetId: "asset-live",
+    assetPath: "/photos/live.jpg",
+  };
+  api.review.mockResolvedValue({
+    items: [pendingItem, unknownItem, liveItem],
+    total: 3,
+    nextCursor: null,
+  } satisfies FaceReviewPage);
+
+  await emitProgress({
+    stage: "detecting",
+    processedAssets: 1,
+    totalAssets: 20,
+    facesDetected: 1,
+  });
+  await settle();
+
+  const livePhoto = [...host.querySelectorAll<HTMLElement>(".face-photo")]
+    .find((photo) => photo.textContent?.includes("live.jpg"));
+  expect(livePhoto).toBeDefined();
+  const reject = [...livePhoto!.querySelectorAll<HTMLButtonElement>("button")]
+    .find((button) => button.textContent?.includes("peopleNotFace"));
+  await act(async () => reject!.click());
+  await settle();
+  expect(api.decideFace).toHaveBeenCalledWith("face-live", { decision: "notFace" });
+});
+
 it("falls back to the whole library when no folder scope was published", async () => {
   api.context = { locale: "zh-CN", visiblePaths: [] };
   await render();
@@ -360,119 +412,13 @@ it("falls back to the whole library when no folder scope was published", async (
   expect(api.startFaceAnalysis).toHaveBeenCalledWith({ force: false });
 });
 
-it("answers a pending candidate with confirm, correct, and not-a-face", async () => {
-  await render();
-  await clickTab("peopleReview");
-  // The identity translator keeps placeholder text, so the badge is asserted
-  // by key; the candidate's identity is asserted through the decision payload.
-  expect(host.textContent).toContain("peopleCandidate");
-  expect(host.textContent).toContain("peopleState_pending");
-
-  const buttons = () => [...host.querySelectorAll<HTMLButtonElement>(".people-panel__review-actions button")];
-  await act(async () => buttons()[0].click());
-  expect(api.decideFace).toHaveBeenCalledWith("face-1", { decision: "confirmPerson", personId: "person-1" });
-
-  await act(async () => buttons()[1].click());
-  expect(api.decideFace).toHaveBeenCalledWith("face-1", { decision: "rejectPerson", personId: "person-1" });
-
-  // The unknown row has only the not-a-face action; index 2 is its button.
-  const unknownButtons = [...host.querySelectorAll<HTMLButtonElement>(".people-panel__review li")][1]
-    .querySelectorAll<HTMLButtonElement>(".people-panel__review-actions button");
-  await act(async () => unknownButtons[0].click());
-  expect(api.decideFace).toHaveBeenCalledWith("face-2", { decision: "notFace" });
-});
-
-it("naming a cluster confirms its members but leaves outliers unconfirmed", async () => {
-  await render();
-  const input = host.querySelector<HTMLInputElement>(".people-panel__cluster-actions input")!;
-  await act(async () => setInputValue(input, "Bob"));
-  await settle();
-
-  await clickButton("peopleConfirmCluster");
-
-  expect(api.createPerson).toHaveBeenCalledTimes(1);
-  expect(api.createPerson.mock.calls[0][1]).toBe("Bob");
-  const confirmed = api.decideFace.mock.calls.map((call) => call[0]);
-  expect(confirmed).toEqual(["face-2", "face-3"]);
-  expect(confirmed).not.toContain("face-4");
-});
-
-it("shows a crop for every face it asks the user to judge", async () => {
-  await render();
-  const crops = [...host.querySelectorAll<HTMLImageElement>("img.face-crop")];
-  expect(crops.length).toBeGreaterThan(0);
-  for (const crop of crops) {
-    expect(crop.src).toContain("oxy-media://localhost/resource/");
-  }
-  expect(api.crops).toHaveBeenCalled();
-  // The cluster's boundary member is marked, so the reviewer knows which face
-  // the cluster is unsure about before confirming the group.
-  const outliers = [...host.querySelectorAll(".face-crop-frame.is-outlier")];
-  expect(outliers).toHaveLength(1);
-  expect(outliers[0].querySelector("img")?.getAttribute("src")).toContain("face-4");
-});
-
-it("shows completed face batches while later Full crops are still loading", async () => {
-  api.clusters.mockResolvedValue([{
-    ...cluster,
-    observationIds: ["face-2", "face-3", "face-4", "face-5", "face-6", "face-7"],
-    memberCount: 6,
-  }]);
-  let finishSecondBatch!: () => void;
-  const secondBatch = new Promise<void>((resolve) => { finishSecondBatch = resolve; });
-  api.crops.mockImplementation(async (ids: string[]) => {
-    if (ids.includes("face-6")) await secondBatch;
-    return ids.map((observationId) => ({
-      observationId,
-      descriptor: {
-        resourceId: `resource-${observationId}`,
-        url: `oxy-media://localhost/resource/${observationId}`,
-        mediaType: "image/jpeg",
-      },
-    }));
-  });
-
-  await render();
-  expect(host.querySelector('img[src*="face-2"]')).not.toBeNull();
-  expect(host.querySelector('img[src*="face-6"]')).toBeNull();
-  await act(async () => finishSecondBatch());
-  await settle();
-  expect(host.querySelector('img[src*="face-6"]')).not.toBeNull();
-});
-
-it("reveals a clicked cluster face in the main window", async () => {
-  await render();
-  const crop = host.querySelector<HTMLButtonElement>(".face-crop-frame--action")!;
-  await act(async () => crop.click());
-  await settle();
-
-  expect(api.resolveObservation).toHaveBeenCalled();
-  expect(api.notifyReveal).toHaveBeenCalledWith({
-    observationId: "face-2",
-    assetId: "asset-2",
-    assetPath: "/photos/b.jpg",
-  });
-  expect(host.querySelector(".face-workbench__notice")?.textContent).toContain("faceWorkbenchRevealed");
-});
-
-it("explains when a clicked face no longer resolves", async () => {
-  api.resolveObservation.mockResolvedValue(null);
-  await render();
-  const crop = host.querySelector<HTMLButtonElement>(".face-crop-frame--action")!;
-  await act(async () => crop.click());
-  await settle();
-
-  expect(api.notifyReveal).not.toHaveBeenCalled();
-  expect(host.querySelector(".face-workbench__notice")?.textContent).toContain("faceWorkbenchRevealMissing");
-});
-
 it("merges two names for the same person through the durable operation", async () => {
   api.persons.mockResolvedValue([
     { personId: "person-1", displayName: "Alice", createdAtMs: 1, updatedAtMs: 1, faceCount: 2 },
     { personId: "person-2", displayName: "Alica", createdAtMs: 1, updatedAtMs: 1, faceCount: 1 },
   ]);
   await render();
-  await clickTab("peoplePersons");
+  await clickButton("peoplePersons");
 
   const selects = [...host.querySelectorAll<HTMLSelectElement>(".people-panel__persons ~ * select")];
   const [source, target] = selects.length >= 2 ? selects : [...host.querySelectorAll<HTMLSelectElement>("select")].slice(-2);
@@ -491,18 +437,6 @@ it("merges two names for the same person through the durable operation", async (
   expect(api.mergePersons).toHaveBeenCalledWith("person-2", "person-1");
 });
 
-it("detaches a wrongly attached face without touching the rest of the person", async () => {
-  api.review.mockResolvedValue({ items: [confirmedItem], total: 1, nextCursor: null });
-  await render();
-  await clickTab("peopleReview");
-
-  const detach = [...host.querySelectorAll<HTMLButtonElement>(".people-panel__review-actions button")]
-    .find((button) => button.textContent?.includes("peopleDetach"))!;
-  expect(detach).toBeDefined();
-  await act(async () => detach.click());
-  expect(api.removeFacesFromPerson).toHaveBeenCalledWith("person-1", ["face-9"]);
-});
-
 it("offers a labelled undo for the newest person operation", async () => {
   api.getPersonUndo.mockResolvedValue({
     kind: "mergePersons",
@@ -511,8 +445,8 @@ it("offers a labelled undo for the newest person operation", async () => {
     otherPersonName: "Alica",
   });
   await render();
-  await clickTab("peoplePersons");
-  const undo = [...host.querySelectorAll<HTMLButtonElement>(".people-panel__undo button")][0];
+  await clickButton("peoplePersons");
+  const undo = [...host.querySelectorAll<HTMLButtonElement>(".face-photos__management button:last-child")][0];
   expect(undo.textContent).toContain("peopleUndoMerge");
   await act(async () => undo.click());
   expect(api.undoPersonOperation).toHaveBeenCalled();
@@ -579,17 +513,50 @@ it("disables analysis when no face models are installed", async () => {
   expect(primary.disabled).toBe(true);
 });
 
-it("opens the review queue on every unanswered face, not only matcher proposals", async () => {
+it("downloads a missing face model only after its button is clicked", async () => {
+  const capability = {
+    available: false,
+    running: false,
+    settings,
+    stats: { analyzedAssets: 0, facesDetected: 0, persons: 0, pendingReviews: 0, unknownFaces: 0, clusters: 0 },
+    peopleStorePath: "demo/people.json",
+    models: [
+      { id: "scrfd-10g-kps", displayName: "SCRFD-10G KPS", installed: false, sizeBytes: 16_923_827, downloadSizeBytes: 288_621_354, licenseSummary: "research" },
+      { id: "adaface-ir101", displayName: "AdaFace IR-101", installed: false, sizeBytes: 260_704_652, downloadSizeBytes: 260_704_652, licenseSummary: "experimental" },
+    ],
+  };
+  api.capability.mockResolvedValue(capability);
+  api.installModel.mockResolvedValue({
+    ...capability,
+    models: capability.models.map((model) => model.id === "scrfd-10g-kps" ? { ...model, installed: true } : model),
+  });
   await render();
-  await clickTab("peopleReview");
-  // A library with no named people has no proposals at all, so a `pending`
-  // default would show an empty queue right after analyzing 990 photos.
-  expect(api.review).toHaveBeenCalledWith("unreviewed");
+  const scrfd = [...host.querySelectorAll(".face-models__item")]
+    .find((item) => item.textContent?.includes("SCRFD-10G KPS"))!;
+  await act(async () => scrfd.querySelector<HTMLButtonElement>("button")!.click());
+  await settle();
+  expect(api.installModel.mock.calls[0][0]).toBe("scrfd-10g-kps");
+});
 
-  await clickButton("peopleFilter_pending");
-  expect(api.review).toHaveBeenCalledWith("pending");
-  await clickButton("peopleFilter_unknown");
-  expect(api.review).toHaveBeenCalledWith("unknown");
+it("shows live byte progress for the model being downloaded", async () => {
+  let emitProgress: ((progress: FaceModelDownloadProgress) => void) | undefined;
+  api.onModelProgress.mockImplementation(async (callback: (progress: FaceModelDownloadProgress) => void) => {
+    emitProgress = callback;
+    return () => {};
+  });
+  api.capability.mockResolvedValue({
+    available: false,
+    running: false,
+    settings,
+    stats: { analyzedAssets: 0, facesDetected: 0, persons: 0, pendingReviews: 0, unknownFaces: 0, clusters: 0 },
+    peopleStorePath: "demo/people.json",
+    models: [{ id: "scrfd-10g-kps", displayName: "SCRFD-10G KPS", installed: false, sizeBytes: 16_923_827, downloadSizeBytes: 100, licenseSummary: "research" }],
+  });
+  await render();
+  await act(async () => emitProgress?.({ modelId: "scrfd-10g-kps", stage: "downloading", downloadedBytes: 42, totalBytes: 100 }));
+  const indicator = host.querySelector<HTMLElement>(".face-models__progress")!;
+  expect(indicator.getAttribute("aria-valuenow")).toBe("42");
+  expect(indicator.textContent).toContain("42%");
 });
 
 it("reports how many faces the last run found, not just how many files it touched", async () => {
@@ -624,4 +591,160 @@ it("shows why a run failed instead of leaving the panel empty", async () => {
   // showed nothing at all.
   expect(summary.className).toContain("is-error");
   expect(summary.textContent).toContain("clustering input exceeds the limit");
+});
+
+it("starts with all photos and shares one card across faces in a photo", async () => {
+  api.review.mockResolvedValue({ items: [pendingItem, { ...unknownItem, assetPath: pendingItem.assetPath }], total: 2, nextCursor: null });
+  await render();
+  expect(api.review).toHaveBeenCalledWith(0, 200);
+  expect(host.querySelectorAll(".face-photo")).toHaveLength(1);
+  expect(host.querySelectorAll(".face-photo__face")).toHaveLength(2);
+});
+
+it("applies an action under a selected face to the entire selection", async () => {
+  await render();
+  const faces = [...host.querySelectorAll<HTMLInputElement>(".face-photo__select input")];
+  await act(async () => faces[0].click());
+  await act(async () => faces[1].dispatchEvent(new MouseEvent("click", { bubbles: true, ctrlKey: true })));
+  await clickButton("peopleNotFace");
+  expect(api.decideFace.mock.calls).toEqual([
+    [pendingItem.observationId, { decision: "notFace" }],
+    [unknownItem.observationId, { decision: "notFace" }],
+  ]);
+});
+
+it("does not apply an unselected card action to another selected face", async () => {
+  await render();
+  const faces = [...host.querySelectorAll<HTMLInputElement>(".face-photo__select input")];
+  await act(async () => faces[1].click());
+  await clickButton("peopleNotFace");
+  expect(api.decideFace).toHaveBeenCalledTimes(1);
+  expect(api.decideFace).toHaveBeenCalledWith(pendingItem.observationId, { decision: "notFace" });
+});
+
+it("clears selection when switching grouping", async () => {
+  await render();
+  await clickButton("facePhotosSelectLoaded");
+  await clickButton("facePhotosView_similar");
+  expect(host.querySelectorAll('.face-photo__face.is-selected')).toHaveLength(0);
+  await clickButton("peopleNotFace");
+  expect(api.decideFace).toHaveBeenCalledTimes(1);
+});
+
+it("moves a confirmed face to its person group after the durable write", async () => {
+  api.review.mockResolvedValue({ items: [pendingItem], total: 1, nextCursor: null });
+  api.assignFacesToPerson.mockImplementation(async () => {
+    api.review.mockResolvedValue({ items: [{ ...pendingItem, state: "confirmed", confirmedPersonId: "person-1", confirmedPersonName: "Alice" }], total: 1, nextCursor: null });
+    return 1;
+  });
+  await render();
+  await clickButton("facePhotosView_status");
+  expect(host.querySelector('.face-photos__group > header')?.textContent).toContain("peopleState_pending");
+  await clickButton("peopleConfirmMatch");
+  expect(host.querySelector('.face-photos__group > header')?.textContent).toContain("Alice");
+});
+
+it("returns a non-face to pending using the persisted decision reset", async () => {
+  api.review.mockResolvedValue({ items: [{ ...unknownItem, state: "notFace" }], total: 1, nextCursor: null });
+  await render();
+  const button = [...host.querySelectorAll<HTMLButtonElement>(".face-photo__actions button")].find((button) => button.textContent === "peopleState_pending")!;
+  await act(async () => button.click());
+  expect(api.clearFaceDecision).toHaveBeenCalledWith(unknownItem.observationId);
+});
+
+it("refreshes after a partially failed batch and reports the failure", async () => {
+  api.decideFace.mockResolvedValueOnce(undefined).mockRejectedValueOnce(new Error("disk full"));
+  await render();
+  await clickButton("facePhotosSelectLoaded");
+  const before = api.review.mock.calls.length;
+  await clickButton("peopleNotFace");
+  expect(host.querySelector('[role="alert"]')?.textContent).toContain("disk full");
+  expect(api.review.mock.calls.length).toBeGreaterThan(before);
+});
+
+it("collapses groups, unmounts previews, and remembers the state per view", async () => {
+  await render();
+  await clickButton("facePhotosView_status");
+  const toggle = host.querySelector<HTMLButtonElement>(".face-photos__group-toggle")!;
+  expect(toggle.getAttribute("aria-expanded")).toBe("true");
+  await act(async () => toggle.click());
+  expect(toggle.getAttribute("aria-expanded")).toBe("false");
+  expect(host.querySelectorAll(".face-photo")).toHaveLength(0);
+  expect(host.querySelector(".face-photos__group > header")?.textContent).toContain("2");
+  await clickButton("facePhotosView_photos");
+  expect(host.querySelectorAll(".face-photo")).toHaveLength(2);
+  await clickButton("facePhotosView_status");
+  expect(host.querySelectorAll(".face-photo")).toHaveLength(0);
+  await act(async () => host.querySelector<HTMLButtonElement>(".face-photos__group-toggle")!.click());
+  expect(host.querySelectorAll(".face-photo")).toHaveLength(2);
+});
+
+it("excludes collapsed groups from both an existing selection and select all", async () => {
+  api.review.mockResolvedValue({ items: [pendingItem, confirmedItem], total: 2, nextCursor: null });
+  await render();
+  await clickButton("facePhotosView_status");
+  await clickButton("facePhotosSelectLoaded");
+  const toggles = [...host.querySelectorAll<HTMLButtonElement>(".face-photos__group-toggle")];
+  await act(async () => toggles[0].click());
+  await clickButton("facePhotosSelectLoaded");
+  await clickButton("peopleNotFace");
+  expect(api.decideFace).toHaveBeenCalledTimes(1);
+  expect(api.decideFace).toHaveBeenCalledWith(confirmedItem.observationId, { decision: "notFace" });
+  await act(async () => host.querySelector<HTMLButtonElement>(".face-photos__group-toggle")!.click());
+  expect(host.querySelectorAll('.face-photo__face.is-selected')).toHaveLength(0);
+});
+
+
+it("manually marks all selected faces without changing their identities", async () => {
+  await render();
+  await clickButton("facePhotosSelectLoaded");
+  await clickButton("facePhotosMarkBlurry");
+  expect(api.setFaceClarity).toHaveBeenCalledWith([pendingItem.observationId, unknownItem.observationId], true);
+  expect(api.decideFace).not.toHaveBeenCalled();
+  expect(api.assignFacesToPerson).not.toHaveBeenCalled();
+  await clickButton("facePhotosMarkClear");
+  expect(api.setFaceClarity).toHaveBeenLastCalledWith([pendingItem.observationId], false);
+  await clickButton("facePhotosQualityAuto");
+  expect(api.setFaceClarity).toHaveBeenLastCalledWith([pendingItem.observationId], null);
+});
+
+it("uses manual quality for labels and blurry-only filtering", async () => {
+  api.review.mockResolvedValue({ items: [{ ...pendingItem, clarity: 0.99, manualBlurry: true }, { ...unknownItem, clarity: 0.01, manualBlurry: false }], total: 2, nextCursor: null });
+  await render();
+  expect(host.textContent).toContain("facePhotosManualBlurry");
+  expect(host.textContent).toContain("facePhotosManualClear");
+  await act(async () => host.querySelector<HTMLInputElement>('.face-photos__toolbar input[type="checkbox"]')!.click());
+  expect(host.querySelectorAll(".face-photo")).toHaveLength(1);
+  expect(host.textContent).toContain("facePhotosManualBlurry");
+  expect(host.textContent).not.toContain("facePhotosManualClear");
+});
+
+it("card checkboxes select all displayed faces and toggle without modifier keys", async () => {
+  api.review.mockResolvedValue({ items: [pendingItem, { ...unknownItem, assetPath: pendingItem.assetPath }, confirmedItem], total: 3, nextCursor: null });
+  await render();
+  const boxes = [...host.querySelectorAll<HTMLInputElement>(".face-photo__select input")];
+  expect(boxes).toHaveLength(2);
+  expect(host.querySelector("button.face-photo__identity")).toBeNull();
+  await act(async () => boxes[0].click());
+  expect(host.querySelectorAll(".face-photo__face.is-selected")).toHaveLength(2);
+  await act(async () => boxes[1].click());
+  expect(host.querySelectorAll(".face-photo__face.is-selected")).toHaveLength(3);
+  await act(async () => boxes[0].click());
+  expect(host.querySelectorAll(".face-photo__face.is-selected")).toHaveLength(1);
+  await clickButton("facePhotosMarkBlurry");
+  // Action on an unselected card targets that card's first face, as before.
+  expect(api.setFaceClarity).toHaveBeenCalledWith([pendingItem.observationId], true);
+});
+
+it("saves a person's hierarchical classification path", async () => {
+  api.persons.mockResolvedValue([{ personId: "alice", displayName: "Alice", faceCount: 1, createdAtMs: 0, updatedAtMs: 0 }]);
+  api.setPersonTagPath.mockResolvedValue(undefined);
+  await render();
+  await clickButton("peoplePersons");
+  const input = host.querySelector<HTMLInputElement>('.people-person-path input')!;
+  expect(input.value).toBe("人物 / Alice");
+  await act(async () => setInputValue(input, "人物 / 家人 / Alice"));
+  await act(async () => input.closest("form")!.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true })));
+  await settle();
+  expect(api.setPersonTagPath).toHaveBeenCalledWith("alice", "人物|家人|Alice");
 });

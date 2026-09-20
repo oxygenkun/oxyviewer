@@ -126,20 +126,36 @@ impl PersonMatch {
 /// pending queue and costs one click. Recall therefore wins here, and
 /// [`PersonMatch::consistent_examples`] exposes whether several samples agreed.
 pub fn match_person(query: &[f32], galleries: &[PersonGallery]) -> Option<PersonMatch> {
+    match_person_cancellable(query, galleries, || false)
+        .ok()
+        .flatten()
+}
+
+/// Matches with cancellation between galleries and examples.
+pub fn match_person_cancellable(
+    query: &[f32],
+    galleries: &[PersonGallery],
+    cancelled: impl Fn() -> bool,
+) -> Result<Option<PersonMatch>, crate::FaceError> {
+    crate::check_cancelled(&cancelled)?;
     if query.is_empty() || !query.iter().all(|value| value.is_finite()) {
-        return None;
+        return Ok(None);
     }
     let normalized = normalize_embedding(query);
     let mut best: Option<PersonMatch> = None;
     for gallery in galleries {
+        crate::check_cancelled(&cancelled)?;
         if gallery.is_empty() {
             continue;
         }
         let scores: Vec<f32> = gallery
             .examples
             .iter()
-            .map(|example| similarity_normalized(&normalized, example))
-            .collect();
+            .map(|example| {
+                crate::check_cancelled(&cancelled)?;
+                Ok(similarity_normalized(&normalized, example))
+            })
+            .collect::<Result<_, crate::FaceError>>()?;
         let top = scores.iter().copied().fold(f32::NEG_INFINITY, f32::max);
         let candidate = PersonMatch {
             person_id: gallery.person_id.clone(),
@@ -158,7 +174,7 @@ pub fn match_person(query: &[f32], galleries: &[PersonGallery]) -> Option<Person
             best = Some(candidate);
         }
     }
-    best
+    Ok(best)
 }
 
 #[cfg(test)]

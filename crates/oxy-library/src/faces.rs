@@ -50,6 +50,8 @@ const FACE_CROP_POLICY_VERSION: &str = "full-crop-v1";
 pub struct StoredFace {
     pub observation: FaceObservation,
     pub embedding: Vec<f32>,
+    pub face_pixels: u32,
+    pub clarity: f32,
 }
 
 /// Rebuildable JPEG cut from the same Full pixels as an observation.
@@ -58,6 +60,25 @@ pub struct StoredFaceCrop {
     pub observation_id: FaceObservationId,
     pub size: u32,
     pub jpeg: Vec<u8>,
+}
+
+/// One atomic publication, optionally guarded by a projection admission revision.
+pub struct FaceResultWrite<'a> {
+    pub asset_path: &'a Path,
+    pub asset_id: &'a str,
+    pub source_revision: &'a str,
+    pub detector_fingerprint: &'a str,
+    pub embedder_fingerprint: &'a str,
+    pub faces: &'a [StoredFace],
+    pub crops: &'a [StoredFaceCrop],
+    pub valid_at: Option<u64>,
+    pub cancellation: Option<&'a oxy_runtime::CancellationToken>,
+}
+
+#[derive(Debug, PartialEq, Eq)]
+pub struct FaceRunCheckpoint {
+    pub generation: u64,
+    pub cursor: Option<PathBuf>,
 }
 
 /// One asset the analyzer still has to visit.
@@ -99,9 +120,65 @@ fn ensure_proposed_similarity_column(connection: &Connection) -> Result<(), rusq
     Ok(())
 }
 
+fn ensure_face_quality_columns(connection: &Connection) -> Result<(), rusqlite::Error> {
+    let columns = connection
+        .prepare("PRAGMA table_info(face_observations)")?
+        .query_map([], |row| row.get::<_, String>(1))?
+        .collect::<Result<Vec<_>, _>>()?;
+    if !columns.iter().any(|column| column == "face_pixels") {
+        connection.execute(
+            "ALTER TABLE face_observations ADD COLUMN face_pixels INTEGER NOT NULL DEFAULT 0",
+            [],
+        )?;
+    }
+    if !columns.iter().any(|column| column == "clarity_score_micro") {
+        connection.execute(
+            "ALTER TABLE face_observations ADD COLUMN clarity_score_micro INTEGER NOT NULL DEFAULT 0",
+            [],
+        )?;
+    }
+    Ok(())
+}
+
+fn ensure_crop_policy_schema(connection: &Connection) -> Result<(), rusqlite::Error> {
+    let transaction = connection.unchecked_transaction()?;
+    let has_policy = transaction
+        .prepare("PRAGMA table_info(face_crops)")?
+        .query_map([], |row| row.get::<_, String>(1))?
+        .collect::<Result<Vec<_>, _>>()?
+        .iter()
+        .any(|column| column == "policy_version");
+    if !has_policy {
+        // Legacy crops have no verifiable rendering policy. Rebuild only this
+        // disposable cache, including its new composite primary key.
+        transaction.execute_batch(
+            "DROP TABLE face_crops;
+             CREATE TABLE face_crops (
+                 observation_id TEXT NOT NULL
+                     REFERENCES face_observations(observation_id) ON DELETE CASCADE,
+                 size INTEGER NOT NULL,
+                 policy_version TEXT NOT NULL,
+                 jpeg BLOB NOT NULL,
+                 PRIMARY KEY (observation_id, size, policy_version)
+             );",
+        )?;
+    }
+    transaction.commit()
+}
+
 pub(super) fn ensure_schema(connection: &Connection) -> Result<(), rusqlite::Error> {
     connection.execute_batch(
-        "CREATE TABLE IF NOT EXISTS face_observations (
+        "CREATE INDEX IF NOT EXISTS indexed_assets_face_cursor ON indexed_assets(path, root_path);
+        CREATE TABLE IF NOT EXISTS face_runtime_state (id INTEGER PRIMARY KEY CHECK(id=1), index_generation INTEGER NOT NULL);
+        INSERT OR IGNORE INTO face_runtime_state VALUES(1, 0);
+        CREATE TABLE IF NOT EXISTS analyzer_schema_owners (analyzer_id TEXT PRIMARY KEY, schema_version INTEGER NOT NULL);
+        INSERT OR REPLACE INTO analyzer_schema_owners VALUES('faces', 1);
+        CREATE TABLE IF NOT EXISTS face_tag_assignments (asset_path TEXT NOT NULL, tag_id INTEGER NOT NULL REFERENCES custom_tags(id) ON DELETE CASCADE, owned INTEGER NOT NULL, PRIMARY KEY(asset_path, tag_id));
+        CREATE TABLE IF NOT EXISTS face_runs (run_key TEXT PRIMARY KEY, generation INTEGER NOT NULL, cursor TEXT);
+        CREATE TRIGGER IF NOT EXISTS face_index_completed AFTER INSERT ON indexed_roots BEGIN UPDATE face_runtime_state SET index_generation=index_generation+1; END;
+        CREATE TRIGGER IF NOT EXISTS face_index_updated AFTER UPDATE ON indexed_roots BEGIN UPDATE face_runtime_state SET index_generation=index_generation+1; END;
+        CREATE TRIGGER IF NOT EXISTS face_index_removed AFTER DELETE ON indexed_roots BEGIN UPDATE face_runtime_state SET index_generation=index_generation+1; END;
+        CREATE TABLE IF NOT EXISTS face_observations (
             observation_id TEXT PRIMARY KEY NOT NULL,
             asset_path TEXT NOT NULL,
             asset_id TEXT NOT NULL,
@@ -113,6 +190,8 @@ pub(super) fn ensure_schema(connection: &Connection) -> Result<(), rusqlite::Err
             width_micro INTEGER NOT NULL,
             height_micro INTEGER NOT NULL,
             detection_score_micro INTEGER NOT NULL,
+            face_pixels INTEGER NOT NULL DEFAULT 0,
+            clarity_score_micro INTEGER NOT NULL DEFAULT 0,
             landmarks_json TEXT NOT NULL DEFAULT '[]',
             created_at INTEGER NOT NULL DEFAULT (unixepoch())
         );
@@ -233,7 +312,9 @@ pub(super) fn ensure_schema(connection: &Connection) -> Result<(), rusqlite::Err
             updated_at INTEGER NOT NULL DEFAULT (unixepoch())
         );",
     )?;
-    ensure_proposed_similarity_column(connection)
+    ensure_proposed_similarity_column(connection)?;
+    ensure_face_quality_columns(connection)?;
+    ensure_crop_policy_schema(connection)
 }
 
 fn to_micro(value: f32) -> i64 {
@@ -335,6 +416,180 @@ fn filter_predicate(filter: FaceReviewFilter) -> &'static str {
     }
 }
 
+/// Bounded page of indexed assets; source identity is verified by the host.
+impl Library {
+    /// A changed index starts a fresh pass; per-asset checkpoints survive it.
+    pub fn resume_face_run(&self, key: &str) -> Result<FaceRunCheckpoint, LibraryError> {
+        let mut connection = self.connection.lock();
+        let transaction = connection.transaction()?;
+        let generation: u64 = transaction.query_row(
+            "SELECT index_generation FROM face_runtime_state WHERE id=1",
+            [],
+            |row| row.get(0),
+        )?;
+        transaction.execute("INSERT INTO face_runs(run_key, generation) VALUES (?1, ?2) ON CONFLICT(run_key) DO UPDATE SET cursor=CASE WHEN generation=excluded.generation THEN cursor ELSE NULL END, generation=excluded.generation", params![key, generation])?;
+        let cursor: Option<String> = transaction.query_row(
+            "SELECT cursor FROM face_runs WHERE run_key=?1",
+            params![key],
+            |row| row.get(0),
+        )?;
+        transaction.commit()?;
+        Ok(FaceRunCheckpoint {
+            generation,
+            cursor: cursor.map(PathBuf::from),
+        })
+    }
+
+    pub fn checkpoint_face_run(
+        &self,
+        key: &str,
+        generation: u64,
+        cursor: &Path,
+    ) -> Result<(), LibraryError> {
+        self.connection.lock().execute(
+            "UPDATE face_runs SET cursor=?1 WHERE run_key=?2 AND generation=?3",
+            params![cursor.to_string_lossy(), key, generation],
+        )?;
+        Ok(())
+    }
+
+    /// Returns false when indexing changed and the caller must visit a fresh pass.
+    pub fn finish_face_run(&self, key: &str, generation: u64) -> Result<bool, LibraryError> {
+        let mut connection = self.connection.lock();
+        let transaction = connection.transaction()?;
+        let current: u64 = transaction.query_row(
+            "SELECT index_generation FROM face_runtime_state WHERE id=1",
+            [],
+            |row| row.get(0),
+        )?;
+        if current != generation {
+            return Ok(false);
+        }
+        transaction.execute(
+            "DELETE FROM face_runs WHERE run_key=?1 AND generation=?2",
+            params![key, generation],
+        )?;
+        transaction.commit()?;
+        Ok(true)
+    }
+
+    pub fn face_analysis_page(
+        &self,
+        request: &oxy_domain::FaceAnalysisRequest,
+        after: Option<&Path>,
+    ) -> Result<Vec<FaceAnalysisTarget>, LibraryError> {
+        let mut reader = self.read_connection();
+        let connection = reader.transaction()?;
+        let paths = serde_json::to_string(&request.paths)?;
+        let root = request
+            .root_path
+            .as_ref()
+            .map(|p| p.to_string_lossy().into_owned());
+        let directory = request
+            .directory
+            .as_ref()
+            .map(|p| p.to_string_lossy().into_owned());
+        let after = after
+            .map(|p| p.to_string_lossy().into_owned())
+            .unwrap_or_default();
+        let mut statement = connection.prepare(
+            "SELECT a.path, a.kind, a.modified_at_ms, a.size_bytes
+             FROM indexed_assets a JOIN library_roots r ON r.path = a.root_path
+             WHERE a.path > ?1
+               AND (?2 IS NULL OR a.root_path = ?2)
+               AND (?3 IS NULL OR a.parent_path = ?3)
+               AND (?4 = '[]' OR a.path IN (SELECT value FROM json_each(?4)))
+             GROUP BY a.path ORDER BY a.path LIMIT 256",
+        )?;
+        let rows = statement.query_map(params![after, root, directory, paths], |row| {
+            Ok((
+                row.get::<_, String>(0)?,
+                row.get::<_, String>(1)?,
+                row.get::<_, u64>(2)?,
+                row.get::<_, u64>(3)?,
+            ))
+        })?;
+        rows.map(|row| {
+            let (path, kind, modified_at_ms, size_bytes) = row?;
+            Ok(FaceAnalysisTarget {
+                path: PathBuf::from(path),
+                kind: super::parse_kind(&kind)?,
+                source_revision: String::new(),
+                modified_at_ms,
+                size_bytes,
+            })
+        })
+        .collect()
+    }
+
+    pub fn begin_face_analysis(
+        &self,
+        path: &Path,
+        source_revision: &str,
+    ) -> Result<u64, LibraryError> {
+        let mut connection = self.connection.lock();
+        let transaction = connection.transaction()?;
+        let revision = super::next_resource_revision(&transaction)?;
+        transaction.execute(
+            "INSERT INTO resource_projections(path, parent_path, projection_kind, source_revision, valid_at, state_revision, status)
+             VALUES (?1, ?2, 'faces:v1', ?3, ?4, ?4, 'pending')
+             ON CONFLICT(path, projection_kind) DO UPDATE SET source_revision=excluded.source_revision, valid_at=excluded.valid_at, state_revision=excluded.state_revision, status='pending', result_json=NULL, error=NULL",
+            params![path.to_string_lossy(), path.parent().unwrap_or(Path::new("")).to_string_lossy(), source_revision, revision],
+        )?;
+        transaction.commit()?;
+        Ok(revision)
+    }
+
+    pub fn fail_face_analysis(
+        &self,
+        path: &Path,
+        valid_at: u64,
+        code: &str,
+    ) -> Result<(), LibraryError> {
+        let mut connection = self.connection.lock();
+        let transaction = connection.transaction()?;
+        let revision = super::next_resource_revision(&transaction)?;
+        transaction.execute("UPDATE resource_projections SET status='error', error=?1, state_revision=?2 WHERE path=?3 AND projection_kind='faces:v1' AND valid_at=?4 AND status='pending'", params![code, revision, path.to_string_lossy(), valid_at])?;
+        transaction.commit()?;
+        Ok(())
+    }
+
+    /// Clear machine data while retaining user facts and revision tombstones.
+    pub fn clear_face_cache(&self) -> Result<(), LibraryError> {
+        let mut connection = self.connection.lock();
+        let transaction = connection.transaction()?;
+        let revision = super::next_resource_revision(&transaction)?;
+        transaction.execute("UPDATE resource_projections SET status='error', error='cleared', result_json=NULL, valid_at=?1, state_revision=?1 WHERE projection_kind='faces:v1'", params![revision])?;
+        transaction.execute_batch("DELETE FROM face_candidates; DELETE FROM face_cluster_members; DELETE FROM face_clusters; DELETE FROM face_crops; DELETE FROM face_embeddings; UPDATE face_decisions SET observation_id=NULL; DELETE FROM face_observations; DELETE FROM face_asset_scans; DELETE FROM face_runs;")?;
+        transaction.commit()?;
+        Ok(())
+    }
+
+    pub fn invalidate_face_projections(&self) -> Result<(), LibraryError> {
+        let mut connection = self.connection.lock();
+        let transaction = connection.transaction()?;
+        let revision = super::next_resource_revision(&transaction)?;
+        transaction.execute("UPDATE resource_projections SET status='error', error='invalidated', state_revision=?1, valid_at=?1 WHERE projection_kind='faces:v1'", params![revision])?;
+        transaction.commit()?;
+        Ok(())
+    }
+
+    /// Checkpoint lookup uses the live source identity, never the cheap index stat.
+    pub fn face_scan_is_current(
+        &self,
+        path: &Path,
+        revision: &str,
+        detector: &str,
+    ) -> Result<bool, LibraryError> {
+        let mut reader = self.read_connection();
+        let connection = reader.transaction()?;
+        Ok(connection.query_row(
+            "SELECT EXISTS(SELECT 1 FROM face_asset_scans s JOIN resource_projections p ON p.path=s.asset_path AND p.projection_kind='faces:v1' WHERE s.asset_path = ?1 AND s.source_revision = ?2 AND s.detector_fingerprint = ?3 AND p.source_revision=?2 AND p.status='ready')",
+            params![path.to_string_lossy(), revision, detector], |row| row.get(0),
+        )?)
+    }
+}
+
 impl Library {
     /// Persists scan-time crops in the rebuildable face cache. Old crops are
     /// removed by the observation foreign key when an asset is re-analyzed.
@@ -357,6 +612,21 @@ impl Library {
         }
         transaction.commit()?;
         Ok(())
+    }
+
+    /// Both detection and embedding identity must match the ready projection.
+    pub fn face_models_are_current(
+        &self,
+        path: &Path,
+        revision: &str,
+        detector: &str,
+        embedder: &str,
+    ) -> Result<bool, LibraryError> {
+        let connection = self.read_connection();
+        Ok(connection.query_row(
+            "SELECT EXISTS(SELECT 1 FROM face_asset_scans s JOIN resource_projections p ON p.path=s.asset_path AND p.projection_kind='faces:v1' WHERE s.asset_path=?1 AND s.source_revision=?2 AND s.detector_fingerprint=?3 AND p.source_revision=?2 AND p.status='ready' AND json_extract(p.result_json, '$.embedderFingerprint')=?4)",
+            params![path.to_string_lossy(), revision, detector, embedder], |row| row.get(0),
+        )?)
     }
 
     /// Returns the smallest cached crop large enough for the requested UI size.
@@ -389,10 +659,48 @@ impl Library {
         embedder_fingerprint: &str,
         faces: &[StoredFace],
     ) -> Result<(), LibraryError> {
+        self.accept_face_result(FaceResultWrite {
+            asset_path,
+            asset_id,
+            source_revision,
+            detector_fingerprint,
+            embedder_fingerprint,
+            faces,
+            crops: &[],
+            valid_at: None,
+            cancellation: None,
+        })
+    }
+
+    /// Only the still-current request may publish derived rows and its projection.
+    pub fn accept_face_result(&self, result: FaceResultWrite<'_>) -> Result<(), LibraryError> {
+        let FaceResultWrite {
+            asset_path,
+            asset_id,
+            source_revision,
+            detector_fingerprint,
+            embedder_fingerprint,
+            faces,
+            crops,
+            valid_at,
+            cancellation,
+        } = result;
         let asset_path_string = asset_path.to_string_lossy().to_string();
         let mut connection = self.connection.lock();
         let transaction = connection.transaction()?;
 
+        if cancellation.is_some_and(oxy_runtime::CancellationToken::is_cancelled) {
+            return Err(LibraryError::StaleFaceResult);
+        }
+        if let Some(expected) = valid_at {
+            let valid: bool = transaction.query_row(
+                "SELECT EXISTS(SELECT 1 FROM resource_projections WHERE path = ?1 AND projection_kind = 'faces:v1' AND source_revision = ?2 AND valid_at = ?3 AND status = 'pending')",
+                params![asset_path_string, source_revision, expected], |row| row.get(0),
+            )?;
+            if !valid {
+                return Err(LibraryError::StaleFaceResult);
+            }
+        }
         let decisions = decisions_for_asset(&transaction, &asset_path_string)?;
 
         transaction.execute(
@@ -406,8 +714,9 @@ impl Library {
                 "INSERT INTO face_observations (
                     observation_id, asset_path, asset_id, source_revision,
                     detector_fingerprint, local_index, x_micro, y_micro,
-                    width_micro, height_micro, detection_score_micro, landmarks_json
-                 ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)",
+                    width_micro, height_micro, detection_score_micro,
+                    face_pixels, clarity_score_micro, landmarks_json
+                 ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14)",
             )?;
             let mut embedding_statement = transaction.prepare_cached(
                 "INSERT INTO face_embeddings (
@@ -432,6 +741,8 @@ impl Library {
                     width,
                     height,
                     to_micro(observation.detection_score),
+                    face.face_pixels,
+                    to_micro(face.clarity.clamp(0.0, 1.0)),
                     landmarks_to_json(&observation.landmarks),
                 ])?;
                 embedding_statement.execute(params![
@@ -490,6 +801,22 @@ impl Library {
             }
         }
 
+        for crop in crops {
+            transaction.execute("INSERT OR REPLACE INTO face_crops(observation_id, size, policy_version, jpeg) VALUES (?1, ?2, ?3, ?4)", params![crop.observation_id, crop.size, FACE_CROP_POLICY_VERSION, crop.jpeg])?;
+        }
+        let revision = super::next_resource_revision(&transaction)?;
+        let summary = serde_json::json!({
+            "schemaVersion": 1, "analyzerId": "faces", "detectorFingerprint": detector_fingerprint,
+            "embedderFingerprint": embedder_fingerprint, "faceCount": inserted.len(),
+            "observationIds": inserted.iter().map(|(id, _)| id).collect::<Vec<_>>()
+        })
+        .to_string();
+        transaction.execute(
+            "INSERT INTO resource_projections(path, parent_path, projection_kind, source_revision, valid_at, state_revision, status, result_json)
+             VALUES (?1, ?2, 'faces:v1', ?3, ?4, ?5, 'ready', ?6)
+             ON CONFLICT(path, projection_kind) DO UPDATE SET source_revision=excluded.source_revision, valid_at=excluded.valid_at, state_revision=excluded.state_revision, status='ready', result_json=excluded.result_json, error=NULL",
+            params![asset_path_string, asset_path.parent().unwrap_or(Path::new("")).to_string_lossy(), source_revision, valid_at.unwrap_or(revision), revision, summary],
+        )?;
         transaction.commit()?;
         Ok(())
     }
@@ -740,13 +1067,48 @@ impl Library {
                     proposed_similarity_micro, created_at, updated_at
                  ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?11)",
             )?;
+            let mut observations =
+                std::collections::HashMap::<PathBuf, Vec<(String, NormalizedRect)>>::new();
             for record in decisions {
                 let Some(region) = record.region.clamp_unit() else {
                     continue;
                 };
+                // Imported portable facts have no detector-local ID. Bind them
+                // to existing observations without requiring another inference.
+                let mut binding = record.observation_id.clone();
+                {
+                    if !observations.contains_key(&record.asset_path) {
+                        let mut statement = transaction.prepare_cached("SELECT observation_id,x_micro,y_micro,width_micro,height_micro FROM face_observations WHERE asset_path=?1 ORDER BY observation_id")?;
+                        let rows = statement
+                            .query_map(params![record.asset_path.to_string_lossy()], |row| {
+                                Ok((
+                                    row.get(0)?,
+                                    NormalizedRect {
+                                        x: from_micro(row.get(1)?),
+                                        y: from_micro(row.get(2)?),
+                                        width: from_micro(row.get(3)?),
+                                        height: from_micro(row.get(4)?),
+                                    },
+                                ))
+                            })?
+                            .collect::<Result<Vec<_>, _>>()?;
+                        observations.insert(record.asset_path.clone(), rows);
+                    }
+                    let available = &observations[&record.asset_path];
+                    if !available.is_empty()
+                        && !available.iter().any(|(id, _)| Some(id) == binding.as_ref())
+                    {
+                        binding = available
+                            .iter()
+                            .map(|(id, bbox)| (id, bbox.iou(region)))
+                            .filter(|(_, iou)| *iou >= DECISION_REBIND_IOU)
+                            .max_by(|left, right| left.1.total_cmp(&right.1))
+                            .map(|(id, _)| id.clone());
+                    }
+                }
                 let (x, y, width, height) = rect_columns(region);
                 decision_statement.execute(params![
-                    record.observation_id,
+                    binding,
                     record.asset_path.to_string_lossy(),
                     record.asset_id,
                     record.decision.kind(),
@@ -779,6 +1141,7 @@ impl Library {
             statement
                 .query_map([], |row| {
                     Ok(PersonRecord {
+                        tag_path: None,
                         person_id: row.get(0)?,
                         display_name: row.get(1)?,
                         linked_tag_id: row.get(2)?,
@@ -1018,6 +1381,85 @@ impl Library {
         Ok(embeddings)
     }
 
+    /// Unknown-face clustering input with the source asset identity required
+    /// for the hard rule that two faces in one photo cannot be one person.
+    pub fn undecided_face_cluster_embeddings(
+        &self,
+        embedder_fingerprint: &str,
+        limit: usize,
+    ) -> Result<Vec<(FaceObservationId, String, Vec<f32>)>, LibraryError> {
+        let mut reader = self.read_connection();
+        let connection = reader.transaction()?;
+        let mut statement = connection.prepare(
+            "SELECT e.observation_id, o.asset_id, e.vector
+             FROM face_embeddings e
+             JOIN face_observations o ON o.observation_id = e.observation_id
+             LEFT JOIN face_decisions d ON d.observation_id = e.observation_id
+             WHERE e.embedder_fingerprint = ?1
+               AND (d.decision_id IS NULL
+                    OR d.decision_kind NOT IN ('confirm_person', 'not_face'))
+             ORDER BY e.observation_id
+             LIMIT ?2",
+        )?;
+        let rows = statement.query_map(params![embedder_fingerprint, limit as i64], |row| {
+            Ok((
+                row.get::<_, FaceObservationId>(0)?,
+                row.get::<_, String>(1)?,
+                row.get::<_, Vec<u8>>(2)?,
+            ))
+        })?;
+        let mut embeddings = Vec::new();
+        for row in rows {
+            let (observation_id, asset_id, bytes) = row?;
+            embeddings.push((observation_id, asset_id, decode_embedding(&bytes)));
+        }
+        Ok(embeddings)
+    }
+
+    /// Publish both derived views together, only if their settings are still current.
+    pub fn replace_face_derived(
+        &self,
+        settings: &FaceAnalyzerSettings,
+        clustering_fingerprint: &str,
+        clusters: &[FaceCluster],
+        matcher_fingerprint: &str,
+        candidates: &[FaceCandidate],
+        cancellation: &oxy_runtime::CancellationToken,
+    ) -> Result<(), LibraryError> {
+        let mut connection = self.connection.lock();
+        let transaction = connection.transaction()?;
+        if cancellation.is_cancelled() {
+            return Err(LibraryError::StaleFaceResult);
+        }
+        transaction.execute("DELETE FROM face_cluster_members", [])?;
+        transaction.execute("DELETE FROM face_clusters", [])?;
+        transaction.execute("DELETE FROM face_candidates", [])?;
+        write_clusters(&transaction, clustering_fingerprint, clusters)?;
+        write_candidates(&transaction, matcher_fingerprint, candidates)?;
+        // Settings changes cancel the same token before publication. Recheck
+        // after writes so cancellation rolls the whole transaction back.
+        let json: Option<String> = transaction
+            .query_row(
+                "SELECT settings_json FROM face_settings WHERE id=1",
+                [],
+                |row| row.get(0),
+            )
+            .optional()?;
+        let current = json
+            .map(|json| serde_json::from_str::<FaceAnalyzerSettings>(&json))
+            .transpose()?
+            .unwrap_or_default()
+            .sanitized();
+        if current != *settings {
+            return Err(LibraryError::StaleFaceResult);
+        }
+        if cancellation.is_cancelled() {
+            return Err(LibraryError::StaleFaceResult);
+        }
+        transaction.commit()?;
+        Ok(())
+    }
+
     /// Replaces the cluster cache for one clustering fingerprint. Clusters are
     /// rebuildable, so a full replacement is safe; decisions are untouched.
     pub fn replace_face_clusters(
@@ -1027,44 +1469,7 @@ impl Library {
     ) -> Result<(), LibraryError> {
         let mut connection = self.connection.lock();
         let transaction = connection.transaction()?;
-        transaction.execute(
-            "DELETE FROM face_cluster_members WHERE clustering_fingerprint = ?1",
-            params![clustering_fingerprint],
-        )?;
-        transaction.execute(
-            "DELETE FROM face_clusters WHERE clustering_fingerprint = ?1",
-            params![clustering_fingerprint],
-        )?;
-        {
-            let mut cluster_statement = transaction.prepare_cached(
-                "INSERT INTO face_clusters (
-                    cluster_id, clustering_fingerprint, representative_observation_id,
-                    member_count, cohesion_micro, outlier_ids_json
-                 ) VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
-            )?;
-            let mut member_statement = transaction.prepare_cached(
-                "INSERT OR IGNORE INTO face_cluster_members (
-                    cluster_id, clustering_fingerprint, observation_id
-                 ) VALUES (?1, ?2, ?3)",
-            )?;
-            for cluster in clusters {
-                cluster_statement.execute(params![
-                    cluster.cluster_id,
-                    clustering_fingerprint,
-                    cluster.representative_observation_id,
-                    cluster.member_count as i64,
-                    to_micro(cluster.cohesion),
-                    serde_json::to_string(&cluster.outlier_observation_ids)?,
-                ])?;
-                for member in &cluster.observation_ids {
-                    member_statement.execute(params![
-                        cluster.cluster_id,
-                        clustering_fingerprint,
-                        member
-                    ])?;
-                }
-            }
-        }
+        write_clusters(&transaction, clustering_fingerprint, clusters)?;
         transaction.commit()?;
         Ok(())
     }
@@ -1094,20 +1499,34 @@ impl Library {
                     observation_ids: Vec::new(),
                     suggested_person_id: None,
                     suggested_name: None,
+                    member_quality: Vec::new(),
                 })
             })?
             .collect::<Result<Vec<_>, _>>()?;
         let mut member_statement = connection.prepare(
-            "SELECT observation_id FROM face_cluster_members
-             WHERE cluster_id = ?1 AND clustering_fingerprint = ?2
-             ORDER BY observation_id",
+            "SELECT m.observation_id, o.detection_score_micro,
+                    o.face_pixels, o.clarity_score_micro
+             FROM face_cluster_members m
+             JOIN face_observations o ON o.observation_id = m.observation_id
+             WHERE m.cluster_id = ?1 AND m.clustering_fingerprint = ?2
+             ORDER BY m.observation_id",
         )?;
         for cluster in &mut clusters {
-            cluster.observation_ids = member_statement
+            cluster.member_quality = member_statement
                 .query_map(params![cluster.cluster_id, clustering_fingerprint], |row| {
-                    row.get::<_, FaceObservationId>(0)
+                    Ok(oxy_domain::FaceQuality {
+                        observation_id: row.get(0)?,
+                        detection_score: from_micro(row.get(1)?),
+                        face_pixels: row.get::<_, i64>(2)? as u32,
+                        clarity: from_micro(row.get(3)?),
+                    })
                 })?
                 .collect::<Result<Vec<_>, _>>()?;
+            cluster.observation_ids = cluster
+                .member_quality
+                .iter()
+                .map(|member| member.observation_id.clone())
+                .collect();
         }
         Ok(clusters)
     }
@@ -1146,33 +1565,7 @@ impl Library {
     ) -> Result<(), LibraryError> {
         let mut connection = self.connection.lock();
         let transaction = connection.transaction()?;
-        transaction.execute(
-            "DELETE FROM face_candidates WHERE matcher_fingerprint = ?1",
-            params![matcher_fingerprint],
-        )?;
-        {
-            // A user decision outranks a machine proposal structurally: the
-            // insert is a no-op for a face that was already answered, so a
-            // rejected proposal cannot be resurrected by a later matcher run.
-            let mut statement = transaction.prepare_cached(
-                "INSERT OR REPLACE INTO face_candidates (
-                    observation_id, person_id, matcher_fingerprint,
-                    similarity_micro, state
-                 )
-                 SELECT ?1, ?2, ?3, ?4, 'pending'
-                 WHERE NOT EXISTS (
-                    SELECT 1 FROM face_decisions WHERE observation_id = ?1
-                 )",
-            )?;
-            for candidate in candidates {
-                statement.execute(params![
-                    candidate.observation_id,
-                    candidate.person_id,
-                    matcher_fingerprint,
-                    to_micro(candidate.similarity),
-                ])?;
-            }
-        }
+        write_candidates(&transaction, matcher_fingerprint, candidates)?;
         transaction.commit()?;
         Ok(())
     }
@@ -1506,9 +1899,37 @@ impl Library {
         offset: usize,
         limit: usize,
     ) -> Result<FaceReviewPage, LibraryError> {
+        self.face_review_page_filtered(filter, offset, limit, 0.0, 0, 0.0)
+    }
+
+    pub fn face_review_page_filtered(
+        &self,
+        filter: FaceReviewFilter,
+        offset: usize,
+        limit: usize,
+        min_detection_score: f32,
+        min_face_pixels: u32,
+        min_clarity: f32,
+    ) -> Result<FaceReviewPage, LibraryError> {
         let mut reader = self.read_connection();
         let connection = reader.transaction()?;
-        let predicate = filter_predicate(filter);
+        let min_detection_score = if min_detection_score.is_finite() {
+            min_detection_score.clamp(0.0, 1.0)
+        } else {
+            0.0
+        };
+        let min_clarity = if min_clarity.is_finite() {
+            min_clarity.clamp(0.0, 1.0)
+        } else {
+            0.0
+        };
+        let predicate = format!(
+            "({}) AND o.detection_score_micro >= {} AND o.face_pixels >= {} AND o.clarity_score_micro >= {}",
+            filter_predicate(filter),
+            to_micro(min_detection_score),
+            min_face_pixels,
+            to_micro(min_clarity),
+        );
         let total: i64 = connection.query_row(
             &format!(
                 "SELECT COUNT(*) FROM face_observations o
@@ -1521,7 +1942,7 @@ impl Library {
         let mut statement = connection.prepare(&format!(
             "SELECT o.observation_id, o.asset_id, o.asset_path,
                     o.x_micro, o.y_micro, o.width_micro, o.height_micro,
-                    o.detection_score_micro,
+                    o.detection_score_micro, o.face_pixels, o.clarity_score_micro,
                     d.decision_kind, d.person_id, p.display_name,
                     (SELECT c.cluster_id FROM face_cluster_members c
                      WHERE c.observation_id = o.observation_id LIMIT 1)
@@ -1540,10 +1961,12 @@ impl Library {
                     row.get::<_, String>(2)?,
                     rect_from_row(row, 3)?,
                     from_micro(row.get::<_, i64>(7)?),
-                    row.get::<_, Option<String>>(8)?,
-                    row.get::<_, Option<String>>(9)?,
+                    row.get::<_, i64>(8)? as u32,
+                    from_micro(row.get::<_, i64>(9)?),
                     row.get::<_, Option<String>>(10)?,
                     row.get::<_, Option<String>>(11)?,
+                    row.get::<_, Option<String>>(12)?,
+                    row.get::<_, Option<String>>(13)?,
                 ))
             })?
             .collect::<Result<Vec<_>, _>>()?;
@@ -1555,6 +1978,8 @@ impl Library {
             asset_path,
             bbox,
             detection_score,
+            face_pixels,
+            clarity,
             kind,
             person_id,
             person_name,
@@ -1590,6 +2015,9 @@ impl Library {
                 asset_path: PathBuf::from(asset_path),
                 bbox,
                 detection_score,
+                face_pixels,
+                clarity,
+                manual_blurry: None,
                 state,
                 candidate,
                 cluster_id,
@@ -1619,7 +2047,7 @@ impl Library {
         let mut statement = connection.prepare(
             "SELECT o.observation_id, o.asset_id, o.asset_path,
                     o.x_micro, o.y_micro, o.width_micro, o.height_micro,
-                    o.detection_score_micro,
+                    o.detection_score_micro, o.face_pixels, o.clarity_score_micro,
                     d.decision_kind, d.person_id, p.display_name,
                     (SELECT c.cluster_id FROM face_cluster_members c
                      WHERE c.observation_id = o.observation_id LIMIT 1)
@@ -1637,10 +2065,12 @@ impl Library {
                     row.get::<_, String>(2)?,
                     rect_from_row(row, 3)?,
                     from_micro(row.get::<_, i64>(7)?),
-                    row.get::<_, Option<String>>(8)?,
-                    row.get::<_, Option<String>>(9)?,
+                    row.get::<_, i64>(8)? as u32,
+                    from_micro(row.get::<_, i64>(9)?),
                     row.get::<_, Option<String>>(10)?,
                     row.get::<_, Option<String>>(11)?,
+                    row.get::<_, Option<String>>(12)?,
+                    row.get::<_, Option<String>>(13)?,
                 ))
             })?
             .collect::<Result<Vec<_>, _>>()?;
@@ -1651,6 +2081,8 @@ impl Library {
             asset_path,
             bbox,
             detection_score,
+            face_pixels,
+            clarity,
             kind,
             person_id,
             person_name,
@@ -1686,6 +2118,9 @@ impl Library {
                 asset_path: PathBuf::from(asset_path),
                 bbox,
                 detection_score,
+                face_pixels,
+                clarity,
+                manual_blurry: None,
                 state,
                 candidate,
                 cluster_id,
@@ -1882,14 +2317,95 @@ fn pending_candidate(
         .optional()
 }
 
+fn write_clusters(
+    transaction: &Transaction<'_>,
+    clustering_fingerprint: &str,
+    clusters: &[FaceCluster],
+) -> Result<(), LibraryError> {
+    transaction.execute(
+        "DELETE FROM face_cluster_members WHERE clustering_fingerprint = ?1",
+        params![clustering_fingerprint],
+    )?;
+    transaction.execute(
+        "DELETE FROM face_clusters WHERE clustering_fingerprint = ?1",
+        params![clustering_fingerprint],
+    )?;
+    {
+        let mut cluster_statement = transaction.prepare_cached(
+            "INSERT INTO face_clusters (
+                    cluster_id, clustering_fingerprint, representative_observation_id,
+                    member_count, cohesion_micro, outlier_ids_json
+                 ) VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+        )?;
+        let mut member_statement = transaction.prepare_cached(
+            "INSERT OR IGNORE INTO face_cluster_members (
+                    cluster_id, clustering_fingerprint, observation_id
+                 ) VALUES (?1, ?2, ?3)",
+        )?;
+        for cluster in clusters {
+            cluster_statement.execute(params![
+                cluster.cluster_id,
+                clustering_fingerprint,
+                cluster.representative_observation_id,
+                cluster.member_count as i64,
+                to_micro(cluster.cohesion),
+                serde_json::to_string(&cluster.outlier_observation_ids)?,
+            ])?;
+            for member in &cluster.observation_ids {
+                member_statement.execute(params![
+                    cluster.cluster_id,
+                    clustering_fingerprint,
+                    member
+                ])?;
+            }
+        }
+    }
+    Ok(())
+}
+
+fn write_candidates(
+    transaction: &Transaction<'_>,
+    matcher_fingerprint: &str,
+    candidates: &[FaceCandidate],
+) -> Result<(), LibraryError> {
+    transaction.execute(
+        "DELETE FROM face_candidates WHERE matcher_fingerprint = ?1",
+        params![matcher_fingerprint],
+    )?;
+    {
+        // A user decision outranks a machine proposal structurally: the
+        // insert is a no-op for a face that was already answered, so a
+        // rejected proposal cannot be resurrected by a later matcher run.
+        let mut statement = transaction.prepare_cached(
+            "INSERT OR REPLACE INTO face_candidates (
+                    observation_id, person_id, matcher_fingerprint,
+                    similarity_micro, state
+                 )
+                 SELECT ?1, ?2, ?3, ?4, 'pending'
+                 WHERE NOT EXISTS (
+                    SELECT 1 FROM face_decisions WHERE observation_id = ?1
+                 )",
+        )?;
+        for candidate in candidates {
+            statement.execute(params![
+                candidate.observation_id,
+                candidate.person_id,
+                matcher_fingerprint,
+                to_micro(candidate.similarity),
+            ])?;
+        }
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use oxy_domain::{FaceReviewFilter, FaceReviewState};
     use std::path::PathBuf;
 
-    const DETECTOR: &str = "yunet/abc/detect-v1";
-    const EMBEDDER: &str = "sface/def/align-v1";
+    const DETECTOR: &str = "scrfd/abc/detect-v1";
+    const EMBEDDER: &str = "adaface/def/align-v1";
 
     fn rect(x: f32, y: f32, width: f32, height: f32) -> NormalizedRect {
         NormalizedRect::new(x, y, width, height)
@@ -1909,6 +2425,8 @@ mod tests {
                 detector_fingerprint: DETECTOR.into(),
             },
             embedding: vec![0.5, -0.25, 0.125],
+            face_pixels: 128,
+            clarity: 0.8,
         }
     }
 
@@ -1923,6 +2441,283 @@ mod tests {
                 faces,
             )
             .unwrap();
+    }
+
+    #[test]
+    fn confirmed_person_tags_filter_by_ancestor_and_withdraw_on_rejection() {
+        let library = Library::in_memory().unwrap();
+        let tag = library.ensure_custom_tag_path("人物|家人|Alice").unwrap();
+        assert_eq!(
+            library
+                .ensure_custom_tag_path("人物|家人|alice")
+                .unwrap()
+                .id,
+            tag.id
+        );
+        library
+            .create_person("alice", "Alice", Some(tag.id))
+            .unwrap();
+        store(
+            &library,
+            &[face("face", 0, rect(0.1, 0.1, 0.2, 0.2), "rev")],
+            "rev",
+        );
+        let asset = oxy_domain::AssetSummary {
+            id: "asset-1".into(),
+            path: "/photos/a.jpg".into(),
+            name: "a.jpg".into(),
+            extension: "jpg".into(),
+            kind: oxy_domain::AssetKind::Jpeg,
+            size_bytes: 1,
+            modified_at_ms: 0,
+            has_sidecar: false,
+            rating: None,
+            color_label: None,
+            pick_label: None,
+        };
+        let query = oxy_domain::AssetQuery {
+            tag_ids: vec![tag.parent_id.unwrap()],
+            ..Default::default()
+        };
+        assert!(
+            library
+                .filter_assets_by_tags(std::slice::from_ref(&asset), &query)
+                .unwrap()
+                .is_empty()
+        );
+        library
+            .record_face_decision(
+                "face",
+                &FaceDecision::ConfirmPerson {
+                    person_id: "alice".into(),
+                },
+                None,
+            )
+            .unwrap();
+        library.refresh_person_tag_projection().unwrap();
+        assert_eq!(
+            library
+                .filter_assets_by_tags(std::slice::from_ref(&asset), &query)
+                .unwrap()
+                .len(),
+            1
+        );
+        library
+            .record_face_decision("face", &FaceDecision::NotFace, None)
+            .unwrap();
+        library.refresh_person_tag_projection().unwrap();
+        assert!(
+            library
+                .filter_assets_by_tags(&[asset], &query)
+                .unwrap()
+                .is_empty()
+        );
+    }
+
+    #[test]
+    fn linked_person_tags_preserve_manual_ownership() {
+        let library = Library::in_memory().unwrap();
+        let path = Path::new("/photos/a.jpg");
+        let tag = library.create_custom_tag(None, "Alice").unwrap();
+        library
+            .create_person("alice", "Alice", Some(tag.id))
+            .unwrap();
+        store(
+            &library,
+            &[face("face", 0, rect(0.1, 0.1, 0.2, 0.2), "rev")],
+            "rev",
+        );
+        library
+            .record_face_decision(
+                "face",
+                &FaceDecision::ConfirmPerson {
+                    person_id: "alice".into(),
+                },
+                None,
+            )
+            .unwrap();
+        assert!(library.refresh_person_tag_projection().unwrap());
+        assert!(!library.refresh_person_tag_projection().unwrap());
+        library.set_asset_tag(&[path.into()], tag.id, true).unwrap();
+        library.clear_face_decision("face").unwrap();
+        assert!(library.refresh_person_tag_projection().unwrap());
+        let count: i64 = library
+            .connection
+            .lock()
+            .query_row("SELECT COUNT(*) FROM asset_tags", [], |row| row.get(0))
+            .unwrap();
+        assert_eq!(
+            count, 1,
+            "manual assignment survives withdrawal of face confirmation"
+        );
+    }
+
+    #[test]
+    fn projection_admission_rejects_old_workers_and_invalidation() {
+        let library = Library::in_memory().unwrap();
+        let path = Path::new("/photo.jpg");
+        let old = library.begin_face_analysis(path, "revision-a").unwrap();
+        let new = library.begin_face_analysis(path, "revision-b").unwrap();
+        let publish = |revision, valid_at| {
+            library.accept_face_result(FaceResultWrite {
+                asset_path: path,
+                asset_id: "photo",
+                source_revision: revision,
+                detector_fingerprint: "detector",
+                embedder_fingerprint: "embedder",
+                faces: &[],
+                crops: &[],
+                valid_at: Some(valid_at),
+                cancellation: None,
+            })
+        };
+        assert!(matches!(
+            publish("revision-a", old),
+            Err(LibraryError::StaleFaceResult)
+        ));
+        publish("revision-b", new).unwrap();
+        assert!(
+            library
+                .face_scan_is_current(path, "revision-b", "detector")
+                .unwrap()
+        );
+        assert!(
+            library
+                .face_models_are_current(path, "revision-b", "detector", "embedder")
+                .unwrap()
+        );
+        assert!(
+            !library
+                .face_models_are_current(path, "revision-b", "detector", "replacement-embedder")
+                .unwrap()
+        );
+        let invalidated = library.begin_face_analysis(path, "revision-b").unwrap();
+        library.invalidate_face_projections().unwrap();
+        assert!(matches!(
+            publish("revision-b", invalidated),
+            Err(LibraryError::StaleFaceResult)
+        ));
+        assert!(
+            !library
+                .face_scan_is_current(path, "revision-b", "detector")
+                .unwrap()
+        );
+    }
+
+    #[test]
+    fn hundred_thousand_targets_are_bounded_and_deduplicated() {
+        let library = Library::in_memory().unwrap();
+        library.connection.lock().execute_batch(
+            "INSERT INTO library_roots(path) VALUES('/photos'),('/photos/nested');
+             WITH RECURSIVE seq(x) AS (SELECT 1 UNION ALL SELECT x+1 FROM seq WHERE x<100000)
+             INSERT INTO indexed_assets(root_path,path,parent_path,id,name,extension,kind,modified_at_ms,size_bytes,has_sidecar,scan_id)
+             SELECT '/photos', '/photos/nested/' || printf('%06d.jpg',x), '/photos/nested', CAST(x AS TEXT), 'photo', 'jpg','jpeg',1,1,0,1 FROM seq;
+             INSERT INTO indexed_assets SELECT '/photos/nested',path,parent_path,id,name,extension,kind,modified_at_ms,size_bytes,has_sidecar,scan_id FROM indexed_assets;
+             INSERT INTO indexed_roots(root_path,asset_count,directory_count) VALUES('/photos',100000,1);"
+        ).unwrap();
+        let request = oxy_domain::FaceAnalysisRequest::library(false);
+        let mut cursor = None;
+        let mut count = 0;
+        loop {
+            let page = library
+                .face_analysis_page(&request, cursor.as_deref())
+                .unwrap();
+            assert!(page.len() <= 256);
+            if page.is_empty() {
+                break;
+            }
+            assert!(page.windows(2).all(|pair| pair[0].path < pair[1].path));
+            count += page.len();
+            cursor = page.last().map(|target| target.path.clone());
+        }
+        assert_eq!(count, 100000);
+        let run = library.resume_face_run("test").unwrap();
+        library
+            .checkpoint_face_run("test", run.generation, cursor.as_ref().unwrap())
+            .unwrap();
+        assert_eq!(library.resume_face_run("test").unwrap().cursor, cursor);
+        library
+            .connection
+            .lock()
+            .execute("UPDATE indexed_roots SET asset_count=100001", [])
+            .unwrap();
+        assert!(!library.finish_face_run("test", run.generation).unwrap());
+        let fresh = library.resume_face_run("test").unwrap();
+        assert!(fresh.generation > run.generation);
+        assert!(fresh.cursor.is_none());
+    }
+
+    #[test]
+    fn legacy_crop_schema_migrates_before_saving_detected_faces() {
+        let directory = tempfile::tempdir().unwrap();
+        let database = directory.path().join("library.sqlite");
+        let library = Library::open(&database).unwrap();
+        store(
+            &library,
+            &[face("old", 0, rect(0.1, 0.1, 0.2, 0.2), "rev-1")],
+            "rev-1",
+        );
+        library.connection.lock().execute_batch(
+            "DROP TABLE face_crops;
+             CREATE TABLE face_crops (
+                 observation_id TEXT NOT NULL REFERENCES face_observations(observation_id) ON DELETE CASCADE,
+                 size INTEGER NOT NULL, jpeg BLOB NOT NULL,
+                 PRIMARY KEY(observation_id, size)
+             );
+             INSERT INTO face_crops VALUES('old', 128, X'010203');",
+        ).unwrap();
+        drop(library);
+
+        let library = Library::open(&database).unwrap();
+        assert_eq!(library.face_crop("old", 96).unwrap(), None);
+        let count: i64 = library
+            .connection
+            .lock()
+            .query_row(
+                "SELECT count(*) FROM face_observations WHERE observation_id='old'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(count, 1);
+        let path = Path::new("/photos/a.jpg");
+        let valid_at = library.begin_face_analysis(path, "rev-2").unwrap();
+        library
+            .accept_face_result(FaceResultWrite {
+                asset_path: path,
+                asset_id: "asset-1",
+                source_revision: "rev-2",
+                detector_fingerprint: DETECTOR,
+                embedder_fingerprint: EMBEDDER,
+                faces: &[face("new", 0, rect(0.1, 0.1, 0.2, 0.2), "rev-2")],
+                crops: &[StoredFaceCrop {
+                    observation_id: "new".into(),
+                    size: 128,
+                    jpeg: vec![4, 5, 6],
+                }],
+                valid_at: Some(valid_at),
+                cancellation: None,
+            })
+            .unwrap();
+        assert!(
+            library
+                .face_models_are_current(path, "rev-2", DETECTOR, EMBEDDER)
+                .unwrap()
+        );
+        library
+            .connection
+            .lock()
+            .execute(
+                "INSERT INTO face_crops VALUES('new', 128, 'other-policy', X'070809')",
+                [],
+            )
+            .unwrap();
+        drop(library);
+        let library = Library::open(&database).unwrap();
+        assert_eq!(
+            library.face_crop("new", 96).unwrap(),
+            Some((128, vec![4, 5, 6]))
+        );
     }
 
     #[test]
@@ -1978,6 +2773,12 @@ mod tests {
         let embeddings = library.undecided_face_embeddings(EMBEDDER, 100).unwrap();
         assert_eq!(embeddings.len(), 2);
         assert_eq!(embeddings[0].1, vec![0.5, -0.25, 0.125]);
+        let cluster_embeddings = library
+            .undecided_face_cluster_embeddings(EMBEDDER, 100)
+            .unwrap();
+        assert_eq!(cluster_embeddings.len(), 2);
+        assert_eq!(cluster_embeddings[0].1, "asset-1");
+        assert_eq!(cluster_embeddings[0].2, vec![0.5, -0.25, 0.125]);
 
         assert_eq!(
             library
@@ -2314,6 +3115,23 @@ mod tests {
     }
 
     #[test]
+    fn review_quality_filter_is_applied_before_paging() {
+        let library = Library::in_memory().unwrap();
+        let mut blurry = face("blurry", 0, rect(0.1, 0.1, 0.2, 0.2), "rev-1");
+        blurry.clarity = 0.2;
+        blurry.face_pixels = 40;
+        let sharp = face("sharp", 1, rect(0.4, 0.1, 0.2, 0.2), "rev-1");
+        store(&library, &[blurry, sharp], "rev-1");
+
+        let page = library
+            .face_review_page_filtered(FaceReviewFilter::Unknown, 0, 1, 0.9, 64, 0.5)
+            .unwrap();
+        assert_eq!(page.total, 1);
+        assert_eq!(page.items[0].observation_id, "sharp");
+        assert_eq!(page.next_cursor, None);
+    }
+
+    #[test]
     fn person_rename_does_not_touch_confirmations() {
         let library = Library::in_memory().unwrap();
         store(
@@ -2547,6 +3365,7 @@ mod tests {
                     outlier_observation_ids: vec!["f2".into()],
                     suggested_person_id: None,
                     suggested_name: None,
+                    member_quality: Vec::new(),
                 }],
             )
             .unwrap();
@@ -2555,6 +3374,12 @@ mod tests {
         assert_eq!(clusters.len(), 1);
         assert_eq!(clusters[0].observation_ids, vec!["f1", "f2"]);
         assert_eq!(clusters[0].outlier_observation_ids, vec!["f2"]);
+        assert_eq!(clusters[0].member_quality.len(), 2);
+        assert!(
+            clusters[0].member_quality.iter().all(|quality| {
+                quality.face_pixels == 128 && (quality.clarity - 0.8).abs() < 1e-6
+            })
+        );
         assert!((clusters[0].cohesion - 0.82).abs() < 1e-6);
         assert!(library.face_clusters("other").unwrap().is_empty());
     }
@@ -2668,6 +3493,8 @@ mod tests {
                         detector_fingerprint: DETECTOR.into(),
                     },
                     embedding: vec![1.0, 0.0],
+                    face_pixels: 128,
+                    clarity: 0.8,
                 }],
             )
             .unwrap();
@@ -2703,7 +3530,7 @@ mod tests {
         // A different detector also invalidates the checkpoint.
         assert_eq!(
             library
-                .face_analysis_targets("yunet/other/detect-v2", false, 100)
+                .face_analysis_targets("scrfd/other/detect-v2", false, 100)
                 .unwrap()
                 .len(),
             2

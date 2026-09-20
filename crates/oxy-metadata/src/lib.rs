@@ -22,6 +22,8 @@ use std::{
 };
 use thiserror::Error;
 
+mod face_sidecar;
+pub use face_sidecar::{read_face_sidecar, write_face_sidecar};
 mod capture;
 mod engine;
 
@@ -937,11 +939,23 @@ fn exiftool_output(command: &mut Command) -> Result<Output, MetadataError> {
     })
 }
 
+fn sidecar_write_lock(path: &Path) -> &'static std::sync::Mutex<()> {
+    use std::hash::{Hash, Hasher};
+    static LOCKS: std::sync::LazyLock<[std::sync::Mutex<()>; 64]> =
+        std::sync::LazyLock::new(|| std::array::from_fn(|_| std::sync::Mutex::new(())));
+    let mut hash = std::collections::hash_map::DefaultHasher::new();
+    path.hash(&mut hash);
+    &LOCKS[hash.finish() as usize % LOCKS.len()]
+}
+
 fn patch_sidecar(
     asset_path: &Path,
     patch: &oxy_domain::MetadataPatch,
 ) -> Result<PathBuf, MetadataError> {
     let destination = sidecar_path(asset_path);
+    let _guard = sidecar_write_lock(&destination)
+        .lock()
+        .map_err(|_| MetadataError::Read("sidecar lock poisoned".into()))?;
     let mut xml = if destination.is_file() {
         fs::read_to_string(&destination)?
     } else {
@@ -1003,9 +1017,12 @@ fn write_sidecar_atomically(destination: &Path, xml: &str) -> Result<(), Metadat
     ));
     let mut temporary = builder.tempfile_in(parent)?;
     temporary.write_all(xml.as_bytes())?;
+    temporary.as_file().sync_all()?;
     temporary
         .persist(destination)
         .map_err(|error| MetadataError::Io(error.error))?;
+    #[cfg(unix)]
+    fs::File::open(parent)?.sync_all()?;
     Ok(())
 }
 

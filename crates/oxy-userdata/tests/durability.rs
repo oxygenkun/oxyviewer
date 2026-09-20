@@ -18,8 +18,8 @@ use oxy_domain::{
 };
 use oxy_library::{Library, StoredFace};
 
-const DETECTOR: &str = "yunet/durability/detect-v1";
-const EMBEDDER: &str = "sface/durability/align-v1";
+const DETECTOR: &str = "scrfd/durability/detect-v1";
+const EMBEDDER: &str = "adaface/durability/align-v1";
 
 fn rect(x: f32, y: f32, width: f32, height: f32) -> NormalizedRect {
     NormalizedRect::new(x, y, width, height)
@@ -49,6 +49,8 @@ fn store_faces_at(library: &Library, asset: &str, faces: &[(&str, NormalizedRect
         .map(|(id, bbox)| StoredFace {
             observation: observation_at(asset, id, *bbox),
             embedding: vec![1.0, 0.0, 0.0],
+            face_pixels: 128,
+            clarity: 0.8,
         })
         .collect();
     library
@@ -186,6 +188,7 @@ fn the_projection_always_matches_the_durable_store() {
     let now = 1_700_000_000_000u64;
     store
         .upsert_person(PersonRecord {
+            tag_path: None,
             person_id: "p1".into(),
             display_name: "Alice".into(),
             linked_tag_id: None,
@@ -238,6 +241,7 @@ fn a_rejection_survives_the_cache_and_still_blocks_the_proposal() {
     let now = 1_700_000_000_000u64;
     store
         .upsert_person(PersonRecord {
+            tag_path: None,
             person_id: "p1".into(),
             display_name: "Alice".into(),
             linked_tag_id: None,
@@ -401,6 +405,7 @@ fn detaching_faces_returns_them_to_the_unknown_queue() {
     );
     store
         .upsert_person(PersonRecord {
+            tag_path: None,
             person_id: "alice".into(),
             display_name: "Alice".into(),
             linked_tag_id: None,
@@ -569,6 +574,7 @@ fn deleting_an_asset_drops_its_face_data() {
     );
     store
         .upsert_person(PersonRecord {
+            tag_path: None,
             person_id: "alice".into(),
             display_name: "Alice".into(),
             linked_tag_id: None,

@@ -307,7 +307,7 @@ impl ResourceRegistry {
         origin: ImageOrigin,
         artifact_lease: Option<ArtifactLease>,
     ) -> Result<ResourceHandle, MediaError> {
-        let revision = SourceRevision::observe(path)?;
+        let revision = oxy_fs::observe_source_revision(path)?;
         self.register(
             ResourcePayload::File(revision.canonical_path.clone()),
             media_type.into(),
@@ -326,7 +326,7 @@ impl ResourceRegistry {
         dimensions: PixelDimensions,
         origin: ImageOrigin,
     ) -> Result<ResourceHandle, MediaError> {
-        let revision = SourceRevision::observe(owner.path())?;
+        let revision = oxy_fs::observe_source_revision(owner.path())?;
         self.register(
             ResourcePayload::File(revision.canonical_path.clone()),
             media_type.into(),
@@ -393,7 +393,7 @@ impl ResourceRegistry {
             }
         };
         if let Some(expected) = &resource.file_revision {
-            let actual = SourceRevision::observe(&expected.canonical_path)?;
+            let actual = oxy_fs::observe_source_revision(&expected.canonical_path)?;
             if actual != *expected {
                 return Err(MediaError::StaleSourceRevision);
             }
@@ -407,7 +407,7 @@ impl ResourceRegistry {
         path: &Path,
         artifact_lease: &mut Option<ArtifactLease>,
     ) -> Result<bool, MediaError> {
-        let revision = SourceRevision::observe(path)?;
+        let revision = oxy_fs::observe_source_revision(path)?;
         let old_staged_owner = {
             let mut state = self
                 .inner
@@ -681,7 +681,7 @@ impl RegistryInner {
             .file_revision
             .as_ref()
             .is_none_or(|expected| {
-                SourceRevision::observe(&expected.canonical_path)
+                oxy_fs::observe_source_revision(&expected.canonical_path)
                     .is_ok_and(|actual| actual == *expected)
             });
         if !immutable {
@@ -1442,7 +1442,7 @@ mod tests {
     fn source(directory: &Path) -> SourceRevision {
         let path = directory.join("source.jpg");
         DynamicImage::new_rgb8(16, 8).save(&path).unwrap();
-        SourceRevision::observe(&path).unwrap()
+        oxy_fs::observe_source_revision(&path).unwrap()
     }
 
     fn variant(_origin: ImageOrigin) -> VariantIdentity {

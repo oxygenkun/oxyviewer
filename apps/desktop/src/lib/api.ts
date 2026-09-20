@@ -1,4 +1,4 @@
-import { normalizeCustomTag } from "@/lib/assets/tagTree";
+import { ensureTagPath, normalizeCustomTag } from "@/lib/assets/tagTree";
 import { retainMediaResource, releaseUnretainedMediaResource } from "@/lib/cache/mediaResourceLease";
 import { invoke } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
@@ -54,8 +54,8 @@ import type {
   FaceCropResource,
   FaceDecision,
   FaceLibraryStats,
+  FaceModelDownloadProgress,
   FaceObservation,
-  FaceReviewFilter,
   FaceReviewItem,
   FaceReviewPage,
   FaceWorkbenchContext,
@@ -76,7 +76,7 @@ import { beginPreviewDebug } from "@/lib/diagnostics/previewDebug";
 import { sharedThumbnailRequests } from "@/lib/preview/sharedThumbnailRequests";
 
 function cancelGeneratedPreviewRequest(
-  asset: AssetSummary,
+  asset: Pick<AssetSummary, "path">,
   level: RenderLevel,
   requestId: string,
 ): void {
@@ -123,6 +123,7 @@ let demoTags: CustomTag[] = [
   { id: 2, parentId: 1, name: "家人", path: "人物|家人", sortOrder: 0 },
 ];
 const demoAssetTags = new Map<string, Set<number>>();
+const demoFaceOwnedTags = new Map<string, Set<number>>();
 
 function demoTreeChildren(path: string, previous: DirectoryTreeNode[] = []): DirectoryTreeNode[] {
   const previousByPath = new Map(previous.map((node) => [node.entry.path, node]));
@@ -698,7 +699,8 @@ export async function setAssetCustomTag(paths: string[], tagId: number, assigned
   if (!isTauri()) {
     for (const path of paths) {
       const ids = demoAssetTags.get(path) ?? new Set<number>();
-      if (assigned) ids.add(tagId); else ids.delete(tagId);
+      if (assigned) { ids.add(tagId); demoFaceOwnedTags.get(path)?.delete(tagId); }
+      else ids.delete(tagId);
       demoAssetTags.set(path, ids);
     }
     return;
@@ -890,8 +892,21 @@ export async function generatedPreview(
   return requestGeneratedPreview(asset, level, signal, priority, rank);
 }
 
+/** Encoded, bounded whole-photo preview for analysis cards. The host validates
+ * the source revision; callers do not invent file metadata or request Full. */
+export async function faceWorkbenchPreview(path: string, signal?: AbortSignal): Promise<PreviewResult | undefined> {
+  if (!isTauri()) {
+    ensureDemoFaces();
+    const faces = demoFaceReview.items.filter((face) => face.assetPath === path);
+    const shapes = faces.map(({ bbox }) => `<ellipse cx="${(bbox.x + bbox.width / 2) * 600}" cy="${(bbox.y + bbox.height / 2) * 400}" rx="${bbox.width * 280}" ry="${bbox.height * 190}" fill="#8c9298"/>`).join("");
+    const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="600" height="400"><rect width="600" height="400" fill="#262a30"/>${shapes}<text x="24" y="370" fill="#8c9298" font-family="sans-serif" font-size="16">DEMO</text></svg>`;
+    return { path, url: `data:image/svg+xml,${encodeURIComponent(svg)}`, width: 600, height: 400, kind: "decoded", renderLevel: "thumbnail" };
+  }
+  return requestGeneratedPreview({ path, name: path.split(/[\\/]/).at(-1) ?? path }, "thumbnail", signal, "visible", 0);
+}
+
 async function requestGeneratedPreview(
-  asset: AssetSummary,
+  asset: Pick<AssetSummary, "path" | "name">,
   level: RenderLevel,
   signal: AbortSignal | undefined,
   priority: PreviewPriority,
@@ -1234,11 +1249,11 @@ let demoFaceStats: FaceLibraryStats = {
   clusters: 0,
 };
 let demoFaceSettings: FaceAnalyzerSettings = {
-  detectionConfidence: 0.9,
+  detectionConfidence: 0.5,
   nmsThreshold: 0.3,
   maxFacesPerAsset: 64,
   minFacePixels: 24,
-  detectSmallFaces: true,
+  detectSmallFaces: false,
   matchSensitivity: "balanced",
   matchThreshold: 0.363,
   clusterThreshold: 0.363,
@@ -1253,13 +1268,18 @@ function demoFaceItem(index: number, state: FaceReviewPage["items"][number]["sta
     assetPath: `/demo/portrait-${index}.jpg`,
     bbox: { x: 0.1 + (seed % 4) * 0.12, y: 0.12, width, height: width * 1.3 },
     detectionScore: 0.97,
+    facePixels: 48 + index * 24,
+    clarity: 0.35 + index * 0.12,
     state,
   };
 }
 
 /** Builds the demo review queue once, so the people panel has something to show. */
+let demoFacesInitialized = false;
 function ensureDemoFaces(): void {
-  if (demoFaceReview.items.length > 0) return;
+  if (demoFacesInitialized) return;
+  demoFacesInitialized = true;
+  if (!demoFacePersons.some((person) => person.personId === "demo-person-1")) demoFacePersons.push({ personId: "demo-person-1", displayName: "Demo Person", createdAtMs: 0, updatedAtMs: 0, faceCount: 0 });
   const states: Array<FaceReviewPage["items"][number]["state"]> = [
     "pending",
     "pending",
@@ -1289,6 +1309,12 @@ function ensureDemoFaces(): void {
       memberCount: 3,
       cohesion: 0.71,
       outlierObservationIds: ["demo-face-4"],
+      memberQuality: items.slice(2).map((item) => ({
+        observationId: item.observationId,
+        detectionScore: item.detectionScore,
+        facePixels: item.facePixels ?? 0,
+        clarity: item.clarity ?? 0,
+      })),
     },
   ];
   demoFaceStats = {
@@ -1309,10 +1335,24 @@ export async function getFaceCapability(): Promise<FaceCapability> {
       running: false,
       settings: demoFaceSettings,
       stats: demoFaceStats,
+      models: [
+        { id: "scrfd-10g-kps", displayName: "SCRFD-10G KPS", installed: false, sizeBytes: 16_923_827, downloadSizeBytes: 288_621_354, licenseSummary: "Non-commercial research only." },
+        { id: "adaface-ir101", displayName: "AdaFace IR-101", installed: false, sizeBytes: 260_704_652, downloadSizeBytes: 260_704_652, licenseSummary: "Experimental model licensing must be reviewed." },
+      ],
       peopleStorePath: "demo/people.json",
     };
   }
   return invoke<FaceCapability>("get_face_capability");
+}
+
+export async function installFaceModel(modelId: string): Promise<FaceCapability> {
+  if (!isTauri()) {
+    const capability = await getFaceCapability();
+    capability.models = capability.models.map((model) => model.id === modelId ? { ...model, installed: true } : model);
+    capability.available = capability.models.every((model) => model.installed);
+    return capability;
+  }
+  return invoke<FaceCapability>("install_face_model", { modelId });
 }
 
 /**
@@ -1343,6 +1383,7 @@ export async function updateFaceAnalyzerSettings(
 
 export async function startFaceAnalysis(request: FaceAnalysisRequest = {}): Promise<string> {
   if (!isTauri()) {
+    demoFacesInitialized = false;
     ensureDemoFaces();
     return "demo-face-job";
   }
@@ -1376,10 +1417,12 @@ export async function createPerson(
 ): Promise<Person> {
   if (!isTauri()) {
     ensureDemoFaces();
+    const tag = linkedTagId == null ? await ensureTagPath(`人物|${displayName}`, demoTags, createCustomTag) : demoTags.find((tag) => tag.id === linkedTagId);
+    if (!tag) throw new Error("Tag not found");
     const person: Person = {
       personId,
       displayName,
-      linkedTagId: linkedTagId ?? undefined,
+      linkedTagId: tag.id,
       createdAtMs: Date.now(),
       updatedAtMs: Date.now(),
       faceCount: 0,
@@ -1398,15 +1441,41 @@ export async function createPerson(
 export async function renamePerson(personId: string, displayName: string): Promise<void> {
   if (!isTauri()) {
     const person = demoFacePersons.find((entry) => entry.personId === personId);
-    if (person) person.displayName = displayName;
+    if (person) {
+      const path = demoTags.find((tag) => tag.id === person.linkedTagId)?.path ?? `人物|${person.displayName}`;
+      const parent = path.split("|").slice(0, -1).join("|") || "人物";
+      await setPersonTagPath(personId, `${parent}|${displayName}`);
+      person.displayName = displayName;
+      for (const face of demoFaceReview.items) if (face.confirmedPersonId === personId) face.confirmedPersonName = displayName;
+    }
     return;
   }
   await invoke("rename_person", { personId, displayName });
 }
 
 export async function linkPersonTag(personId: string, tagId: number | null): Promise<void> {
-  if (!isTauri()) return;
+  if (!isTauri()) {
+    const person = demoFacePersons.find((person) => person.personId === personId);
+    if (!person) throw new Error("Person not found");
+    const path = demoTags.find((tag) => tag.id === tagId)?.path ?? `人物|${person.displayName}`;
+    await setPersonTagPath(personId, path);
+    return;
+  }
   await invoke("link_person_tag", { personId, tagId });
+}
+
+export async function setPersonTagPath(personId: string, path: string): Promise<void> {
+  if (!isTauri()) {
+    ensureDemoFaces();
+    const person = demoFacePersons.find((person) => person.personId === personId);
+    if (!person) throw new Error("Person not found");
+    const tag = await ensureTagPath(path, demoTags, createCustomTag);
+    person.linkedTagId = tag.id;
+    person.updatedAtMs = Date.now();
+    refreshDemoFaceCounts();
+    return;
+  }
+  await invoke("set_person_tag_path", { personId, path });
 }
 
 /**
@@ -1421,10 +1490,17 @@ export async function mergePersons(
     const source = demoFacePersons.find((entry) => entry.personId === sourcePersonId);
     const target = demoFacePersons.find((entry) => entry.personId === targetPersonId);
     if (!source || !target) throw new Error("Unknown person");
-    target.faceCount += source.faceCount;
+    if (source === target) return 0;
+    const moved = demoFaceReview.items.filter((face) => face.confirmedPersonId === sourcePersonId);
+    if (target.linkedTagId === undefined) target.linkedTagId = (await ensureTagPath(`人物|${target.displayName}`, demoTags, createCustomTag)).id;
+    for (const face of moved) {
+      face.confirmedPersonId = targetPersonId;
+      face.confirmedPersonName = target.displayName;
+    }
     demoFacePersons.splice(demoFacePersons.indexOf(source), 1);
+    refreshDemoFaceCounts();
     demoFaceStats = { ...demoFaceStats, persons: demoFacePersons.length };
-    return source.faceCount;
+    return moved.length;
   }
   return invoke<number>("merge_persons", { sourcePersonId, targetPersonId });
 }
@@ -1443,7 +1519,10 @@ export async function assignFacesToPerson(
   personId: string,
   observationIds: string[],
 ): Promise<number> {
-  if (!isTauri()) return 0;
+  if (!isTauri()) {
+    for (const id of observationIds) await decideFace(id, { decision: "confirmPerson", personId });
+    return observationIds.length;
+  }
   return invoke<number>("assign_faces_to_person", { personId, observationIds });
 }
 
@@ -1461,10 +1540,38 @@ export async function deletePerson(personId: string): Promise<number> {
   if (!isTauri()) {
     const index = demoFacePersons.findIndex((entry) => entry.personId === personId);
     if (index >= 0) demoFacePersons.splice(index, 1);
+    const affected = demoFaceReview.items.filter((face) => face.confirmedPersonId === personId);
+    for (const face of affected) {
+      face.state = "unknown";
+      face.confirmedPersonId = undefined;
+      face.confirmedPersonName = undefined;
+    }
+    refreshDemoFaceCounts();
     demoFaceStats = { ...demoFaceStats, persons: demoFacePersons.length };
-    return 0;
+    return affected.length;
   }
   return invoke<number>("delete_person", { personId });
+}
+
+function refreshDemoFaceCounts(): void {
+  for (const [path, ids] of demoFaceOwnedTags) for (const id of ids) demoAssetTags.get(path)?.delete(id);
+  demoFaceOwnedTags.clear();
+  for (const face of demoFaceReview.items) {
+    if (face.state !== "confirmed") continue;
+    const person = demoFacePersons.find((person) => person.personId === face.confirmedPersonId);
+    if (person?.linkedTagId === undefined) continue;
+    const ids = demoAssetTags.get(face.assetPath) ?? new Set<number>();
+    if (!ids.has(person.linkedTagId)) {
+      const owned = demoFaceOwnedTags.get(face.assetPath) ?? new Set<number>();
+      owned.add(person.linkedTagId);
+      demoFaceOwnedTags.set(face.assetPath, owned);
+    }
+    ids.add(person.linkedTagId);
+    demoAssetTags.set(face.assetPath, ids);
+  }
+  for (const person of demoFacePersons) person.faceCount = demoFaceReview.items.filter((item) => item.state === "confirmed" && item.confirmedPersonId === person.personId).length;
+  demoFaceStats.pendingReviews = demoFaceReview.items.filter((item) => item.state === "pending").length;
+  demoFaceStats.unknownFaces = demoFaceReview.items.filter((item) => item.state === "unknown").length;
 }
 
 export async function decideFace(
@@ -1485,13 +1592,27 @@ export async function decideFace(
         decision.decision === "confirmPerson" ? decision.personId : undefined;
       if (decision.decision === "confirmPerson") {
         const person = demoFacePersons.find((entry) => entry.personId === decision.personId);
+        if (person && person.linkedTagId === undefined) person.linkedTagId = (await ensureTagPath(`人物|${person.displayName}`, demoTags, createCustomTag)).id;
         item.confirmedPersonName = person?.displayName;
-        if (person) person.faceCount += 1;
-      }
+      } else item.confirmedPersonName = undefined;
     }
+    refreshDemoFaceCounts();
     return;
   }
   await invoke("decide_face", { observationId, decision });
+}
+
+/** Manual quality is independent of identity; null restores automatic judgement. */
+export async function setFaceClarity(observationIds: string[], blurry: boolean | null): Promise<void> {
+  if (!isTauri()) {
+    ensureDemoFaces();
+    const ids = new Set(observationIds);
+    for (const item of demoFaceReview.items) {
+      if (ids.has(item.observationId)) item.manualBlurry = blurry ?? undefined;
+    }
+    return;
+  }
+  await invoke("set_face_clarity", { observationIds, blurry });
 }
 
 export async function clearFaceDecision(observationId: string): Promise<void> {
@@ -1503,28 +1624,22 @@ export async function clearFaceDecision(observationId: string): Promise<void> {
       item.confirmedPersonId = undefined;
       item.confirmedPersonName = undefined;
     }
+    refreshDemoFaceCounts();
     return;
   }
   await invoke("clear_face_decision", { observationId });
 }
 
 export async function getFaceReviewPage(
-  filter: FaceReviewFilter,
   cursor = 0,
   pageSize = 200,
 ): Promise<FaceReviewPage> {
   if (!isTauri()) {
     ensureDemoFaces();
-    const items = demoFaceReview.items.filter((item) => {
-      if (filter === "all") return true;
-      if (filter === "pending") return item.state === "pending";
-      if (filter === "unknown") return item.state === "unknown";
-      if (filter === "confirmed") return item.state === "confirmed";
-      return item.state === "rejected" || item.state === "notFace";
-    });
-    return { items, total: items.length, nextCursor: null };
+    const items = demoFaceReview.items;
+    return { items: structuredClone(items.slice(cursor, cursor + pageSize)), total: items.length, nextCursor: cursor + pageSize < items.length ? cursor + pageSize : null };
   }
-  return invoke<FaceReviewPage>("get_face_review_page", { filter, cursor, pageSize });
+  return invoke<FaceReviewPage>("get_face_review_page", { cursor, pageSize });
 }
 
 export async function getFaceClusters(): Promise<FaceCluster[]> {
@@ -1569,6 +1684,13 @@ export async function onFaceAnalysisProgress(
 ): Promise<UnlistenFn> {
   if (!isTauri()) return () => {};
   return listen<FaceAnalysisProgress>("face-analysis-progress", (event) => callback(event.payload));
+}
+
+export async function onFaceModelDownloadProgress(
+  callback: (progress: FaceModelDownloadProgress) => void,
+): Promise<UnlistenFn> {
+  if (!isTauri()) return () => {};
+  return listen<FaceModelDownloadProgress>("face-model-download-progress", (event) => callback(event.payload));
 }
 
 export async function onFaceLibraryUpdated(
@@ -1723,4 +1845,29 @@ export async function onFaceAssetReveal(
     });
   }
   return listen<FaceAssetReveal>("face-asset-reveal", (event) => callback(event.payload));
+}
+
+export async function getFaceSyncStatus(): Promise<import("@/types").FaceSyncStatus[]> {
+  if (!isTauri()) return [];
+  return invoke("get_face_sync_status");
+}
+
+export async function resolveFaceSyncConflict(path: string, useRemote: boolean): Promise<void> {
+  if (!isTauri()) return;
+  return invoke("resolve_face_sync_conflict", { path, useRemote });
+}
+
+export async function clearFaceAnalysisData(): Promise<void> {
+  if (!isTauri()) {
+    demoFacesInitialized = true;
+    demoFaceReview = { items: [], total: 0, nextCursor: null };
+    demoFaceClusters = [];
+    demoFaceStats = { analyzedAssets: 0, facesDetected: 0, persons: demoFacePersons.length, pendingReviews: 0, unknownFaces: 0, clusters: 0 };
+    return;
+  }
+  return invoke("clear_face_analysis_data");
+}
+export async function deletePeopleAnnotations(): Promise<void> {
+  if (!isTauri()) { demoFacePersons.splice(0); await clearFaceAnalysisData(); return; }
+  return invoke("delete_people_annotations");
 }
