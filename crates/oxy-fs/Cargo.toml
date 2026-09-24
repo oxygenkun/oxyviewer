@@ -11,6 +11,7 @@ workspace = true
 [dependencies]
 oxy-domain = { path = "../oxy-domain" }
 parking_lot.workspace = true
+sha2.workspace = true
 thiserror.workspace = true
 trash.workspace = true
 

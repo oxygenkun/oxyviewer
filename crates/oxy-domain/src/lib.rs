@@ -9,6 +9,8 @@ mod external_apps;
 pub use external_apps::*;
 mod about;
 pub use about::*;
+mod person;
+pub use person::*;
 
 pub type AssetId = String;
 pub type JobId = String;
@@ -910,6 +912,7 @@ pub enum TagMatchMode {
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 #[serde(rename_all = "camelCase")]
 pub struct AssetQuery {
+    pub person_filter: Option<PersonFilter>,
     #[serde(default)]
     pub tag_ids: Vec<CustomTagId>,
     #[serde(default)]

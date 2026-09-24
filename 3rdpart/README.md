@@ -10,6 +10,7 @@ each component retains the upstream build system appropriate to its artifact.
 | libjpeg-turbo 3.1.3 | `3rdpart/libjpeg-turbo` Git submodule | Static library linked into OxyViewer |
 | libheif 1.23.4 | URL and SHA-256 in `3rdpart/libheif/source.json`, built with the pinned FFmpeg decoder on macOS/Linux; the vcpkg curated registry at revision `0635f447edcc25f50645afade4e91a229a35fcdc` (libde265 decoder) on Windows | Static native library linked through `libheif-rs` |
 | FFmpeg 9.0.1 | URL and SHA-256 in `3rdpart/ffmpeg/source.json` | Standalone `oxy-ffmpeg` and `oxy-ffprobe` sidecars, plus the static prefix that libheif links on macOS/Linux |
+| sqlite-vec 0.1.9 | Exact Cargo version in `Cargo.toml` and checksum in `Cargo.lock` | Statically compiled C SQLite extension used by the rebuildable person feature cache |
 
 Build prerequisites and commands belong in [CONTRIBUTING.md](../CONTRIBUTING.md).
 For FFmpeg-specific packaging, verification, and redistribution requirements,

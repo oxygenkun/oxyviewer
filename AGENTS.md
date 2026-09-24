@@ -29,7 +29,24 @@ Repository-specific rules for coding agents working on OxyViewer.
 - Keep blocking and CPU-heavy media work off async and UI threads. Preserve
   priority, cancellation, generation, invalidation, lease, and stale-result
   semantics when replacing an implementation.
-- Treat the SQLite library and generated previews as rebuildable caches.
+- Treat the SQLite library and generated previews as rebuildable caches, but
+  only in `oxy-library::cache`. Everything in `oxy-library::user` (library
+  roots, tags, person identity, reviews, historical links, person tag mapping,
+  `person_request_results`) is user data: never delete it from a cache clear,
+  cache migration, or re-index, and never add a deletion path that is not an
+  explicit, confirmed user action.
+- Deletion follows ownership, not a list. A cache table is emptied by the
+  `oxy-library::cache` module that created it, in a `clear()` next to that
+  module's DDL. Declare a new table in the owning module's `TABLES` constant
+  and, if it is cache, delete it in that module's `clear()`. There is no
+  registry to update: `oxy-library::schema` derives each table's class from the
+  namespace that declared it and only audits the result. Never delete by
+  table-name prefix and never drop the database.
+- A module may read across the cache/user boundary but never write across it.
+  Call a named function on the owning module (for example
+  `cache::index::forget_root` or `cache::features::forget_asset`) instead of
+  writing SQL against another namespace's tables. A source-level test in
+  `schema.rs` fails the build's tests on any cross-namespace write.
 - Route file discovery and safe file operations through `oxy-fs`; do not add
   ad hoc frontend filesystem access.
 - Treat native dependencies as pinned inputs. Do not change submodules, the

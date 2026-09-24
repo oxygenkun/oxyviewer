@@ -17,7 +17,7 @@ type DirectoryKey = (PathBuf, PathBuf);
 
 const SNAPSHOT_PERSIST_QUEUE_CAPACITY: usize = 64;
 
-pub(super) struct DirectorySnapshots {
+pub(crate) struct DirectorySnapshots {
     slots: Mutex<HashMap<DirectoryKey, Arc<Slot>>>,
     pub background_scan: Mutex<()>,
     persistence: SnapshotPersistence,
@@ -86,7 +86,7 @@ struct SnapshotPublish {
 }
 
 impl DirectorySnapshots {
-    pub(super) fn new(connection: Arc<Mutex<Connection>>) -> Self {
+    pub(crate) fn new(connection: Arc<Mutex<Connection>>) -> Self {
         let (sender, receiver) = mpsc::sync_channel(SNAPSHOT_PERSIST_QUEUE_CAPACITY);
         let worker = thread::Builder::new()
             .name("directory-snapshot-persistence".into())
@@ -109,6 +109,12 @@ impl DirectorySnapshots {
                 worker: Mutex::new(Some(worker)),
             },
         }
+    }
+
+    /// Drops every in-memory snapshot. Used when the persisted cache is wiped,
+    /// so a surviving slot cannot serve rows that were just deleted.
+    pub(crate) fn invalidate_all(&self) {
+        self.slots.lock().clear();
     }
 
     fn enqueue(&self, slot: Arc<Slot>, item: PersistenceItem) -> Result<(), String> {
@@ -208,7 +214,17 @@ fn record_persistence_error(slot: &Slot, item: &PersistenceItem, error: String) 
     }
 }
 
-pub(super) fn ensure_schema(connection: &Connection) -> Result<(), rusqlite::Error> {
+/// Tables created by [`ensure_schema`].
+///
+/// Declared beside the DDL so the registry cannot drift from the schema it
+/// describes, and so claiming a table is the same act as creating it.
+pub(super) const TABLES: &[&str] = &["directory_snapshots"];
+
+/// Tables [`clear`] empties of content but never of their allocator or format
+/// marker; see [`crate::schema::preserved_on_clear`].
+pub(super) const PRESERVED: &[&str] = &[];
+
+pub(crate) fn ensure_schema(connection: &Connection) -> Result<(), rusqlite::Error> {
     connection.execute_batch(
         "CREATE TABLE IF NOT EXISTS directory_snapshots (
         root_path TEXT NOT NULL, directory_path TEXT NOT NULL,
@@ -217,8 +233,15 @@ pub(super) fn ensure_schema(connection: &Connection) -> Result<(), rusqlite::Err
     )
 }
 
+/// Empties the table created by [`ensure_schema`]. In-memory slots are dropped
+/// separately by [`Library::clear_rebuildable_cache`], because a slot must not
+/// answer from rows that no longer exist.
+pub(crate) fn clear(connection: &Connection) -> Result<(), rusqlite::Error> {
+    connection.execute_batch("DELETE FROM directory_snapshots")
+}
+
 impl Library {
-    pub(super) fn validated_directory_assets(
+    pub(crate) fn validated_directory_assets(
         &self,
         root: &Path,
         directory: &Path,
@@ -304,11 +327,14 @@ impl Library {
                 if state.assets.is_none() && !has_snapshot_record {
                     let mut reader = self.read_connection();
                     let transaction = reader.transaction()?;
-                    if super::has_completed_index(&transaction, &root.to_string_lossy())? {
+                    if crate::cache::index::has_completed_index(
+                        &transaction,
+                        &root.to_string_lossy(),
+                    )? {
                         state.assets = Some(Arc::new(transaction.prepare(
                             "SELECT id,path,name,extension,kind,size_bytes,modified_at_ms,has_sidecar
                              FROM indexed_assets WHERE root_path=?1 AND parent_path=?2"
-                        )?.query_map(params![root.to_string_lossy(), directory.to_string_lossy()], super::asset_from_row)?
+                        )?.query_map(params![root.to_string_lossy(), directory.to_string_lossy()], crate::cache::index::asset_from_row)?
                             .collect::<Result<Vec<_>, _>>()?));
                     }
                 }
@@ -507,7 +533,7 @@ impl Library {
         )?)
     }
 
-    pub(super) fn invalidate_snapshot_root(&self, root: &Path) -> Result<(), LibraryError> {
+    pub(crate) fn invalidate_snapshot_root(&self, root: &Path) -> Result<(), LibraryError> {
         let slots = self.directory_snapshots.slots.lock();
         let matching = slots
             .iter()

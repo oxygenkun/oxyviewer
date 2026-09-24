@@ -1,7 +1,6 @@
 # Rust Style and Lint Policy
 
-OxyViewer targets Rust 2024 with a minimum supported Rust version (MSRV) of
-1.85. Rust code must follow `rustfmt` and pass the workspace Clippy policy.
+Rust code must follow `rustfmt` and pass the workspace Clippy policy.
 
 ## Required checks
 

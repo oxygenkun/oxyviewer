@@ -13,6 +13,7 @@ Native runtime components:
 | OxyViewer metadata parser (SiftX fork at `fcf8e3d`) | Pure-Rust EXIF/XMP/IPTC/ICC/MakerNote reads | Modified image-only fork, statically linked under the MIT OR Apache-2.0 license; upstream notices retained |
 | libheif 1.23.4 | HEIF/HEIC decoding | Statically linked from the pinned source with the pinned FFmpeg decoder on macOS/Linux, and from the pinned vcpkg revision with the libde265 decoder on Windows; codec licenses reviewed per platform. libheif is LGPL-3.0-only; the MIT terms in its `COPYING` cover only the sample applications and language wrappers, which are not redistributed here |
 | libjpeg-turbo 3.1.3 | JPEG thumbnail decoding and tile coefficient stitching | Pinned upstream Git submodule, statically linked with SIMD; IJG/BSD-3-Clause/zlib notices retained in `3rdpart/libjpeg-turbo/LICENSE.md` and `README.ijg` |
+| sqlite-vec 0.1.9 | Local person feature distance functions | Pinned Cargo crate compiling its C source into the application; upstream MIT OR Apache-2.0 license. Include the chosen license text and copyright notice in distributed packages |
 | ExifTool | Optional metadata compatibility/write worker | Separate process; Artistic/GPL terms reviewed before release |
 
 OxyViewer does not link Exiv2 because the product must retain the option of

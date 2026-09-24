@@ -15,6 +15,7 @@ oxy-runtime = { path = "../oxy-runtime" }
 parking_lot.workspace = true
 rusqlite.workspace = true
 serde_json.workspace = true
+sqlite-vec.workspace = true
 thiserror.workspace = true
 
 [dev-dependencies]

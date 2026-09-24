@@ -1,3 +1,4 @@
+use sha2::{Digest, Sha256};
 use std::{fs, io, path::Path, path::PathBuf};
 
 /// A point-in-time observation of one filesystem object.
@@ -10,6 +11,36 @@ pub struct FileObservation {
     pub file_identity: String,
     pub size_bytes: u64,
     pub modified: String,
+}
+
+impl FileObservation {
+    /// Matches the media cache's versioned source key for this observation.
+    pub fn revision_id(&self) -> String {
+        let mut hasher = Sha256::new();
+        hasher.update(b"oxy-media-source-revision-v2\0");
+        update_path(&mut hasher, &self.canonical_path);
+        hasher.update(self.file_identity.as_bytes());
+        hasher.update([0]);
+        hasher.update(self.size_bytes.to_le_bytes());
+        hasher.update(self.modified.as_bytes());
+        format!("{:x}", hasher.finalize())
+    }
+}
+
+#[cfg(unix)]
+fn update_path(hasher: &mut Sha256, path: &Path) {
+    use std::os::unix::ffi::OsStrExt;
+    hasher.update(path.as_os_str().as_bytes());
+    hasher.update([0]);
+}
+
+#[cfg(windows)]
+fn update_path(hasher: &mut Sha256, path: &Path) {
+    use std::os::windows::ffi::OsStrExt;
+    for code_unit in path.as_os_str().encode_wide() {
+        hasher.update(code_unit.to_le_bytes());
+    }
+    hasher.update([0, 0]);
 }
 
 pub fn observe_file(path: &Path) -> io::Result<FileObservation> {

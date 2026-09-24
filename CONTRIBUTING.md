@@ -18,7 +18,7 @@ You will need:
 
 - Node.js 22
 - pnpm 10.34.5 (the version pinned in `package.json`)
-- Rust 1.85 or newer with `rustfmt` and `clippy` (the workspace uses edition 2024)
+- Rust 1.88 or newer with `rustfmt` and `clippy` (the workspace uses edition 2024)
 - The platform prerequisites required by Tauri 2
 - CMake and a C/C++ compiler for the linked native media libraries
 - `pkg-config` on macOS and Linux (`brew install pkg-config` or the

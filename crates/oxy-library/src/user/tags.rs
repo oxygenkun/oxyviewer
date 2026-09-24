@@ -1,10 +1,453 @@
-use crate::{Library, LibraryError};
+use crate::{
+    Library, LibraryError,
+    cache::features::{forget_asset, rename_asset},
+};
 use oxy_domain::{
-    AssetTagAssignment, AssetTagAssignmentsByPath, CustomTag, CustomTagId, TagDeleteImpact,
-    TagSyncStatus,
+    AssetTagAssignment, AssetTagAssignmentsByPath, CustomTag, CustomTagId, PersonTagLink,
+    PersonTagOverride, SetPersonTagLink, SetPersonTagOverride, TagDeleteImpact, TagSyncStatus,
 };
 use rusqlite::{OptionalExtension, Transaction, params};
 use std::{collections::HashMap, path::Path};
+
+/// Creates the user-owned tag tables. Tags are facts the user entered, so they
+/// are never part of a cache rebuild; only an explicit delete removes them.
+/// Tables created by [`ensure_schema`]. User-owned because this module lives in
+/// [`crate::user`]; there is no second list that could claim otherwise.
+pub(super) const TABLES: &[&str] = &[
+    "custom_tags",
+    "asset_tags",
+    "asset_tag_sources",
+    "asset_tag_xmp_state",
+    "tag_xmp_sync_queue",
+];
+
+pub(crate) fn ensure_schema(connection: &rusqlite::Connection) -> Result<(), rusqlite::Error> {
+    connection.execute_batch(
+        "CREATE TABLE IF NOT EXISTS custom_tags (
+           id INTEGER PRIMARY KEY AUTOINCREMENT,
+           parent_id INTEGER REFERENCES custom_tags(id) ON DELETE CASCADE,
+           name TEXT NOT NULL,
+           name_key TEXT NOT NULL,
+           sort_order INTEGER NOT NULL,
+           created_at INTEGER NOT NULL DEFAULT (unixepoch()),
+           updated_at INTEGER NOT NULL DEFAULT (unixepoch())
+         );
+         CREATE UNIQUE INDEX IF NOT EXISTS custom_tags_sibling_name
+           ON custom_tags(COALESCE(parent_id, 0), name_key);
+         CREATE INDEX IF NOT EXISTS custom_tags_parent
+           ON custom_tags(parent_id, sort_order, name);
+         CREATE TABLE IF NOT EXISTS asset_tags (
+           asset_path TEXT NOT NULL,
+           tag_id INTEGER NOT NULL REFERENCES custom_tags(id) ON DELETE CASCADE,
+           assigned_at INTEGER NOT NULL DEFAULT (unixepoch()),
+           PRIMARY KEY(asset_path, tag_id)
+         );
+         CREATE INDEX IF NOT EXISTS asset_tags_tag ON asset_tags(tag_id, asset_path);
+         CREATE TABLE IF NOT EXISTS asset_tag_xmp_state (
+           asset_path TEXT PRIMARY KEY NOT NULL,
+           subjects_json TEXT NOT NULL DEFAULT '[]',
+           hierarchical_json TEXT NOT NULL DEFAULT '[]',
+           synced_at INTEGER NOT NULL DEFAULT (unixepoch())
+         );
+         CREATE TABLE IF NOT EXISTS tag_xmp_sync_queue (
+           asset_path TEXT PRIMARY KEY NOT NULL,
+           requested_at INTEGER NOT NULL DEFAULT (unixepoch()),
+           attempt_count INTEGER NOT NULL DEFAULT 0,
+           last_error TEXT
+         );
+         ",
+    )
+}
+
+pub(crate) fn ensure_source_schema(
+    connection: &rusqlite::Connection,
+) -> Result<(), rusqlite::Error> {
+    connection.execute_batch(
+        "BEGIN;
+         CREATE TABLE IF NOT EXISTS asset_tag_sources (
+           asset_path TEXT NOT NULL,
+           tag_id INTEGER NOT NULL REFERENCES custom_tags(id) ON DELETE CASCADE,
+           source_kind TEXT NOT NULL CHECK(source_kind IN ('legacy','manual','sidecar','person')),
+           source_id TEXT NOT NULL DEFAULT '',
+           PRIMARY KEY(asset_path,tag_id,source_kind,source_id)
+         );
+         CREATE INDEX IF NOT EXISTS asset_tag_sources_tag
+           ON asset_tag_sources(tag_id,source_kind,asset_path);
+         INSERT OR IGNORE INTO asset_tag_sources(asset_path,tag_id,source_kind,source_id)
+           SELECT a.asset_path,a.tag_id,'legacy','' FROM asset_tags a
+           WHERE NOT EXISTS (SELECT 1 FROM asset_tag_sources s
+             WHERE s.asset_path=a.asset_path AND s.tag_id=a.tag_id);
+         COMMIT;",
+    )
+}
+
+fn reconcile_effective_tag(
+    transaction: &Transaction<'_>,
+    path: &str,
+    tag_id: CustomTagId,
+) -> Result<(), rusqlite::Error> {
+    let has_source: bool = transaction.query_row(
+        "SELECT EXISTS(SELECT 1 FROM asset_tag_sources WHERE asset_path=?1 AND tag_id=?2)",
+        params![path, tag_id],
+        |row| row.get(0),
+    )?;
+    if has_source {
+        transaction.execute(
+            "INSERT OR IGNORE INTO asset_tags(asset_path,tag_id) VALUES (?1,?2)",
+            params![path, tag_id],
+        )?;
+    } else {
+        transaction.execute(
+            "DELETE FROM asset_tags WHERE asset_path=?1 AND tag_id=?2",
+            params![path, tag_id],
+        )?;
+    }
+    Ok(())
+}
+
+pub(crate) fn reconcile_person_source_for_subject_asset(
+    transaction: &Transaction<'_>,
+    subject_id: &str,
+    asset_path: &str,
+) -> Result<(), rusqlite::Error> {
+    let desired: Option<CustomTagId> = transaction
+        .query_row(
+            "SELECT t.tag_id FROM folder_historical_links l
+         JOIN person_tag_links t ON t.historical_person_id=l.historical_person_id
+         WHERE l.subject_id=?1 AND t.enabled=1 AND t.tag_id IS NOT NULL
+           AND NOT EXISTS (SELECT 1 FROM person_tag_overrides o
+             WHERE o.historical_person_id=l.historical_person_id
+               AND o.asset_path=?2 AND o.suppressed=1)
+           AND EXISTS (SELECT 1 FROM person_review_decisions r
+             JOIN person_manual_instances i ON i.id=r.instance_id
+             WHERE r.subject_id=?1 AND i.asset_path=?2
+               AND r.decision='belongs' AND i.needs_review=0)",
+            params![subject_id, asset_path],
+            |row| row.get(0),
+        )
+        .optional()?;
+    let old = {
+        let mut statement = transaction.prepare(
+            "SELECT tag_id FROM asset_tag_sources
+             WHERE asset_path=?1 AND source_kind='person' AND source_id=?2",
+        )?;
+        statement
+            .query_map(params![asset_path, subject_id], |row| {
+                row.get::<_, CustomTagId>(0)
+            })?
+            .collect::<Result<std::collections::HashSet<_>, _>>()?
+    };
+    let mut affected = old;
+    if let Some(tag_id) = desired {
+        affected.insert(tag_id);
+    }
+    let before = affected
+        .iter()
+        .map(|tag_id| {
+            transaction
+                .query_row(
+                    "SELECT EXISTS(SELECT 1 FROM asset_tags WHERE asset_path=?1 AND tag_id=?2)",
+                    params![asset_path, tag_id],
+                    |row| row.get::<_, bool>(0),
+                )
+                .map(|present| (*tag_id, present))
+        })
+        .collect::<Result<HashMap<_, _>, _>>()?;
+    transaction.execute(
+        "DELETE FROM asset_tag_sources WHERE asset_path=?1 AND source_kind='person' AND source_id=?2",
+        params![asset_path,subject_id],
+    )?;
+    if let Some(tag_id) = desired {
+        transaction.execute(
+            "INSERT INTO asset_tag_sources(asset_path,tag_id,source_kind,source_id)
+             VALUES (?1,?2,'person',?3)",
+            params![asset_path, tag_id, subject_id],
+        )?;
+    }
+    let mut changed = false;
+    for tag_id in affected {
+        reconcile_effective_tag(transaction, asset_path, tag_id)?;
+        let after: bool = transaction.query_row(
+            "SELECT EXISTS(SELECT 1 FROM asset_tags WHERE asset_path=?1 AND tag_id=?2)",
+            params![asset_path, tag_id],
+            |row| row.get(0),
+        )?;
+        changed |= before.get(&tag_id).copied().unwrap_or(false) != after;
+    }
+    if changed {
+        enqueue_paths(transaction, &[asset_path.to_owned()])?;
+    }
+    Ok(())
+}
+
+pub(crate) fn reconcile_person_sources_for_subject(
+    transaction: &Transaction<'_>,
+    subject_id: &str,
+) -> Result<(), rusqlite::Error> {
+    let paths = {
+        let mut statement = transaction.prepare(
+            "SELECT DISTINCT i.asset_path FROM person_manual_instances i
+             JOIN person_review_decisions r ON r.instance_id=i.id WHERE r.subject_id=?1
+             UNION SELECT asset_path FROM asset_tag_sources
+             WHERE source_kind='person' AND source_id=?1",
+        )?;
+        statement
+            .query_map([subject_id], |row| row.get::<_, String>(0))?
+            .collect::<Result<Vec<_>, _>>()?
+    };
+    for path in paths {
+        reconcile_person_source_for_subject_asset(transaction, subject_id, &path)?;
+    }
+    Ok(())
+}
+
+impl Library {
+    pub fn asset_tag_source_kinds(
+        &self,
+        path: &Path,
+        tag_id: CustomTagId,
+    ) -> Result<Vec<String>, LibraryError> {
+        let connection = self.read_connection();
+        let mut statement = connection.prepare(
+            "SELECT DISTINCT source_kind FROM asset_tag_sources WHERE asset_path=?1 AND tag_id=?2 ORDER BY source_kind",
+        )?;
+        Ok(statement
+            .query_map(params![path.to_string_lossy(), tag_id], |row| row.get(0))?
+            .collect::<Result<Vec<_>, _>>()?)
+    }
+
+    pub fn get_person_tag_link(
+        &self,
+        folder_path: &Path,
+        subject_id: &str,
+    ) -> Result<Option<PersonTagLink>, LibraryError> {
+        let connection = self.read_connection();
+        Ok(connection
+            .query_row(
+                "SELECT t.historical_person_id,t.tag_id,t.enabled,t.revision
+             FROM folder_people f JOIN folder_historical_links l ON l.subject_id=f.id
+             LEFT JOIN person_tag_links t ON t.historical_person_id=l.historical_person_id
+             WHERE f.folder_path=?1 AND f.id=?2 AND t.historical_person_id IS NOT NULL",
+                params![folder_path.to_string_lossy(), subject_id],
+                |row| {
+                    Ok(PersonTagLink {
+                        historical_person_id: row.get(0)?,
+                        tag_id: row.get(1)?,
+                        enabled: row.get::<_, bool>(2)? && row.get::<_, Option<i64>>(1)?.is_some(),
+                        revision: row.get(3)?,
+                    })
+                },
+            )
+            .optional()?)
+    }
+
+    pub fn set_person_tag_link(
+        &self,
+        input: &SetPersonTagLink,
+    ) -> Result<PersonTagLink, LibraryError> {
+        if input.request_id.is_empty() || (input.enabled && input.tag_id.is_none()) {
+            return Err(LibraryError::PersonConflict);
+        }
+        let mut connection = self.connection.lock();
+        let tx = connection.transaction()?;
+        let historical_id: String = tx
+            .query_row(
+                "SELECT l.historical_person_id FROM folder_people f
+             JOIN folder_historical_links l ON l.subject_id=f.id
+             WHERE f.folder_path=?1 AND f.id=?2",
+                params![input.folder_path.to_string_lossy(), input.subject_id],
+                |row| row.get(0),
+            )
+            .optional()?
+            .ok_or(LibraryError::MissingPersonRecord)?;
+        let replay: Option<(String, String)> = tx
+            .query_row(
+                "SELECT operation,entity_id FROM person_request_results WHERE request_id=?1",
+                [&input.request_id],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .optional()?;
+        if let Some((operation, id)) = replay {
+            if operation != "setPersonTagLink" || id != historical_id {
+                return Err(LibraryError::PersonConflict);
+            }
+        } else {
+            let revision: Option<i64> = tx
+                .query_row(
+                    "SELECT revision FROM person_tag_links WHERE historical_person_id=?1",
+                    [&historical_id],
+                    |row| row.get(0),
+                )
+                .optional()?;
+            if revision.unwrap_or(0) != input.expected_revision {
+                return Err(LibraryError::PersonConflict);
+            }
+            if let Some(tag_id) = input.tag_id {
+                let exists: bool = tx.query_row(
+                    "SELECT EXISTS(SELECT 1 FROM custom_tags WHERE id=?1)",
+                    [tag_id],
+                    |row| row.get(0),
+                )?;
+                if !exists {
+                    return Err(LibraryError::MissingTagParent);
+                }
+            }
+            tx.execute(
+                "INSERT INTO person_tag_links(historical_person_id,tag_id,enabled,revision)
+                 VALUES (?1,?2,?3,1)
+                 ON CONFLICT(historical_person_id) DO UPDATE SET
+                   tag_id=excluded.tag_id,enabled=excluded.enabled,
+                   revision=person_tag_links.revision+1,updated_at=unixepoch()",
+                params![historical_id, input.tag_id, input.enabled],
+            )?;
+            let subjects = {
+                let mut statement = tx.prepare(
+                    "SELECT subject_id FROM folder_historical_links WHERE historical_person_id=?1",
+                )?;
+                statement
+                    .query_map([&historical_id], |row| row.get::<_, String>(0))?
+                    .collect::<Result<Vec<_>, _>>()?
+            };
+            for subject in subjects {
+                reconcile_person_sources_for_subject(&tx, &subject)?;
+            }
+            tx.execute(
+                "INSERT INTO person_request_results VALUES (?1,'setPersonTagLink',?2)",
+                params![input.request_id, historical_id],
+            )?;
+        }
+        let result = tx.query_row(
+            "SELECT historical_person_id,tag_id,enabled,revision FROM person_tag_links
+             WHERE historical_person_id=?1",
+            [&historical_id],
+            |row| {
+                Ok(PersonTagLink {
+                    historical_person_id: row.get(0)?,
+                    tag_id: row.get(1)?,
+                    enabled: row.get::<_, bool>(2)? && row.get::<_, Option<i64>>(1)?.is_some(),
+                    revision: row.get(3)?,
+                })
+            },
+        )?;
+        tx.commit()?;
+        Ok(result)
+    }
+
+    pub fn get_person_tag_override(
+        &self,
+        folder_path: &Path,
+        subject_id: &str,
+        asset_path: &Path,
+    ) -> Result<Option<PersonTagOverride>, LibraryError> {
+        let connection = self.read_connection();
+        Ok(connection
+            .query_row(
+                "SELECT o.historical_person_id,o.asset_path,o.suppressed,o.revision
+             FROM folder_people f JOIN folder_historical_links l ON l.subject_id=f.id
+             JOIN person_tag_overrides o ON o.historical_person_id=l.historical_person_id
+             WHERE f.folder_path=?1 AND f.id=?2 AND o.asset_path=?3",
+                params![
+                    folder_path.to_string_lossy(),
+                    subject_id,
+                    asset_path.to_string_lossy()
+                ],
+                |row| {
+                    Ok(PersonTagOverride {
+                        historical_person_id: row.get(0)?,
+                        asset_path: row.get::<_, String>(1)?.into(),
+                        suppressed: row.get(2)?,
+                        revision: row.get(3)?,
+                    })
+                },
+            )
+            .optional()?)
+    }
+
+    pub fn set_person_tag_override(
+        &self,
+        input: &SetPersonTagOverride,
+    ) -> Result<PersonTagOverride, LibraryError> {
+        if input.request_id.is_empty()
+            || input.asset_path.parent() != Some(input.folder_path.as_path())
+        {
+            return Err(LibraryError::PersonConflict);
+        }
+        let mut connection = self.connection.lock();
+        let tx = connection.transaction()?;
+        let historical_id: String = tx
+            .query_row(
+                "SELECT l.historical_person_id FROM folder_people f
+             JOIN folder_historical_links l ON l.subject_id=f.id
+             WHERE f.folder_path=?1 AND f.id=?2",
+                params![input.folder_path.to_string_lossy(), input.subject_id],
+                |row| row.get(0),
+            )
+            .optional()?
+            .ok_or(LibraryError::MissingPersonRecord)?;
+        let request_entity = format!("{}:{}", historical_id, input.asset_path.display());
+        let replay: Option<(String, String)> = tx
+            .query_row(
+                "SELECT operation,entity_id FROM person_request_results WHERE request_id=?1",
+                [&input.request_id],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .optional()?;
+        if let Some((operation, entity)) = replay {
+            if operation != "setPersonTagOverride" || entity != request_entity {
+                return Err(LibraryError::PersonConflict);
+            }
+        } else {
+            let revision: Option<i64> = tx.query_row(
+                "SELECT revision FROM person_tag_overrides WHERE historical_person_id=?1 AND asset_path=?2",
+                params![historical_id,input.asset_path.to_string_lossy()], |row| row.get(0),
+            ).optional()?;
+            if revision.unwrap_or(0) != input.expected_revision {
+                return Err(LibraryError::PersonConflict);
+            }
+            tx.execute(
+                "INSERT INTO person_tag_overrides(historical_person_id,asset_path,suppressed,revision)
+                 VALUES (?1,?2,?3,1)
+                 ON CONFLICT(historical_person_id,asset_path) DO UPDATE SET
+                   suppressed=excluded.suppressed,revision=person_tag_overrides.revision+1",
+                params![historical_id,input.asset_path.to_string_lossy(),input.suppressed],
+            )?;
+            let subjects = {
+                let mut statement = tx.prepare(
+                    "SELECT subject_id FROM folder_historical_links WHERE historical_person_id=?1",
+                )?;
+                statement
+                    .query_map([&historical_id], |row| row.get::<_, String>(0))?
+                    .collect::<Result<Vec<_>, _>>()?
+            };
+            for subject in subjects {
+                reconcile_person_source_for_subject_asset(
+                    &tx,
+                    &subject,
+                    &input.asset_path.to_string_lossy(),
+                )?;
+            }
+            tx.execute(
+                "INSERT INTO person_request_results VALUES (?1,'setPersonTagOverride',?2)",
+                params![input.request_id, request_entity],
+            )?;
+        }
+        let result = tx.query_row(
+            "SELECT historical_person_id,asset_path,suppressed,revision FROM person_tag_overrides
+             WHERE historical_person_id=?1 AND asset_path=?2",
+            params![historical_id, input.asset_path.to_string_lossy()],
+            |row| {
+                Ok(PersonTagOverride {
+                    historical_person_id: row.get(0)?,
+                    asset_path: row.get::<_, String>(1)?.into(),
+                    suppressed: row.get(2)?,
+                    revision: row.get(3)?,
+                })
+            },
+        )?;
+        tx.commit()?;
+        Ok(result)
+    }
+}
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TagXmpPayload {
@@ -351,15 +794,22 @@ impl Library {
         for path in &path_strings {
             if assigned {
                 transaction.execute(
-                    "INSERT OR IGNORE INTO asset_tags(asset_path, tag_id) VALUES (?1, ?2)",
+                    "DELETE FROM asset_tag_sources WHERE asset_path=?1 AND tag_id=?2 AND source_kind='legacy'",
                     params![path, tag_id],
+                )?;
+                transaction.execute(
+                    "INSERT OR IGNORE INTO asset_tag_sources(asset_path,tag_id,source_kind,source_id)
+                     VALUES (?1,?2,'manual','')",
+                    params![path,tag_id],
                 )?;
             } else {
                 transaction.execute(
-                    "DELETE FROM asset_tags WHERE asset_path = ?1 AND tag_id = ?2",
+                    "DELETE FROM asset_tag_sources WHERE asset_path=?1 AND tag_id=?2
+                     AND source_kind IN ('manual','legacy')",
                     params![path, tag_id],
                 )?;
             }
+            reconcile_effective_tag(&transaction, path, tag_id)?;
         }
         enqueue_paths(&transaction, &path_strings)?;
         transaction.commit()?;
@@ -540,8 +990,10 @@ impl Library {
         let mut connection = self.connection.lock();
         let transaction = connection.transaction()?;
         let existing_tag_ids = {
-            let mut statement =
-                transaction.prepare("SELECT tag_id FROM asset_tags WHERE asset_path = ?1")?;
+            let mut statement = transaction.prepare(
+                "SELECT tag_id FROM asset_tag_sources
+                 WHERE asset_path=?1 AND source_kind='sidecar'",
+            )?;
             statement
                 .query_map(params![path.to_string_lossy()], |row| {
                     row.get::<_, CustomTagId>(0)
@@ -551,16 +1003,32 @@ impl Library {
         for tag_id in existing_tag_ids {
             if !desired_tag_ids.contains(&tag_id) {
                 transaction.execute(
-                    "DELETE FROM asset_tags WHERE asset_path = ?1 AND tag_id = ?2",
+                    "DELETE FROM asset_tag_sources WHERE asset_path=?1 AND tag_id=?2
+                     AND source_kind='sidecar'",
                     params![path.to_string_lossy(), tag_id],
                 )?;
+                reconcile_effective_tag(&transaction, path.to_string_lossy().as_ref(), tag_id)?;
             }
         }
-        for tag_id in desired_tag_ids {
+        for tag_id in &desired_tag_ids {
             transaction.execute(
-                "INSERT OR IGNORE INTO asset_tags(asset_path, tag_id) VALUES (?1, ?2)",
+                "INSERT OR IGNORE INTO asset_tag_sources(asset_path,tag_id,source_kind,source_id)
+                 VALUES (?1,?2,'sidecar','')",
                 params![path.to_string_lossy(), tag_id],
             )?;
+            reconcile_effective_tag(&transaction, path.to_string_lossy().as_ref(), *tag_id)?;
+        }
+        let effective_tag_ids = {
+            let mut statement =
+                transaction.prepare("SELECT tag_id FROM asset_tags WHERE asset_path=?1")?;
+            statement
+                .query_map(params![path.to_string_lossy()], |row| {
+                    row.get::<_, CustomTagId>(0)
+                })?
+                .collect::<Result<std::collections::HashSet<_>, _>>()?
+        };
+        if effective_tag_ids != desired_tag_ids {
+            enqueue_paths(&transaction, &[path.to_string_lossy().into_owned()])?;
         }
         transaction.commit()?;
         drop(connection);
@@ -591,17 +1059,64 @@ impl Library {
     ) -> Result<(), LibraryError> {
         let mut connection = self.connection.lock();
         let transaction = connection.transaction()?;
+        let same_folder_move = !copy && source.parent() == destination.parent();
+        transaction.execute(
+            "INSERT OR IGNORE INTO asset_tag_sources(asset_path,tag_id,source_kind,source_id)
+             SELECT ?2,tag_id,source_kind,source_id FROM asset_tag_sources
+             WHERE asset_path=?1 AND (?3=1 OR source_kind!='person')",
+            params![
+                source.to_string_lossy(),
+                destination.to_string_lossy(),
+                same_folder_move
+            ],
+        )?;
         transaction.execute(
             "INSERT OR IGNORE INTO asset_tags(asset_path, tag_id)
-             SELECT ?2, tag_id FROM asset_tags WHERE asset_path=?1",
-            params![source.to_string_lossy(), destination.to_string_lossy()],
+             SELECT DISTINCT ?2,tag_id FROM asset_tag_sources
+             WHERE asset_path=?1 AND (?3=1 OR source_kind!='person')",
+            params![
+                source.to_string_lossy(),
+                destination.to_string_lossy(),
+                same_folder_move
+            ],
         )?;
         if copy {
             enqueue_paths(&transaction, &[destination.to_string_lossy().into_owned()])?;
         } else {
+            if same_folder_move {
+                // The feature cache still describes the same photo, so point it
+                // at the new path instead of throwing the vectors away.
+                rename_asset(
+                    &transaction,
+                    &source.to_string_lossy(),
+                    &destination.to_string_lossy(),
+                )?;
+                transaction.execute(
+                    "UPDATE person_manual_instances SET asset_path=?2 WHERE asset_path=?1",
+                    params![source.to_string_lossy(), destination.to_string_lossy()],
+                )?;
+                transaction.execute(
+                    "UPDATE historical_people SET reference_asset_path=?2 WHERE reference_asset_path=?1",
+                    params![source.to_string_lossy(),destination.to_string_lossy()],
+                )?;
+                transaction.execute(
+                    "UPDATE person_tag_overrides SET asset_path=?2 WHERE asset_path=?1",
+                    params![source.to_string_lossy(), destination.to_string_lossy()],
+                )?;
+            } else {
+                forget_asset(&transaction, &source.to_string_lossy())?;
+                transaction.execute(
+                    "UPDATE person_manual_instances SET needs_review=1 WHERE asset_path=?1",
+                    params![source.to_string_lossy()],
+                )?;
+            }
             transaction.execute(
                 "UPDATE OR REPLACE asset_tag_xmp_state SET asset_path=?2 WHERE asset_path=?1",
                 params![source.to_string_lossy(), destination.to_string_lossy()],
+            )?;
+            transaction.execute(
+                "DELETE FROM asset_tag_sources WHERE asset_path=?1",
+                params![source.to_string_lossy()],
             )?;
             transaction.execute(
                 "DELETE FROM asset_tags WHERE asset_path=?1",
@@ -617,17 +1132,24 @@ impl Library {
     }
 
     pub fn remove_asset_tag_state(&self, path: &Path) -> Result<(), LibraryError> {
-        let connection = self.connection.lock();
+        let mut connection = self.connection.lock();
+        let transaction = connection.transaction()?;
         let path = path.to_string_lossy();
-        connection.execute("DELETE FROM asset_tags WHERE asset_path=?1", params![path])?;
-        connection.execute(
+        forget_asset(&transaction, &path)?;
+        transaction.execute(
+            "DELETE FROM asset_tag_sources WHERE asset_path=?1",
+            params![path],
+        )?;
+        transaction.execute("DELETE FROM asset_tags WHERE asset_path=?1", params![path])?;
+        transaction.execute(
             "DELETE FROM asset_tag_xmp_state WHERE asset_path=?1",
             params![path],
         )?;
-        connection.execute(
+        transaction.execute(
             "DELETE FROM tag_xmp_sync_queue WHERE asset_path=?1",
             params![path],
         )?;
+        transaction.commit()?;
         Ok(())
     }
 }
@@ -992,6 +1514,331 @@ mod tests {
                 .asset_tag_assignments_by_path(&[])
                 .unwrap()
                 .is_empty()
+        );
+    }
+
+    #[test]
+    fn sidecar_reconciliation_preserves_manual_source_and_requeues_xmp() {
+        let library = Library::in_memory().unwrap();
+        let asset = std::path::PathBuf::from("/photos/a.jpg");
+        let tag = library.create_custom_tag(None, "Keeper").unwrap();
+        library
+            .set_asset_tag(std::slice::from_ref(&asset), tag.id, true)
+            .unwrap();
+        let payload = library.tag_xmp_payload(&asset).unwrap();
+        library
+            .complete_tag_xmp_sync(&asset, &payload.subjects, &payload.hierarchical)
+            .unwrap();
+        assert!(library.pending_tag_sync_paths().unwrap().is_empty());
+
+        library.import_sidecar_tags(&asset, &[], &[]).unwrap();
+        let assignments = library
+            .asset_tag_assignments(std::slice::from_ref(&asset))
+            .unwrap();
+        assert_eq!(
+            assignments
+                .iter()
+                .find(|row| row.tag.id == tag.id)
+                .unwrap()
+                .assigned_count,
+            1
+        );
+        assert_eq!(
+            library.pending_tag_sync_paths().unwrap(),
+            vec![asset.clone()]
+        );
+        let sources: Vec<String> = library
+            .connection
+            .lock()
+            .prepare("SELECT source_kind FROM asset_tag_sources WHERE asset_path=?1 AND tag_id=?2")
+            .unwrap()
+            .query_map(params![asset.to_string_lossy(), tag.id], |row| row.get(0))
+            .unwrap()
+            .collect::<Result<_, _>>()
+            .unwrap();
+        assert_eq!(sources, ["manual"]);
+    }
+
+    #[test]
+    fn reopening_migrates_unattributed_assignments_as_legacy() {
+        let temporary = tempfile::tempdir().unwrap();
+        let database = temporary.path().join("library.sqlite");
+        let path = std::path::PathBuf::from("/photos/legacy.jpg");
+        let library = Library::open(&database).unwrap();
+        let tag = library.create_custom_tag(None, "Legacy").unwrap();
+        library
+            .connection
+            .lock()
+            .execute(
+                "INSERT INTO asset_tags(asset_path,tag_id) VALUES (?1,?2)",
+                params![path.to_string_lossy(), tag.id],
+            )
+            .unwrap();
+        drop(library);
+        let reopened = Library::open(&database).unwrap();
+        let source: String = reopened
+            .connection
+            .lock()
+            .query_row(
+                "SELECT source_kind FROM asset_tag_sources WHERE asset_path=?1 AND tag_id=?2",
+                params![path.to_string_lossy(), tag.id],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(source, "legacy");
+        reopened
+            .set_asset_tag(std::slice::from_ref(&path), tag.id, false)
+            .unwrap();
+        assert_eq!(
+            reopened.asset_tag_assignments(&[path]).unwrap()[0].assigned_count,
+            0
+        );
+    }
+
+    #[test]
+    fn person_sources_require_last_belonging_instance_and_preserve_manual_tag() {
+        use oxy_domain::{PersonReviewDecision, SetPersonReview};
+        let library = Library::in_memory().unwrap();
+        let folder = PathBuf::from("/photos");
+        let image = folder.join("pair.jpg");
+        let tag = library.create_custom_tag(None, "Alex").unwrap();
+        let first = library.create_folder_person(&folder, "first").unwrap();
+        let second = library.create_folder_person(&folder, "second").unwrap();
+        {
+            let connection = library.connection.lock();
+            connection.execute("INSERT INTO historical_people(id,display_name,reference_asset_path,reference_source_revision) VALUES ('history','Alex',?1,'10:20')", [image.to_string_lossy()]).unwrap();
+            for subject in [&first.id, &second.id] {
+                connection.execute("INSERT INTO folder_historical_links(subject_id,historical_person_id) VALUES (?1,'history')", [subject]).unwrap();
+            }
+        }
+        let mut reviews = Vec::new();
+        for (index, subject) in [&first, &second].into_iter().enumerate() {
+            let instance = library
+                .create_person_instance(&oxy_domain::CreatePersonInstance {
+                    folder_path: folder.clone(),
+                    asset_path: image.clone(),
+                    source_revision: "10:20".into(),
+                    face_box: Some([0.1 + index as f64 * 0.4, 0.1, 0.2, 0.2]),
+                    body_box: None,
+                    request_id: format!("instance-{index}"),
+                })
+                .unwrap();
+            let review = library
+                .set_person_review(&SetPersonReview {
+                    folder_path: folder.clone(),
+                    instance_id: instance.id,
+                    subject_id: subject.id.clone(),
+                    decision: PersonReviewDecision::Belongs,
+                    expected_revision: 0,
+                    request_id: format!("belongs-{index}"),
+                })
+                .unwrap();
+            reviews.push(review);
+        }
+        let input = SetPersonTagLink {
+            folder_path: folder.clone(),
+            subject_id: first.id.clone(),
+            tag_id: Some(tag.id),
+            enabled: true,
+            expected_revision: 0,
+            request_id: "bind-tag".into(),
+        };
+        let link = library.set_person_tag_link(&input).unwrap();
+        assert_eq!(link, library.set_person_tag_link(&input).unwrap());
+        assert_eq!(
+            library.asset_tag_source_kinds(&image, tag.id).unwrap(),
+            ["person"]
+        );
+        assert_eq!(
+            library
+                .asset_tag_assignments(std::slice::from_ref(&image))
+                .unwrap()[0]
+                .assigned_count,
+            1
+        );
+        library
+            .set_person_review(&SetPersonReview {
+                folder_path: folder.clone(),
+                instance_id: reviews[0].instance.id.clone(),
+                subject_id: first.id,
+                decision: PersonReviewDecision::DoesNotBelong,
+                expected_revision: 1,
+                request_id: "remove-first".into(),
+            })
+            .unwrap();
+        assert_eq!(
+            library
+                .asset_tag_assignments(std::slice::from_ref(&image))
+                .unwrap()[0]
+                .assigned_count,
+            1
+        );
+        let override_input = SetPersonTagOverride {
+            folder_path: folder.clone(),
+            subject_id: input.subject_id.clone(),
+            asset_path: image.clone(),
+            suppressed: true,
+            expected_revision: 0,
+            request_id: "suppress-photo".into(),
+        };
+        let suppressed = library.set_person_tag_override(&override_input).unwrap();
+        assert_eq!(
+            suppressed,
+            library.set_person_tag_override(&override_input).unwrap()
+        );
+        assert_eq!(
+            library
+                .asset_tag_assignments(std::slice::from_ref(&image))
+                .unwrap()[0]
+                .assigned_count,
+            0
+        );
+        library
+            .set_person_tag_override(&SetPersonTagOverride {
+                suppressed: false,
+                expected_revision: suppressed.revision,
+                request_id: "restore-photo".into(),
+                ..override_input
+            })
+            .unwrap();
+        assert_eq!(
+            library
+                .asset_tag_assignments(std::slice::from_ref(&image))
+                .unwrap()[0]
+                .assigned_count,
+            1
+        );
+        library
+            .set_asset_tag(std::slice::from_ref(&image), tag.id, true)
+            .unwrap();
+        assert_eq!(
+            library.asset_tag_source_kinds(&image, tag.id).unwrap(),
+            ["manual", "person"]
+        );
+        library
+            .set_person_review(&SetPersonReview {
+                folder_path: folder,
+                instance_id: reviews[1].instance.id.clone(),
+                subject_id: second.id,
+                decision: PersonReviewDecision::DoesNotBelong,
+                expected_revision: 1,
+                request_id: "remove-second".into(),
+            })
+            .unwrap();
+        assert_eq!(
+            library
+                .asset_tag_assignments(std::slice::from_ref(&image))
+                .unwrap()[0]
+                .assigned_count,
+            1
+        );
+        library
+            .set_asset_tag(std::slice::from_ref(&image), tag.id, false)
+            .unwrap();
+        assert_eq!(
+            library
+                .asset_tag_assignments(std::slice::from_ref(&image))
+                .unwrap()[0]
+                .assigned_count,
+            0
+        );
+        library.delete_custom_tag(tag.id).unwrap();
+        let broken = library
+            .get_person_tag_link(&input.folder_path, &input.subject_id)
+            .unwrap()
+            .unwrap();
+        assert_eq!(broken.tag_id, None);
+        assert!(!broken.enabled);
+    }
+
+    #[test]
+    fn same_folder_rename_moves_person_facts_with_tag_sources() {
+        let library = Library::in_memory().unwrap();
+        let folder = PathBuf::from("/photos");
+        let source = folder.join("before.jpg");
+        let destination = folder.join("after.jpg");
+        let tag = library.create_custom_tag(None, "Alex").unwrap();
+        let person = library.create_folder_person(&folder, "new-person").unwrap();
+        let instance = library
+            .create_person_instance(&oxy_domain::CreatePersonInstance {
+                folder_path: folder.clone(),
+                asset_path: source.clone(),
+                source_revision: "10:20".into(),
+                face_box: Some([0.1, 0.1, 0.2, 0.2]),
+                body_box: None,
+                request_id: "new-face".into(),
+            })
+            .unwrap();
+        {
+            let connection = library.connection.lock();
+            connection.execute("INSERT INTO historical_people(id,display_name,reference_asset_path,reference_source_revision) VALUES ('history','Alex',?1,'10:20')",[source.to_string_lossy()]).unwrap();
+            connection.execute("INSERT INTO folder_historical_links(subject_id,historical_person_id) VALUES (?1,'history')",[&person.id]).unwrap();
+        }
+        library
+            .set_person_review(&oxy_domain::SetPersonReview {
+                folder_path: folder.clone(),
+                instance_id: instance.id.clone(),
+                subject_id: person.id.clone(),
+                decision: oxy_domain::PersonReviewDecision::Belongs,
+                expected_revision: 0,
+                request_id: "belongs".into(),
+            })
+            .unwrap();
+        library
+            .set_person_tag_link(&SetPersonTagLink {
+                folder_path: folder.clone(),
+                subject_id: person.id,
+                tag_id: Some(tag.id),
+                enabled: true,
+                expected_revision: 0,
+                request_id: "bind".into(),
+            })
+            .unwrap();
+        library.move_asset_tag_state(&source, &destination).unwrap();
+        assert!(
+            library
+                .list_person_instances(&folder, &source)
+                .unwrap()
+                .is_empty()
+        );
+        assert_eq!(
+            library
+                .list_person_instances(&folder, &destination)
+                .unwrap()[0]
+                .id,
+            instance.id
+        );
+        assert_eq!(
+            library
+                .asset_tag_source_kinds(&destination, tag.id)
+                .unwrap(),
+            ["person"]
+        );
+        assert!(
+            library
+                .asset_tag_source_kinds(&source, tag.id)
+                .unwrap()
+                .is_empty()
+        );
+        assert_eq!(
+            library.list_historical_people().unwrap()[0].reference_asset_path,
+            destination
+        );
+        let elsewhere = PathBuf::from("/other/after.jpg");
+        library
+            .move_asset_tag_state(&destination, &elsewhere)
+            .unwrap();
+        assert!(
+            library
+                .asset_tag_source_kinds(&elsewhere, tag.id)
+                .unwrap()
+                .is_empty()
+        );
+        assert!(
+            library
+                .list_person_instances(&folder, &destination)
+                .unwrap()[0]
+                .needs_review
         );
     }
 }

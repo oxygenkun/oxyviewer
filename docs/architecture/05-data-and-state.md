@@ -92,6 +92,35 @@ Rust projection 与前端显示镜像失效。
 旧行清理仍是原子事务。预览与元数据入队阶段仍有持队列锁进行 projection 写入的路径，
 这些写入受益于批次交接，但尚未与队列锁完全解耦。
 
+`oxy-library` 按数据归属分成两个命名空间，磁盘上仍是同一个 `oxyviewer.sqlite`：
+
+| 命名空间 | 含义 | 谁能删 |
+| --- | --- | --- |
+| `oxy_library::cache` | 由照片或用户数据推导出的状态：`indexed_*`、FTS、`resource_projections`、`directory_snapshots`、人物检测/特征缓存、`person_analysis_*` | 建表的那个模块自己的 `clear()`，由 `Library::clear_rebuildable_cache()` 汇总调用 |
+| `oxy_library::user` | 用户输入的事实：`library_roots`、标签树与资产标签、人物身份与审阅、历史关联、人物↔标签映射、`person_request_results` 幂等账本 | 只由显式、经过确认的用户操作删除 |
+
+**删除跟随所有权，而不是跟随一份名单。** 每个 cache 模块的 `clear()` 就写在它的 `ensure_schema`
+旁边，同一个文件里还声明 `TABLES`（这个模块建了哪些表）与 `PRESERVED`（清空时保留哪些）。建表、
+声明归属、决定怎么删，是同一个人在同一个文件里做的一次决定。`schema.rs` 里没有注册表：它从
+「表被哪个命名空间声明」推导出 `DataClass`，只做审计和测试：
+
+- 测试枚举 `sqlite_master`，断言每张表都被某个模块声明，新增表不会被默认当成可清理缓存；
+- `clear_rebuildable_cache()` 之后，断言每张 `Rebuildable` 表已清空、每张 `UserOwned` 表行数不变，
+  因此把某张表标成 `Rebuildable` 却没在模块里删它，测试同样会失败；
+- 序列表（`*_sequence`）和缓存格式标记（`*_cache_meta`）在清理时保留，否则清空前启动的 worker
+  可能用旧的更高 revision 覆盖新结果，或让一份仍然有效的缓存被无谓重建。保留哪些由各模块自己的
+  `PRESERVED` 声明，`schema::preserved_on_clear()` 只做汇总。
+
+因为分类是从命名空间推导的，把一张用户表标成可重建的唯一办法是把它的声明搬进 `cache/`——
+而那样做会立刻触发「该表在清空后仍有行」的失败。不存在一个可以填错的字段。
+
+命名空间之间允许**读**、禁止**写**。`cache` 会查询 `library_roots` 判断根是否已注册，但删除索引行
+必须走 `cache::index::forget_root`；`user` 在移动/删除照片时清理特征缓存，必须走
+`cache::features::rename_asset` / `forget_asset`。`schema.rs` 里有一个源码级测试扫描 `src/cache`
+与 `src/user`，任何跨命名空间的写 SQL 都会让测试失败，这样跨界删除在 review 里是一次命名函数调用，
+而不是藏在 SQL 字符串里。缓存迁移（`person_instances_cache`、`person_features_cache` 的 schema
+版本）只 DROP 自己的缓存表与 meta，人工资料不受影响。
+
 `oxy-library::Library::open` 在 app data 目录创建 `oxyviewer.sqlite`，启用 WAL，并确保以下逻辑
 结构存在：
 
@@ -172,13 +201,38 @@ SQLite connection 放在 `Mutex` 内，因为 `rusqlite::Connection` 的访问�
 任务把旧结果重新写回。
 
 自定义标签是用户资料，不属于可重建索引。`custom_tags` 保存同级名称唯一的任意深度树，
-`asset_tags` 以资产路径保存明确分配的标签（不会隐式分配祖先）。标签改名、移动、删除及资产标签
+`asset_tag_sources` 按手工、旧版迁移、sidecar 和已确认人物分别记账，`asset_tags` 以资产路径保存来源的有效并集（不会隐式分配祖先）。标签改名、移动、删除及资产标签
 变更先事务提交数据库，再进入持久化 `tag_xmp_sync_queue`。写入成功后
 `asset_tag_xmp_state` 记录 OxyViewer 管理的 `dc:subject` 与 `lr:hierarchicalSubject` 项，使后续同步
 只替换受管值。相邻 XMP sidecar 的普通及层级关键词在详情读取时与 `asset_tags` 对账；存在待写队列
 时暂停反向导入，防止旧 XML 恢复刚删除的数据库状态。图片内嵌关键词不进入数据库，和 sidecar
 重叠时只显示一次，内嵌独有项作为灰色只读标签显示。失败不回滚数据库，可在目录重新打开或由
 用户手动重试。
+
+人物身份、逐实例审阅、历史关联与 tag 映射是用户资料；`person_feature_spaces`、
+`person_features_cache` 是可重建缓存。sqlite-vec 0.1.9 在资料库的写连接和两个 WAL 读连接
+建立前注册，同版探测失败只禁用向量查询，不应影响人工资料或普通浏览。特征空间用生产阶段
+及其上游依赖指纹校验兼容性，每条向量保留完整管线指纹供追溯；查询先限定文件夹和特征空间，
+对范围内所有向量计算 cosine 距离，再按完整的
+当前文件夹源版本快照剔除过期结果并分页。缓存格式不兼容时只重建向量表，保留人工资料；
+自动推理生产者尚未接入。
+
+`person_analysis_heads` 为每个文件夹保存当前运行 generation；`person_analysis_runs` 和
+`person_analysis_tasks` 保存显式、可取消的运行及分批任务状态。新运行在一个事务中推进
+generation 并取消旧运行；领取任务须等同一资产的前置阶段完成。每次领取生成一次性令牌，
+重启恢复重新排队时废弃旧令牌；迟到 worker 的提交和失败报告都被拒绝。特征与进度在一个事务中
+提交，并再次校验 generation、任务键、领取令牌与 `oxy-fs` 最新源版本；失败阶段同时记账同资产
+未开始的后继阶段。作业恢复尚未接入启动流程，不能把领取时的检查当作提交授权。
+
+`oxy-people` 按 pipeline 依赖拓扑排序每图阶段，从 `oxy-fs` 新扫描的当前层资产快照中
+观察完整源版本，以最多 256 条任务为一批登记。文件夹级聚类和检索阶段另行调度；
+逐图登记不封存整次作业，避免在文件夹级阶段开始前误报完成。目录打开路径不执行扫描或
+分析。枚举遇到错误或取消时不封存作业，由调用方决定取消或用新 generation 重试。
+
+`person_instances_cache` 只存模型派生的规范化框和检测证据；同阶段结果在受 generation、
+领取令牌和源版本保护的事务中整体替换，人工 `person_manual_instances` 与审阅决定不受其写入。
+新人工实例另存完整 `source_identity_revision`，旧记录保持空值并要求重新核对后才可能与
+检测缓存对齐。对齐只输出唯一几何对应或待复核冲突，不能直接修改人工身份事实。
 
 重启后的 metadata cache 采用两阶段恢复：先用 `AssetSummary` 已有的 size/mtime 逐项发布
 SQLite ready snapshot，再在 Rust worker 中核验 sidecar/嵌入 XMP digest。完整 revision 不同
@@ -301,6 +355,8 @@ session/root policy 显式加入 command 契约并增加符号链接测试。
 | 原始照片 | 是 | 否 | 用户备份 |
 | XMP sidecar | 是 | 否 | 用户备份 |
 | 显式 library root | 用户配置 | 不应无故删除 | SQLite/配置恢复 |
+| 人物身份、审阅、历史关联、标签映射 | 用户资料 | 否（需显式确认） | 用户重新录入；目前无导出入口 |
+| `person_request_results` 幂等账本 | 用户操作记录 | 否（删除会重放请求） | 无 |
 | SQLite asset/directory/FTS rows | 否 | 是 | 后台重新索引显式根目录 |
 | 生成预览文件 | 否 | 是 | 重新解码 |
 | React Query cache | 否 | 是 | 重新 invoke |
@@ -311,6 +367,10 @@ session/root policy 显式加入 command 契约并增加符号链接测试。
 
 - 搜索文本为什么属于 Zustand，而搜索结果属于 React Query？
 - 删除 preview cache 会丢失什么，删除 XMP 又会丢失什么？
+- 新增一张缓存表时，除了在所属模块的 `TABLES` 里声明，还必须做什么？只登记不删会怎样？
+- 为什么 `user` 模块不能直接写 `DELETE FROM indexed_assets`，而要走
+  `cache::index::forget_root`？如果这个约束只有文档没有测试，最可能怎么被破坏？
+- 把用户表误标成 `Rebuildable` 会怎样？现有测试能拦住吗？
 - SQLite 中已有 `indexed_assets` 行是否等于某个 root 的完整 generation 已经完成？
 - `cancel_job` 为什么必须有 worker 主动检查才能生效？
 - 当前文件写操作是否受 FolderSession root 限制？
