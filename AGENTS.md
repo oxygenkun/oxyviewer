@@ -35,13 +35,18 @@ Repository-specific rules for coding agents working on OxyViewer.
   `person_request_results`) is user data: never delete it from a cache clear,
   cache migration, or re-index, and never add a deletion path that is not an
   explicit, confirmed user action.
-- Deletion follows ownership, not a list. A cache table is emptied by the
-  `oxy-library::cache` module that created it, in a `clear()` next to that
-  module's DDL. Declare a new table in the owning module's `TABLES` constant
-  and, if it is cache, delete it in that module's `clear()`. There is no
-  registry to update: `oxy-library::schema` derives each table's class from the
-  namespace that declared it and only audits the result. Never delete by
-  table-name prefix and never drop the database.
+- Declare every table once with `crate::table::tables!` in the module that owns
+  it. One declaration produces the `CREATE TABLE`, the list of owned tables,
+  and the `DELETE` statements, so a new table cannot be created without also
+  being cleared. Declare in creation order; clearing walks that order backwards
+  so a referencing table is always emptied first. Mark a table `preserve` only
+  if it is an allocator or cache-format marker, and `external` if something
+  other than the declaration creates it (FTS5, a backfill transaction).
+- Deletion follows ownership, not a list. `oxy-library::schema` derives each
+  table's class from the namespace that declared it and only audits the result.
+  Never delete by table-name prefix and never drop the database.
+- Read a result row by column name (`row.get("path")`), never by position
+  (`row.get(0)`). Reordering a `SELECT` list must not silently shift values.
 - A module may read across the cache/user boundary but never write across it.
   Call a named function on the owning module (for example
   `cache::index::forget_root` or `cache::features::forget_asset`) instead of

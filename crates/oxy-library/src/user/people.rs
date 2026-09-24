@@ -8,137 +8,112 @@ use oxy_domain::{
 use rusqlite::{Connection, OptionalExtension, params};
 use std::path::{Path, PathBuf};
 
-/// Tables created by [`ensure_schema`]. User-owned because this module lives in
-/// [`crate::user`]; there is no second list that could claim otherwise.
-pub(super) const TABLES: &[&str] = &[
-    "folder_people",
-    "person_manual_instances",
-    "person_review_decisions",
-    "person_review_events",
-    "person_identity_events",
-    "person_instance_events",
-    "person_references",
-    "person_request_results",
-    "historical_people",
-    "folder_historical_links",
-    "person_history_events",
-    "person_tag_links",
-    "person_tag_overrides",
-];
+crate::table::tables! {
+    preserve folder_people =
+        "id TEXT PRIMARY KEY,
+        folder_path TEXT NOT NULL,
+        display_name TEXT,
+        identity_confirmed INTEGER NOT NULL DEFAULT 0,
+        revision INTEGER NOT NULL DEFAULT 1,
+        created_at INTEGER NOT NULL DEFAULT (unixepoch()),
+        updated_at INTEGER NOT NULL DEFAULT (unixepoch())";
+    preserve person_manual_instances =
+        "id TEXT PRIMARY KEY,
+        folder_path TEXT NOT NULL,
+        asset_path TEXT NOT NULL,
+        source_revision TEXT NOT NULL,
+        source_identity_revision TEXT,
+        face_box TEXT,
+        body_box TEXT,
+        needs_review INTEGER NOT NULL DEFAULT 0,
+        revision INTEGER NOT NULL DEFAULT 1,
+        created_at INTEGER NOT NULL DEFAULT (unixepoch()),
+        updated_at INTEGER NOT NULL DEFAULT (unixepoch())";
+    preserve person_review_decisions =
+        "instance_id TEXT NOT NULL REFERENCES person_manual_instances(id),
+        subject_id TEXT NOT NULL REFERENCES folder_people(id),
+        decision TEXT NOT NULL CHECK(decision IN ('pending','belongs','doesNotBelong','deferred')),
+        revision INTEGER NOT NULL DEFAULT 1,
+        updated_at INTEGER NOT NULL DEFAULT (unixepoch()),
+        PRIMARY KEY(instance_id, subject_id)";
+    preserve person_review_events =
+        "id INTEGER PRIMARY KEY AUTOINCREMENT,
+        instance_id TEXT NOT NULL,
+        subject_id TEXT NOT NULL,
+        decision TEXT NOT NULL,
+        revision INTEGER NOT NULL,
+        request_id TEXT NOT NULL UNIQUE,
+        changed_at INTEGER NOT NULL DEFAULT (unixepoch())";
+    preserve person_identity_events =
+        "id INTEGER PRIMARY KEY AUTOINCREMENT,
+        subject_id TEXT NOT NULL,
+        event_kind TEXT NOT NULL,
+        display_name TEXT,
+        revision INTEGER NOT NULL,
+        request_id TEXT NOT NULL UNIQUE,
+        changed_at INTEGER NOT NULL DEFAULT (unixepoch())";
+    preserve person_references =
+        "subject_id TEXT NOT NULL REFERENCES folder_people(id),
+        instance_id TEXT NOT NULL REFERENCES person_manual_instances(id),
+        source_revision TEXT NOT NULL,
+        confirmed_at INTEGER NOT NULL DEFAULT (unixepoch()),
+        PRIMARY KEY(subject_id, instance_id)";
+    preserve person_instance_events =
+        "id INTEGER PRIMARY KEY AUTOINCREMENT,
+        instance_id TEXT NOT NULL,
+        previous_json TEXT NOT NULL,
+        request_id TEXT NOT NULL UNIQUE,
+        changed_at INTEGER NOT NULL DEFAULT (unixepoch())";
+    preserve person_request_results = "request_id TEXT PRIMARY KEY, operation TEXT NOT NULL, entity_id TEXT NOT NULL";
+    preserve historical_people =
+        "id TEXT PRIMARY KEY,
+        display_name TEXT NOT NULL,
+        reference_asset_path TEXT NOT NULL,
+        reference_source_revision TEXT NOT NULL,
+        revision INTEGER NOT NULL DEFAULT 1,
+        created_at INTEGER NOT NULL DEFAULT (unixepoch())";
+    preserve folder_historical_links =
+        "subject_id TEXT PRIMARY KEY REFERENCES folder_people(id),
+        historical_person_id TEXT NOT NULL REFERENCES historical_people(id),
+        linked_at INTEGER NOT NULL DEFAULT (unixepoch())";
+    preserve person_history_events =
+        "id INTEGER PRIMARY KEY AUTOINCREMENT,
+        subject_id TEXT NOT NULL,
+        historical_person_id TEXT NOT NULL,
+        event_kind TEXT NOT NULL CHECK(event_kind IN ('link','unlink')),
+        request_id TEXT NOT NULL UNIQUE,
+        linked_at INTEGER NOT NULL DEFAULT (unixepoch())";
+    preserve person_tag_links =
+        "historical_person_id TEXT PRIMARY KEY REFERENCES historical_people(id),
+        tag_id INTEGER REFERENCES custom_tags(id) ON DELETE SET NULL,
+        enabled INTEGER NOT NULL DEFAULT 0,
+        revision INTEGER NOT NULL DEFAULT 1,
+        updated_at INTEGER NOT NULL DEFAULT (unixepoch())";
+    preserve person_tag_overrides =
+        "historical_person_id TEXT NOT NULL REFERENCES historical_people(id),
+        asset_path TEXT NOT NULL,
+        suppressed INTEGER NOT NULL DEFAULT 1,
+        revision INTEGER NOT NULL DEFAULT 1,
+        PRIMARY KEY(historical_person_id,asset_path)";
+}
 
+/// Creates the declared tables. User-owned because this module lives in
+/// [`crate::user`]; nothing here is emptied by a cache clear.
 pub(crate) fn ensure_schema(connection: &Connection) -> Result<(), rusqlite::Error> {
+    crate::table::create_all(connection, DEFS)?;
     connection.execute_batch(
-        "CREATE TABLE IF NOT EXISTS folder_people (
-           id TEXT PRIMARY KEY,
-           folder_path TEXT NOT NULL,
-           display_name TEXT,
-           identity_confirmed INTEGER NOT NULL DEFAULT 0,
-           revision INTEGER NOT NULL DEFAULT 1,
-           created_at INTEGER NOT NULL DEFAULT (unixepoch()),
-           updated_at INTEGER NOT NULL DEFAULT (unixepoch())
-         );
-         CREATE INDEX IF NOT EXISTS folder_people_folder ON folder_people(folder_path);
-         CREATE TABLE IF NOT EXISTS person_manual_instances (
-           id TEXT PRIMARY KEY,
-           folder_path TEXT NOT NULL,
-           asset_path TEXT NOT NULL,
-           source_revision TEXT NOT NULL,
-           source_identity_revision TEXT,
-           face_box TEXT,
-           body_box TEXT,
-           needs_review INTEGER NOT NULL DEFAULT 0,
-           revision INTEGER NOT NULL DEFAULT 1,
-           created_at INTEGER NOT NULL DEFAULT (unixepoch()),
-           updated_at INTEGER NOT NULL DEFAULT (unixepoch())
-         );
+        "CREATE INDEX IF NOT EXISTS folder_people_folder ON folder_people(folder_path);
          CREATE INDEX IF NOT EXISTS person_manual_instances_asset
            ON person_manual_instances(folder_path, asset_path);
-         CREATE TABLE IF NOT EXISTS person_review_decisions (
-           instance_id TEXT NOT NULL REFERENCES person_manual_instances(id),
-           subject_id TEXT NOT NULL REFERENCES folder_people(id),
-           decision TEXT NOT NULL CHECK(decision IN ('pending','belongs','doesNotBelong','deferred')),
-           revision INTEGER NOT NULL DEFAULT 1,
-           updated_at INTEGER NOT NULL DEFAULT (unixepoch()),
-           PRIMARY KEY(instance_id, subject_id)
-         );
-         CREATE TABLE IF NOT EXISTS person_review_events (
-           id INTEGER PRIMARY KEY AUTOINCREMENT,
-           instance_id TEXT NOT NULL,
-           subject_id TEXT NOT NULL,
-           decision TEXT NOT NULL,
-           revision INTEGER NOT NULL,
-           request_id TEXT NOT NULL UNIQUE,
-           changed_at INTEGER NOT NULL DEFAULT (unixepoch())
-         );
-         CREATE TABLE IF NOT EXISTS person_identity_events (
-           id INTEGER PRIMARY KEY AUTOINCREMENT,
-           subject_id TEXT NOT NULL,
-           event_kind TEXT NOT NULL,
-           display_name TEXT,
-           revision INTEGER NOT NULL,
-           request_id TEXT NOT NULL UNIQUE,
-           changed_at INTEGER NOT NULL DEFAULT (unixepoch())
-         );
-         CREATE TABLE IF NOT EXISTS person_references (
-           subject_id TEXT NOT NULL REFERENCES folder_people(id),
-           instance_id TEXT NOT NULL REFERENCES person_manual_instances(id),
-           source_revision TEXT NOT NULL,
-           confirmed_at INTEGER NOT NULL DEFAULT (unixepoch()),
-           PRIMARY KEY(subject_id, instance_id)
-         );
-         CREATE TABLE IF NOT EXISTS person_instance_events (
-           id INTEGER PRIMARY KEY AUTOINCREMENT, instance_id TEXT NOT NULL,
-           previous_json TEXT NOT NULL, request_id TEXT NOT NULL UNIQUE,
-           changed_at INTEGER NOT NULL DEFAULT (unixepoch())
-         );
-         CREATE TABLE IF NOT EXISTS person_request_results (
-           request_id TEXT PRIMARY KEY,
-           operation TEXT NOT NULL,
-           entity_id TEXT NOT NULL
-         );
-         CREATE TABLE IF NOT EXISTS historical_people (
-           id TEXT PRIMARY KEY,
-           display_name TEXT NOT NULL,
-           reference_asset_path TEXT NOT NULL,
-           reference_source_revision TEXT NOT NULL,
-           revision INTEGER NOT NULL DEFAULT 1,
-           created_at INTEGER NOT NULL DEFAULT (unixepoch())
-         );
-         CREATE TABLE IF NOT EXISTS folder_historical_links (
-           subject_id TEXT PRIMARY KEY REFERENCES folder_people(id),
-           historical_person_id TEXT NOT NULL REFERENCES historical_people(id),
-           linked_at INTEGER NOT NULL DEFAULT (unixepoch())
-         );
          CREATE INDEX IF NOT EXISTS folder_historical_links_person
            ON folder_historical_links(historical_person_id);
-         CREATE TABLE IF NOT EXISTS person_history_events (
-           id INTEGER PRIMARY KEY AUTOINCREMENT,
-           subject_id TEXT NOT NULL,
-           historical_person_id TEXT NOT NULL,
-           event_kind TEXT NOT NULL CHECK(event_kind IN ('link','unlink')),
-           request_id TEXT NOT NULL UNIQUE,
-           linked_at INTEGER NOT NULL DEFAULT (unixepoch())
-         );
-         CREATE TABLE IF NOT EXISTS person_tag_links (
-           historical_person_id TEXT PRIMARY KEY REFERENCES historical_people(id),
-           tag_id INTEGER REFERENCES custom_tags(id) ON DELETE SET NULL,
-           enabled INTEGER NOT NULL DEFAULT 0,
-           revision INTEGER NOT NULL DEFAULT 1,
-           updated_at INTEGER NOT NULL DEFAULT (unixepoch())
-         );
-         CREATE TABLE IF NOT EXISTS person_tag_overrides (
-           historical_person_id TEXT NOT NULL REFERENCES historical_people(id),
-           asset_path TEXT NOT NULL,
-           suppressed INTEGER NOT NULL DEFAULT 1,
-           revision INTEGER NOT NULL DEFAULT 1,
-           PRIMARY KEY(historical_person_id,asset_path)
-         );",
+         ",
     )?;
     let has_source_identity: bool = connection.query_row(
         "SELECT EXISTS(SELECT 1 FROM pragma_table_info('person_manual_instances')
-           WHERE name='source_identity_revision')",
+           WHERE name='source_identity_revision') AS present",
         [],
-        |row| row.get(0),
+        |row| row.get("present"),
     )?;
     if !has_source_identity {
         connection.execute(
@@ -190,38 +165,38 @@ fn valid_source_identity(value: Option<&str>) -> bool {
 
 fn row_person(row: &rusqlite::Row<'_>) -> rusqlite::Result<FolderPerson> {
     Ok(FolderPerson {
-        id: row.get(0)?,
-        folder_path: PathBuf::from(row.get::<_, String>(1)?),
-        display_name: row.get(2)?,
-        identity_confirmed: row.get::<_, i64>(3)? != 0,
-        revision: row.get(4)?,
-        reference_instance_id: row.get(5)?,
-        pending_count: row.get(6)?,
+        id: row.get("id")?,
+        folder_path: PathBuf::from(row.get::<_, String>("folder_path")?),
+        display_name: row.get("display_name")?,
+        identity_confirmed: row.get::<_, i64>("identity_confirmed")? != 0,
+        revision: row.get("revision")?,
+        reference_instance_id: row.get("reference_instance_id")?,
+        pending_count: row.get("pending_count")?,
     })
 }
 
 fn row_instance(row: &rusqlite::Row<'_>) -> rusqlite::Result<PersonInstance> {
-    let face: Option<String> = row.get(4)?;
-    let body: Option<String> = row.get(5)?;
+    let face: Option<String> = row.get("face_box")?;
+    let body: Option<String> = row.get("body_box")?;
     Ok(PersonInstance {
-        id: row.get(0)?,
-        folder_path: PathBuf::from(row.get::<_, String>(1)?),
-        asset_path: PathBuf::from(row.get::<_, String>(2)?),
-        source_revision: row.get(3)?,
+        id: row.get("id")?,
+        folder_path: PathBuf::from(row.get::<_, String>("folder_path")?),
+        asset_path: PathBuf::from(row.get::<_, String>("asset_path")?),
+        source_revision: row.get("source_revision")?,
         face_box: face.and_then(|value| serde_json::from_str(&value).ok()),
         body_box: body.and_then(|value| serde_json::from_str(&value).ok()),
-        needs_review: row.get::<_, i64>(6)? != 0,
-        revision: row.get(7)?,
+        needs_review: row.get::<_, i64>("needs_review")? != 0,
+        revision: row.get("revision")?,
     })
 }
 
 fn row_historical_person(row: &rusqlite::Row<'_>) -> rusqlite::Result<HistoricalPerson> {
     Ok(HistoricalPerson {
-        id: row.get(0)?,
-        display_name: row.get(1)?,
-        reference_asset_path: PathBuf::from(row.get::<_, String>(2)?),
-        reference_source_revision: row.get(3)?,
-        revision: row.get(4)?,
+        id: row.get("id")?,
+        display_name: row.get("display_name")?,
+        reference_asset_path: PathBuf::from(row.get::<_, String>("reference_asset_path")?),
+        reference_source_revision: row.get("reference_source_revision")?,
+        revision: row.get("revision")?,
     })
 }
 
@@ -261,7 +236,7 @@ impl Library {
                  JOIN folder_people f ON f.id=l.subject_id
                  WHERE f.folder_path=?1 AND f.id=?2",
                 params![path_text(folder_path), subject_id],
-                |row| row.get(0),
+                |row| row.get("historical_person_id"),
             )
             .optional()?)
     }
@@ -279,7 +254,7 @@ impl Library {
             .query_row(
                 "SELECT operation,entity_id FROM person_request_results WHERE request_id=?1",
                 [&input.request_id],
-                |row| Ok((row.get(0)?, row.get(1)?)),
+                |row| Ok((row.get("operation")?, row.get("entity_id")?)),
             )
             .optional()?;
         let history_id = if let Some((operation, id)) = replay {
@@ -287,7 +262,7 @@ impl Library {
                 .query_row(
                     "SELECT subject_id FROM person_history_events WHERE request_id=?1",
                     [&input.request_id],
-                    |row| row.get(0),
+                    |row| row.get("subject_id"),
                 )
                 .optional()?;
             if operation != "linkHistory"
@@ -316,7 +291,13 @@ impl Library {
                         path_text(&input.folder_path),
                         input.expected_revision
                     ],
-                    |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+                    |row| {
+                        Ok((
+                            row.get("display_name")?,
+                            row.get("asset_path")?,
+                            row.get("source_revision")?,
+                        ))
+                    },
                 )
                 .optional()?;
             let Some((name, asset, revision)) = source else {
@@ -326,7 +307,7 @@ impl Library {
                 .query_row(
                     "SELECT historical_person_id FROM folder_historical_links WHERE subject_id=?1",
                     [&input.subject_id],
-                    |row| row.get(0),
+                    |row| row.get("historical_person_id"),
                 )
                 .optional()?;
             if previous.is_some() && input.historical_person_id.is_none() {
@@ -334,18 +315,20 @@ impl Library {
             }
             let id = if let Some(id) = &input.historical_person_id {
                 let exists: bool = transaction.query_row(
-                    "SELECT EXISTS(SELECT 1 FROM historical_people WHERE id=?1)",
+                    "SELECT EXISTS(SELECT 1 FROM historical_people WHERE id=?1) AS present",
                     [id],
-                    |row| row.get(0),
+                    |row| row.get("present"),
                 )?;
                 if !exists {
                     return Err(LibraryError::MissingPersonRecord);
                 }
                 id.clone()
             } else {
-                let id: String =
-                    transaction
-                        .query_row("SELECT lower(hex(randomblob(16)))", [], |row| row.get(0))?;
+                let id: String = transaction.query_row(
+                    "SELECT lower(hex(randomblob(16))) AS id",
+                    [],
+                    |row| row.get("id"),
+                )?;
                 transaction.execute(
                     "INSERT INTO historical_people(id,display_name,reference_asset_path,reference_source_revision)
                      VALUES (?1,?2,?3,?4)",
@@ -403,7 +386,7 @@ impl Library {
             .query_row(
                 "SELECT operation,entity_id FROM person_request_results WHERE request_id=?1",
                 [&input.request_id],
-                |row| Ok((row.get(0)?, row.get(1)?)),
+                |row| Ok((row.get("operation")?, row.get("entity_id")?)),
             )
             .optional()?;
         if let Some((operation, subject)) = replay {
@@ -421,7 +404,7 @@ impl Library {
                         input.subject_id,
                         input.expected_revision
                     ],
-                    |row| row.get(0),
+                    |row| row.get("historical_person_id"),
                 )
                 .optional()?
                 .ok_or(LibraryError::PersonConflict)?;
@@ -461,10 +444,10 @@ impl Library {
         let rows = statement
             .query_map(params![path_text(folder), filter.subject_id], |row| {
                 Ok((
-                    row.get::<_, String>(0)?,
-                    row.get::<_, String>(1)?,
-                    row.get::<_, bool>(2)?,
-                    row.get::<_, Option<String>>(3)?,
+                    row.get::<_, String>("asset_path")?,
+                    row.get::<_, String>("source_revision")?,
+                    row.get::<_, bool>("needs_review")?,
+                    row.get::<_, Option<String>>("decision")?,
                 ))
             })?
             .collect::<Result<Vec<_>, _>>()?;
@@ -542,7 +525,7 @@ impl Library {
             .query_row(
                 "SELECT operation,entity_id FROM person_request_results WHERE request_id=?1",
                 [&input.request_id],
-                |row| Ok((row.get(0)?, row.get(1)?)),
+                |row| Ok((row.get("operation")?, row.get("entity_id")?)),
             )
             .optional()?;
         if let Some((operation, entity)) = replay {
@@ -552,7 +535,7 @@ impl Library {
             let stored: Option<String> = tx.query_row(
                 "SELECT source_identity_revision FROM person_manual_instances WHERE id=?1",
                 [&input.instance_id],
-                |row| row.get(0),
+                |row| row.get("source_identity_revision"),
             )?;
             if stored.as_deref() != source_identity_revision {
                 return Err(LibraryError::PersonConflict);
@@ -582,7 +565,9 @@ impl Library {
                     "SELECT subject_id FROM person_review_decisions WHERE instance_id=?1",
                 )?;
                 statement
-                    .query_map([&input.instance_id], |row| row.get::<_, String>(0))?
+                    .query_map([&input.instance_id], |row| {
+                        row.get::<_, String>("subject_id")
+                    })?
                     .collect::<Result<Vec<_>, _>>()?
             };
             for subject in subjects {
@@ -608,7 +593,7 @@ impl Library {
             .query_row(
                 "SELECT operation,entity_id FROM person_request_results WHERE request_id=?1",
                 [&input.request_id],
-                |row| Ok((row.get(0)?, row.get(1)?)),
+                |row| Ok((row.get("operation")?, row.get("entity_id")?)),
             )
             .optional()?;
         if let Some((operation, entity)) = replay {
@@ -667,7 +652,7 @@ impl Library {
             .query_row(
                 "SELECT operation,entity_id FROM person_request_results WHERE request_id=?1",
                 [&input.request_id],
-                |row| Ok((row.get(0)?, row.get(1)?)),
+                |row| Ok((row.get("operation")?, row.get("entity_id")?)),
             )
             .optional()?;
         if let Some((operation, entity)) = replay {
@@ -686,7 +671,7 @@ impl Library {
                         path_text(&input.folder_path),
                         input.subject_id
                     ],
-                    |row| row.get(0),
+                    |row| row.get("source_revision"),
                 )
                 .optional()?;
             let Some(source_revision) = reference else {
@@ -731,7 +716,7 @@ impl Library {
         let result = transaction
             .query_row(
                 "SELECT id,folder_path,display_name,identity_confirmed,revision,
-             (SELECT instance_id FROM person_references WHERE subject_id=folder_people.id LIMIT 1), (SELECT count(*) FROM person_review_decisions WHERE subject_id=folder_people.id AND decision='pending') FROM folder_people
+             (SELECT instance_id FROM person_references WHERE subject_id=folder_people.id LIMIT 1) AS reference_instance_id, (SELECT count(*) FROM person_review_decisions WHERE subject_id=folder_people.id AND decision='pending') AS pending_count FROM folder_people
              WHERE id=?1 AND folder_path=?2",
                 params![input.subject_id, path_text(&input.folder_path)],
                 row_person,
@@ -748,7 +733,7 @@ impl Library {
         let connection = self.read_connection();
         let mut query = connection.prepare(
             "SELECT id,folder_path,display_name,identity_confirmed,revision,
-             (SELECT instance_id FROM person_references WHERE subject_id=folder_people.id LIMIT 1), (SELECT count(*) FROM person_review_decisions WHERE subject_id=folder_people.id AND decision='pending')
+             (SELECT instance_id FROM person_references WHERE subject_id=folder_people.id LIMIT 1) AS reference_instance_id, (SELECT count(*) FROM person_review_decisions WHERE subject_id=folder_people.id AND decision='pending') AS pending_count
              FROM folder_people WHERE folder_path=?1 ORDER BY created_at,id",
         )?;
         Ok(query
@@ -770,7 +755,7 @@ impl Library {
             .query_row(
                 "SELECT operation,entity_id FROM person_request_results WHERE request_id=?1",
                 [request_id],
-                |row| Ok((row.get(0)?, row.get(1)?)),
+                |row| Ok((row.get("operation")?, row.get("entity_id")?)),
             )
             .optional()?;
         let id = if let Some((operation, id)) = existing {
@@ -780,7 +765,9 @@ impl Library {
             id
         } else {
             let id: String =
-                transaction.query_row("SELECT lower(hex(randomblob(16)))", [], |row| row.get(0))?;
+                transaction.query_row("SELECT lower(hex(randomblob(16))) AS id", [], |row| {
+                    row.get("id")
+                })?;
             transaction.execute(
                 "INSERT INTO folder_people(id,folder_path) VALUES (?1,?2)",
                 params![id, path_text(folder_path)],
@@ -793,7 +780,7 @@ impl Library {
         };
         let result = transaction.query_row(
             "SELECT id,folder_path,display_name,identity_confirmed,revision,
-             (SELECT instance_id FROM person_references WHERE subject_id=folder_people.id LIMIT 1), (SELECT count(*) FROM person_review_decisions WHERE subject_id=folder_people.id AND decision='pending') FROM folder_people WHERE id=?1 AND folder_path=?2",
+             (SELECT instance_id FROM person_references WHERE subject_id=folder_people.id LIMIT 1) AS reference_instance_id, (SELECT count(*) FROM person_review_decisions WHERE subject_id=folder_people.id AND decision='pending') AS pending_count FROM folder_people WHERE id=?1 AND folder_path=?2",
             params![id, path_text(folder_path)], row_person,
         ).optional()?.ok_or(LibraryError::MissingPersonRecord)?;
         transaction.commit()?;
@@ -827,7 +814,7 @@ impl Library {
             .query_row(
                 "SELECT operation,entity_id FROM person_request_results WHERE request_id=?1",
                 [&input.request_id],
-                |row| Ok((row.get(0)?, row.get(1)?)),
+                |row| Ok((row.get("operation")?, row.get("entity_id")?)),
             )
             .optional()?;
         let id = if let Some((operation, id)) = existing {
@@ -837,7 +824,7 @@ impl Library {
             let stored: Option<String> = transaction.query_row(
                 "SELECT source_identity_revision FROM person_manual_instances WHERE id=?1",
                 [&id],
-                |row| row.get(0),
+                |row| row.get("source_identity_revision"),
             )?;
             if stored.as_deref() != source_identity_revision {
                 return Err(LibraryError::PersonConflict);
@@ -845,7 +832,9 @@ impl Library {
             id
         } else {
             let id: String =
-                transaction.query_row("SELECT lower(hex(randomblob(16)))", [], |row| row.get(0))?;
+                transaction.query_row("SELECT lower(hex(randomblob(16))) AS id", [], |row| {
+                    row.get("id")
+                })?;
             transaction.execute(
                 "INSERT INTO person_manual_instances(id,folder_path,asset_path,source_revision,source_identity_revision,face_box,body_box)
                  VALUES (?1,?2,?3,?4,?5,?6,?7)",
@@ -899,8 +888,8 @@ impl Library {
         let rows = query.query_map(
             params![path_text(folder_path), path_text(asset_path)],
             |row| {
-                let face: Option<String> = row.get(2)?;
-                let body: Option<String> = row.get(3)?;
+                let face: Option<String> = row.get("face_box")?;
+                let body: Option<String> = row.get("body_box")?;
                 let parse = |value: Option<String>| {
                     value
                         .map(|value| serde_json::from_str::<[f64; 4]>(&value))
@@ -914,12 +903,12 @@ impl Library {
                         })
                 };
                 Ok(ManualPersonAnchor {
-                    instance_id: row.get(0)?,
-                    source_identity_revision: row.get(1)?,
+                    instance_id: row.get("id")?,
+                    source_identity_revision: row.get("source_identity_revision")?,
                     face_box: parse(face)?,
                     body_box: parse(body)?,
-                    needs_review: row.get::<_, i64>(4)? != 0,
-                    revision: row.get(5)?,
+                    needs_review: row.get::<_, i64>("needs_review")? != 0,
+                    revision: row.get("revision")?,
                 })
             },
         )?;
@@ -936,7 +925,7 @@ impl Library {
             .query_row(
                 "SELECT operation,entity_id FROM person_request_results WHERE request_id=?1",
                 [&input.request_id],
-                |row| Ok((row.get(0)?, row.get(1)?)),
+                |row| Ok((row.get("operation")?, row.get("entity_id")?)),
             )
             .optional()?;
         let key = format!("{}:{}", input.instance_id, input.subject_id);
@@ -947,20 +936,20 @@ impl Library {
         } else {
             let present: bool = transaction.query_row(
                 "SELECT EXISTS(SELECT 1 FROM person_manual_instances i JOIN folder_people p
-                   ON p.folder_path=i.folder_path WHERE i.id=?1 AND p.id=?2 AND i.folder_path=?3)",
+                   ON p.folder_path=i.folder_path WHERE i.id=?1 AND p.id=?2 AND i.folder_path=?3) AS present",
                 params![
                     input.instance_id,
                     input.subject_id,
                     path_text(&input.folder_path)
                 ],
-                |row| row.get(0),
+                |row| row.get("present"),
             )?;
             if !present {
                 return Err(LibraryError::MissingPersonRecord);
             }
             let current: Option<i64> = transaction.query_row(
                 "SELECT revision FROM person_review_decisions WHERE instance_id=?1 AND subject_id=?2",
-                params![input.instance_id, input.subject_id], |row| row.get(0),
+                params![input.instance_id, input.subject_id], |row| row.get("revision"),
             ).optional()?;
             if current.unwrap_or(0) != input.expected_revision {
                 return Err(LibraryError::PersonConflict);
@@ -1001,7 +990,7 @@ impl Library {
             let asset_path: String = transaction.query_row(
                 "SELECT asset_path FROM person_manual_instances WHERE id=?1",
                 [&input.instance_id],
-                |row| row.get(0),
+                |row| row.get("asset_path"),
             )?;
             crate::user::tags::reconcile_person_source_for_subject_asset(
                 &transaction,
@@ -1011,11 +1000,12 @@ impl Library {
         }
         let (instance, decision, revision) = transaction.query_row(
             "SELECT i.id,i.folder_path,i.asset_path,i.source_revision,i.face_box,i.body_box,i.needs_review,i.revision,
-                    r.decision,r.revision FROM person_review_decisions r
+                    r.decision AS decision,r.revision AS review_revision
+             FROM person_review_decisions r
              JOIN person_manual_instances i ON i.id=r.instance_id
              WHERE r.instance_id=?1 AND r.subject_id=?2",
             params![input.instance_id,input.subject_id],
-            |row| Ok((row_instance(row)?, row.get::<_, String>(8)?, row.get::<_, i64>(9)?)),
+            |row| Ok((row_instance(row)?, row.get::<_, String>("decision")?, row.get::<_, i64>("review_revision")?)),
         )?;
         transaction.commit()?;
         Ok(PersonReview {
@@ -1034,7 +1024,8 @@ impl Library {
         let connection = self.read_connection();
         let mut query = connection.prepare(
             "SELECT i.id,i.folder_path,i.asset_path,i.source_revision,i.face_box,i.body_box,i.needs_review,i.revision,
-                    COALESCE(r.decision,'pending'),COALESCE(r.revision,0)
+                    COALESCE(r.decision,'pending') AS decision,
+                    COALESCE(r.revision,0) AS review_revision
              FROM person_manual_instances i
              JOIN person_review_decisions r ON r.instance_id=i.id AND r.subject_id=?2
              WHERE i.folder_path=?1 ORDER BY i.asset_path,i.id",
@@ -1044,8 +1035,8 @@ impl Library {
                 Ok(PersonReview {
                     instance: row_instance(row)?,
                     subject_id: subject_id.to_owned(),
-                    decision: parse_decision(&row.get::<_, String>(8)?),
-                    revision: row.get(9)?,
+                    decision: parse_decision(&row.get::<_, String>("decision")?),
+                    revision: row.get("review_revision")?,
                 })
             })?
             .collect::<Result<Vec<_>, _>>()?)

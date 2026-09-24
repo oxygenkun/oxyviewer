@@ -38,7 +38,9 @@ pub(crate) fn probe_connections(
 ) -> Result<String, String> {
     let version = |connection: &Connection| {
         connection
-            .query_row("SELECT vec_version()", [], |row| row.get::<_, String>(0))
+            .query_row("SELECT vec_version() AS version", [], |row| {
+                row.get::<_, String>("version")
+            })
             .map_err(|error| error.to_string())
     };
     let expected = version(writer)?;
@@ -55,32 +57,35 @@ pub(crate) fn probe_connections(
 
 const CACHE_SCHEMA_VERSION: i64 = 3;
 
-/// Tables created by [`ensure_schema`].
-///
-/// Declared beside the DDL so the registry cannot drift from the schema it
-/// describes, and so claiming a table is the same act as creating it.
-pub(super) const TABLES: &[&str] = &[
-    "person_vector_cache_meta",
-    "person_feature_spaces",
-    "person_features_cache",
-];
-
-/// Tables [`clear`] empties of content but never of their allocator or format
-/// marker; see [`crate::schema::preserved_on_clear`].
-pub(super) const PRESERVED: &[&str] = &["person_vector_cache_meta"];
+crate::table::tables! {
+    preserve person_vector_cache_meta = "schema_version INTEGER NOT NULL";
+    clear person_feature_spaces =
+        "id TEXT PRIMARY KEY,
+        modality TEXT NOT NULL CHECK(modality IN ('face','body')),
+        dimension INTEGER NOT NULL CHECK(dimension > 0 AND dimension <= 4096),
+        producer_fingerprint TEXT NOT NULL,
+        format_version INTEGER NOT NULL DEFAULT 1";
+    clear person_features_cache =
+        "feature_row_id INTEGER PRIMARY KEY,
+        folder_path TEXT NOT NULL,
+        asset_path TEXT NOT NULL,
+        instance_id TEXT NOT NULL,
+        source_revision TEXT NOT NULL,
+        feature_space_id TEXT NOT NULL REFERENCES person_feature_spaces(id),
+        pipeline_fingerprint TEXT NOT NULL,
+        vector BLOB NOT NULL,
+        updated_at INTEGER NOT NULL DEFAULT (unixepoch()),
+        UNIQUE(folder_path,asset_path,instance_id,feature_space_id)";
+}
 
 pub(crate) fn ensure_schema(connection: &mut Connection) -> Result<(), rusqlite::Error> {
     let transaction = connection.transaction()?;
-    transaction.execute_batch(
-        "CREATE TABLE IF NOT EXISTS person_vector_cache_meta (
-           schema_version INTEGER NOT NULL
-         );",
-    )?;
+    crate::table::create_all(&transaction, DEFS)?;
     let current: Option<i64> = transaction
         .query_row(
             "SELECT schema_version FROM person_vector_cache_meta LIMIT 1",
             [],
-            |row| row.get(0),
+            |row| row.get("schema_version"),
         )
         .optional()?;
     if current != Some(CACHE_SCHEMA_VERSION) {
@@ -94,41 +99,21 @@ pub(crate) fn ensure_schema(connection: &mut Connection) -> Result<(), rusqlite:
             [CACHE_SCHEMA_VERSION],
         )?;
     }
+    // Runs again because a version mismatch dropped the tables above.
+    crate::table::create_all(&transaction, DEFS)?;
     transaction.execute_batch(
-        "CREATE TABLE IF NOT EXISTS person_feature_spaces (
-           id TEXT PRIMARY KEY,
-           modality TEXT NOT NULL CHECK(modality IN ('face','body')),
-           dimension INTEGER NOT NULL CHECK(dimension > 0 AND dimension <= 4096),
-           producer_fingerprint TEXT NOT NULL,
-           format_version INTEGER NOT NULL DEFAULT 1
-         );
-         CREATE TABLE IF NOT EXISTS person_features_cache (
-           feature_row_id INTEGER PRIMARY KEY,
-           folder_path TEXT NOT NULL,
-           asset_path TEXT NOT NULL,
-           instance_id TEXT NOT NULL,
-           source_revision TEXT NOT NULL,
-           feature_space_id TEXT NOT NULL REFERENCES person_feature_spaces(id),
-           pipeline_fingerprint TEXT NOT NULL,
-           vector BLOB NOT NULL,
-           updated_at INTEGER NOT NULL DEFAULT (unixepoch()),
-           UNIQUE(folder_path,asset_path,instance_id,feature_space_id)
-         );
-         CREATE INDEX IF NOT EXISTS person_features_folder_space
+        "CREATE INDEX IF NOT EXISTS person_features_folder_space
            ON person_features_cache(folder_path,feature_space_id,asset_path,instance_id);",
     )?;
     transaction.commit()
 }
 
-/// Empties the tables created by [`ensure_schema`].
+/// Empties the tables declared above.
 ///
 /// Feature spaces go with the vectors they describe. The schema marker
 /// survives; see [`crate::schema::preserved_on_clear`].
 pub(crate) fn clear(connection: &Connection) -> Result<(), rusqlite::Error> {
-    connection.execute_batch(
-        "DELETE FROM person_features_cache;
-         DELETE FROM person_feature_spaces;",
-    )
+    crate::table::clear_all(connection, DEFS)
 }
 
 /// Points cached features at a renamed file. Called from [`crate::user`] when
@@ -258,7 +243,13 @@ pub(crate) fn write_feature(
     let contract: (String, i64, String) = tx.query_row(
         "SELECT modality,dimension,producer_fingerprint FROM person_feature_spaces WHERE id=?1",
         [&feature.feature_space_id],
-        |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+        |row| {
+            Ok((
+                row.get("modality")?,
+                row.get("dimension")?,
+                row.get("producer_fingerprint")?,
+            ))
+        },
     )?;
     if contract
         != (
@@ -386,7 +377,7 @@ impl Library {
             .query_row(
                 "SELECT dimension FROM person_feature_spaces WHERE id=?1",
                 [feature_space_id],
-                |row| row.get(0),
+                |row| row.get("dimension"),
             )
             .optional()?;
         let Some(dimension) = dimension else {
@@ -418,12 +409,12 @@ impl Library {
             ],
             |row| {
                 Ok(PersonFeatureMatch {
-                    feature_row_id: row.get(0)?,
-                    asset_path: row.get::<_, String>(1)?.into(),
-                    instance_id: row.get(2)?,
-                    source_revision: row.get(3)?,
-                    pipeline_fingerprint: row.get(4)?,
-                    similarity: row.get(5)?,
+                    feature_row_id: row.get("feature_row_id")?,
+                    asset_path: row.get::<_, String>("asset_path")?.into(),
+                    instance_id: row.get("instance_id")?,
+                    source_revision: row.get("source_revision")?,
+                    pipeline_fingerprint: row.get("pipeline_fingerprint")?,
+                    similarity: row.get("similarity")?,
                 })
             },
         )?;

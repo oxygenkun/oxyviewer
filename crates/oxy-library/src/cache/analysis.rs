@@ -11,70 +11,52 @@ use oxy_domain::{
 use rusqlite::{Connection, OptionalExtension, Row, Transaction, params};
 use std::path::PathBuf;
 
-/// Tables created by [`ensure_schema`].
-///
-/// Declared beside the DDL so the registry cannot drift from the schema it
-/// describes, and so claiming a table is the same act as creating it.
-pub(super) const TABLES: &[&str] = &[
-    "person_analysis_heads",
-    "person_analysis_runs",
-    "person_analysis_requests",
-    "person_analysis_tasks",
-];
-
-/// Tables [`clear`] empties of content but never of their allocator or format
-/// marker; see [`crate::schema::preserved_on_clear`].
-pub(super) const PRESERVED: &[&str] = &[];
+crate::table::tables! {
+    clear person_analysis_heads = "folder_path TEXT PRIMARY KEY, generation INTEGER NOT NULL, run_id TEXT NOT NULL";
+    clear person_analysis_runs =
+        "run_id TEXT PRIMARY KEY,
+        folder_path TEXT NOT NULL,
+        pipeline_id TEXT NOT NULL,
+        pipeline_fingerprint TEXT NOT NULL,
+        generation INTEGER NOT NULL,
+        state TEXT NOT NULL CHECK(state IN ('queued','running','completed','failed','cancelled')),
+        enumeration_complete INTEGER NOT NULL DEFAULT 0,
+        total_tasks INTEGER NOT NULL DEFAULT 0,
+        completed_tasks INTEGER NOT NULL DEFAULT 0,
+        failed_tasks INTEGER NOT NULL DEFAULT 0,
+        created_at INTEGER NOT NULL DEFAULT (unixepoch()),
+        updated_at INTEGER NOT NULL DEFAULT (unixepoch())";
+    clear person_analysis_requests =
+        "request_id TEXT PRIMARY KEY,
+        operation TEXT NOT NULL,
+        run_id TEXT NOT NULL REFERENCES person_analysis_runs(run_id)";
+    clear person_analysis_tasks =
+        "run_id TEXT NOT NULL REFERENCES person_analysis_runs(run_id),
+        asset_path TEXT NOT NULL,
+        source_revision TEXT NOT NULL,
+        stage_id TEXT NOT NULL,
+        stage_fingerprint TEXT NOT NULL,
+        stage_order INTEGER NOT NULL,
+        state TEXT NOT NULL CHECK(state IN ('queued','running','completed','failed')),
+        claim_token TEXT,
+        error TEXT,
+        PRIMARY KEY(run_id,asset_path,stage_id),
+        UNIQUE(run_id,asset_path,stage_order)";
+}
 
 pub(crate) fn ensure_schema(connection: &Connection) -> Result<(), rusqlite::Error> {
+    crate::table::create_all(connection, DEFS)?;
     connection.execute_batch(
-        "CREATE TABLE IF NOT EXISTS person_analysis_heads (
-           folder_path TEXT PRIMARY KEY,
-           generation INTEGER NOT NULL,
-           run_id TEXT NOT NULL
-         );
-         CREATE TABLE IF NOT EXISTS person_analysis_runs (
-           run_id TEXT PRIMARY KEY,
-           folder_path TEXT NOT NULL,
-           pipeline_id TEXT NOT NULL,
-           pipeline_fingerprint TEXT NOT NULL,
-           generation INTEGER NOT NULL,
-           state TEXT NOT NULL CHECK(state IN ('queued','running','completed','failed','cancelled')),
-           enumeration_complete INTEGER NOT NULL DEFAULT 0,
-           total_tasks INTEGER NOT NULL DEFAULT 0,
-           completed_tasks INTEGER NOT NULL DEFAULT 0,
-           failed_tasks INTEGER NOT NULL DEFAULT 0,
-           created_at INTEGER NOT NULL DEFAULT (unixepoch()),
-           updated_at INTEGER NOT NULL DEFAULT (unixepoch())
-         );
-         CREATE INDEX IF NOT EXISTS person_analysis_runs_folder
+        "CREATE INDEX IF NOT EXISTS person_analysis_runs_folder
            ON person_analysis_runs(folder_path,generation DESC);
-         CREATE TABLE IF NOT EXISTS person_analysis_requests (
-           request_id TEXT PRIMARY KEY,
-           operation TEXT NOT NULL,
-           run_id TEXT NOT NULL REFERENCES person_analysis_runs(run_id)
-         );
-         CREATE TABLE IF NOT EXISTS person_analysis_tasks (
-           run_id TEXT NOT NULL REFERENCES person_analysis_runs(run_id),
-           asset_path TEXT NOT NULL,
-           source_revision TEXT NOT NULL,
-           stage_id TEXT NOT NULL,
-           stage_fingerprint TEXT NOT NULL,
-           stage_order INTEGER NOT NULL,
-           state TEXT NOT NULL CHECK(state IN ('queued','running','completed','failed')),
-           claim_token TEXT,
-           error TEXT,
-           PRIMARY KEY(run_id,asset_path,stage_id),
-           UNIQUE(run_id,asset_path,stage_order)
-         );
          CREATE INDEX IF NOT EXISTS person_analysis_tasks_next
            ON person_analysis_tasks(run_id,state,asset_path,stage_order);",
     )?;
     let has_claim_token: bool = connection.query_row(
         "SELECT EXISTS(SELECT 1 FROM pragma_table_info('person_analysis_tasks')
-           WHERE name='claim_token')",
+           WHERE name='claim_token') AS present",
         [],
-        |row| row.get(0),
+        |row| row.get("present"),
     )?;
     if !has_claim_token {
         connection.execute(
@@ -85,19 +67,15 @@ pub(crate) fn ensure_schema(connection: &Connection) -> Result<(), rusqlite::Err
     Ok(())
 }
 
-/// Empties every table created by [`ensure_schema`], children before parents so
-/// the foreign keys to `person_analysis_runs` never dangle mid-clear.
+/// Empties every table declared above. [`crate::table::clear_all`] walks the
+/// declaration backwards, so tasks and requests go before the runs they
+/// reference.
 pub(crate) fn clear(connection: &Connection) -> Result<(), rusqlite::Error> {
-    connection.execute_batch(
-        "DELETE FROM person_analysis_tasks;
-         DELETE FROM person_analysis_requests;
-         DELETE FROM person_analysis_runs;
-         DELETE FROM person_analysis_heads;",
-    )
+    crate::table::clear_all(connection, DEFS)
 }
 
 fn row_run(row: &Row<'_>) -> rusqlite::Result<PersonAnalysisRun> {
-    let state: String = row.get(5)?;
+    let state: String = row.get("state")?;
     let state = match state.as_str() {
         "queued" => PersonAnalysisState::Queued,
         "running" => PersonAnalysisState::Running,
@@ -107,16 +85,16 @@ fn row_run(row: &Row<'_>) -> rusqlite::Result<PersonAnalysisRun> {
         _ => return Err(rusqlite::Error::InvalidQuery),
     };
     Ok(PersonAnalysisRun {
-        run_id: row.get(0)?,
-        folder_path: PathBuf::from(row.get::<_, String>(1)?),
-        pipeline_id: row.get(2)?,
-        pipeline_fingerprint: row.get(3)?,
-        generation: row.get(4)?,
+        run_id: row.get("run_id")?,
+        folder_path: PathBuf::from(row.get::<_, String>("folder_path")?),
+        pipeline_id: row.get("pipeline_id")?,
+        pipeline_fingerprint: row.get("pipeline_fingerprint")?,
+        generation: row.get("generation")?,
         state,
-        enumeration_complete: row.get::<_, i64>(6)? != 0,
-        total_tasks: row.get::<_, i64>(7)? as u64,
-        completed_tasks: row.get::<_, i64>(8)? as u64,
-        failed_tasks: row.get::<_, i64>(9)? as u64,
+        enumeration_complete: row.get::<_, i64>("enumeration_complete")? != 0,
+        total_tasks: row.get::<_, i64>("total_tasks")? as u64,
+        completed_tasks: row.get::<_, i64>("completed_tasks")? as u64,
+        failed_tasks: row.get::<_, i64>("failed_tasks")? as u64,
     })
 }
 
@@ -141,13 +119,13 @@ fn current_run(
         .ok_or(LibraryError::MissingPersonAnalysis)?;
     let is_head: bool = transaction.query_row(
         "SELECT EXISTS(SELECT 1 FROM person_analysis_heads
-           WHERE folder_path=?1 AND run_id=?2 AND generation=?3)",
+           WHERE folder_path=?1 AND run_id=?2 AND generation=?3) AS present",
         params![
             run.folder_path.to_string_lossy(),
             run.run_id,
             run.generation
         ],
-        |row| row.get(0),
+        |row| row.get("present"),
     )?;
     if !is_head
         || !matches!(
@@ -162,13 +140,13 @@ fn current_run(
 
 fn row_task(row: &Row<'_>) -> rusqlite::Result<PersonAnalysisTask> {
     Ok(PersonAnalysisTask {
-        run_id: row.get(0)?,
-        folder_path: PathBuf::from(row.get::<_, String>(1)?),
-        asset_path: PathBuf::from(row.get::<_, String>(2)?),
-        source_revision: row.get(3)?,
-        stage_id: row.get(4)?,
-        stage_fingerprint: row.get(5)?,
-        stage_order: row.get::<_, i64>(6)? as u32,
+        run_id: row.get("run_id")?,
+        folder_path: PathBuf::from(row.get::<_, String>("folder_path")?),
+        asset_path: PathBuf::from(row.get::<_, String>("asset_path")?),
+        source_revision: row.get("source_revision")?,
+        stage_id: row.get("stage_id")?,
+        stage_fingerprint: row.get("stage_fingerprint")?,
+        stage_order: row.get::<_, i64>("stage_order")? as u32,
         claim_token: String::new(),
     })
 }
@@ -193,7 +171,7 @@ impl Library {
             .query_row(
                 "SELECT operation,run_id FROM person_analysis_requests WHERE request_id=?1",
                 [&input.request_id],
-                |row| Ok((row.get(0)?, row.get(1)?)),
+                |row| Ok((row.get("operation")?, row.get("run_id")?)),
             )
             .optional()?;
         if let Some((operation, run_id)) = replay {
@@ -218,7 +196,7 @@ impl Library {
             .query_row(
                 "SELECT generation,run_id FROM person_analysis_heads WHERE folder_path=?1",
                 [folder.as_ref()],
-                |row| Ok((row.get(0)?, row.get(1)?)),
+                |row| Ok((row.get("generation")?, row.get("run_id")?)),
             )
             .optional()?;
         let generation = previous
@@ -233,7 +211,9 @@ impl Library {
             )?;
         }
         let run_id: String =
-            transaction.query_row("SELECT lower(hex(randomblob(16)))", [], |row| row.get(0))?;
+            transaction.query_row("SELECT lower(hex(randomblob(16))) AS id", [], |row| {
+                row.get("id")
+            })?;
         transaction.execute(
             "INSERT INTO person_analysis_runs(run_id,folder_path,pipeline_id,pipeline_fingerprint,generation,state)
              VALUES (?1,?2,?3,?4,?5,'queued')",
@@ -283,7 +263,7 @@ impl Library {
             .query_row(
                 "SELECT operation,run_id FROM person_analysis_requests WHERE request_id=?1",
                 [request_id],
-                |row| Ok((row.get(0)?, row.get(1)?)),
+                |row| Ok((row.get("operation")?, row.get("run_id")?)),
             )
             .optional()?;
         if let Some((operation, prior_id)) = replay {
@@ -298,9 +278,9 @@ impl Library {
             )?;
             if changed == 0 {
                 let exists: bool = transaction.query_row(
-                    "SELECT EXISTS(SELECT 1 FROM person_analysis_runs WHERE run_id=?1)",
+                    "SELECT EXISTS(SELECT 1 FROM person_analysis_runs WHERE run_id=?1) AS present",
                     [run_id],
-                    |row| row.get(0),
+                    |row| row.get("present"),
                 )?;
                 if !exists {
                     return Err(LibraryError::MissingPersonAnalysis);
@@ -351,7 +331,13 @@ impl Library {
                     "SELECT source_revision,stage_fingerprint,stage_order
                      FROM person_analysis_tasks WHERE run_id=?1 AND asset_path=?2 AND stage_id=?3",
                     params![run_id, asset_path, task.stage_id],
-                    |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+                    |row| {
+                        Ok((
+                            row.get("source_revision")?,
+                            row.get("stage_fingerprint")?,
+                            row.get("stage_order")?,
+                        ))
+                    },
                 )
                 .optional()?;
             if let Some((source, fingerprint, order)) = existing {
@@ -365,9 +351,9 @@ impl Library {
             }
             let order_taken: bool = transaction.query_row(
                 "SELECT EXISTS(SELECT 1 FROM person_analysis_tasks
-                   WHERE run_id=?1 AND asset_path=?2 AND stage_order=?3)",
+                   WHERE run_id=?1 AND asset_path=?2 AND stage_order=?3) AS present",
                 params![run_id, asset_path, task.stage_order],
-                |row| row.get(0),
+                |row| row.get("present"),
             )?;
             if order_taken {
                 return Err(LibraryError::PersonAnalysisConflict);
@@ -444,7 +430,9 @@ impl Library {
             .optional()?;
         if let Some(task) = &mut task {
             let claim_token: String =
-                transaction.query_row("SELECT lower(hex(randomblob(16)))", [], |row| row.get(0))?;
+                transaction.query_row("SELECT lower(hex(randomblob(16))) AS id", [], |row| {
+                    row.get("id")
+                })?;
             let changed = transaction.execute(
                 "UPDATE person_analysis_tasks SET state='running',claim_token=?4
                  WHERE run_id=?1 AND asset_path=?2 AND stage_id=?3 AND state='queued'",
@@ -563,11 +551,11 @@ impl Library {
                 ],
                 |row| {
                     Ok((
-                        row.get(0)?,
-                        row.get(1)?,
-                        row.get(2)?,
-                        row.get(3)?,
-                        row.get(4)?,
+                        row.get("source_revision")?,
+                        row.get("stage_fingerprint")?,
+                        row.get("stage_order")?,
+                        row.get("state")?,
+                        row.get("claim_token")?,
                     ))
                 },
             )
@@ -701,9 +689,9 @@ impl Library {
             "SELECT EXISTS(SELECT 1 FROM person_analysis_runs r
                JOIN person_analysis_heads h ON h.folder_path=r.folder_path
               WHERE r.run_id=?1 AND h.run_id=r.run_id AND h.generation=r.generation
-                AND r.state IN ('queued','running'))",
+                AND r.state IN ('queued','running')) AS present",
             [run_id],
-            |row| row.get(0),
+            |row| row.get("present"),
         )?)
     }
 }
@@ -1156,7 +1144,7 @@ mod tests {
             .query_row(
                 "SELECT state,claim_token FROM person_analysis_tasks WHERE run_id='old-run'",
                 [],
-                |row| Ok((row.get(0)?, row.get(1)?)),
+                |row| Ok((row.get("state")?, row.get("claim_token")?)),
             )
             .unwrap();
         assert_eq!(found, ("completed".into(), None));

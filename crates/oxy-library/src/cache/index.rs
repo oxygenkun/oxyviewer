@@ -22,69 +22,51 @@ use std::{
     time::Instant,
 };
 
-/// Tables created by [`ensure_schema`].
-///
-/// Declared beside the DDL so the registry cannot drift from the schema it
-/// describes, and so claiming a table is the same act as creating it.
-pub(super) const TABLES: &[&str] = &[
-    "indexed_roots",
-    "indexed_directory_roots",
-    "library_index_sequence",
-    "indexed_assets",
-    "indexed_directories",
-    "indexed_asset_search",
-    "indexed_asset_search_keys",
-];
-
-/// Tables [`clear`] empties of content but never of their allocator or format
-/// marker; see [`crate::schema::preserved_on_clear`].
-pub(super) const PRESERVED: &[&str] = &["library_index_sequence"];
+crate::table::tables! {
+    clear indexed_roots =
+        "root_path TEXT PRIMARY KEY NOT NULL,
+        indexed_at INTEGER NOT NULL DEFAULT (unixepoch()),
+        asset_count INTEGER NOT NULL,
+        directory_count INTEGER NOT NULL";
+    clear indexed_directory_roots =
+        "root_path TEXT PRIMARY KEY NOT NULL,
+        indexed_at INTEGER NOT NULL DEFAULT (unixepoch()),
+        directory_count INTEGER NOT NULL";
+    preserve library_index_sequence = "id INTEGER PRIMARY KEY CHECK(id = 1), next_scan_id INTEGER NOT NULL";
+    clear indexed_assets =
+        "root_path TEXT NOT NULL,
+        path TEXT NOT NULL,
+        parent_path TEXT NOT NULL,
+        id TEXT NOT NULL,
+        name TEXT NOT NULL,
+        extension TEXT NOT NULL,
+        kind TEXT NOT NULL,
+        modified_at_ms INTEGER NOT NULL,
+        size_bytes INTEGER NOT NULL,
+        has_sidecar INTEGER NOT NULL,
+        scan_id INTEGER NOT NULL,
+        PRIMARY KEY(root_path, path)";
+    clear indexed_directories =
+        "root_path TEXT NOT NULL,
+        path TEXT NOT NULL,
+        parent_path TEXT NOT NULL,
+        name TEXT NOT NULL,
+        has_children INTEGER NOT NULL,
+        scan_id INTEGER NOT NULL,
+        PRIMARY KEY(root_path, path)";
+    // A virtual table and a backfill table: created below, cleared here.
+    external indexed_asset_search;
+    external indexed_asset_search_keys;
+}
 
 pub(super) fn ensure_schema(connection: &mut Connection) -> Result<(), rusqlite::Error> {
+    crate::table::create_all(connection, DEFS)?;
     connection.execute_batch(
-        "CREATE TABLE IF NOT EXISTS indexed_roots (
-           root_path TEXT PRIMARY KEY NOT NULL,
-           indexed_at INTEGER NOT NULL DEFAULT (unixepoch()),
-           asset_count INTEGER NOT NULL,
-           directory_count INTEGER NOT NULL
-         );
-         CREATE TABLE IF NOT EXISTS indexed_directory_roots (
-           root_path TEXT PRIMARY KEY NOT NULL,
-           indexed_at INTEGER NOT NULL DEFAULT (unixepoch()),
-           directory_count INTEGER NOT NULL
-         );
-         INSERT OR IGNORE INTO indexed_directory_roots(root_path, indexed_at, directory_count)
+        "INSERT OR IGNORE INTO indexed_directory_roots(root_path, indexed_at, directory_count)
            SELECT root_path, indexed_at, directory_count FROM indexed_roots;
-         CREATE TABLE IF NOT EXISTS library_index_sequence (
-           id INTEGER PRIMARY KEY CHECK(id = 1),
-           next_scan_id INTEGER NOT NULL
-         );
          INSERT OR IGNORE INTO library_index_sequence(id, next_scan_id) VALUES (1, 1);
-         CREATE TABLE IF NOT EXISTS indexed_assets (
-           root_path TEXT NOT NULL,
-           path TEXT NOT NULL,
-           parent_path TEXT NOT NULL,
-           id TEXT NOT NULL,
-           name TEXT NOT NULL,
-           extension TEXT NOT NULL,
-           kind TEXT NOT NULL,
-           modified_at_ms INTEGER NOT NULL,
-           size_bytes INTEGER NOT NULL,
-           has_sidecar INTEGER NOT NULL,
-           scan_id INTEGER NOT NULL,
-           PRIMARY KEY(root_path, path)
-         );
          CREATE INDEX IF NOT EXISTS indexed_assets_parent
            ON indexed_assets(root_path, parent_path);
-         CREATE TABLE IF NOT EXISTS indexed_directories (
-           root_path TEXT NOT NULL,
-           path TEXT NOT NULL,
-           parent_path TEXT NOT NULL,
-           name TEXT NOT NULL,
-           has_children INTEGER NOT NULL,
-           scan_id INTEGER NOT NULL,
-           PRIMARY KEY(root_path, path)
-         );
          CREATE INDEX IF NOT EXISTS indexed_directories_parent
            ON indexed_directories(root_path, parent_path);
          CREATE VIRTUAL TABLE IF NOT EXISTS indexed_asset_search USING fts5(
@@ -99,20 +81,13 @@ pub(super) fn ensure_schema(connection: &mut Connection) -> Result<(), rusqlite:
     ensure_search_keys(connection)
 }
 
-/// Empties every table created by [`ensure_schema`].
+/// Empties every table declared above.
 ///
-/// This sits next to the DDL it clears on purpose. A table added above without
-/// a matching delete below is visible in the same file, and the tests in
-/// [`crate::schema`] fail if any of them survives a cache clear.
+/// The delete list is not written here: it is derived from the same
+/// declaration that created the tables, so a new table is cleared by default
+/// and marking one `preserve` is the only way to opt out.
 pub(super) fn clear(connection: &Connection) -> Result<(), rusqlite::Error> {
-    connection.execute_batch(
-        "DELETE FROM indexed_assets;
-         DELETE FROM indexed_directories;
-         DELETE FROM indexed_roots;
-         DELETE FROM indexed_directory_roots;
-         DELETE FROM indexed_asset_search;
-         DELETE FROM indexed_asset_search_keys;",
-    )
+    crate::table::clear_all(connection, DEFS)
 }
 
 /// Drops every derived row for one root.
@@ -160,9 +135,9 @@ fn ensure_search_keys(connection: &mut Connection) -> Result<(), rusqlite::Error
     let transaction = connection.transaction()?;
     let exists: bool = transaction.query_row(
         "SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type = 'table'
-         AND name = 'indexed_asset_search_keys')",
+         AND name = 'indexed_asset_search_keys') AS present",
         [],
-        |row| row.get(0),
+        |row| row.get("present"),
     )?;
     if !exists {
         transaction.execute_batch(
@@ -308,9 +283,9 @@ impl Library {
         let mut reader = self.read_connection();
         let connection = reader.transaction()?;
         let registered = connection.query_row(
-            "SELECT EXISTS(SELECT 1 FROM library_roots WHERE path = ?1)",
+            "SELECT EXISTS(SELECT 1 FROM library_roots WHERE path = ?1) AS registered",
             params![root],
-            |row| row.get::<_, bool>(0),
+            |row| row.get::<_, bool>("registered"),
         )?;
         Ok(registered && !has_completed_index(&connection, &root)?)
     }
@@ -391,14 +366,14 @@ impl Library {
         let (total, sql, search_expression) = if let Some(search) = search {
             let expression = fts_expression(search);
             let total = connection.query_row(
-                "SELECT COUNT(*)
+                "SELECT COUNT(*) AS total
                  FROM indexed_assets a
                  JOIN indexed_asset_search s ON s.path = a.path AND s.root_path = a.root_path
                  WHERE s.root_path = ?1
                    AND indexed_asset_search MATCH ?2
                    AND (?3 IS NULL OR a.kind = ?3)",
                 params![root, expression, kind],
-                |row| row.get::<_, usize>(0),
+                |row| row.get::<_, usize>("total"),
             )?;
             (
                 total,
@@ -418,11 +393,11 @@ impl Library {
         } else {
             let directory = directory.to_string_lossy();
             let total = connection.query_row(
-                "SELECT COUNT(*) FROM indexed_assets a
+                "SELECT COUNT(*) AS total FROM indexed_assets a
                  WHERE a.root_path = ?1 AND a.parent_path = ?2
                    AND (?3 IS NULL OR a.kind = ?3)",
                 params![root, directory, kind],
-                |row| row.get::<_, usize>(0),
+                |row| row.get::<_, usize>("total"),
             )?;
             (
                 total,
@@ -481,9 +456,9 @@ impl Library {
         let directories = statement
             .query_map(params![root, parent.to_string_lossy()], |row| {
                 Ok(DirectorySummary {
-                    path: PathBuf::from(row.get::<_, String>(0)?),
-                    name: row.get(1)?,
-                    has_children: row.get(2)?,
+                    path: PathBuf::from(row.get::<_, String>("path")?),
+                    name: row.get("name")?,
+                    has_children: row.get("has_children")?,
                 })
             })?
             .collect::<Result<Vec<_>, _>>()?;
@@ -520,9 +495,9 @@ impl Library {
         let directories = statement
             .query_map(params![root_text, search], |row| {
                 Ok(DirectorySummary {
-                    path: PathBuf::from(row.get::<_, String>(0)?),
-                    name: row.get(1)?,
-                    has_children: row.get(2)?,
+                    path: PathBuf::from(row.get::<_, String>("path")?),
+                    name: row.get("name")?,
+                    has_children: row.get("has_children")?,
                 })
             })?
             .collect::<Result<Vec<_>, _>>()?;
@@ -815,7 +790,7 @@ impl Library {
                     ])?;
                     let search_rowid: i64 = search_key.query_row(
                         params![root.to_string_lossy(), asset.path.to_string_lossy()],
-                        |row| row.get(0),
+                        |row| row.get("search_rowid"),
                     )?;
                     insert_search.execute(params![
                         search_rowid,
@@ -839,7 +814,7 @@ impl Library {
         let scan_id = transaction.query_row(
             "SELECT next_scan_id FROM library_index_sequence WHERE id = 1",
             [],
-            |row| row.get(0),
+            |row| row.get("next_scan_id"),
         )?;
         transaction.execute(
             "UPDATE library_index_sequence SET next_scan_id = next_scan_id + 1 WHERE id = 1",
@@ -1012,14 +987,14 @@ fn parse_kind(value: &str) -> Result<AssetKind, rusqlite::Error> {
 
 pub(crate) fn asset_from_row(row: &rusqlite::Row<'_>) -> Result<AssetSummary, rusqlite::Error> {
     Ok(AssetSummary {
-        id: row.get(0)?,
-        path: PathBuf::from(row.get::<_, String>(1)?),
-        name: row.get(2)?,
-        extension: row.get(3)?,
-        kind: parse_kind(&row.get::<_, String>(4)?)?,
-        size_bytes: row.get(5)?,
-        modified_at_ms: row.get(6)?,
-        has_sidecar: row.get(7)?,
+        id: row.get("id")?,
+        path: PathBuf::from(row.get::<_, String>("path")?),
+        name: row.get("name")?,
+        extension: row.get("extension")?,
+        kind: parse_kind(&row.get::<_, String>("kind")?)?,
+        size_bytes: row.get("size_bytes")?,
+        modified_at_ms: row.get("modified_at_ms")?,
+        has_sidecar: row.get("has_sidecar")?,
         rating: None,
         color_label: None,
         pick_label: None,

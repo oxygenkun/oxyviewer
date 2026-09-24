@@ -214,30 +214,23 @@ fn record_persistence_error(slot: &Slot, item: &PersistenceItem, error: String) 
     }
 }
 
-/// Tables created by [`ensure_schema`].
-///
-/// Declared beside the DDL so the registry cannot drift from the schema it
-/// describes, and so claiming a table is the same act as creating it.
-pub(super) const TABLES: &[&str] = &["directory_snapshots"];
-
-/// Tables [`clear`] empties of content but never of their allocator or format
-/// marker; see [`crate::schema::preserved_on_clear`].
-pub(super) const PRESERVED: &[&str] = &[];
+crate::table::tables! {
+    clear directory_snapshots =
+        "root_path TEXT NOT NULL,
+        directory_path TEXT NOT NULL,
+        assets_json TEXT NOT NULL,
+        PRIMARY KEY(root_path, directory_path)";
+}
 
 pub(crate) fn ensure_schema(connection: &Connection) -> Result<(), rusqlite::Error> {
-    connection.execute_batch(
-        "CREATE TABLE IF NOT EXISTS directory_snapshots (
-        root_path TEXT NOT NULL, directory_path TEXT NOT NULL,
-        assets_json TEXT NOT NULL, PRIMARY KEY(root_path, directory_path)
-    );",
-    )
+    crate::table::create_all(connection, DEFS)
 }
 
 /// Empties the table created by [`ensure_schema`]. In-memory slots are dropped
 /// separately by [`Library::clear_rebuildable_cache`], because a slot must not
 /// answer from rows that no longer exist.
 pub(crate) fn clear(connection: &Connection) -> Result<(), rusqlite::Error> {
-    connection.execute_batch("DELETE FROM directory_snapshots")
+    crate::table::clear_all(connection, DEFS)
 }
 
 impl Library {
@@ -315,7 +308,7 @@ impl Library {
             if !state.loaded {
                 let json: Option<String> = self.read_connection().query_row(
                     "SELECT assets_json FROM directory_snapshots WHERE root_path=?1 AND directory_path=?2",
-                    params![root.to_string_lossy(), directory.to_string_lossy()], |row| row.get(0),
+                    params![root.to_string_lossy(), directory.to_string_lossy()], |row| row.get("assets_json"),
                 ).optional()?;
                 let has_snapshot_record =
                     json.is_some() || self.has_ancestor_snapshot_tombstone(root, directory)?;
@@ -528,8 +521,8 @@ impl Library {
             return Ok(true);
         }
         Ok(self.read_connection().query_row(
-            "SELECT EXISTS(SELECT 1 FROM directory_snapshots WHERE root_path=?1 AND directory_path=?2 AND assets_json!='')",
-            params![root.to_string_lossy(), directory.to_string_lossy()], |row| row.get(0),
+            "SELECT EXISTS(SELECT 1 FROM directory_snapshots WHERE root_path=?1 AND directory_path=?2 AND assets_json!='') AS present",
+            params![root.to_string_lossy(), directory.to_string_lossy()], |row| row.get("present"),
         )?)
     }
 
@@ -577,7 +570,7 @@ impl Library {
                  WHERE root_path=?1 AND assets_json=''",
             )?
             .query_map([root.to_string_lossy()], |row| {
-                row.get::<_, String>(0).map(PathBuf::from)
+                row.get::<_, String>("directory_path").map(PathBuf::from)
             })?
             .collect::<Result<Vec<_>, _>>()?;
         Ok(tombstones
@@ -620,15 +613,15 @@ impl Library {
             .prepare("SELECT root_path,directory_path FROM directory_snapshots")?
             .query_map([], |row| {
                 Ok((
-                    PathBuf::from(row.get::<_, String>(0)?),
-                    PathBuf::from(row.get::<_, String>(1)?),
+                    PathBuf::from(row.get::<_, String>("root_path")?),
+                    PathBuf::from(row.get::<_, String>("directory_path")?),
                 ))
             })?
             .collect::<Result<std::collections::HashSet<_>, _>>()?;
         paths.extend(slots.keys().cloned());
         let registered_roots = connection
             .prepare("SELECT path FROM library_roots")?
-            .query_map([], |row| row.get::<_, String>(0).map(PathBuf::from))?
+            .query_map([], |row| row.get::<_, String>("path").map(PathBuf::from))?
             .collect::<Result<Vec<_>, _>>()?;
         paths.extend(
             registered_roots
@@ -774,7 +767,7 @@ mod tests {
             .query_row(
                 "SELECT assets_json FROM directory_snapshots WHERE root_path=?1 AND directory_path=?2",
                 params![root.to_string_lossy(), root.to_string_lossy()],
-                |row| row.get(0),
+                |row| row.get("assets_json"),
             )
             .unwrap();
         assert!(json.is_empty());
@@ -1028,7 +1021,7 @@ mod tests {
                 "SELECT assets_json FROM directory_snapshots
                  WHERE root_path=?1 AND directory_path=?2",
                 params![root.to_string_lossy(), destination.to_string_lossy()],
-                |row| row.get(0),
+                |row| row.get("assets_json"),
             )
             .unwrap();
         assert!(tombstone.is_empty());

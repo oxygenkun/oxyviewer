@@ -20,20 +20,17 @@ pub(crate) mod projections;
 use crate::{Library, LibraryError};
 use rusqlite::Connection;
 
-/// Every rebuildable table, collected from the modules that create them.
+/// Every rebuildable table, collected from the modules that declare them.
 ///
-/// There is no registry to update: a module's tables are listed in the module
-/// itself, next to the DDL that creates them and the `clear()` that empties
-/// them.
+/// There is no registry to update: a module declares its tables once, and both
+/// the DDL and the delete statements are derived from that declaration.
 pub(crate) fn tables() -> impl Iterator<Item = &'static str> {
-    index::TABLES
-        .iter()
-        .copied()
-        .chain(projections::TABLES.iter().copied())
-        .chain(browsing::TABLES.iter().copied())
-        .chain(detections::TABLES.iter().copied())
-        .chain(features::TABLES.iter().copied())
-        .chain(analysis::TABLES.iter().copied())
+    crate::table::names(index::DEFS)
+        .chain(crate::table::names(projections::DEFS))
+        .chain(crate::table::names(browsing::DEFS))
+        .chain(crate::table::names(detections::DEFS))
+        .chain(crate::table::names(features::DEFS))
+        .chain(crate::table::names(analysis::DEFS))
 }
 
 /// Cache tables a clear leaves their allocator or format marker in place.
@@ -43,14 +40,12 @@ pub(crate) fn tables() -> impl Iterator<Item = &'static str> {
 /// everything written after. Clearing a schema marker would only force a
 /// needless rebuild of an otherwise valid cache.
 pub(crate) fn preserved_on_clear() -> impl Iterator<Item = &'static str> {
-    index::PRESERVED
-        .iter()
-        .copied()
-        .chain(projections::PRESERVED.iter().copied())
-        .chain(browsing::PRESERVED.iter().copied())
-        .chain(detections::PRESERVED.iter().copied())
-        .chain(features::PRESERVED.iter().copied())
-        .chain(analysis::PRESERVED.iter().copied())
+    crate::table::preserved(index::DEFS)
+        .chain(crate::table::preserved(projections::DEFS))
+        .chain(crate::table::preserved(browsing::DEFS))
+        .chain(crate::table::preserved(detections::DEFS))
+        .chain(crate::table::preserved(features::DEFS))
+        .chain(crate::table::preserved(analysis::DEFS))
 }
 
 /// Creates or migrates every rebuildable table. Called after the user-owned

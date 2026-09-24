@@ -11,22 +11,20 @@ use std::{
     path::{Path, PathBuf},
 };
 
-/// Tables created by [`ensure_schema`]. User-owned because this module lives in
-/// [`crate::user`]; there is no second list that could claim otherwise.
-pub(super) const TABLES: &[&str] = &["library_roots"];
+// `preserve` because a root is the user's, not something a cache clear may
+// empty. Every table in [`crate::user`] is declared this way.
+crate::table::tables! {
+    preserve library_roots =
+        "path TEXT PRIMARY KEY NOT NULL,
+        added_at INTEGER NOT NULL DEFAULT (unixepoch()),
+        sort_order INTEGER";
+}
 
 pub(super) fn ensure_schema(connection: &mut Connection) -> Result<(), rusqlite::Error> {
-    connection.execute_batch(
-        "CREATE TABLE IF NOT EXISTS library_roots (
-           path TEXT PRIMARY KEY NOT NULL,
-           added_at INTEGER NOT NULL DEFAULT (unixepoch()),
-           sort_order INTEGER
-         );
-         ",
-    )?;
+    crate::table::create_all(connection, DEFS)?;
     let has_sort_order = connection
         .prepare("PRAGMA table_info(library_roots)")?
-        .query_map([], |row| row.get::<_, String>(1))?
+        .query_map([], |row| row.get::<_, String>("name"))?
         .collect::<Result<Vec<_>, _>>()?
         .iter()
         .any(|column| column == "sort_order");
@@ -46,7 +44,7 @@ fn normalize_root_order(connection: &mut Connection) -> Result<(), rusqlite::Err
              ORDER BY sort_order IS NULL, sort_order, added_at, path",
         )?;
         statement
-            .query_map([], |row| row.get::<_, String>(0))?
+            .query_map([], |row| row.get::<_, String>("path"))?
             .collect::<Result<Vec<_>, _>>()?
     };
     let transaction = connection.transaction()?;
@@ -92,7 +90,7 @@ impl Library {
         let mut statement = connection
             .prepare("SELECT path FROM library_roots ORDER BY sort_order, added_at, path")?;
         let paths = statement
-            .query_map([], |row| row.get::<_, String>(0))?
+            .query_map([], |row| row.get::<_, String>("path"))?
             .collect::<Result<Vec<_>, _>>()?;
         Ok(paths.into_iter().map(PathBuf::from).collect())
     }
@@ -101,7 +99,7 @@ impl Library {
         let mut connection = self.connection.lock();
         let stored = connection
             .prepare("SELECT path FROM library_roots")?
-            .query_map([], |row| row.get::<_, String>(0))?
+            .query_map([], |row| row.get::<_, String>("path"))?
             .collect::<Result<HashSet<_>, _>>()?;
         let requested = paths
             .iter()
@@ -126,9 +124,9 @@ impl Library {
         let path = path.canonicalize().unwrap_or_else(|_| path.to_owned());
         self.read_connection()
             .query_row(
-                "SELECT EXISTS(SELECT 1 FROM library_roots WHERE path = ?1)",
+                "SELECT EXISTS(SELECT 1 FROM library_roots WHERE path = ?1) AS present",
                 params![path.to_string_lossy()],
-                |row| row.get(0),
+                |row| row.get("present"),
             )
             .map_err(Into::into)
     }

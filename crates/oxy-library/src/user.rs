@@ -15,13 +15,15 @@ pub(crate) mod tags;
 
 use rusqlite::Connection;
 
-/// Every user-owned table, collected from the modules that create them.
+/// Every user-owned table, collected from the modules that declare them.
+///
+/// Nothing here asks whether a table is `preserve`d: the whole namespace is
+/// outside the reach of a cache clear, so the only thing read from the
+/// declarations is their names.
 pub(crate) fn tables() -> impl Iterator<Item = &'static str> {
-    roots::TABLES
-        .iter()
-        .copied()
-        .chain(tags::TABLES.iter().copied())
-        .chain(people::TABLES.iter().copied())
+    crate::table::names(roots::DEFS)
+        .chain(crate::table::names(tags::DEFS))
+        .chain(crate::table::names(people::DEFS))
 }
 
 /// Creates or migrates every user-owned table. Runs before the cache schema so

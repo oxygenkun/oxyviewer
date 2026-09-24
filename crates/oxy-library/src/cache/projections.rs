@@ -12,45 +12,35 @@ use oxy_domain::{
 use rusqlite::{Connection, OptionalExtension, Transaction, TransactionBehavior, params};
 use std::path::Path;
 
-/// Tables created by [`ensure_schema`].
-///
-/// Declared beside the DDL so the registry cannot drift from the schema it
-/// describes, and so claiming a table is the same act as creating it.
-pub(super) const TABLES: &[&str] = &["resource_projection_sequence", "resource_projections"];
-
-/// Tables [`clear`] empties of content but never of their allocator or format
-/// marker; see [`crate::schema::preserved_on_clear`].
-pub(super) const PRESERVED: &[&str] = &["resource_projection_sequence"];
+crate::table::tables! {
+    preserve resource_projection_sequence = "id INTEGER PRIMARY KEY CHECK(id = 1), next_revision INTEGER NOT NULL";
+    clear resource_projections =
+        "path TEXT NOT NULL,
+        parent_path TEXT NOT NULL,
+        projection_kind TEXT NOT NULL,
+        source_revision TEXT NOT NULL,
+        valid_at INTEGER NOT NULL,
+        state_revision INTEGER NOT NULL,
+        status TEXT NOT NULL,
+        rating INTEGER,
+        color_label TEXT,
+        pick_label TEXT,
+        result_json TEXT,
+        error TEXT,
+        PRIMARY KEY(path, projection_kind)";
+}
 
 pub(super) fn ensure_schema(connection: &mut Connection) -> Result<(), rusqlite::Error> {
+    crate::table::create_all(connection, DEFS)?;
     connection.execute_batch(
-        "CREATE TABLE IF NOT EXISTS resource_projection_sequence (
-           id INTEGER PRIMARY KEY CHECK(id = 1),
-           next_revision INTEGER NOT NULL
-         );
-         INSERT OR IGNORE INTO resource_projection_sequence(id, next_revision) VALUES (1, 1);
-         CREATE TABLE IF NOT EXISTS resource_projections (
-           path TEXT NOT NULL,
-           parent_path TEXT NOT NULL,
-           projection_kind TEXT NOT NULL,
-           source_revision TEXT NOT NULL,
-           valid_at INTEGER NOT NULL,
-           state_revision INTEGER NOT NULL,
-           status TEXT NOT NULL,
-           rating INTEGER,
-           color_label TEXT,
-           pick_label TEXT,
-           result_json TEXT,
-           error TEXT,
-           PRIMARY KEY(path, projection_kind)
-         );
+        "INSERT OR IGNORE INTO resource_projection_sequence(id, next_revision) VALUES (1, 1);
          CREATE INDEX IF NOT EXISTS resource_projections_parent
            ON resource_projections(parent_path);
          ",
     )?;
     let projection_columns = connection
         .prepare("PRAGMA table_info(resource_projections)")?
-        .query_map([], |row| row.get::<_, String>(1))?
+        .query_map([], |row| row.get::<_, String>("name"))?
         .collect::<Result<Vec<_>, _>>()?;
     let has_state_revision = projection_columns
         .iter()
@@ -76,13 +66,10 @@ pub(super) fn ensure_schema(connection: &mut Connection) -> Result<(), rusqlite:
     Ok(())
 }
 
-/// Empties every table created by [`ensure_schema`].
-///
-/// Kept next to the DDL it clears so a new projection table cannot be added
-/// without deciding whether it is cleared here. The revision counter is left
-/// alone; see [`crate::schema::preserved_on_clear`].
+/// Empties every table declared above except the revision counter, which the
+/// declaration marks `preserve`; see [`crate::schema::preserved_on_clear`].
 pub(super) fn clear(connection: &Connection) -> Result<(), rusqlite::Error> {
-    connection.execute_batch("DELETE FROM resource_projections")
+    crate::table::clear_all(connection, DEFS)
 }
 
 impl Library {
@@ -299,7 +286,7 @@ fn next_resource_revision(transaction: &Transaction<'_>) -> Result<u64, rusqlite
     let revision = transaction.query_row(
         "SELECT next_revision FROM resource_projection_sequence WHERE id = 1",
         [],
-        |row| row.get::<_, i64>(0),
+        |row| row.get::<_, i64>("next_revision"),
     )?;
     transaction.execute(
         "UPDATE resource_projection_sequence SET next_revision = next_revision + 1 WHERE id = 1",
@@ -321,14 +308,14 @@ fn read_metadata_projection(
             params![path.to_string_lossy()],
             |row| {
                 Ok((
-                    row.get::<_, String>(0)?,
-                    row.get::<_, i64>(1)?,
-                    row.get::<_, i64>(2)?,
-                    row.get::<_, String>(3)?,
-                    row.get::<_, Option<u8>>(4)?,
-                    row.get::<_, Option<String>>(5)?,
-                    row.get::<_, Option<String>>(6)?,
-                    row.get::<_, Option<String>>(7)?,
+                    row.get::<_, String>("source_revision")?,
+                    row.get::<_, i64>("state_revision")?,
+                    row.get::<_, i64>("valid_at")?,
+                    row.get::<_, String>("status")?,
+                    row.get::<_, Option<u8>>("rating")?,
+                    row.get::<_, Option<String>>("color_label")?,
+                    row.get::<_, Option<String>>("pick_label")?,
+                    row.get::<_, Option<String>>("error")?,
                 ))
             },
         )
@@ -374,12 +361,12 @@ fn read_image_projection(
             params![path.to_string_lossy(), image_projection_kind(level)],
             |row| {
                 Ok((
-                    row.get::<_, String>(0)?,
-                    row.get::<_, i64>(1)?,
-                    row.get::<_, i64>(2)?,
-                    row.get::<_, String>(3)?,
-                    row.get::<_, Option<String>>(4)?,
-                    row.get::<_, Option<String>>(5)?,
+                    row.get::<_, String>("source_revision")?,
+                    row.get::<_, i64>("state_revision")?,
+                    row.get::<_, i64>("valid_at")?,
+                    row.get::<_, String>("status")?,
+                    row.get::<_, Option<String>>("result_json")?,
+                    row.get::<_, Option<String>>("error")?,
                 ))
             },
         )

@@ -80,7 +80,7 @@ mod tests {
             )
             .unwrap();
         statement
-            .query_map([], |row| row.get::<_, String>(0))
+            .query_map([], |row| row.get::<_, String>("name"))
             .unwrap()
             .collect::<Result<Vec<_>, _>>()
             .unwrap()
@@ -126,18 +126,22 @@ mod tests {
         let connection = library.connection.lock();
         for table in user_owned_tables() {
             let count: i64 = connection
-                .query_row(&format!("SELECT COUNT(*) FROM {table}"), [], |row| {
-                    row.get(0)
-                })
+                .query_row(
+                    &format!("SELECT COUNT(*) AS count FROM {table}"),
+                    [],
+                    |row| row.get("count"),
+                )
                 .unwrap_or_else(|error| panic!("{table} must survive a cache clear: {error}"));
             assert!(count > 0, "{table} lost its rows during a cache clear");
         }
         let preserved: Vec<&str> = preserved_on_clear().collect();
         for table in rebuildable_tables() {
             let count: i64 = connection
-                .query_row(&format!("SELECT COUNT(*) FROM {table}"), [], |row| {
-                    row.get(0)
-                })
+                .query_row(
+                    &format!("SELECT COUNT(*) AS count FROM {table}"),
+                    [],
+                    |row| row.get("count"),
+                )
                 .unwrap_or_else(|error| panic!("{table} must be queryable: {error}"));
             let expected = i64::from(preserved.contains(&table));
             assert_eq!(

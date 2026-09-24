@@ -15,6 +15,7 @@ pub use cache::browsing::DirectoryRead;
 pub use cache::index::{IndexProgress, IndexStage, IndexStats};
 mod schema;
 pub use schema::{DataClass, class_of, preserved_on_clear, rebuildable_tables, user_owned_tables};
+mod table;
 mod user;
 pub use oxy_domain::DetectedPersonInstance;
 pub use user::people::ManualPersonAnchor;
@@ -304,7 +305,7 @@ mod tests {
             .lock()
             .prepare("PRAGMA table_info(resource_projections)")
             .unwrap()
-            .query_map([], |row| row.get::<_, String>(1))
+            .query_map([], |row| row.get::<_, String>("name"))
             .unwrap()
             .collect::<Result<Vec<_>, _>>()
             .unwrap();
@@ -624,9 +625,11 @@ mod tests {
         }
         let connection = library.connection.lock();
         let count: usize = connection
-            .query_row("SELECT COUNT(*) FROM indexed_asset_search", [], |row| {
-                row.get(0)
-            })
+            .query_row(
+                "SELECT COUNT(*) AS count FROM indexed_asset_search",
+                [],
+                |row| row.get("count"),
+            )
             .unwrap();
         assert_eq!(count, inserted);
     }
@@ -679,9 +682,9 @@ mod tests {
         let connection = library.connection.lock();
         let (count, rowid): (usize, i64) = connection
             .query_row(
-                "SELECT COUNT(*), MIN(rowid) FROM indexed_asset_search",
+                "SELECT COUNT(*) AS count, MIN(rowid) AS min_rowid FROM indexed_asset_search",
                 [],
-                |row| Ok((row.get(0)?, row.get(1)?)),
+                |row| Ok((row.get("count")?, row.get("min_rowid")?)),
             )
             .unwrap();
         assert_eq!((count, rowid), (1, 1234));
@@ -725,9 +728,11 @@ mod tests {
         let connection = library.connection.lock();
         for table in ["indexed_asset_search", "indexed_asset_search_keys"] {
             let count: usize = connection
-                .query_row(&format!("SELECT COUNT(*) FROM {table}"), [], |row| {
-                    row.get(0)
-                })
+                .query_row(
+                    &format!("SELECT COUNT(*) AS count FROM {table}"),
+                    [],
+                    |row| row.get("count"),
+                )
                 .unwrap();
             assert_eq!(count, 0, "stale rows in {table}");
         }
@@ -770,9 +775,9 @@ mod tests {
             .connection
             .lock()
             .query_row(
-                "SELECT COUNT(*) FROM indexed_asset_search WHERE root_path = ?1",
+                "SELECT COUNT(*) AS count FROM indexed_asset_search WHERE root_path = ?1",
                 params![canonical_root.to_string_lossy()],
-                |row| row.get::<_, usize>(0),
+                |row| row.get::<_, usize>("count"),
             )
             .unwrap();
         assert_eq!(search_rows, 2);
@@ -856,13 +861,15 @@ mod tests {
             .index_root_with_progress(root.path(), |_| {
                 let connection = library.connection.lock();
                 let directory_rows = connection
-                    .query_row("SELECT COUNT(*) FROM indexed_directories", [], |row| {
-                        row.get::<_, usize>(0)
-                    })
+                    .query_row(
+                        "SELECT COUNT(*) AS count FROM indexed_directories",
+                        [],
+                        |row| row.get::<_, usize>("count"),
+                    )
                     .unwrap();
                 let asset_rows = connection
-                    .query_row("SELECT COUNT(*) FROM indexed_assets", [], |row| {
-                        row.get::<_, usize>(0)
+                    .query_row("SELECT COUNT(*) AS count FROM indexed_assets", [], |row| {
+                        row.get::<_, usize>("count")
                     })
                     .unwrap();
                 observed_counts.push((directory_rows, asset_rows));

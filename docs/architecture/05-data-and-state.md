@@ -99,17 +99,39 @@ Rust projection 与前端显示镜像失效。
 | `oxy_library::cache` | 由照片或用户数据推导出的状态：`indexed_*`、FTS、`resource_projections`、`directory_snapshots`、人物检测/特征缓存、`person_analysis_*` | 建表的那个模块自己的 `clear()`，由 `Library::clear_rebuildable_cache()` 汇总调用 |
 | `oxy_library::user` | 用户输入的事实：`library_roots`、标签树与资产标签、人物身份与审阅、历史关联、人物↔标签映射、`person_request_results` 幂等账本 | 只由显式、经过确认的用户操作删除 |
 
-**删除跟随所有权，而不是跟随一份名单。** 每个 cache 模块的 `clear()` 就写在它的 `ensure_schema`
-旁边，同一个文件里还声明 `TABLES`（这个模块建了哪些表）与 `PRESERVED`（清空时保留哪些）。建表、
-声明归属、决定怎么删，是同一个人在同一个文件里做的一次决定。`schema.rs` 里没有注册表：它从
-「表被哪个命名空间声明」推导出 `DataClass`，只做审计和测试：
+**删除跟随所有权，而不是跟随一份名单。** 每个模块用 `crate::table::tables!` 把自己的表声明一次：
+
+```rust
+crate::table::tables! {
+    clear indexed_assets =
+        "root_path TEXT NOT NULL, path TEXT NOT NULL, PRIMARY KEY(root_path, path)";
+    preserve library_index_sequence =
+        "id INTEGER PRIMARY KEY CHECK(id = 1), next_scan_id INTEGER NOT NULL";
+    external indexed_asset_search;
+}
+```
+
+一份声明同时产出三样东西：`CREATE TABLE`、这个模块拥有的表清单、以及清空它们的 `DELETE`。
+新增一张表不可能「建了但没清」，因为清空读的就是建表用的那份声明。`preserve` 只用于分配器与
+缓存格式标记，`external` 用于不由这份声明创建、但仍参与清空的表（FTS5 虚表、需要独立事务回填的
+`asset_tag_sources`、`indexed_asset_search_keys`）。
+
+声明顺序即创建顺序；**清空按声明的逆序执行**，因此引用别人的表总是先被清空，外键不会中途悬空
+（`person_features_cache` → `person_feature_spaces`、`person_analysis_tasks` → `_runs`）。
+
+`schema.rs` 里没有注册表：它从「表被哪个命名空间声明」推导出 `DataClass`，只做审计和测试：
 
 - 测试枚举 `sqlite_master`，断言每张表都被某个模块声明，新增表不会被默认当成可清理缓存；
 - `clear_rebuildable_cache()` 之后，断言每张 `Rebuildable` 表已清空、每张 `UserOwned` 表行数不变，
   因此把某张表标成 `Rebuildable` 却没在模块里删它，测试同样会失败；
 - 序列表（`*_sequence`）和缓存格式标记（`*_cache_meta`）在清理时保留，否则清空前启动的 worker
-  可能用旧的更高 revision 覆盖新结果，或让一份仍然有效的缓存被无谓重建。保留哪些由各模块自己的
-  `PRESERVED` 声明，`schema::preserved_on_clear()` 只做汇总。
+  可能用旧的更高 revision 覆盖新结果，或让一份仍然有效的缓存被无谓重建。保留哪些由各模块在声明里
+  标 `preserve`，`schema::preserved_on_clear()` 只做汇总。
+
+**结果行一律按列名取值。** `row.get("path")` 而不是 `row.get(0)`：后者依赖 `SELECT` 列表的顺序，
+调整字段顺序会静默错位且编译器不会报警。少数表达式本身没有列名（`COUNT(*)`、`EXISTS(...)`、
+`COALESCE(...)`、标量子查询），这些查询必须显式写 `AS` 别名——`row_person` 依赖的两个标量子查询
+就是因此加上了 `AS reference_instance_id` / `AS pending_count`。
 
 因为分类是从命名空间推导的，把一张用户表标成可重建的唯一办法是把它的声明搬进 `cache/`——
 而那样做会立刻触发「该表在清空后仍有行」的失败。不存在一个可以填错的字段。
@@ -367,10 +389,13 @@ session/root policy 显式加入 command 契约并增加符号链接测试。
 
 - 搜索文本为什么属于 Zustand，而搜索结果属于 React Query？
 - 删除 preview cache 会丢失什么，删除 XMP 又会丢失什么？
-- 新增一张缓存表时，除了在所属模块的 `TABLES` 里声明，还必须做什么？只登记不删会怎样？
+- 新增一张缓存表需要改几处？为什么把它声明为 `preserve` 会让测试失败？
+- 为什么清空要按声明的逆序执行？把 `person_features_cache` 声明在 `person_feature_spaces`
+  之前会发生什么？
 - 为什么 `user` 模块不能直接写 `DELETE FROM indexed_assets`，而要走
   `cache::index::forget_root`？如果这个约束只有文档没有测试，最可能怎么被破坏？
 - 把用户表误标成 `Rebuildable` 会怎样？现有测试能拦住吗？
+- 为什么 `row.get(0)` 要改成 `row.get("列名")`？哪些查询还必须额外加 `AS` 别名？
 - SQLite 中已有 `indexed_assets` 行是否等于某个 root 的完整 generation 已经完成？
 - `cancel_job` 为什么必须有 worker 主动检查才能生效？
 - 当前文件写操作是否受 FolderSession root 限制？

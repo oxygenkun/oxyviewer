@@ -8,28 +8,34 @@ use std::path::Path;
 
 const CACHE_SCHEMA_VERSION: i64 = 2;
 
-/// Tables created by [`ensure_schema`].
-///
-/// Declared beside the DDL so the registry cannot drift from the schema it
-/// describes, and so claiming a table is the same act as creating it.
-pub(super) const TABLES: &[&str] = &["person_detection_cache_meta", "person_instances_cache"];
-
-/// Tables [`clear`] empties of content but never of their allocator or format
-/// marker; see [`crate::schema::preserved_on_clear`].
-pub(super) const PRESERVED: &[&str] = &["person_detection_cache_meta"];
+crate::table::tables! {
+    preserve person_detection_cache_meta = "schema_version INTEGER NOT NULL";
+    clear person_instances_cache =
+        "folder_path TEXT NOT NULL,
+        asset_path TEXT NOT NULL,
+        instance_id TEXT NOT NULL,
+        source_revision TEXT NOT NULL,
+        producer_fingerprint TEXT NOT NULL,
+        pipeline_fingerprint TEXT NOT NULL,
+        run_id TEXT NOT NULL,
+        face_box TEXT,
+        face_landmarks TEXT,
+        body_box TEXT,
+        face_score REAL,
+        body_score REAL,
+        association_score REAL,
+        updated_at INTEGER NOT NULL DEFAULT (unixepoch()),
+        PRIMARY KEY(folder_path,asset_path,producer_fingerprint,instance_id)";
+}
 
 pub(crate) fn ensure_schema(connection: &mut Connection) -> Result<(), rusqlite::Error> {
     let transaction = connection.transaction()?;
-    transaction.execute_batch(
-        "CREATE TABLE IF NOT EXISTS person_detection_cache_meta (
-           schema_version INTEGER NOT NULL
-         );",
-    )?;
+    crate::table::create_all(&transaction, DEFS)?;
     let version: Option<i64> = transaction
         .query_row(
             "SELECT schema_version FROM person_detection_cache_meta LIMIT 1",
             [],
-            |row| row.get(0),
+            |row| row.get("schema_version"),
         )
         .optional()?;
     if version != Some(CACHE_SCHEMA_VERSION) {
@@ -42,36 +48,21 @@ pub(crate) fn ensure_schema(connection: &mut Connection) -> Result<(), rusqlite:
             [CACHE_SCHEMA_VERSION],
         )?;
     }
+    // Runs again because a version mismatch dropped the table above.
+    crate::table::create_all(&transaction, DEFS)?;
     transaction.execute_batch(
-        "CREATE TABLE IF NOT EXISTS person_instances_cache (
-           folder_path TEXT NOT NULL,
-           asset_path TEXT NOT NULL,
-           instance_id TEXT NOT NULL,
-           source_revision TEXT NOT NULL,
-           producer_fingerprint TEXT NOT NULL,
-           pipeline_fingerprint TEXT NOT NULL,
-           run_id TEXT NOT NULL,
-           face_box TEXT,
-           face_landmarks TEXT,
-           body_box TEXT,
-           face_score REAL,
-           body_score REAL,
-           association_score REAL,
-           updated_at INTEGER NOT NULL DEFAULT (unixepoch()),
-           PRIMARY KEY(folder_path,asset_path,producer_fingerprint,instance_id)
-         );
-         CREATE INDEX IF NOT EXISTS person_instances_cache_asset
+        "CREATE INDEX IF NOT EXISTS person_instances_cache_asset
            ON person_instances_cache(folder_path,asset_path,source_revision,producer_fingerprint);",
     )?;
     transaction.commit()
 }
 
-/// Empties the detections created by [`ensure_schema`].
+/// Empties the detections declared above.
 ///
 /// The schema marker survives: it records the format of the cache, not the
 /// cache itself, and clearing it would only force a needless rebuild.
 pub(crate) fn clear(connection: &Connection) -> Result<(), rusqlite::Error> {
-    connection.execute_batch("DELETE FROM person_instances_cache")
+    crate::table::clear_all(connection, DEFS)
 }
 
 fn valid_box(value: Option<[f64; 4]>) -> bool {
@@ -203,9 +194,9 @@ impl Library {
                 producer_fingerprint
             ],
             |row| {
-                let face: Option<String> = row.get(1)?;
-                let landmarks: Option<String> = row.get(2)?;
-                let body: Option<String> = row.get(3)?;
+                let face: Option<String> = row.get("face_box")?;
+                let landmarks: Option<String> = row.get("face_landmarks")?;
+                let body: Option<String> = row.get("body_box")?;
                 let parse = |value: Option<String>| {
                     value
                         .map(|value| serde_json::from_str::<[f64; 4]>(&value))
@@ -219,7 +210,7 @@ impl Library {
                         })
                 };
                 Ok(DetectedPersonInstance {
-                    instance_id: row.get(0)?,
+                    instance_id: row.get("instance_id")?,
                     face_box: parse(face)?,
                     face_landmarks: landmarks
                         .map(|value| serde_json::from_str::<[[f32; 2]; 5]>(&value))
@@ -232,9 +223,9 @@ impl Library {
                             )
                         })?,
                     body_box: parse(body)?,
-                    face_score: row.get(4)?,
-                    body_score: row.get(5)?,
-                    association_score: row.get(6)?,
+                    face_score: row.get("face_score")?,
+                    body_score: row.get("body_score")?,
+                    association_score: row.get("association_score")?,
                 })
             },
         )?;
