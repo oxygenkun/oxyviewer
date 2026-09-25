@@ -21,6 +21,7 @@
 //! waits for a background index write. [`Store::read`] falls back to the write
 //! connection for in-memory stores, which cannot share WAL.
 
+pub mod repo;
 pub mod schema;
 pub mod table;
 mod vector;

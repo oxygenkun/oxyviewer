@@ -2596,8 +2596,10 @@ dependencies = [
 name = "oxy-store"
 version = "0.1.4"
 dependencies = [
+ "oxy-domain",
  "parking_lot",
  "rusqlite",
+ "serde_json",
  "sqlite-vec",
  "tempfile",
  "thiserror 2.0.20",

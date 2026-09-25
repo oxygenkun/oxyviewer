@@ -20,8 +20,7 @@ pub use cache::index::{IndexProgress, IndexStage, IndexStats};
 #[cfg(test)]
 mod audit;
 mod user;
-pub use oxy_domain::DetectedPersonInstance;
-pub use user::people::ManualPersonAnchor;
+pub use oxy_domain::{DetectedPersonInstance, ManualPersonAnchor};
 
 use oxy_store::Store;
 use parking_lot::{Mutex, MutexGuard};

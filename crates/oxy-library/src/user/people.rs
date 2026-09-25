@@ -2,9 +2,10 @@
 //!
 //! Everything here was named, confirmed, or rejected by the user, so it is
 //! never dropped as a side effect of cache maintenance. The tables and their
-//! `user` class are declared in `oxy_store::schema::user`; the derived
-//! detection and feature caches that feed this module are declared in
-//! `oxy_store::schema::cache`, next to the tables they can be rebuilt from.
+//! `user` class are declared in `oxy_store::schema::user`, the derived
+//! detection and feature caches that feed this module in
+//! `oxy_store::schema::cache`, and every statement against them is a function
+//! in `oxy_store::repo`.
 //!
 //! What stays here is what an identity *is*: that a review decision carries the
 //! revision it was made against, that renaming a person is an event with a
@@ -18,29 +19,11 @@ use oxy_domain::{
     PersonReviewDecision, ResetFolderPerson, SetPersonReview, UnlinkHistoricalPerson,
     UpdatePersonInstance,
 };
-use rusqlite::{OptionalExtension, params};
-use std::path::{Path, PathBuf};
+use oxy_store::repo;
+use std::{collections::HashMap, path::Path};
 
 fn path_text(path: &Path) -> String {
     path.to_string_lossy().into_owned()
-}
-
-fn decision_text(value: PersonReviewDecision) -> &'static str {
-    match value {
-        PersonReviewDecision::Pending => "pending",
-        PersonReviewDecision::Belongs => "belongs",
-        PersonReviewDecision::DoesNotBelong => "doesNotBelong",
-        PersonReviewDecision::Deferred => "deferred",
-    }
-}
-
-fn parse_decision(value: &str) -> PersonReviewDecision {
-    match value {
-        "belongs" => PersonReviewDecision::Belongs,
-        "doesNotBelong" => PersonReviewDecision::DoesNotBelong,
-        "deferred" => PersonReviewDecision::Deferred,
-        _ => PersonReviewDecision::Pending,
-    }
 }
 
 fn valid_box(value: Option<[f64; 4]>) -> bool {
@@ -60,65 +43,9 @@ fn valid_source_identity(value: Option<&str>) -> bool {
         .is_none_or(|value| value.len() == 64 && value.bytes().all(|byte| byte.is_ascii_hexdigit()))
 }
 
-fn row_person(row: &rusqlite::Row<'_>) -> rusqlite::Result<FolderPerson> {
-    Ok(FolderPerson {
-        id: row.get("id")?,
-        folder_path: PathBuf::from(row.get::<_, String>("folder_path")?),
-        display_name: row.get("display_name")?,
-        identity_confirmed: row.get::<_, i64>("identity_confirmed")? != 0,
-        revision: row.get("revision")?,
-        reference_instance_id: row.get("reference_instance_id")?,
-        pending_count: row.get("pending_count")?,
-    })
-}
-
-fn row_instance(row: &rusqlite::Row<'_>) -> rusqlite::Result<PersonInstance> {
-    let face: Option<String> = row.get("face_box")?;
-    let body: Option<String> = row.get("body_box")?;
-    Ok(PersonInstance {
-        id: row.get("id")?,
-        folder_path: PathBuf::from(row.get::<_, String>("folder_path")?),
-        asset_path: PathBuf::from(row.get::<_, String>("asset_path")?),
-        source_revision: row.get("source_revision")?,
-        face_box: face.and_then(|value| serde_json::from_str(&value).ok()),
-        body_box: body.and_then(|value| serde_json::from_str(&value).ok()),
-        needs_review: row.get::<_, i64>("needs_review")? != 0,
-        revision: row.get("revision")?,
-    })
-}
-
-fn row_historical_person(row: &rusqlite::Row<'_>) -> rusqlite::Result<HistoricalPerson> {
-    Ok(HistoricalPerson {
-        id: row.get("id")?,
-        display_name: row.get("display_name")?,
-        reference_asset_path: PathBuf::from(row.get::<_, String>("reference_asset_path")?),
-        reference_source_revision: row.get("reference_source_revision")?,
-        revision: row.get("revision")?,
-    })
-}
-
-/// Internal alignment evidence. A missing full source identity means the
-/// instance predates source-identity capture and must not auto-align.
-#[derive(Debug, Clone, PartialEq)]
-pub struct ManualPersonAnchor {
-    pub instance_id: String,
-    pub source_identity_revision: Option<String>,
-    pub face_box: Option<[f64; 4]>,
-    pub body_box: Option<[f64; 4]>,
-    pub needs_review: bool,
-    pub revision: i64,
-}
-
 impl Library {
     pub fn list_historical_people(&self) -> Result<Vec<HistoricalPerson>, LibraryError> {
-        let connection = self.read_connection();
-        let mut statement = connection.prepare(
-            "SELECT id,display_name,reference_asset_path,reference_source_revision,revision
-             FROM historical_people ORDER BY display_name,id",
-        )?;
-        Ok(statement
-            .query_map([], row_historical_person)?
-            .collect::<Result<Vec<_>, _>>()?)
+        Ok(repo::people::list_historical_people(&self.read_connection())?)
     }
 
     pub fn get_historical_link(
@@ -126,16 +53,11 @@ impl Library {
         folder_path: &Path,
         subject_id: &str,
     ) -> Result<Option<String>, LibraryError> {
-        let connection = self.read_connection();
-        Ok(connection
-            .query_row(
-                "SELECT l.historical_person_id FROM folder_historical_links l
-                 JOIN folder_people f ON f.id=l.subject_id
-                 WHERE f.folder_path=?1 AND f.id=?2",
-                params![path_text(folder_path), subject_id],
-                |row| row.get("historical_person_id"),
-            )
-            .optional()?)
+        Ok(repo::people::historical_link(
+            &self.read_connection(),
+            &path_text(folder_path),
+            subject_id,
+        )?)
     }
 
     pub fn link_historical_person(
@@ -147,21 +69,11 @@ impl Library {
         }
         let mut connection = self.write();
         let transaction = connection.transaction()?;
-        let replay: Option<(String, String)> = transaction
-            .query_row(
-                "SELECT operation,entity_id FROM person_request_results WHERE request_id=?1",
-                [&input.request_id],
-                |row| Ok((row.get("operation")?, row.get("entity_id")?)),
-            )
-            .optional()?;
-        let history_id = if let Some((operation, id)) = replay {
-            let replay_subject: Option<String> = transaction
-                .query_row(
-                    "SELECT subject_id FROM person_history_events WHERE request_id=?1",
-                    [&input.request_id],
-                    |row| row.get("subject_id"),
-                )
-                .optional()?;
+        let history_id = if let Some((operation, id)) =
+            repo::people::request_result(&transaction, &input.request_id)?
+        {
+            let replay_subject =
+                repo::people::history_event_subject(&transaction, &input.request_id)?;
             if operation != "linkHistory"
                 || replay_subject.as_deref() != Some(input.subject_id.as_str())
                 || input
@@ -173,99 +85,53 @@ impl Library {
             }
             id
         } else {
-            let source: Option<(String, String, String)> = transaction
-                .query_row(
-                    "SELECT f.display_name,i.asset_path,i.source_revision FROM folder_people f
-                     JOIN person_references r ON r.subject_id=f.id
-                     JOIN person_manual_instances i ON i.id=r.instance_id
-                     JOIN person_review_decisions d ON d.instance_id=i.id AND d.subject_id=f.id
-                     WHERE f.id=?1 AND f.folder_path=?2 AND f.revision=?3
-                       AND f.identity_confirmed=1 AND d.decision='belongs'
-                       AND i.needs_review=0 AND i.face_box IS NOT NULL
-                       AND r.source_revision=i.source_revision",
-                    params![
-                        input.subject_id,
-                        path_text(&input.folder_path),
-                        input.expected_revision
-                    ],
-                    |row| {
-                        Ok((
-                            row.get("display_name")?,
-                            row.get("asset_path")?,
-                            row.get("source_revision")?,
-                        ))
-                    },
-                )
-                .optional()?;
+            let source = repo::people::link_source(
+                &transaction,
+                &input.subject_id,
+                &path_text(&input.folder_path),
+                input.expected_revision,
+            )?;
             let Some((name, asset, revision)) = source else {
                 return Err(LibraryError::PersonConflict);
             };
-            let previous: Option<String> = transaction
-                .query_row(
-                    "SELECT historical_person_id FROM folder_historical_links WHERE subject_id=?1",
-                    [&input.subject_id],
-                    |row| row.get("historical_person_id"),
-                )
-                .optional()?;
+            let previous =
+                repo::people::historical_link_of_subject(&transaction, &input.subject_id)?;
             if previous.is_some() && input.historical_person_id.is_none() {
                 return Err(LibraryError::PersonConflict);
             }
             let id = if let Some(id) = &input.historical_person_id {
-                let exists: bool = transaction.query_row(
-                    "SELECT EXISTS(SELECT 1 FROM historical_people WHERE id=?1) AS present",
-                    [id],
-                    |row| row.get("present"),
-                )?;
-                if !exists {
+                if !repo::people::historical_person_exists(&transaction, id)? {
                     return Err(LibraryError::MissingPersonRecord);
                 }
                 id.clone()
             } else {
-                let id: String = transaction.query_row(
-                    "SELECT lower(hex(randomblob(16))) AS id",
-                    [],
-                    |row| row.get("id"),
-                )?;
-                transaction.execute(
-                    "INSERT INTO historical_people(id,display_name,reference_asset_path,reference_source_revision)
-                     VALUES (?1,?2,?3,?4)",
-                    params![id,name,asset,revision],
-                )?;
+                let id = repo::people::new_id(&transaction)?;
+                repo::people::insert_historical_person(&transaction, &id, &name, &asset, &revision)?;
                 id
             };
             if previous.as_deref() == Some(id.as_str()) {
                 return Err(LibraryError::PersonConflict);
             }
-            transaction.execute(
-                "INSERT INTO folder_historical_links(subject_id,historical_person_id) VALUES (?1,?2)
-                 ON CONFLICT(subject_id) DO UPDATE SET historical_person_id=excluded.historical_person_id,
-                 linked_at=unixepoch()",
-                params![input.subject_id,id],
-            )?;
-            transaction.execute(
-                "UPDATE folder_people SET revision=revision+1,updated_at=unixepoch() WHERE id=?1",
-                [&input.subject_id],
-            )?;
-            transaction.execute(
-                "INSERT INTO person_history_events(subject_id,historical_person_id,event_kind,request_id) VALUES (?1,?2,'link',?3)",
-                params![input.subject_id,id,input.request_id],
-            )?;
-            transaction.execute(
-                "INSERT INTO person_request_results VALUES (?1,'linkHistory',?2)",
-                params![input.request_id, id],
-            )?;
-            crate::user::tags::reconcile_person_sources_for_subject(
+            repo::people::upsert_historical_link(&transaction, &input.subject_id, &id)?;
+            repo::people::bump_subject_revision(&transaction, &input.subject_id)?;
+            repo::people::insert_history_event(
                 &transaction,
                 &input.subject_id,
+                &id,
+                "link",
+                &input.request_id,
             )?;
+            repo::people::record_request_result(
+                &transaction,
+                &input.request_id,
+                "linkHistory",
+                &id,
+            )?;
+            repo::cross::reconcile_person_sources_for_subject(&transaction, &input.subject_id)?;
             id
         };
-        let result = transaction.query_row(
-            "SELECT id,display_name,reference_asset_path,reference_source_revision,revision
-             FROM historical_people WHERE id=?1",
-            [history_id],
-            row_historical_person,
-        )?;
+        let result = repo::people::historical_person(&transaction, &history_id)?
+            .ok_or(LibraryError::MissingPersonRecord)?;
         transaction.commit()?;
         Ok(result)
     }
@@ -279,56 +145,41 @@ impl Library {
         }
         let mut connection = self.write();
         let transaction = connection.transaction()?;
-        let replay: Option<(String, String)> = transaction
-            .query_row(
-                "SELECT operation,entity_id FROM person_request_results WHERE request_id=?1",
-                [&input.request_id],
-                |row| Ok((row.get("operation")?, row.get("entity_id")?)),
-            )
-            .optional()?;
-        if let Some((operation, subject)) = replay {
+        if let Some((operation, subject)) =
+            repo::people::request_result(&transaction, &input.request_id)?
+        {
             if operation != "unlinkHistory" || subject != input.subject_id {
                 return Err(LibraryError::PersonConflict);
             }
         } else {
-            let history_id: String = transaction
-                .query_row(
-                    "SELECT l.historical_person_id FROM folder_historical_links l
-                 JOIN folder_people f ON f.id=l.subject_id
-                 WHERE f.folder_path=?1 AND f.id=?2 AND f.revision=?3",
-                    params![
-                        path_text(&input.folder_path),
-                        input.subject_id,
-                        input.expected_revision
-                    ],
-                    |row| row.get("historical_person_id"),
-                )
-                .optional()?
-                .ok_or(LibraryError::PersonConflict)?;
-            transaction.execute(
-                "DELETE FROM folder_historical_links WHERE subject_id=?1",
-                [&input.subject_id],
-            )?;
-            transaction.execute(
-                "UPDATE folder_people SET revision=revision+1,updated_at=unixepoch() WHERE id=?1",
-                [&input.subject_id],
-            )?;
-            transaction.execute(
-                "INSERT INTO person_history_events(subject_id,historical_person_id,event_kind,request_id) VALUES (?1,?2,'unlink',?3)",
-                params![input.subject_id,history_id,input.request_id],
-            )?;
-            transaction.execute(
-                "INSERT INTO person_request_results VALUES (?1,'unlinkHistory',?2)",
-                params![input.request_id, input.subject_id],
-            )?;
-            crate::user::tags::reconcile_person_sources_for_subject(
+            let history_id = repo::people::historical_link_at_revision(
+                &transaction,
+                &path_text(&input.folder_path),
+                &input.subject_id,
+                input.expected_revision,
+            )?
+            .ok_or(LibraryError::PersonConflict)?;
+            repo::people::delete_historical_link(&transaction, &input.subject_id)?;
+            repo::people::bump_subject_revision(&transaction, &input.subject_id)?;
+            repo::people::insert_history_event(
                 &transaction,
                 &input.subject_id,
+                &history_id,
+                "unlink",
+                &input.request_id,
             )?;
+            repo::people::record_request_result(
+                &transaction,
+                &input.request_id,
+                "unlinkHistory",
+                &input.subject_id,
+            )?;
+            repo::cross::reconcile_person_sources_for_subject(&transaction, &input.subject_id)?;
         }
         transaction.commit()?;
         Ok(())
     }
+
     /// Intersect the entire directory snapshot before sorting/paging, never a loaded UI page.
     pub fn filter_assets_by_person(
         &self,
@@ -336,24 +187,18 @@ impl Library {
         assets: &[AssetSummary],
         filter: &PersonFilter,
     ) -> Result<Vec<AssetSummary>, LibraryError> {
-        let connection = self.read_connection();
-        let mut statement = connection.prepare("SELECT i.asset_path,i.source_revision,i.needs_review,r.decision FROM person_manual_instances i LEFT JOIN person_review_decisions r ON r.instance_id=i.id AND r.subject_id=?2 WHERE i.folder_path=?1")?;
-        let rows = statement
-            .query_map(params![path_text(folder), filter.subject_id], |row| {
-                Ok((
-                    row.get::<_, String>("asset_path")?,
-                    row.get::<_, String>("source_revision")?,
-                    row.get::<_, bool>("needs_review")?,
-                    row.get::<_, Option<String>>("decision")?,
-                ))
-            })?
-            .collect::<Result<Vec<_>, _>>()?;
-        let mut by_path = std::collections::HashMap::<String, Vec<_>>::new();
-        for (path, source, needs_review, decision) in rows {
-            by_path
-                .entry(path)
-                .or_default()
-                .push((source, needs_review, decision));
+        let records = repo::people::instance_records(
+            &self.read_connection(),
+            &path_text(folder),
+            filter.subject_id.as_deref(),
+        )?;
+        let mut by_path = HashMap::<String, Vec<_>>::new();
+        for record in records {
+            by_path.entry(record.asset_path).or_default().push((
+                record.source_revision,
+                record.needs_review,
+                record.decision,
+            ));
         }
         Ok(assets
             .iter()
@@ -418,64 +263,75 @@ impl Library {
         }
         let mut connection = self.write();
         let tx = connection.transaction()?;
-        let replay: Option<(String, String)> = tx
-            .query_row(
-                "SELECT operation,entity_id FROM person_request_results WHERE request_id=?1",
-                [&input.request_id],
-                |row| Ok((row.get("operation")?, row.get("entity_id")?)),
-            )
-            .optional()?;
-        if let Some((operation, entity)) = replay {
+        if let Some((operation, entity)) =
+            repo::people::request_result(&tx, &input.request_id)?
+        {
             if operation != "updateInstance" || entity != input.instance_id {
                 return Err(LibraryError::PersonConflict);
             }
-            let stored: Option<String> = tx.query_row(
-                "SELECT source_identity_revision FROM person_manual_instances WHERE id=?1",
-                [&input.instance_id],
-                |row| row.get("source_identity_revision"),
-            )?;
+            let stored = repo::people::source_identity_revision(&tx, &input.instance_id)?;
             if stored.as_deref() != source_identity_revision {
                 return Err(LibraryError::PersonConflict);
             }
         } else {
-            let previous = tx.query_row("SELECT id,folder_path,asset_path,source_revision,face_box,body_box,needs_review,revision FROM person_manual_instances WHERE id=?1 AND folder_path=?2", params![input.instance_id,path_text(&input.folder_path)],row_instance).optional()?.ok_or(LibraryError::MissingPersonRecord)?;
+            let previous = repo::people::instance(
+                &tx,
+                &input.instance_id,
+                &path_text(&input.folder_path),
+            )?
+            .ok_or(LibraryError::MissingPersonRecord)?;
             if previous.revision != input.expected_revision {
                 return Err(LibraryError::PersonConflict);
             }
-            tx.execute("INSERT INTO person_instance_events(instance_id,previous_json,request_id) VALUES (?1,?2,?3)",params![input.instance_id,serde_json::to_string(&previous)?,input.request_id])?;
-            tx.execute("UPDATE person_manual_instances SET face_box=?1,body_box=?2,source_revision=?3,source_identity_revision=?4,needs_review=0,revision=revision+1,updated_at=unixepoch() WHERE id=?5",params![input.face_box.map(|v|serde_json::to_string(&v)).transpose()?,input.body_box.map(|v|serde_json::to_string(&v)).transpose()?,input.source_revision,source_identity_revision,input.instance_id])?;
+            repo::people::insert_instance_event(
+                &tx,
+                &input.instance_id,
+                &serde_json::to_string(&previous)?,
+                &input.request_id,
+            )?;
+            repo::people::update_instance_geometry(
+                &tx,
+                &input.instance_id,
+                input
+                    .face_box
+                    .map(|value| serde_json::to_string(&value))
+                    .transpose()?
+                    .as_deref(),
+                input
+                    .body_box
+                    .map(|value| serde_json::to_string(&value))
+                    .transpose()?
+                    .as_deref(),
+                &input.source_revision,
+                source_identity_revision,
+            )?;
             // A changed region is a new human claim: preserve old decisions in the audit,
             // and explicitly require review for every subject using this instance.
-            tx.execute("INSERT INTO person_review_events(instance_id,subject_id,decision,revision,request_id) SELECT instance_id,subject_id,CASE WHEN decision='doesNotBelong' THEN decision ELSE 'pending' END,revision+1,?2 || ':' || subject_id FROM person_review_decisions WHERE instance_id=?1",params![input.instance_id,input.request_id])?;
-            tx.execute("UPDATE person_review_decisions SET decision=CASE WHEN decision='doesNotBelong' THEN decision ELSE 'pending' END,revision=revision+1 WHERE instance_id=?1",[&input.instance_id])?;
-            tx.execute("UPDATE folder_people SET revision=revision+1 WHERE id IN (SELECT subject_id FROM person_references WHERE instance_id=?1)",[&input.instance_id])?;
-            tx.execute(
-                "DELETE FROM person_references WHERE instance_id=?1",
-                [&input.instance_id],
+            repo::people::carry_review_decisions_into_events(
+                &tx,
+                &input.instance_id,
+                &input.request_id,
             )?;
-            tx.execute(
-                "INSERT INTO person_request_results VALUES (?1,'updateInstance',?2)",
-                params![input.request_id, input.instance_id],
+            repo::people::require_review_after_change(&tx, &input.instance_id)?;
+            repo::people::bump_referencing_subjects(&tx, &input.instance_id)?;
+            repo::people::delete_references_of_instance(&tx, &input.instance_id)?;
+            repo::people::record_request_result(
+                &tx,
+                &input.request_id,
+                "updateInstance",
+                &input.instance_id,
             )?;
-            let subjects = {
-                let mut statement = tx.prepare(
-                    "SELECT subject_id FROM person_review_decisions WHERE instance_id=?1",
-                )?;
-                statement
-                    .query_map([&input.instance_id], |row| {
-                        row.get::<_, String>("subject_id")
-                    })?
-                    .collect::<Result<Vec<_>, _>>()?
-            };
-            for subject in subjects {
-                crate::user::tags::reconcile_person_source_for_subject_asset(
+            for subject in repo::people::subjects_of_instance(&tx, &input.instance_id)? {
+                repo::cross::reconcile_person_source_for_asset(
                     &tx,
                     &subject,
                     &path_text(&previous.asset_path),
                 )?;
             }
         }
-        let result = tx.query_row("SELECT id,folder_path,asset_path,source_revision,face_box,body_box,needs_review,revision FROM person_manual_instances WHERE id=?1 AND folder_path=?2",params![input.instance_id,path_text(&input.folder_path)],row_instance)?;
+        let result =
+            repo::people::instance(&tx, &input.instance_id, &path_text(&input.folder_path))?
+                .ok_or(LibraryError::MissingPersonRecord)?;
         tx.commit()?;
         Ok(result)
     }
@@ -486,38 +342,40 @@ impl Library {
         }
         let mut connection = self.write();
         let tx = connection.transaction()?;
-        let replay: Option<(String, String)> = tx
-            .query_row(
-                "SELECT operation,entity_id FROM person_request_results WHERE request_id=?1",
-                [&input.request_id],
-                |row| Ok((row.get("operation")?, row.get("entity_id")?)),
-            )
-            .optional()?;
-        if let Some((operation, entity)) = replay {
+        if let Some((operation, entity)) = repo::people::request_result(&tx, &input.request_id)? {
             if operation != "resetPerson" || entity != input.subject_id {
                 return Err(LibraryError::PersonConflict);
             }
         } else {
-            if tx.execute("UPDATE folder_people SET display_name=?1,identity_confirmed=0,revision=revision+1,updated_at=unixepoch() WHERE id=?2 AND folder_path=?3 AND revision=?4",params![input.display_name.trim(),input.subject_id,path_text(&input.folder_path),input.expected_revision])? != 1 { return Err(LibraryError::PersonConflict); }
-            tx.execute(
-                "INSERT INTO person_history_events(subject_id,historical_person_id,event_kind,request_id)
-                 SELECT subject_id,historical_person_id,'unlink',?2 FROM folder_historical_links WHERE subject_id=?1",
-                params![input.subject_id,input.request_id],
+            let name = input.display_name.trim();
+            let changed = repo::people::reset_identity(
+                &tx,
+                &input.subject_id,
+                &path_text(&input.folder_path),
+                name,
+                input.expected_revision,
             )?;
-            tx.execute(
-                "DELETE FROM folder_historical_links WHERE subject_id=?1",
-                [&input.subject_id],
+            if changed != 1 {
+                return Err(LibraryError::PersonConflict);
+            }
+            repo::people::carry_links_into_events(&tx, &input.subject_id, &input.request_id)?;
+            repo::people::delete_historical_link(&tx, &input.subject_id)?;
+            repo::people::delete_references_of_subject(&tx, &input.subject_id)?;
+            repo::people::insert_identity_event(
+                &tx,
+                &input.subject_id,
+                "reset",
+                name,
+                input.expected_revision + 1,
+                &input.request_id,
             )?;
-            tx.execute(
-                "DELETE FROM person_references WHERE subject_id=?1",
-                [&input.subject_id],
+            repo::people::record_request_result(
+                &tx,
+                &input.request_id,
+                "resetPerson",
+                &input.subject_id,
             )?;
-            tx.execute("INSERT INTO person_identity_events(subject_id,event_kind,display_name,revision,request_id) VALUES (?1,'reset',?2,?3,?4)",params![input.subject_id,input.display_name.trim(),input.expected_revision+1,input.request_id])?;
-            tx.execute(
-                "INSERT INTO person_request_results VALUES (?1,'resetPerson',?2)",
-                params![input.request_id, input.subject_id],
-            )?;
-            crate::user::tags::reconcile_person_sources_for_subject(&tx, &input.subject_id)?;
+            repo::cross::reconcile_person_sources_for_subject(&tx, &input.subject_id)?;
         }
         tx.commit()?;
         Ok(())
@@ -528,13 +386,10 @@ impl Library {
         folder_path: &Path,
         id: &str,
     ) -> Result<PersonInstance, LibraryError> {
-        let connection = self.read_connection();
-        connection.query_row(
-            "SELECT id,folder_path,asset_path,source_revision,face_box,body_box,needs_review,revision
-             FROM person_manual_instances WHERE folder_path=?1 AND id=?2",
-            params![path_text(folder_path),id],row_instance,
-        ).optional()?.ok_or(LibraryError::MissingPersonRecord)
+        repo::people::instance(&self.read_connection(), id, &path_text(folder_path))?
+            .ok_or(LibraryError::MissingPersonRecord)
     }
+
     pub fn confirm_folder_person(
         &self,
         input: &ConfirmFolderPerson,
@@ -545,97 +400,70 @@ impl Library {
         }
         let mut connection = self.write();
         let transaction = connection.transaction()?;
-        let replay: Option<(String, String)> = transaction
-            .query_row(
-                "SELECT operation,entity_id FROM person_request_results WHERE request_id=?1",
-                [&input.request_id],
-                |row| Ok((row.get("operation")?, row.get("entity_id")?)),
-            )
-            .optional()?;
-        if let Some((operation, entity)) = replay {
+        if let Some((operation, entity)) =
+            repo::people::request_result(&transaction, &input.request_id)?
+        {
             if operation != "confirmPerson" || entity != input.subject_id {
                 return Err(LibraryError::PersonConflict);
             }
         } else {
-            let reference: Option<String> = transaction
-                .query_row(
-                    "SELECT i.source_revision FROM person_manual_instances i
-                 JOIN person_review_decisions r ON r.instance_id=i.id
-                 WHERE i.id=?1 AND i.folder_path=?2 AND r.subject_id=?3
-                   AND r.decision='belongs' AND i.face_box IS NOT NULL AND i.needs_review=0",
-                    params![
-                        input.reference_instance_id,
-                        path_text(&input.folder_path),
-                        input.subject_id
-                    ],
-                    |row| row.get("source_revision"),
-                )
-                .optional()?;
-            let Some(source_revision) = reference else {
-                return Err(LibraryError::MissingPersonRecord);
-            };
-            let changed = transaction.execute(
-                "UPDATE folder_people SET display_name=?1,identity_confirmed=1,revision=revision+1,
-                 updated_at=unixepoch() WHERE id=?2 AND folder_path=?3 AND revision=?4",
-                params![
-                    name,
-                    input.subject_id,
-                    path_text(&input.folder_path),
-                    input.expected_revision
-                ],
+            let source_revision = repo::people::reference_source_revision(
+                &transaction,
+                &input.reference_instance_id,
+                &path_text(&input.folder_path),
+                &input.subject_id,
+            )?
+            .ok_or(LibraryError::MissingPersonRecord)?;
+            let changed = repo::people::confirm_identity(
+                &transaction,
+                &input.subject_id,
+                &path_text(&input.folder_path),
+                name,
+                input.expected_revision,
             )?;
             if changed != 1 {
                 return Err(LibraryError::PersonConflict);
             }
-            transaction.execute(
-                "DELETE FROM person_references WHERE subject_id=?1",
-                [&input.subject_id],
+            repo::people::delete_references_of_subject(&transaction, &input.subject_id)?;
+            repo::people::replace_reference(
+                &transaction,
+                &input.subject_id,
+                &input.reference_instance_id,
+                &source_revision,
             )?;
-            transaction.execute(
-                "INSERT OR REPLACE INTO person_references(subject_id,instance_id,source_revision)
-                 VALUES (?1,?2,?3)",
-                params![
-                    input.subject_id,
-                    input.reference_instance_id,
-                    source_revision
-                ],
+            repo::people::insert_identity_event(
+                &transaction,
+                &input.subject_id,
+                "confirm",
+                name,
+                input.expected_revision + 1,
+                &input.request_id,
             )?;
-            transaction.execute(
-                "INSERT INTO person_identity_events(subject_id,event_kind,display_name,revision,request_id)
-                 VALUES (?1,'confirm',?2,?3,?4)",
-                params![input.subject_id,name,input.expected_revision+1,input.request_id],
-            )?;
-            transaction.execute(
-                "INSERT INTO person_request_results VALUES (?1,'confirmPerson',?2)",
-                params![input.request_id, input.subject_id],
+            repo::people::record_request_result(
+                &transaction,
+                &input.request_id,
+                "confirmPerson",
+                &input.subject_id,
             )?;
         }
-        let result = transaction
-            .query_row(
-                "SELECT id,folder_path,display_name,identity_confirmed,revision,
-             (SELECT instance_id FROM person_references WHERE subject_id=folder_people.id LIMIT 1) AS reference_instance_id, (SELECT count(*) FROM person_review_decisions WHERE subject_id=folder_people.id AND decision='pending') AS pending_count FROM folder_people
-             WHERE id=?1 AND folder_path=?2",
-                params![input.subject_id, path_text(&input.folder_path)],
-                row_person,
-            )
-            .optional()?
-            .ok_or(LibraryError::MissingPersonRecord)?;
+        let result = repo::people::folder_person(
+            &transaction,
+            &input.subject_id,
+            &path_text(&input.folder_path),
+        )?
+        .ok_or(LibraryError::MissingPersonRecord)?;
         transaction.commit()?;
         Ok(result)
     }
+
     pub fn list_folder_people(
         &self,
         folder_path: &Path,
     ) -> Result<Vec<FolderPerson>, LibraryError> {
-        let connection = self.read_connection();
-        let mut query = connection.prepare(
-            "SELECT id,folder_path,display_name,identity_confirmed,revision,
-             (SELECT instance_id FROM person_references WHERE subject_id=folder_people.id LIMIT 1) AS reference_instance_id, (SELECT count(*) FROM person_review_decisions WHERE subject_id=folder_people.id AND decision='pending') AS pending_count
-             FROM folder_people WHERE folder_path=?1 ORDER BY created_at,id",
-        )?;
-        Ok(query
-            .query_map([path_text(folder_path)], row_person)?
-            .collect::<Result<Vec<_>, _>>()?)
+        Ok(repo::people::list_folder_people(
+            &self.read_connection(),
+            &path_text(folder_path),
+        )?)
     }
 
     pub fn create_folder_person(
@@ -648,38 +476,21 @@ impl Library {
         }
         let mut connection = self.write();
         let transaction = connection.transaction()?;
-        let existing: Option<(String, String)> = transaction
-            .query_row(
-                "SELECT operation,entity_id FROM person_request_results WHERE request_id=?1",
-                [request_id],
-                |row| Ok((row.get("operation")?, row.get("entity_id")?)),
-            )
-            .optional()?;
-        let id = if let Some((operation, id)) = existing {
+        let id = if let Some((operation, id)) =
+            repo::people::request_result(&transaction, request_id)?
+        {
             if operation != "createPerson" {
                 return Err(LibraryError::PersonConflict);
             }
             id
         } else {
-            let id: String =
-                transaction.query_row("SELECT lower(hex(randomblob(16))) AS id", [], |row| {
-                    row.get("id")
-                })?;
-            transaction.execute(
-                "INSERT INTO folder_people(id,folder_path) VALUES (?1,?2)",
-                params![id, path_text(folder_path)],
-            )?;
-            transaction.execute(
-                "INSERT INTO person_request_results VALUES (?1,'createPerson',?2)",
-                params![request_id, id],
-            )?;
+            let id = repo::people::new_id(&transaction)?;
+            repo::people::insert_folder_person(&transaction, &id, &path_text(folder_path))?;
+            repo::people::record_request_result(&transaction, request_id, "createPerson", &id)?;
             id
         };
-        let result = transaction.query_row(
-            "SELECT id,folder_path,display_name,identity_confirmed,revision,
-             (SELECT instance_id FROM person_references WHERE subject_id=folder_people.id LIMIT 1) AS reference_instance_id, (SELECT count(*) FROM person_review_decisions WHERE subject_id=folder_people.id AND decision='pending') AS pending_count FROM folder_people WHERE id=?1 AND folder_path=?2",
-            params![id, path_text(folder_path)], row_person,
-        ).optional()?.ok_or(LibraryError::MissingPersonRecord)?;
+        let result = repo::people::folder_person(&transaction, &id, &path_text(folder_path))?
+            .ok_or(LibraryError::MissingPersonRecord)?;
         transaction.commit()?;
         Ok(result)
     }
@@ -707,49 +518,49 @@ impl Library {
         }
         let mut connection = self.write();
         let transaction = connection.transaction()?;
-        let existing: Option<(String, String)> = transaction
-            .query_row(
-                "SELECT operation,entity_id FROM person_request_results WHERE request_id=?1",
-                [&input.request_id],
-                |row| Ok((row.get("operation")?, row.get("entity_id")?)),
-            )
-            .optional()?;
-        let id = if let Some((operation, id)) = existing {
+        let id = if let Some((operation, id)) =
+            repo::people::request_result(&transaction, &input.request_id)?
+        {
             if operation != "createInstance" {
                 return Err(LibraryError::PersonConflict);
             }
-            let stored: Option<String> = transaction.query_row(
-                "SELECT source_identity_revision FROM person_manual_instances WHERE id=?1",
-                [&id],
-                |row| row.get("source_identity_revision"),
-            )?;
+            let stored = repo::people::source_identity_revision(&transaction, &id)?;
             if stored.as_deref() != source_identity_revision {
                 return Err(LibraryError::PersonConflict);
             }
             id
         } else {
-            let id: String =
-                transaction.query_row("SELECT lower(hex(randomblob(16))) AS id", [], |row| {
-                    row.get("id")
-                })?;
-            transaction.execute(
-                "INSERT INTO person_manual_instances(id,folder_path,asset_path,source_revision,source_identity_revision,face_box,body_box)
-                 VALUES (?1,?2,?3,?4,?5,?6,?7)",
-                params![id, path_text(&input.folder_path), path_text(&input.asset_path), input.source_revision,source_identity_revision,
-                    input.face_box.map(|value| serde_json::to_string(&value)).transpose()?,
-                    input.body_box.map(|value| serde_json::to_string(&value)).transpose()?],
+            let id = repo::people::new_id(&transaction)?;
+            repo::people::insert_instance(
+                &transaction,
+                &repo::people::NewInstance {
+                    id: &id,
+                    folder_path: &path_text(&input.folder_path),
+                    asset_path: &path_text(&input.asset_path),
+                    source_revision: &input.source_revision,
+                    source_identity_revision,
+                    face_box_json: input
+                        .face_box
+                        .map(|value| serde_json::to_string(&value))
+                        .transpose()?
+                        .as_deref(),
+                    body_box_json: input
+                        .body_box
+                        .map(|value| serde_json::to_string(&value))
+                        .transpose()?
+                        .as_deref(),
+                },
             )?;
-            transaction.execute(
-                "INSERT INTO person_request_results VALUES (?1,'createInstance',?2)",
-                params![input.request_id, id],
+            repo::people::record_request_result(
+                &transaction,
+                &input.request_id,
+                "createInstance",
+                &id,
             )?;
             id
         };
-        let result = transaction.query_row(
-            "SELECT id,folder_path,asset_path,source_revision,face_box,body_box,needs_review,revision
-             FROM person_manual_instances WHERE id=?1 AND folder_path=?2",
-            params![id, path_text(&input.folder_path)], row_instance,
-        ).optional()?.ok_or(LibraryError::MissingPersonRecord)?;
+        let result = repo::people::instance(&transaction, &id, &path_text(&input.folder_path))?
+            .ok_or(LibraryError::MissingPersonRecord)?;
         transaction.commit()?;
         Ok(result)
     }
@@ -759,57 +570,23 @@ impl Library {
         folder_path: &Path,
         asset_path: &Path,
     ) -> Result<Vec<PersonInstance>, LibraryError> {
-        let connection = self.read_connection();
-        let mut query = connection.prepare(
-            "SELECT id,folder_path,asset_path,source_revision,face_box,body_box,needs_review,revision
-             FROM person_manual_instances WHERE folder_path=?1 AND asset_path=?2 ORDER BY created_at,id",
-        )?;
-        Ok(query
-            .query_map(
-                params![path_text(folder_path), path_text(asset_path)],
-                row_instance,
-            )?
-            .collect::<Result<Vec<_>, _>>()?)
+        Ok(repo::people::list_instances(
+            &self.read_connection(),
+            &path_text(folder_path),
+            &path_text(asset_path),
+        )?)
     }
 
     pub fn list_manual_person_anchors(
         &self,
         folder_path: &Path,
         asset_path: &Path,
-    ) -> Result<Vec<ManualPersonAnchor>, LibraryError> {
-        let connection = self.read_connection();
-        let mut query = connection.prepare(
-            "SELECT id,source_identity_revision,face_box,body_box,needs_review,revision
-             FROM person_manual_instances WHERE folder_path=?1 AND asset_path=?2 ORDER BY id",
-        )?;
-        let rows = query.query_map(
-            params![path_text(folder_path), path_text(asset_path)],
-            |row| {
-                let face: Option<String> = row.get("face_box")?;
-                let body: Option<String> = row.get("body_box")?;
-                let parse = |value: Option<String>| {
-                    value
-                        .map(|value| serde_json::from_str::<[f64; 4]>(&value))
-                        .transpose()
-                        .map_err(|error| {
-                            rusqlite::Error::FromSqlConversionFailure(
-                                2,
-                                rusqlite::types::Type::Text,
-                                Box::new(error),
-                            )
-                        })
-                };
-                Ok(ManualPersonAnchor {
-                    instance_id: row.get("id")?,
-                    source_identity_revision: row.get("source_identity_revision")?,
-                    face_box: parse(face)?,
-                    body_box: parse(body)?,
-                    needs_review: row.get::<_, i64>("needs_review")? != 0,
-                    revision: row.get("revision")?,
-                })
-            },
-        )?;
-        Ok(rows.collect::<Result<Vec<_>, _>>()?)
+    ) -> Result<Vec<oxy_domain::ManualPersonAnchor>, LibraryError> {
+        Ok(repo::people::list_anchors(
+            &self.read_connection(),
+            &path_text(folder_path),
+            &path_text(asset_path),
+        )?)
     }
 
     pub fn set_person_review(&self, input: &SetPersonReview) -> Result<PersonReview, LibraryError> {
@@ -818,97 +595,75 @@ impl Library {
         }
         let mut connection = self.write();
         let transaction = connection.transaction()?;
-        let replay: Option<(String, String)> = transaction
-            .query_row(
-                "SELECT operation,entity_id FROM person_request_results WHERE request_id=?1",
-                [&input.request_id],
-                |row| Ok((row.get("operation")?, row.get("entity_id")?)),
-            )
-            .optional()?;
         let key = format!("{}:{}", input.instance_id, input.subject_id);
-        if let Some((operation, entity)) = replay {
+        if let Some((operation, entity)) =
+            repo::people::request_result(&transaction, &input.request_id)?
+        {
             if operation != "setReview" || entity != key {
                 return Err(LibraryError::PersonConflict);
             }
         } else {
-            let present: bool = transaction.query_row(
-                "SELECT EXISTS(SELECT 1 FROM person_manual_instances i JOIN folder_people p
-                   ON p.folder_path=i.folder_path WHERE i.id=?1 AND p.id=?2 AND i.folder_path=?3) AS present",
-                params![
-                    input.instance_id,
-                    input.subject_id,
-                    path_text(&input.folder_path)
-                ],
-                |row| row.get("present"),
+            let present = repo::people::review_allowed(
+                &transaction,
+                &input.instance_id,
+                &input.subject_id,
+                &path_text(&input.folder_path),
             )?;
             if !present {
                 return Err(LibraryError::MissingPersonRecord);
             }
-            let current: Option<i64> = transaction.query_row(
-                "SELECT revision FROM person_review_decisions WHERE instance_id=?1 AND subject_id=?2",
-                params![input.instance_id, input.subject_id], |row| row.get("revision"),
-            ).optional()?;
+            let current = repo::people::review_revision(
+                &transaction,
+                &input.instance_id,
+                &input.subject_id,
+            )?;
             if current.unwrap_or(0) != input.expected_revision {
                 return Err(LibraryError::PersonConflict);
             }
-            transaction.execute(
-                "INSERT INTO person_review_decisions(instance_id,subject_id,decision,revision)
-                 VALUES (?1,?2,?3,?4)
-                 ON CONFLICT(instance_id,subject_id) DO UPDATE SET decision=excluded.decision,
-                   revision=excluded.revision,updated_at=unixepoch()",
-                params![
-                    input.instance_id,
-                    input.subject_id,
-                    decision_text(input.decision),
-                    input.expected_revision + 1
-                ],
+            repo::people::upsert_review_decision(
+                &transaction,
+                &input.instance_id,
+                &input.subject_id,
+                input.decision,
+                input.expected_revision + 1,
             )?;
             if input.decision != PersonReviewDecision::Belongs {
-                let removed = transaction.execute(
-                    "DELETE FROM person_references WHERE subject_id=?1 AND instance_id=?2",
-                    params![input.subject_id, input.instance_id],
+                let removed = repo::people::delete_reference(
+                    &transaction,
+                    &input.subject_id,
+                    &input.instance_id,
                 )?;
                 if removed > 0 {
-                    transaction.execute(
-                        "UPDATE folder_people SET revision=revision+1 WHERE id=?1",
-                        [&input.subject_id],
-                    )?;
+                    repo::people::bump_subject_revision(&transaction, &input.subject_id)?;
                 }
             }
-            transaction.execute(
-                "INSERT INTO person_review_events(instance_id,subject_id,decision,revision,request_id)
-                 VALUES (?1,?2,?3,?4,?5)",
-                params![input.instance_id, input.subject_id, decision_text(input.decision), input.expected_revision+1, input.request_id],
+            repo::people::insert_review_event(
+                &transaction,
+                &input.instance_id,
+                &input.subject_id,
+                input.decision,
+                input.expected_revision + 1,
+                &input.request_id,
             )?;
-            transaction.execute(
-                "INSERT INTO person_request_results VALUES (?1,'setReview',?2)",
-                params![input.request_id, key],
-            )?;
-            let asset_path: String = transaction.query_row(
-                "SELECT asset_path FROM person_manual_instances WHERE id=?1",
-                [&input.instance_id],
-                |row| row.get("asset_path"),
-            )?;
-            crate::user::tags::reconcile_person_source_for_subject_asset(
+            repo::people::record_request_result(&transaction, &input.request_id, "setReview", &key)?;
+            let asset_path =
+                repo::people::instance_asset_path(&transaction, &input.instance_id)?;
+            repo::cross::reconcile_person_source_for_asset(
                 &transaction,
                 &input.subject_id,
                 &asset_path,
             )?;
         }
-        let (instance, decision, revision) = transaction.query_row(
-            "SELECT i.id,i.folder_path,i.asset_path,i.source_revision,i.face_box,i.body_box,i.needs_review,i.revision,
-                    r.decision AS decision,r.revision AS review_revision
-             FROM person_review_decisions r
-             JOIN person_manual_instances i ON i.id=r.instance_id
-             WHERE r.instance_id=?1 AND r.subject_id=?2",
-            params![input.instance_id,input.subject_id],
-            |row| Ok((row_instance(row)?, row.get::<_, String>("decision")?, row.get::<_, i64>("review_revision")?)),
-        )?;
+        let Some((instance, decision, revision)) =
+            repo::people::review(&transaction, &input.instance_id, &input.subject_id)?
+        else {
+            return Err(LibraryError::MissingPersonRecord);
+        };
         transaction.commit()?;
         Ok(PersonReview {
             instance,
             subject_id: input.subject_id.clone(),
-            decision: parse_decision(&decision),
+            decision,
             revision,
         })
     }
@@ -918,25 +673,11 @@ impl Library {
         folder_path: &Path,
         subject_id: &str,
     ) -> Result<Vec<PersonReview>, LibraryError> {
-        let connection = self.read_connection();
-        let mut query = connection.prepare(
-            "SELECT i.id,i.folder_path,i.asset_path,i.source_revision,i.face_box,i.body_box,i.needs_review,i.revision,
-                    COALESCE(r.decision,'pending') AS decision,
-                    COALESCE(r.revision,0) AS review_revision
-             FROM person_manual_instances i
-             JOIN person_review_decisions r ON r.instance_id=i.id AND r.subject_id=?2
-             WHERE i.folder_path=?1 ORDER BY i.asset_path,i.id",
-        )?;
-        Ok(query
-            .query_map(params![path_text(folder_path), subject_id], |row| {
-                Ok(PersonReview {
-                    instance: row_instance(row)?,
-                    subject_id: subject_id.to_owned(),
-                    decision: parse_decision(&row.get::<_, String>("decision")?),
-                    revision: row.get("review_revision")?,
-                })
-            })?
-            .collect::<Result<Vec<_>, _>>()?)
+        Ok(repo::people::list_reviews(
+            &self.read_connection(),
+            &path_text(folder_path),
+            subject_id,
+        )?)
     }
 }
 
@@ -944,6 +685,7 @@ impl Library {
 mod tests {
     use super::*;
     use rusqlite::Connection;
+    use std::path::PathBuf;
 
     #[test]
     fn manual_reviews_are_scoped_idempotent_and_survive_reopen() {

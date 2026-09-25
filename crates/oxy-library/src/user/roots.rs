@@ -4,10 +4,12 @@
 //! this module is rebuilt by a scan, and removing a root is a user decision
 //! that never cascades into identifiers, reviews, or tags. The table declares
 //! itself `user` in `oxy_store::schema::user`, which is what keeps a cache
-//! clear away from it; what stays here is what a root *means*.
+//! clear away from it; what stays here is what a root *means*: an order the
+//! user chose, a canonical path, and a removal that also drops the index rows
+//! derived from it.
 
 use crate::{Library, LibraryError, cache::index::forget_root};
-use rusqlite::params;
+use oxy_store::repo;
 use std::{
     collections::HashSet,
     path::{Path, PathBuf},
@@ -16,11 +18,7 @@ use std::{
 impl Library {
     pub fn add_root(&self, path: &Path) -> Result<(), LibraryError> {
         let canonical = path.canonicalize()?;
-        self.write().execute(
-            "INSERT OR IGNORE INTO library_roots(path, sort_order)
-             VALUES (?1, (SELECT COALESCE(MAX(sort_order), -1) + 1 FROM library_roots))",
-            params![canonical.to_string_lossy()],
-        )?;
+        repo::library::insert_root(&self.write(), &canonical.to_string_lossy())?;
         Ok(())
     }
 
@@ -33,7 +31,7 @@ impl Library {
         let root = path.to_string_lossy();
         let mut connection = self.write();
         let transaction = connection.transaction()?;
-        transaction.execute("DELETE FROM library_roots WHERE path = ?1", params![root])?;
+        repo::library::delete_root(&transaction, root.as_ref())?;
         // The index owns its own rows. Asking it to forget the root keeps the
         // delete list next to the schema that defines those tables.
         forget_root(&transaction, root.as_ref())?;
@@ -42,21 +40,15 @@ impl Library {
     }
 
     pub fn roots(&self) -> Result<Vec<PathBuf>, LibraryError> {
-        let connection = self.read_connection();
-        let mut statement = connection
-            .prepare("SELECT path FROM library_roots ORDER BY sort_order, added_at, path")?;
-        let paths = statement
-            .query_map([], |row| row.get::<_, String>("path"))?
-            .collect::<Result<Vec<_>, _>>()?;
-        Ok(paths.into_iter().map(PathBuf::from).collect())
+        Ok(repo::library::list_roots(&self.read_connection())?
+            .into_iter()
+            .map(PathBuf::from)
+            .collect())
     }
 
     pub fn reorder_roots(&self, paths: &[PathBuf]) -> Result<(), LibraryError> {
         let mut connection = self.write();
-        let stored = connection
-            .prepare("SELECT path FROM library_roots")?
-            .query_map([], |row| row.get::<_, String>("path"))?
-            .collect::<Result<HashSet<_>, _>>()?;
+        let stored = repo::library::root_paths(&connection)?;
         let requested = paths
             .iter()
             .map(|path| path.to_string_lossy().into_owned())
@@ -67,10 +59,7 @@ impl Library {
 
         let transaction = connection.transaction()?;
         for (sort_order, path) in paths.iter().enumerate() {
-            transaction.execute(
-                "UPDATE library_roots SET sort_order = ?1 WHERE path = ?2",
-                params![sort_order as i64, path.to_string_lossy()],
-            )?;
+            repo::library::set_sort_order(&transaction, &path.to_string_lossy(), sort_order as i64)?;
         }
         transaction.commit()?;
         Ok(())
@@ -78,12 +67,9 @@ impl Library {
 
     pub fn contains_root(&self, path: &Path) -> Result<bool, LibraryError> {
         let path = path.canonicalize().unwrap_or_else(|_| path.to_owned());
-        self.read_connection()
-            .query_row(
-                "SELECT EXISTS(SELECT 1 FROM library_roots WHERE path = ?1) AS present",
-                params![path.to_string_lossy()],
-                |row| row.get("present"),
-            )
-            .map_err(Into::into)
+        Ok(repo::library::contains_root(
+            &self.read_connection(),
+            &path.to_string_lossy(),
+        )?)
     }
 }

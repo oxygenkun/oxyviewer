@@ -272,6 +272,16 @@ pub struct ResetFolderPerson {
     pub request_id: String,
 }
 
+#[derive(Debug, Clone, PartialEq)]
+pub struct ManualPersonAnchor {
+    pub instance_id: String,
+    pub source_identity_revision: Option<String>,
+    pub face_box: Option<[f64; 4]>,
+    pub body_box: Option<[f64; 4]>,
+    pub needs_review: bool,
+    pub revision: i64,
+}
+
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub enum PersonReviewDecision {
@@ -279,6 +289,32 @@ pub enum PersonReviewDecision {
     Belongs,
     DoesNotBelong,
     Deferred,
+}
+
+impl PersonReviewDecision {
+    /// The spelling stored in the database and sent across IPC.
+    ///
+    /// It matches the serde name, so the column and the wire format cannot
+    /// drift apart.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Pending => "pending",
+            Self::Belongs => "belongs",
+            Self::DoesNotBelong => "doesNotBelong",
+            Self::Deferred => "deferred",
+        }
+    }
+
+    /// Reads [`Self::as_str`] back. An unknown word is [`Self::Pending`],
+    /// because a decision the app cannot interpret has to be looked at again.
+    pub fn from_text(value: &str) -> Self {
+        match value {
+            "belongs" => Self::Belongs,
+            "doesNotBelong" => Self::DoesNotBelong,
+            "deferred" => Self::Deferred,
+            _ => Self::Pending,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]

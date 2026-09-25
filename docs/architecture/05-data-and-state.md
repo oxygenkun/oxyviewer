@@ -155,6 +155,18 @@ oxy_store::table::tables! {
 拿不到另一方的表，就写不出它的 SQL。缓存迁移（`person_instances_cache`、`person_features_cache`
 的 schema 版本）只 DROP 自己的缓存表与 meta，人工资料不受影响。
 
+**用户域的每一句 SQL 住在 `oxy-store/src/repo`。** 一个仓库函数拥有一个查询，接收连接——或者接收
+`Transaction`，因为 `Transaction` 会解引用成 `Connection`——返回 `oxy-domain` 类型，或者返回一个紧挨着
+查询声明的小行结构（`InstanceRecord`、`NewInstance`）。仓库函数**不开启事务**，也不做任何判断：
+「这四下写是一个原子动作」「同一文件夹内的移动保留人物来源」「改过的框需要重新审阅」都是规则，留在拥有
+该领域的 crate 里；仓库只知道语句本身。这样拆分后，`oxy-library` 的 `user/` 只留下策略：`set_asset_tag`
+是一句 `replace_manual_source` 加一句 `reconcile_effective` 再加一句 `enqueue_sync`，而不是三段 SQL 字面量；
+`asset_tags` 只有一个语句会从 `asset_tag_sources` 派生（`reconcile_effective`），来源增删不再可能让派生集合
+漂移。跨领域的少数函数（人物身份推标签：读 `person_*` 的决定，写 `asset_tag_sources` 与 `asset_tags`）放在
+`repo/cross.rs`，因为任何领域 crate 都不能拥有它而不依赖同级 crate。`oxy-library/src/audit.rs` 里另一个源码级
+测试断言 `src/user` 的**生产代码**不再出现任何 SQL 动词，缓存域的语句（`src/cache/index.rs` 的分页、FTS、递归
+目录、向量检索）仍在原处，属于后续阶段。
+
 `oxy-store::Store::open` 在 app data 目录创建 `oxyviewer.sqlite`、启用 WAL、注册向量扩展，然后运行
 schema 步骤（先是用户表，再是缓存表）；`oxy-library::Library::open` 只是在此之上组装。确保以下逻辑
 结构存在：

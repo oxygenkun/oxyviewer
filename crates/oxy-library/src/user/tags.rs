@@ -3,9 +3,10 @@
 //!
 //! Tags are facts the user entered, so they are never part of a cache rebuild;
 //! only an explicit delete removes them. The tables and their `user` class are
-//! declared in `oxy_store::schema::user`, next to the DDL. What stays here is
-//! what a tag *is*: that the name is unique among siblings, that a tag cannot
-//! be moved below itself, and what deleting one cascades into.
+//! declared in `oxy_store::schema::user`, next to the DDL, and every statement
+//! that reads or writes them is a function in `oxy_store::repo`. What stays
+//! here is what a tag *is*: that the name is unique among siblings, that a tag
+//! cannot be moved below itself, and what deleting one cascades into.
 
 use crate::{
     Library, LibraryError,
@@ -15,128 +16,8 @@ use oxy_domain::{
     AssetTagAssignment, AssetTagAssignmentsByPath, CustomTag, CustomTagId, PersonTagLink,
     PersonTagOverride, SetPersonTagLink, SetPersonTagOverride, TagDeleteImpact, TagSyncStatus,
 };
-use rusqlite::{OptionalExtension, Transaction, params};
+use oxy_store::{StoreError, repo};
 use std::{collections::HashMap, path::Path};
-
-fn reconcile_effective_tag(
-    transaction: &Transaction<'_>,
-    path: &str,
-    tag_id: CustomTagId,
-) -> Result<(), rusqlite::Error> {
-    let has_source: bool = transaction.query_row(
-        "SELECT EXISTS(SELECT 1 FROM asset_tag_sources WHERE asset_path=?1 AND tag_id=?2) AS present",
-        params![path, tag_id],
-        |row| row.get("present"),
-    )?;
-    if has_source {
-        transaction.execute(
-            "INSERT OR IGNORE INTO asset_tags(asset_path,tag_id) VALUES (?1,?2)",
-            params![path, tag_id],
-        )?;
-    } else {
-        transaction.execute(
-            "DELETE FROM asset_tags WHERE asset_path=?1 AND tag_id=?2",
-            params![path, tag_id],
-        )?;
-    }
-    Ok(())
-}
-
-pub(crate) fn reconcile_person_source_for_subject_asset(
-    transaction: &Transaction<'_>,
-    subject_id: &str,
-    asset_path: &str,
-) -> Result<(), rusqlite::Error> {
-    let desired: Option<CustomTagId> = transaction
-        .query_row(
-            "SELECT t.tag_id FROM folder_historical_links l
-         JOIN person_tag_links t ON t.historical_person_id=l.historical_person_id
-         WHERE l.subject_id=?1 AND t.enabled=1 AND t.tag_id IS NOT NULL
-           AND NOT EXISTS (SELECT 1 FROM person_tag_overrides o
-             WHERE o.historical_person_id=l.historical_person_id
-               AND o.asset_path=?2 AND o.suppressed=1)
-           AND EXISTS (SELECT 1 FROM person_review_decisions r
-             JOIN person_manual_instances i ON i.id=r.instance_id
-             WHERE r.subject_id=?1 AND i.asset_path=?2
-               AND r.decision='belongs' AND i.needs_review=0)",
-            params![subject_id, asset_path],
-            |row| row.get("tag_id"),
-        )
-        .optional()?;
-    let old = {
-        let mut statement = transaction.prepare(
-            "SELECT tag_id FROM asset_tag_sources
-             WHERE asset_path=?1 AND source_kind='person' AND source_id=?2",
-        )?;
-        statement
-            .query_map(params![asset_path, subject_id], |row| {
-                row.get::<_, CustomTagId>("tag_id")
-            })?
-            .collect::<Result<std::collections::HashSet<_>, _>>()?
-    };
-    let mut affected = old;
-    if let Some(tag_id) = desired {
-        affected.insert(tag_id);
-    }
-    let before = affected
-        .iter()
-        .map(|tag_id| {
-            transaction
-                .query_row(
-                    "SELECT EXISTS(SELECT 1 FROM asset_tags WHERE asset_path=?1 AND tag_id=?2) AS present",
-                    params![asset_path, tag_id],
-                    |row| row.get::<_, bool>("present"),
-                )
-                .map(|present| (*tag_id, present))
-        })
-        .collect::<Result<HashMap<_, _>, _>>()?;
-    transaction.execute(
-        "DELETE FROM asset_tag_sources WHERE asset_path=?1 AND source_kind='person' AND source_id=?2",
-        params![asset_path,subject_id],
-    )?;
-    if let Some(tag_id) = desired {
-        transaction.execute(
-            "INSERT INTO asset_tag_sources(asset_path,tag_id,source_kind,source_id)
-             VALUES (?1,?2,'person',?3)",
-            params![asset_path, tag_id, subject_id],
-        )?;
-    }
-    let mut changed = false;
-    for tag_id in affected {
-        reconcile_effective_tag(transaction, asset_path, tag_id)?;
-        let after: bool = transaction.query_row(
-            "SELECT EXISTS(SELECT 1 FROM asset_tags WHERE asset_path=?1 AND tag_id=?2) AS present",
-            params![asset_path, tag_id],
-            |row| row.get("present"),
-        )?;
-        changed |= before.get(&tag_id).copied().unwrap_or(false) != after;
-    }
-    if changed {
-        enqueue_paths(transaction, &[asset_path.to_owned()])?;
-    }
-    Ok(())
-}
-
-pub(crate) fn reconcile_person_sources_for_subject(
-    transaction: &Transaction<'_>,
-    subject_id: &str,
-) -> Result<(), rusqlite::Error> {
-    let paths = {
-        let mut statement = transaction.prepare(
-            "SELECT DISTINCT i.asset_path FROM person_manual_instances i
-             JOIN person_review_decisions r ON r.instance_id=i.id WHERE r.subject_id=?1
-             UNION SELECT asset_path FROM asset_tag_sources
-             WHERE source_kind='person' AND source_id=?1",
-        )?;
-        statement
-            .query_map([subject_id], |row| row.get::<_, String>("asset_path"))?
-            .collect::<Result<Vec<_>, _>>()?
-    };
-    for path in paths {
-        reconcile_person_source_for_subject_asset(transaction, subject_id, &path)?;
-    }
-    Ok(())
-}
 
 impl Library {
     pub fn asset_tag_source_kinds(
@@ -144,15 +25,11 @@ impl Library {
         path: &Path,
         tag_id: CustomTagId,
     ) -> Result<Vec<String>, LibraryError> {
-        let connection = self.read_connection();
-        let mut statement = connection.prepare(
-            "SELECT DISTINCT source_kind FROM asset_tag_sources WHERE asset_path=?1 AND tag_id=?2 ORDER BY source_kind",
-        )?;
-        Ok(statement
-            .query_map(params![path.to_string_lossy(), tag_id], |row| {
-                row.get("source_kind")
-            })?
-            .collect::<Result<Vec<_>, _>>()?)
+        Ok(repo::tags::source_kinds(
+            &self.read_connection(),
+            &path.to_string_lossy(),
+            tag_id,
+        )?)
     }
 
     pub fn get_person_tag_link(
@@ -160,25 +37,11 @@ impl Library {
         folder_path: &Path,
         subject_id: &str,
     ) -> Result<Option<PersonTagLink>, LibraryError> {
-        let connection = self.read_connection();
-        Ok(connection
-            .query_row(
-                "SELECT t.historical_person_id,t.tag_id,t.enabled,t.revision
-             FROM folder_people f JOIN folder_historical_links l ON l.subject_id=f.id
-             LEFT JOIN person_tag_links t ON t.historical_person_id=l.historical_person_id
-             WHERE f.folder_path=?1 AND f.id=?2 AND t.historical_person_id IS NOT NULL",
-                params![folder_path.to_string_lossy(), subject_id],
-                |row| {
-                    Ok(PersonTagLink {
-                        historical_person_id: row.get("historical_person_id")?,
-                        tag_id: row.get("tag_id")?,
-                        enabled: row.get::<_, bool>("enabled")?
-                            && row.get::<_, Option<i64>>("tag_id")?.is_some(),
-                        revision: row.get("revision")?,
-                    })
-                },
-            )
-            .optional()?)
+        Ok(repo::people::person_tag_link(
+            &self.read_connection(),
+            folder_path,
+            subject_id,
+        )?)
     }
 
     pub fn set_person_tag_link(
@@ -190,86 +53,36 @@ impl Library {
         }
         let mut connection = self.write();
         let tx = connection.transaction()?;
-        let historical_id: String = tx
-            .query_row(
-                "SELECT l.historical_person_id FROM folder_people f
-             JOIN folder_historical_links l ON l.subject_id=f.id
-             WHERE f.folder_path=?1 AND f.id=?2",
-                params![input.folder_path.to_string_lossy(), input.subject_id],
-                |row| row.get("historical_person_id"),
-            )
-            .optional()?
-            .ok_or(LibraryError::MissingPersonRecord)?;
-        let replay: Option<(String, String)> = tx
-            .query_row(
-                "SELECT operation,entity_id FROM person_request_results WHERE request_id=?1",
-                [&input.request_id],
-                |row| Ok((row.get("operation")?, row.get("entity_id")?)),
-            )
-            .optional()?;
-        if let Some((operation, id)) = replay {
+        let historical_id =
+            repo::people::historical_person_of_subject(&tx, &input.folder_path, &input.subject_id)?
+                .ok_or(LibraryError::MissingPersonRecord)?;
+        if let Some((operation, id)) = repo::people::request_result(&tx, &input.request_id)? {
             if operation != "setPersonTagLink" || id != historical_id {
                 return Err(LibraryError::PersonConflict);
             }
         } else {
-            let revision: Option<i64> = tx
-                .query_row(
-                    "SELECT revision FROM person_tag_links WHERE historical_person_id=?1",
-                    [&historical_id],
-                    |row| row.get("revision"),
-                )
-                .optional()?;
+            let revision = repo::people::person_tag_link_revision(&tx, &historical_id)?;
             if revision.unwrap_or(0) != input.expected_revision {
                 return Err(LibraryError::PersonConflict);
             }
-            if let Some(tag_id) = input.tag_id {
-                let exists: bool = tx.query_row(
-                    "SELECT EXISTS(SELECT 1 FROM custom_tags WHERE id=?1) AS present",
-                    [tag_id],
-                    |row| row.get("present"),
-                )?;
-                if !exists {
-                    return Err(LibraryError::MissingTagParent);
-                }
+            if let Some(tag_id) = input.tag_id
+                && !repo::tags::tag_exists(&tx, tag_id)?
+            {
+                return Err(LibraryError::MissingTagParent);
             }
-            tx.execute(
-                "INSERT INTO person_tag_links(historical_person_id,tag_id,enabled,revision)
-                 VALUES (?1,?2,?3,1)
-                 ON CONFLICT(historical_person_id) DO UPDATE SET
-                   tag_id=excluded.tag_id,enabled=excluded.enabled,
-                   revision=person_tag_links.revision+1,updated_at=unixepoch()",
-                params![historical_id, input.tag_id, input.enabled],
-            )?;
-            let subjects = {
-                let mut statement = tx.prepare(
-                    "SELECT subject_id FROM folder_historical_links WHERE historical_person_id=?1",
-                )?;
-                statement
-                    .query_map([&historical_id], |row| row.get::<_, String>("subject_id"))?
-                    .collect::<Result<Vec<_>, _>>()?
-            };
-            for subject in subjects {
-                reconcile_person_sources_for_subject(&tx, &subject)?;
+            repo::people::upsert_person_tag_link(&tx, &historical_id, input.tag_id, input.enabled)?;
+            for subject in repo::people::subjects_of_historical_person(&tx, &historical_id)? {
+                repo::cross::reconcile_person_sources_for_subject(&tx, &subject)?;
             }
-            tx.execute(
-                "INSERT INTO person_request_results VALUES (?1,'setPersonTagLink',?2)",
-                params![input.request_id, historical_id],
+            repo::people::record_request_result(
+                &tx,
+                &input.request_id,
+                "setPersonTagLink",
+                &historical_id,
             )?;
         }
-        let result = tx.query_row(
-            "SELECT historical_person_id,tag_id,enabled,revision FROM person_tag_links
-             WHERE historical_person_id=?1",
-            [&historical_id],
-            |row| {
-                Ok(PersonTagLink {
-                    historical_person_id: row.get("historical_person_id")?,
-                    tag_id: row.get("tag_id")?,
-                    enabled: row.get::<_, bool>("enabled")?
-                        && row.get::<_, Option<i64>>("tag_id")?.is_some(),
-                    revision: row.get("revision")?,
-                })
-            },
-        )?;
+        let result = repo::people::person_tag_link_of(&tx, &historical_id)?
+            .ok_or(LibraryError::MissingPersonRecord)?;
         tx.commit()?;
         Ok(result)
     }
@@ -280,28 +93,12 @@ impl Library {
         subject_id: &str,
         asset_path: &Path,
     ) -> Result<Option<PersonTagOverride>, LibraryError> {
-        let connection = self.read_connection();
-        Ok(connection
-            .query_row(
-                "SELECT o.historical_person_id,o.asset_path,o.suppressed,o.revision
-             FROM folder_people f JOIN folder_historical_links l ON l.subject_id=f.id
-             JOIN person_tag_overrides o ON o.historical_person_id=l.historical_person_id
-             WHERE f.folder_path=?1 AND f.id=?2 AND o.asset_path=?3",
-                params![
-                    folder_path.to_string_lossy(),
-                    subject_id,
-                    asset_path.to_string_lossy()
-                ],
-                |row| {
-                    Ok(PersonTagOverride {
-                        historical_person_id: row.get("historical_person_id")?,
-                        asset_path: row.get::<_, String>("asset_path")?.into(),
-                        suppressed: row.get("suppressed")?,
-                        revision: row.get("revision")?,
-                    })
-                },
-            )
-            .optional()?)
+        Ok(repo::people::person_tag_override(
+            &self.read_connection(),
+            folder_path,
+            subject_id,
+            asset_path,
+        )?)
     }
 
     pub fn set_person_tag_override(
@@ -315,76 +112,39 @@ impl Library {
         }
         let mut connection = self.write();
         let tx = connection.transaction()?;
-        let historical_id: String = tx
-            .query_row(
-                "SELECT l.historical_person_id FROM folder_people f
-             JOIN folder_historical_links l ON l.subject_id=f.id
-             WHERE f.folder_path=?1 AND f.id=?2",
-                params![input.folder_path.to_string_lossy(), input.subject_id],
-                |row| row.get("historical_person_id"),
-            )
-            .optional()?
-            .ok_or(LibraryError::MissingPersonRecord)?;
+        let historical_id =
+            repo::people::historical_person_of_subject(&tx, &input.folder_path, &input.subject_id)?
+                .ok_or(LibraryError::MissingPersonRecord)?;
         let request_entity = format!("{}:{}", historical_id, input.asset_path.display());
-        let replay: Option<(String, String)> = tx
-            .query_row(
-                "SELECT operation,entity_id FROM person_request_results WHERE request_id=?1",
-                [&input.request_id],
-                |row| Ok((row.get("operation")?, row.get("entity_id")?)),
-            )
-            .optional()?;
-        if let Some((operation, entity)) = replay {
+        let asset_path = input.asset_path.to_string_lossy();
+        if let Some((operation, entity)) = repo::people::request_result(&tx, &input.request_id)? {
             if operation != "setPersonTagOverride" || entity != request_entity {
                 return Err(LibraryError::PersonConflict);
             }
         } else {
-            let revision: Option<i64> = tx.query_row(
-                "SELECT revision FROM person_tag_overrides WHERE historical_person_id=?1 AND asset_path=?2",
-                params![historical_id,input.asset_path.to_string_lossy()], |row| row.get("revision"),
-            ).optional()?;
+            let revision =
+                repo::people::person_tag_override_revision(&tx, &historical_id, &asset_path)?;
             if revision.unwrap_or(0) != input.expected_revision {
                 return Err(LibraryError::PersonConflict);
             }
-            tx.execute(
-                "INSERT INTO person_tag_overrides(historical_person_id,asset_path,suppressed,revision)
-                 VALUES (?1,?2,?3,1)
-                 ON CONFLICT(historical_person_id,asset_path) DO UPDATE SET
-                   suppressed=excluded.suppressed,revision=person_tag_overrides.revision+1",
-                params![historical_id,input.asset_path.to_string_lossy(),input.suppressed],
+            repo::people::upsert_person_tag_override(
+                &tx,
+                &historical_id,
+                &asset_path,
+                input.suppressed,
             )?;
-            let subjects = {
-                let mut statement = tx.prepare(
-                    "SELECT subject_id FROM folder_historical_links WHERE historical_person_id=?1",
-                )?;
-                statement
-                    .query_map([&historical_id], |row| row.get::<_, String>("subject_id"))?
-                    .collect::<Result<Vec<_>, _>>()?
-            };
-            for subject in subjects {
-                reconcile_person_source_for_subject_asset(
-                    &tx,
-                    &subject,
-                    &input.asset_path.to_string_lossy(),
-                )?;
+            for subject in repo::people::subjects_of_historical_person(&tx, &historical_id)? {
+                repo::cross::reconcile_person_source_for_asset(&tx, &subject, &asset_path)?;
             }
-            tx.execute(
-                "INSERT INTO person_request_results VALUES (?1,'setPersonTagOverride',?2)",
-                params![input.request_id, request_entity],
+            repo::people::record_request_result(
+                &tx,
+                &input.request_id,
+                "setPersonTagOverride",
+                &request_entity,
             )?;
         }
-        let result = tx.query_row(
-            "SELECT historical_person_id,asset_path,suppressed,revision FROM person_tag_overrides
-             WHERE historical_person_id=?1 AND asset_path=?2",
-            params![historical_id, input.asset_path.to_string_lossy()],
-            |row| {
-                Ok(PersonTagOverride {
-                    historical_person_id: row.get("historical_person_id")?,
-                    asset_path: row.get::<_, String>("asset_path")?.into(),
-                    suppressed: row.get("suppressed")?,
-                    revision: row.get("revision")?,
-                })
-            },
-        )?;
+        let result = repo::people::person_tag_override_of(&tx, &historical_id, &asset_path)?
+            .ok_or(LibraryError::MissingPersonRecord)?;
         tx.commit()?;
         Ok(result)
     }
@@ -406,40 +166,17 @@ fn normalize_name(name: &str) -> Result<(String, String), LibraryError> {
     Ok((name.to_owned(), name.to_lowercase()))
 }
 
-fn map_constraint(error: rusqlite::Error) -> LibraryError {
-    if matches!(
-        error,
-        rusqlite::Error::SqliteFailure(ref value, _)
-            if value.code == rusqlite::ErrorCode::ConstraintViolation
-    ) {
-        LibraryError::DuplicateTagName
-    } else {
-        LibraryError::Sqlite(error)
+/// Turns a rejected sibling-name constraint into the domain error it means.
+///
+/// The unique index on `(parent, name_key)` is the only constraint a tag write
+/// can legitimately hit; anything else is a real storage failure.
+fn map_constraint(error: StoreError) -> LibraryError {
+    if let StoreError::Sqlite(rusqlite::Error::SqliteFailure(value, _)) = &error
+        && value.code == rusqlite::ErrorCode::ConstraintViolation
+    {
+        return LibraryError::DuplicateTagName;
     }
-}
-
-fn tag_exists(transaction: &Transaction<'_>, id: CustomTagId) -> Result<bool, rusqlite::Error> {
-    transaction
-        .query_row(
-            "SELECT 1 FROM custom_tags WHERE id = ?1",
-            params![id],
-            |_| Ok(true),
-        )
-        .optional()
-        .map(|value| value.unwrap_or(false))
-}
-
-fn enqueue_paths(transaction: &Transaction<'_>, paths: &[String]) -> Result<(), rusqlite::Error> {
-    for path in paths {
-        transaction.execute(
-            "INSERT INTO tag_xmp_sync_queue(asset_path, requested_at, attempt_count, last_error)
-             VALUES (?1, unixepoch(), 0, NULL)
-             ON CONFLICT(asset_path) DO UPDATE SET
-               requested_at=excluded.requested_at, attempt_count=0, last_error=NULL",
-            params![path],
-        )?;
-    }
-    Ok(())
+    LibraryError::Store(error)
 }
 
 impl Library {
@@ -456,32 +193,12 @@ impl Library {
         let selected = serde_json::to_string(&query.tag_ids)?;
         let paths =
             serde_json::to_string(&assets.iter().map(|asset| &asset.path).collect::<Vec<_>>())?;
-        let connection = self.read_connection();
-        let mut statement = connection.prepare(
-            "WITH RECURSIVE selected(id) AS (
-                SELECT DISTINCT value FROM json_each(?1)
-             ), subtree(root, id) AS (
-                SELECT id, id FROM selected
-                UNION
-                SELECT subtree.root, tag.id FROM custom_tags tag
-                JOIN subtree ON tag.parent_id = subtree.id
-             )
-             SELECT assignment.asset_path FROM asset_tags assignment
-             JOIN subtree ON assignment.tag_id = subtree.id
-             WHERE assignment.asset_path IN (SELECT value FROM json_each(?2))
-             GROUP BY assignment.asset_path
-             HAVING ?3 OR COUNT(DISTINCT subtree.root) = (SELECT COUNT(*) FROM selected)",
+        let matches = repo::tags::assets_matching_tags(
+            &self.read_connection(),
+            &selected,
+            &paths,
+            query.tag_match == oxy_domain::TagMatchMode::Any,
         )?;
-        let matches = statement
-            .query_map(
-                params![
-                    selected,
-                    paths,
-                    query.tag_match == oxy_domain::TagMatchMode::Any
-                ],
-                |row| row.get::<_, String>("asset_path"),
-            )?
-            .collect::<Result<std::collections::HashSet<_>, _>>()?;
         Ok(assets
             .iter()
             .filter(|asset| matches.contains(asset.path.to_string_lossy().as_ref()))
@@ -490,35 +207,7 @@ impl Library {
     }
 
     pub fn custom_tags(&self) -> Result<Vec<CustomTag>, LibraryError> {
-        let connection = self.read_connection();
-        let mut statement = connection.prepare(
-            "SELECT id, parent_id, name, sort_order
-             FROM custom_tags ORDER BY parent_id, sort_order, name COLLATE NOCASE, id",
-        )?;
-        let rows = statement
-            .query_map([], |row| {
-                Ok((
-                    row.get::<_, CustomTagId>("id")?,
-                    row.get::<_, Option<CustomTagId>>("parent_id")?,
-                    row.get::<_, String>("name")?,
-                    row.get::<_, i64>("sort_order")?,
-                ))
-            })?
-            .collect::<Result<Vec<_>, _>>()?;
-        let names = rows
-            .iter()
-            .map(|(id, parent_id, name, _)| (*id, (*parent_id, name.clone())))
-            .collect::<HashMap<_, _>>();
-        Ok(rows
-            .into_iter()
-            .map(|(id, parent_id, name, sort_order)| CustomTag {
-                id,
-                parent_id,
-                path: tag_path(id, &names),
-                name,
-                sort_order,
-            })
-            .collect())
+        Ok(repo::tags::list_tags(&self.read_connection())?)
     }
 
     pub fn create_custom_tag(
@@ -530,24 +219,13 @@ impl Library {
         let mut connection = self.write();
         let transaction = connection.transaction()?;
         if let Some(parent_id) = parent_id
-            && !tag_exists(&transaction, parent_id)?
+            && !repo::tags::tag_exists(&transaction, parent_id)?
         {
             return Err(LibraryError::MissingTagParent);
         }
-        let sort_order = transaction.query_row(
-            "SELECT COALESCE(MAX(sort_order), -1) + 1 AS sort_order FROM custom_tags
-             WHERE parent_id IS ?1",
-            params![parent_id],
-            |row| row.get::<_, i64>("sort_order"),
-        )?;
-        transaction
-            .execute(
-                "INSERT INTO custom_tags(parent_id, name, name_key, sort_order)
-                 VALUES (?1, ?2, ?3, ?4)",
-                params![parent_id, name, name_key, sort_order],
-            )
+        let sort_order = repo::tags::next_sort_order(&transaction, parent_id)?;
+        let id = repo::tags::insert_tag(&transaction, parent_id, &name, &name_key, sort_order)
             .map_err(map_constraint)?;
-        let id = transaction.last_insert_rowid();
         transaction.commit()?;
         drop(connection);
         self.custom_tags()?
@@ -565,55 +243,25 @@ impl Library {
         let (name, name_key) = normalize_name(name)?;
         let mut connection = self.write();
         let transaction = connection.transaction()?;
-        let (current_parent_id, current_sort_order) = transaction
-            .query_row(
-                "SELECT parent_id, sort_order FROM custom_tags WHERE id=?1",
-                params![id],
-                |row| {
-                    Ok((
-                        row.get::<_, Option<CustomTagId>>("parent_id")?,
-                        row.get::<_, i64>("sort_order")?,
-                    ))
-                },
-            )
-            .optional()?
+        let (current_parent_id, current_sort_order) = repo::tags::tag_position(&transaction, id)?
             .ok_or(LibraryError::MissingTagParent)?;
         if let Some(parent_id) = parent_id {
-            if !tag_exists(&transaction, parent_id)? {
+            if !repo::tags::tag_exists(&transaction, parent_id)? {
                 return Err(LibraryError::MissingTagParent);
             }
-            let creates_cycle = transaction.query_row(
-                "WITH RECURSIVE descendants(id) AS (
-                   SELECT id FROM custom_tags WHERE id = ?1
-                   UNION ALL SELECT child.id FROM custom_tags child
-                     JOIN descendants parent ON child.parent_id = parent.id
-                 ) SELECT EXISTS(SELECT 1 FROM descendants WHERE id = ?2) AS present",
-                params![id, parent_id],
-                |row| row.get::<_, bool>("present"),
-            )?;
-            if creates_cycle {
+            if repo::tags::subtree_contains(&transaction, id, parent_id)? {
                 return Err(LibraryError::TagHierarchyCycle);
             }
         }
-        let affected = descendant_asset_paths(&transaction, id)?;
+        let affected = repo::tags::descendant_asset_paths(&transaction, id)?;
         let sort_order = if current_parent_id == parent_id {
             current_sort_order
         } else {
-            transaction.query_row(
-                "SELECT COALESCE(MAX(sort_order), -1) + 1 AS sort_order FROM custom_tags
-                 WHERE parent_id IS ?1 AND id != ?2",
-                params![parent_id, id],
-                |row| row.get::<_, i64>("sort_order"),
-            )?
+            repo::tags::next_sort_order_excluding(&transaction, parent_id, id)?
         };
-        transaction
-            .execute(
-                "UPDATE custom_tags SET parent_id=?1, name=?2, name_key=?3,
-                   sort_order=?4, updated_at=unixepoch() WHERE id=?5",
-                params![parent_id, name, name_key, sort_order, id],
-            )
+        repo::tags::update_tag(&transaction, id, parent_id, &name, &name_key, sort_order)
             .map_err(map_constraint)?;
-        enqueue_paths(&transaction, &affected)?;
+        repo::tags::enqueue_sync(&transaction, &affected)?;
         transaction.commit()?;
         drop(connection);
         self.custom_tags()?
@@ -626,23 +274,8 @@ impl Library {
         &self,
         id: CustomTagId,
     ) -> Result<TagDeleteImpact, LibraryError> {
-        let connection = self.read_connection();
-        let (tag_count, asset_count) = connection.query_row(
-            "WITH RECURSIVE descendants(id) AS (
-               SELECT id FROM custom_tags WHERE id = ?1
-               UNION ALL SELECT child.id FROM custom_tags child
-                 JOIN descendants parent ON child.parent_id = parent.id
-             ) SELECT COUNT(DISTINCT descendants.id) AS tag_count,
-               COUNT(DISTINCT asset_tags.asset_path) AS asset_count
-               FROM descendants LEFT JOIN asset_tags ON asset_tags.tag_id = descendants.id",
-            params![id],
-            |row| {
-                Ok((
-                    row.get::<_, usize>("tag_count")?,
-                    row.get::<_, usize>("asset_count")?,
-                ))
-            },
-        )?;
+        let (tag_count, asset_count) =
+            repo::tags::delete_impact(&self.read_connection(), id)?;
         Ok(TagDeleteImpact {
             tag_count,
             asset_count,
@@ -653,9 +286,9 @@ impl Library {
         let impact = self.custom_tag_delete_impact(id)?;
         let mut connection = self.write();
         let transaction = connection.transaction()?;
-        let affected = descendant_asset_paths(&transaction, id)?;
-        transaction.execute("DELETE FROM custom_tags WHERE id = ?1", params![id])?;
-        enqueue_paths(&transaction, &affected)?;
+        let affected = repo::tags::descendant_asset_paths(&transaction, id)?;
+        repo::tags::delete_tag(&transaction, id)?;
+        repo::tags::enqueue_sync(&transaction, &affected)?;
         transaction.commit()?;
         Ok(impact)
     }
@@ -665,16 +298,12 @@ impl Library {
         paths: &[std::path::PathBuf],
     ) -> Result<Vec<AssetTagAssignment>, LibraryError> {
         let tags = self.custom_tags()?;
-        let connection = self.read_connection();
+        let path_strings = selection_paths(paths);
         let mut assigned = HashMap::<CustomTagId, usize>::new();
-        for path in paths {
-            let mut statement =
-                connection.prepare("SELECT tag_id FROM asset_tags WHERE asset_path = ?1")?;
-            for id in
-                statement.query_map(params![path.to_string_lossy()], |row| row.get("tag_id"))?
-            {
-                *assigned.entry(id?).or_default() += 1;
-            }
+        for (_, tag_id) in
+            repo::tags::assigned_tag_ids(&self.read_connection(), &path_strings)?
+        {
+            *assigned.entry(tag_id).or_default() += 1;
         }
         Ok(tags
             .into_iter()
@@ -693,26 +322,11 @@ impl Library {
         paths: &[std::path::PathBuf],
     ) -> Result<Vec<AssetTagAssignmentsByPath>, LibraryError> {
         let tags = self.custom_tags()?;
-        let connection = self.read_connection();
         let mut assigned = HashMap::<String, std::collections::HashSet<CustomTagId>>::new();
-        for chunk in paths.chunks(512) {
-            let placeholders = vec!["?"; chunk.len()].join(",");
-            let mut statement = connection.prepare(&format!(
-                "SELECT asset_path, tag_id FROM asset_tags WHERE asset_path IN ({placeholders})"
-            ))?;
-            let rows = statement.query_map(
-                rusqlite::params_from_iter(chunk.iter().map(|path| path.to_string_lossy())),
-                |row| {
-                    Ok((
-                        row.get::<_, String>("asset_path")?,
-                        row.get::<_, CustomTagId>("tag_id")?,
-                    ))
-                },
-            )?;
-            for row in rows {
-                let (path, id) = row?;
-                assigned.entry(path).or_default().insert(id);
-            }
+        for (path, tag_id) in
+            repo::tags::assigned_tag_ids(&self.read_connection(), &selection_paths(paths))?
+        {
+            assigned.entry(path).or_default().insert(tag_id);
         }
         Ok(paths
             .iter()
@@ -743,46 +357,24 @@ impl Library {
     ) -> Result<(), LibraryError> {
         let mut connection = self.write();
         let transaction = connection.transaction()?;
-        if !tag_exists(&transaction, tag_id)? {
+        if !repo::tags::tag_exists(&transaction, tag_id)? {
             return Err(LibraryError::MissingTagParent);
         }
-        let path_strings = paths
-            .iter()
-            .map(|path| path.to_string_lossy().into_owned())
-            .collect::<Vec<_>>();
+        let path_strings = selection_paths(paths);
         for path in &path_strings {
-            if assigned {
-                transaction.execute(
-                    "DELETE FROM asset_tag_sources WHERE asset_path=?1 AND tag_id=?2 AND source_kind='legacy'",
-                    params![path, tag_id],
-                )?;
-                transaction.execute(
-                    "INSERT OR IGNORE INTO asset_tag_sources(asset_path,tag_id,source_kind,source_id)
-                     VALUES (?1,?2,'manual','')",
-                    params![path,tag_id],
-                )?;
-            } else {
-                transaction.execute(
-                    "DELETE FROM asset_tag_sources WHERE asset_path=?1 AND tag_id=?2
-                     AND source_kind IN ('manual','legacy')",
-                    params![path, tag_id],
-                )?;
-            }
-            reconcile_effective_tag(&transaction, path, tag_id)?;
+            // A hand assignment drops the legacy inference and records a manual
+            // source; removing it drops both. Either way the effective set is
+            // then re-derived from the sources that remain.
+            repo::tags::replace_manual_source(&transaction, path, tag_id, assigned)?;
+            repo::tags::reconcile_effective(&transaction, path, tag_id)?;
         }
-        enqueue_paths(&transaction, &path_strings)?;
+        repo::tags::enqueue_sync(&transaction, &path_strings)?;
         transaction.commit()?;
         Ok(())
     }
 
     pub fn pending_tag_sync_paths(&self) -> Result<Vec<std::path::PathBuf>, LibraryError> {
-        let connection = self.read_connection();
-        let mut statement = connection.prepare(
-            "SELECT asset_path FROM tag_xmp_sync_queue ORDER BY requested_at, asset_path",
-        )?;
-        Ok(statement
-            .query_map([], |row| row.get::<_, String>("asset_path"))?
-            .collect::<Result<Vec<_>, _>>()?
+        Ok(repo::tags::pending_sync_paths(&self.read_connection())?
             .into_iter()
             .map(Into::into)
             .collect())
@@ -790,33 +382,22 @@ impl Library {
 
     pub fn tag_xmp_payload(&self, path: &Path) -> Result<TagXmpPayload, LibraryError> {
         let connection = self.read_connection();
-        let tags = assigned_tag_paths(&connection, path)?;
+        let asset_path = path.to_string_lossy();
+        let tags = repo::tags::assigned_tag_paths(&connection, &asset_path)?;
         let subjects = tags
             .iter()
             .filter_map(|value| value.rsplit('|').next().map(str::to_owned))
             .collect::<Vec<_>>();
-        let previous = connection
-            .query_row(
-                "SELECT subjects_json, hierarchical_json FROM asset_tag_xmp_state
-                 WHERE asset_path = ?1",
-                params![path.to_string_lossy()],
-                |row| {
-                    Ok((
-                        row.get::<_, String>("subjects_json")?,
-                        row.get::<_, String>("hierarchical_json")?,
+        let (previous_subjects, previous_hierarchical) =
+            repo::tags::xmp_state(&connection, &asset_path)?.map_or_else(
+                || Ok((Vec::new(), Vec::new())),
+                |(subjects, hierarchical)| {
+                    Ok::<_, serde_json::Error>((
+                        serde_json::from_str(&subjects)?,
+                        serde_json::from_str(&hierarchical)?,
                     ))
                 },
-            )
-            .optional()?;
-        let (previous_subjects, previous_hierarchical) = previous.map_or_else(
-            || Ok((Vec::new(), Vec::new())),
-            |(subjects, hierarchical)| {
-                Ok::<_, serde_json::Error>((
-                    serde_json::from_str(&subjects)?,
-                    serde_json::from_str(&hierarchical)?,
-                ))
-            },
-        )?;
+            )?;
         Ok(TagXmpPayload {
             subjects,
             hierarchical: tags,
@@ -832,55 +413,32 @@ impl Library {
         hierarchical: &[String],
     ) -> Result<(), LibraryError> {
         let connection = self.write();
-        connection.execute(
-            "INSERT INTO asset_tag_xmp_state(asset_path, subjects_json, hierarchical_json, synced_at)
-             VALUES (?1, ?2, ?3, unixepoch())
-             ON CONFLICT(asset_path) DO UPDATE SET subjects_json=excluded.subjects_json,
-               hierarchical_json=excluded.hierarchical_json, synced_at=excluded.synced_at",
-            params![
-                path.to_string_lossy(),
-                serde_json::to_string(subjects)?,
-                serde_json::to_string(hierarchical)?,
-            ],
+        let asset_path = path.to_string_lossy();
+        repo::tags::put_xmp_state(
+            &connection,
+            &asset_path,
+            &serde_json::to_string(subjects)?,
+            &serde_json::to_string(hierarchical)?,
         )?;
-        let current_hierarchical = assigned_tag_paths(&connection, path)?;
+        let current_hierarchical = repo::tags::assigned_tag_paths(&connection, &asset_path)?;
         let current_subjects = current_hierarchical
             .iter()
             .filter_map(|value| value.rsplit('|').next().map(str::to_owned))
             .collect::<Vec<_>>();
         if subjects == current_subjects && hierarchical == current_hierarchical {
-            connection.execute(
-                "DELETE FROM tag_xmp_sync_queue WHERE asset_path = ?1",
-                params![path.to_string_lossy()],
-            )?;
+            repo::tags::delete_sync_entry(&connection, &asset_path)?;
         }
         Ok(())
     }
 
     pub fn fail_tag_xmp_sync(&self, path: &Path, error: &str) -> Result<(), LibraryError> {
-        self.write().execute(
-            "UPDATE tag_xmp_sync_queue SET attempt_count=attempt_count + 1, last_error=?2
-             WHERE asset_path=?1",
-            params![path.to_string_lossy(), error],
-        )?;
+        repo::tags::record_sync_failure(&self.write(), &path.to_string_lossy(), error)?;
         Ok(())
     }
 
     pub fn tag_sync_status(&self) -> Result<TagSyncStatus, LibraryError> {
-        let connection = self.read_connection();
-        let (pending_count, failed_count) = connection.query_row(
-            "SELECT COUNT(*) AS pending_count, COUNT(last_error) AS failed_count FROM tag_xmp_sync_queue",
-            [],
-            |row| Ok((row.get("pending_count")?, row.get("failed_count")?)),
-        )?;
-        let last_error = connection
-            .query_row(
-                "SELECT last_error FROM tag_xmp_sync_queue WHERE last_error IS NOT NULL
-                 ORDER BY requested_at DESC LIMIT 1",
-                [],
-                |row| row.get("last_error"),
-            )
-            .optional()?;
+        let (pending_count, failed_count, last_error) =
+            repo::tags::sync_status(&self.read_connection())?;
         Ok(TagSyncStatus {
             pending_count,
             failed_count,
@@ -894,12 +452,8 @@ impl Library {
         subjects: &[String],
         hierarchical: &[String],
     ) -> Result<(), LibraryError> {
-        let has_pending_write = self.write().query_row(
-            "SELECT EXISTS(SELECT 1 FROM tag_xmp_sync_queue WHERE asset_path = ?1) AS present",
-            params![path.to_string_lossy()],
-            |row| row.get::<_, bool>("present"),
-        )?;
-        if has_pending_write {
+        let asset_path = path.to_string_lossy();
+        if repo::tags::has_pending_sync(&self.write(), &asset_path)? {
             return Ok(());
         }
 
@@ -908,14 +462,7 @@ impl Library {
             let mut parent_id = None;
             for segment in value.split('|') {
                 let (name, name_key) = normalize_name(segment)?;
-                let existing = self
-                    .write()
-                    .query_row(
-                        "SELECT id FROM custom_tags WHERE parent_id IS ?1 AND name_key = ?2",
-                        params![parent_id, name_key],
-                        |row| row.get::<_, CustomTagId>("id"),
-                    )
-                    .optional()?;
+                let existing = repo::tags::tag_id_at(&self.write(), parent_id, &name_key)?;
                 parent_id = Some(match existing {
                     Some(id) => id,
                     None => self.create_custom_tag(parent_id, &name)?.id,
@@ -935,62 +482,28 @@ impl Library {
                 continue;
             }
             let (name, name_key) = normalize_name(subject)?;
-            let existing = self
-                .write()
-                .query_row(
-                    "SELECT id FROM custom_tags WHERE parent_id IS NULL AND name_key = ?1",
-                    params![name_key],
-                    |row| row.get::<_, CustomTagId>("id"),
-                )
-                .optional()?;
+            let existing = repo::tags::tag_id_at(&self.write(), None, &name_key)?;
             let tag_id = match existing {
                 Some(id) => id,
                 None => self.create_custom_tag(None, &name)?.id,
             };
             desired_tag_ids.insert(tag_id);
         }
+
         let mut connection = self.write();
         let transaction = connection.transaction()?;
-        let existing_tag_ids = {
-            let mut statement = transaction.prepare(
-                "SELECT tag_id FROM asset_tag_sources
-                 WHERE asset_path=?1 AND source_kind='sidecar'",
-            )?;
-            statement
-                .query_map(params![path.to_string_lossy()], |row| {
-                    row.get::<_, CustomTagId>("tag_id")
-                })?
-                .collect::<Result<Vec<_>, _>>()?
-        };
-        for tag_id in existing_tag_ids {
+        for tag_id in repo::tags::source_tag_ids_for_kind(&transaction, &asset_path, "sidecar")? {
             if !desired_tag_ids.contains(&tag_id) {
-                transaction.execute(
-                    "DELETE FROM asset_tag_sources WHERE asset_path=?1 AND tag_id=?2
-                     AND source_kind='sidecar'",
-                    params![path.to_string_lossy(), tag_id],
-                )?;
-                reconcile_effective_tag(&transaction, path.to_string_lossy().as_ref(), tag_id)?;
+                repo::tags::delete_source_of_kind(&transaction, &asset_path, tag_id, "sidecar")?;
+                repo::tags::reconcile_effective(&transaction, &asset_path, tag_id)?;
             }
         }
         for tag_id in &desired_tag_ids {
-            transaction.execute(
-                "INSERT OR IGNORE INTO asset_tag_sources(asset_path,tag_id,source_kind,source_id)
-                 VALUES (?1,?2,'sidecar','')",
-                params![path.to_string_lossy(), tag_id],
-            )?;
-            reconcile_effective_tag(&transaction, path.to_string_lossy().as_ref(), *tag_id)?;
+            repo::tags::insert_source(&transaction, &asset_path, *tag_id, "sidecar", "")?;
+            repo::tags::reconcile_effective(&transaction, &asset_path, *tag_id)?;
         }
-        let effective_tag_ids = {
-            let mut statement =
-                transaction.prepare("SELECT tag_id FROM asset_tags WHERE asset_path=?1")?;
-            statement
-                .query_map(params![path.to_string_lossy()], |row| {
-                    row.get::<_, CustomTagId>("tag_id")
-                })?
-                .collect::<Result<std::collections::HashSet<_>, _>>()?
-        };
-        if effective_tag_ids != desired_tag_ids {
-            enqueue_paths(&transaction, &[path.to_string_lossy().into_owned()])?;
+        if repo::tags::effective_tag_ids(&transaction, &asset_path)? != desired_tag_ids {
+            repo::tags::enqueue_sync(&transaction, &[asset_path.into_owned()])?;
         }
         transaction.commit()?;
         drop(connection);
@@ -1021,73 +534,28 @@ impl Library {
     ) -> Result<(), LibraryError> {
         let mut connection = self.write();
         let transaction = connection.transaction()?;
+        // A move inside the same folder keeps the person source: it is still
+        // the same photo of the same person. A copy, or a move to another
+        // folder, is a different asset and must be reviewed on its own.
         let same_folder_move = !copy && source.parent() == destination.parent();
-        transaction.execute(
-            "INSERT OR IGNORE INTO asset_tag_sources(asset_path,tag_id,source_kind,source_id)
-             SELECT ?2,tag_id,source_kind,source_id FROM asset_tag_sources
-             WHERE asset_path=?1 AND (?3=1 OR source_kind!='person')",
-            params![
-                source.to_string_lossy(),
-                destination.to_string_lossy(),
-                same_folder_move
-            ],
-        )?;
-        transaction.execute(
-            "INSERT OR IGNORE INTO asset_tags(asset_path, tag_id)
-             SELECT DISTINCT ?2,tag_id FROM asset_tag_sources
-             WHERE asset_path=?1 AND (?3=1 OR source_kind!='person')",
-            params![
-                source.to_string_lossy(),
-                destination.to_string_lossy(),
-                same_folder_move
-            ],
-        )?;
+        let source = source.to_string_lossy();
+        let destination = destination.to_string_lossy();
+        repo::tags::copy_source_rows(&transaction, &source, &destination, same_folder_move)?;
+        repo::tags::copy_effective_rows(&transaction, &source, &destination, same_folder_move)?;
         if copy {
-            enqueue_paths(&transaction, &[destination.to_string_lossy().into_owned()])?;
+            repo::tags::enqueue_sync(&transaction, &[destination.into_owned()])?;
         } else {
             if same_folder_move {
                 // The feature cache still describes the same photo, so point it
                 // at the new path instead of throwing the vectors away.
-                rename_asset(
-                    &transaction,
-                    &source.to_string_lossy(),
-                    &destination.to_string_lossy(),
-                )?;
-                transaction.execute(
-                    "UPDATE person_manual_instances SET asset_path=?2 WHERE asset_path=?1",
-                    params![source.to_string_lossy(), destination.to_string_lossy()],
-                )?;
-                transaction.execute(
-                    "UPDATE historical_people SET reference_asset_path=?2 WHERE reference_asset_path=?1",
-                    params![source.to_string_lossy(),destination.to_string_lossy()],
-                )?;
-                transaction.execute(
-                    "UPDATE person_tag_overrides SET asset_path=?2 WHERE asset_path=?1",
-                    params![source.to_string_lossy(), destination.to_string_lossy()],
-                )?;
+                rename_asset(&transaction, &source, &destination)?;
+                repo::people::repoint_asset_rows(&transaction, &source, &destination)?;
             } else {
-                forget_asset(&transaction, &source.to_string_lossy())?;
-                transaction.execute(
-                    "UPDATE person_manual_instances SET needs_review=1 WHERE asset_path=?1",
-                    params![source.to_string_lossy()],
-                )?;
+                forget_asset(&transaction, &source)?;
+                repo::people::require_review_for_asset(&transaction, &source)?;
             }
-            transaction.execute(
-                "UPDATE OR REPLACE asset_tag_xmp_state SET asset_path=?2 WHERE asset_path=?1",
-                params![source.to_string_lossy(), destination.to_string_lossy()],
-            )?;
-            transaction.execute(
-                "DELETE FROM asset_tag_sources WHERE asset_path=?1",
-                params![source.to_string_lossy()],
-            )?;
-            transaction.execute(
-                "DELETE FROM asset_tags WHERE asset_path=?1",
-                params![source.to_string_lossy()],
-            )?;
-            transaction.execute(
-                "DELETE FROM tag_xmp_sync_queue WHERE asset_path=?1",
-                params![source.to_string_lossy()],
-            )?;
+            repo::tags::move_xmp_state(&transaction, &source, &destination)?;
+            repo::tags::forget_asset_rows(&transaction, &source)?;
         }
         transaction.commit()?;
         Ok(())
@@ -1098,101 +566,24 @@ impl Library {
         let transaction = connection.transaction()?;
         let path = path.to_string_lossy();
         forget_asset(&transaction, &path)?;
-        transaction.execute(
-            "DELETE FROM asset_tag_sources WHERE asset_path=?1",
-            params![path],
-        )?;
-        transaction.execute("DELETE FROM asset_tags WHERE asset_path=?1", params![path])?;
-        transaction.execute(
-            "DELETE FROM asset_tag_xmp_state WHERE asset_path=?1",
-            params![path],
-        )?;
-        transaction.execute(
-            "DELETE FROM tag_xmp_sync_queue WHERE asset_path=?1",
-            params![path],
-        )?;
+        repo::tags::forget_asset_rows(&transaction, &path)?;
         transaction.commit()?;
         Ok(())
     }
 }
 
-fn tag_path(
-    id: CustomTagId,
-    names: &HashMap<CustomTagId, (Option<CustomTagId>, String)>,
-) -> String {
-    let mut parts = Vec::new();
-    let mut current = Some(id);
-    while let Some(id) = current {
-        let Some((parent, name)) = names.get(&id) else {
-            break;
-        };
-        parts.push(name.as_str());
-        current = *parent;
-    }
-    parts.reverse();
-    parts.join("|")
-}
-
-fn descendant_asset_paths(
-    transaction: &Transaction<'_>,
-    id: CustomTagId,
-) -> Result<Vec<String>, rusqlite::Error> {
-    let mut statement = transaction.prepare(
-        "WITH RECURSIVE descendants(id) AS (
-           SELECT id FROM custom_tags WHERE id = ?1
-           UNION ALL SELECT child.id FROM custom_tags child
-             JOIN descendants parent ON child.parent_id = parent.id
-         ) SELECT DISTINCT asset_path FROM asset_tags
-           WHERE tag_id IN (SELECT id FROM descendants)",
-    )?;
-    statement
-        .query_map(params![id], |row| row.get("asset_path"))?
-        .collect::<Result<Vec<_>, _>>()
-}
-
-fn assigned_tag_paths(
-    connection: &rusqlite::Connection,
-    path: &Path,
-) -> Result<Vec<String>, LibraryError> {
-    let tags = {
-        let mut statement = connection.prepare(
-            "SELECT tag.id, tag.parent_id, tag.name FROM custom_tags tag
-             JOIN asset_tags assignment ON assignment.tag_id=tag.id
-             WHERE assignment.asset_path=?1 ORDER BY tag.id",
-        )?;
-        statement
-            .query_map(params![path.to_string_lossy()], |row| {
-                Ok((
-                    row.get::<_, CustomTagId>("id")?,
-                    row.get::<_, Option<CustomTagId>>("parent_id")?,
-                    row.get::<_, String>("name")?,
-                ))
-            })?
-            .collect::<Result<Vec<_>, _>>()?
-    };
-    let all_names = {
-        let mut statement = connection.prepare("SELECT id, parent_id, name FROM custom_tags")?;
-        statement
-            .query_map([], |row| {
-                Ok((
-                    row.get::<_, CustomTagId>("id")?,
-                    (
-                        row.get::<_, Option<CustomTagId>>("parent_id")?,
-                        row.get::<_, String>("name")?,
-                    ),
-                ))
-            })?
-            .collect::<Result<HashMap<_, _>, _>>()?
-    };
-    Ok(tags
-        .into_iter()
-        .map(|(id, _, _)| tag_path(id, &all_names))
-        .collect())
+/// The paths of a selection, in the form the assignment tables store.
+fn selection_paths(paths: &[std::path::PathBuf]) -> Vec<String> {
+    paths
+        .iter()
+        .map(|path| path.to_string_lossy().into_owned())
+        .collect()
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use rusqlite::params;
     use std::path::PathBuf;
 
     #[test]

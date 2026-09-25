@@ -9,8 +9,10 @@ version.workspace = true
 workspace = true
 
 [dependencies]
+oxy-domain = { path = "../oxy-domain" }
 parking_lot.workspace = true
 rusqlite.workspace = true
+serde_json.workspace = true
 sqlite-vec.workspace = true
 thiserror.workspace = true
 

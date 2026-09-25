@@ -35,6 +35,39 @@ fn no_module_writes_tables_owned_by_the_other_namespace() {
     );
 }
 
+/// Every statement against a user-owned table now has a home in
+/// `oxy_store::repo`.
+///
+/// The audit above catches a write to the *other* namespace. This one catches a
+/// statement that should not be in this crate at all: naming a repository
+/// function keeps the SQL of one domain in exactly one place to read and
+/// change. Tests still set rows up directly, which is their business, so the
+/// check stops at the test module.
+#[test]
+fn the_user_namespace_carries_no_sql_of_its_own() {
+    let directory = Path::new(env!("CARGO_MANIFEST_DIR")).join("src").join("user");
+    let mut offenders = Vec::new();
+    for entry in std::fs::read_dir(&directory).expect("namespace directory must be readable") {
+        let path = entry.expect("directory entry").path();
+        if path.extension().and_then(|ext| ext.to_str()) != Some("rs") {
+            continue;
+        }
+        let source = std::fs::read_to_string(&path).expect("source must be readable");
+        let name = path.file_name().unwrap().to_string_lossy().into_owned();
+        let production = source.split("#[cfg(test)]").next().unwrap_or(&source);
+        for (index, line) in production.lines().enumerate() {
+            if looks_like_sql(line.trim()) {
+                offenders.push(format!("{name}:{}", index + 1));
+            }
+        }
+    }
+    assert!(
+        offenders.is_empty(),
+        "a user-domain statement belongs in oxy_store::repo, not here:\n{}",
+        offenders.join("\n")
+    );
+}
+
 /// Collects `file:line: table` for every SQL literal in `directory` that
 /// writes to a table it does not own.
 fn namespace_offenders(

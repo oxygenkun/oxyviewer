@@ -36,12 +36,20 @@ Repository-specific rules for coding agents working on OxyViewer.
   `oxy-store/src/schema`. Never delete user data from a cache clear, cache
   migration, or re-index, and never add a deletion path that is not an explicit,
   confirmed user action.
-- Keep storage mechanism out of domain code. `oxy-store` owns the SQLite file
-  and its schema: connections, WAL readers, transactions, the declaration macro,
-  every `CREATE TABLE`, and the migrations that upgrade a file written by an
-  earlier build. A domain crate owns what the rows mean. Do not open a database
-  from a domain module, and do not put a domain rule — a tag cycle, a review
-  revision — into `oxy-store`.
+- Keep storage mechanism out of domain code. `oxy-store` owns the SQLite file,
+  its schema, and the statements over it: connections, WAL readers, the
+  declaration macro, every `CREATE TABLE`, the migrations that upgrade a file
+  written by an earlier build, and `oxy-store/src/repo` — one function per
+  statement, taking the connection or the transaction a policy layer opened. A
+  domain crate owns what the rows mean. Do not open a database from a domain
+  module, do not keep a statement that a repository function should own, and do
+  not put a domain rule — a tag cycle, a review revision — into `oxy-store`.
+- A repository function opens no transaction and decides nothing. "These four
+  writes are one atomic act" and "a move inside its folder keeps the person
+  source" are rules: they stay in the crate that owns the domain, which opens
+  the transaction and calls repositories inside it. Statements that read or
+  write two domains at once live in `oxy-store/src/repo/cross.rs`, because no
+  domain crate may own one without depending on a sibling.
 - Declare every table once in `oxy-store/src/schema`, with its class and how it
   is created. One declaration produces the `CREATE TABLE`, the list of owned
   tables, and the `DELETE` statements, so a new table cannot be created without
@@ -59,7 +67,8 @@ Repository-specific rules for coding agents working on OxyViewer.
   `cache::index::forget_root` or `cache::features::forget_asset`) instead of
   writing SQL against another namespace's tables. A source-level test in
   `oxy-library/src/audit.rs` fails the build's tests on any cross-namespace
-  write. Once the domains are separate crates the compiler replaces that test.
+  write, and a second one asserts that `oxy-library/src/user` carries no SQL of
+  its own. Once the domains are separate crates the compiler replaces both.
 - Route file discovery and safe file operations through `oxy-fs`; do not add
   ad hoc frontend filesystem access.
 - Treat native dependencies as pinned inputs. Do not change submodules, the
