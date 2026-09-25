@@ -85,10 +85,15 @@ smaller than the 83-method API suggests. Measured:
 | `state.library` — index, browsing, projections, metadata projections | 26 | `commands/folder.rs`, `commands/library.rs`, `jobs.rs`, `jobs/{metadata,preview,directory_tree}.rs` |
 | **Total** | **83 call sites, 59 distinct methods** | **7 files** |
 
+The `state.people` and `state.tags` rows both landed: 31 call sites in stage D,
+19 in stage C. The favours and index rows stay on `state.library`, which is why
+that handle still exists.
+
 Every command already returns `Result<T, String>` through
 `map_err(|error| error.to_string())`, so per-crate error types cost nothing at
 the seam: `oxy_tags::TagError` and `oxy_people::PeopleError` replace
-`LibraryError` in the commands that move.
+`LibraryError` in the commands that move — measured, the 31 person call sites
+changed nothing but the receiver.
 
 ## 27 of 86 public methods have no caller
 
@@ -121,6 +126,15 @@ boundary than to move it blind. If you would rather keep it as-is, say so and it
 moves with the rest — but then the 16 methods need tests at the new boundary,
 because today nothing exercises them.
 
+**Superseded by stage D.** The option above was taken: the 16 analysis methods
+moved as-is, and the tests came with them — `analysis_runs.rs` alone carries 11.
+The count of "no caller" methods was measured from `apps/desktop` only, and it
+missed that the person WIP line already drives the whole run ledger from
+`oxy-people`'s own tests and from the enrollment service in `analysis.rs`. The
+cleanup that remains is `clear_rebuildable_cache`, which is still unreachable
+from the UI: the desktop "clear cache" action clears the preview disk cache only.
+That gap belongs to the desktop, not to this plan.
+
 ## Target layout
 
 ```
@@ -133,12 +147,13 @@ crates/oxy-store/src/
   repo.rs              repository root
   repo/library.rs      favourites, index, browsing, projections
   repo/tags.rs         tags
-  repo/people.rs       person identity, review, history, person caches
+  repo/people.rs       person identity, review, history
+  repo/person_cache.rs detections, feature spaces and vectors, analysis runs
   repo/cross.rs        queries that join two domains
 
 crates/oxy-library/    favourites + index + browsing + projections
 crates/oxy-tags/       tag vocabulary rules, tree invariants, XMP payload
-crates/oxy-people/     person identity, review, inference pipeline
+crates/oxy-people/     person identity, review, history, caches, inference pipeline
 crates/oxy-preview/    preview request identity, queue, projection restore
 ```
 
@@ -146,7 +161,12 @@ The four domain crates are **siblings with no dependencies between them**. That
 is what turns the tag↔person direction from a convention into a compiler
 check, and it is why `repo/cross.rs` has to exist: `filter_assets_by_tags`
 joins `indexed_assets` (library) with `asset_tags` (tags), so no domain crate
-can own it without depending on a sibling.
+can own it without depending on a sibling. `filter_assets_by_person` did **not**
+need the same treatment: the directory snapshot arrives as an argument, so
+`oxy-people` reads its own rows through `repo::people::instance_records` and
+intersects them in memory. That is the cheaper answer whenever a caller already
+holds the asset list — a join is only required when the rows must be selected
+in SQL to keep paging honest.
 
 `oxy-preview` does not touch the database — it depends on `oxy-library` for
 projections and `oxy-media` for decoding. Its reason to be a crate is build
@@ -155,12 +175,18 @@ run without compiling and linking Tauri.
 
 ### Cross-domain queries get a natural home
 
-`filter_assets_by_tags` and `filter_assets_by_person` join `indexed_assets`
-(library) with `asset_tags` / `person_review_decisions` (tags, people). No
-domain crate can own them without depending on a sibling. Because `oxy-store`
-owns every table, `repo/cross.rs` is the correct place, and `oxy-library`
-exposes the browsing-level `filter_assets_by_tags` that calls it. This is a real
-advantage of the layout you chose over one crate per table owner.
+`filter_assets_by_tags` joins `indexed_assets` (library) with `asset_tags`
+(tags). No domain crate can own it without depending on a sibling. Because
+`oxy-store` owns every table, `repo/cross.rs` is the correct place, and
+`oxy-tags` exposes the browsing-level function that calls it.
+
+Stage D showed the person filter is the opposite case:
+`filter_assets_by_person` takes the directory snapshot as an argument, so it
+reads `person_review_decisions` through `repo::people` and intersects in memory,
+with no cross-domain statement at all. The general rule: a join is required when
+the rows must be chosen in SQL for paging to stay honest; when the caller
+already holds the asset list, filtering in Rust across a sibling's rows is both
+correct and cheaper.
 
 ### Composition moves to the application
 
@@ -169,7 +195,6 @@ domains, so `apps/desktop` becomes the composition root:
 
 ```rust
 pub(crate) struct AppState {
-    pub(crate) store: Arc<oxy_store::Store>,
     pub(crate) library: Arc<oxy_library::Library>,
     pub(crate) tags: Arc<oxy_tags::Tags>,
     pub(crate) people: Arc<oxy_people::People>,
@@ -177,16 +202,25 @@ pub(crate) struct AppState {
 }
 ```
 
-Five lines of wiring in `lib.rs`, replacing `Library::open`. `AGENTS.md` says to
-keep `apps/desktop/src-tauri` thin; that rule is about behaviour, not wiring,
-and the paragraph should say so explicitly after this change. If the wiring
-grows past a handful of lines, the alternative is a small composition crate
-holding the four handles as public fields — a struct of objects, which is not
-the same thing as a struct of forwarders.
+No `store` field was needed. `Library` holds the `Arc<Store>` and hands it out
+through `store()`, so the composition root reads:
 
-`Store::open` gains the schema step (it now owns the DDL), so the
-"user tables before cache tables" ordering and the vector-extension
-registration both move inside `oxy-store`, where the declarations are.
+```rust
+let library = Arc::new(Library::open(&data_dir.join("oxyviewer.sqlite"))?);
+let tags = Arc::new(oxy_tags::Tags::new(library.store()));
+let people = Arc::new(oxy_people::People::new(library.store()));
+```
+
+Three lines of wiring in `lib.rs`, replacing `Library::open`. `AGENTS.md` says to
+keep `apps/desktop/src-tauri` thin; that rule is about behaviour, not wiring,
+and the paragraph now says so explicitly. If the wiring grows past a handful of
+lines, the alternative is a small composition crate holding the three handles as
+public fields — a struct of objects, which is not the same thing as a struct of
+forwarders.
+
+`Store::open` gained the schema step (it now owns the DDL): the "user tables
+before cache tables" ordering and the vector-extension registration are both
+inside `oxy-store`, where the declarations are.
 
 ## Declaration change
 
@@ -305,6 +339,15 @@ those files. Whether the person line is committed, stashed, or left in place is
 your call, but `commands/people.rs` — untracked, and 26 of the 83 call sites —
 gets rewritten in stage D.
 
+**Resolved by stage D.** The person line *was* the thing stage D landed, so the
+last of those files stopped being a prerequisite and became the work. The
+pipeline side of `oxy-people` (`alignment.rs`, `face_input.rs`, `onnx_face.rs`,
+`artifact_store.rs`, `analysis.rs`) was already written but untracked, and it
+entered version control with the identity and cache halves that moved onto it.
+The frontend half of the same line (`components/people/`, `PersonReviewPanel.tsx`,
+and the `api.ts`/`types.ts` wrappers) is still uncommitted and still the person
+line's to land.
+
 ## Progress
 
 | Stage | State | Commit |
@@ -312,8 +355,9 @@ gets rewritten in stage D.
 | 0 — extract `oxy-store` | done | `b66602e` |
 | A — schema into `oxy-store` | done | `1143b0d` |
 | B — repositories for favourites, tags, people | done | `b3c57ea` |
-| C — `oxy-tags` extracted, `Library` tags methods deleted | done | this commit |
-| D, E, P | not started | |
+| C — `oxy-tags` extracted, `Library` tags methods deleted | done | `5b1e090` |
+| D — `oxy-people` owns the person domain, caches included | done | this commit |
+| E, P | not started | |
 
 ### What stage B settled
 
@@ -428,6 +472,67 @@ tag method. Five things took a different shape than the sketch above.
 `oxy-tags` reports 13 (11 moved + 2 new audit tests). Measured now: `oxy-store`
 12, `oxy-tags` 13, `oxy-library` 75 (73 pass, 2 ignored) — all green.
 
+### What stage D settled
+
+The person domain is a crate of its own, and `oxy-library` no longer holds a
+single person table, statement, or method. Six things took a different shape
+than the sketch above.
+
+- **The person caches moved with the identity, so stage E lost its person half.**
+  The plan put the person caches in `repo/people.rs` and left them to stage E.
+  What landed is `oxy-store/src/repo/person_cache.rs` — 35 statements in 34
+  functions — next to `repo/people.rs` rather than next to `repo/library.rs`,
+  because every table those statements touch is a person table. Filing them
+  under "cache" would have made module ownership and table ownership disagree.
+  `oxy-people` now holds `detections.rs`, `features.rs`, and `analysis_runs.rs`,
+  so the crate owns both axes of the person domain: `user` (identity, reviews,
+  history, references) and `cache` (detections, vectors, run ledger). Stage E is
+  therefore library caches only.
+- **`Library` lost its person surface entirely.** `crates/oxy-library/src/cache/
+  {analysis,detections,features}.rs` and `user/people.rs` were moved, not copied:
+  the four tag↔person bridge methods that stage C deliberately left in
+  `user/people.rs` are now `oxy-people/src/identity.rs`, which is where the plan
+  said they would end up. `LibraryError` dropped the nine person variants it no
+  longer raises — including `MissingTagParent`, which now exists only as
+  `TagError::MissingTagParent` and `PeopleError::MissingTagParent`, one per side
+  that can actually raise it. `Library` also lost its `vector_status` field: the
+  vector extension's state is the person domain's business, and `People::new`
+  copies it from the store for exactly the same reason `Library` used to.
+- **Two types left `features.rs` for `oxy-domain`.** The repository has to
+  return and accept them, so `FeatureModality` (with the `as_str`/`from_text`
+  pair, so the stored spelling of "face" has one definition) and
+  `PersonFeatureMatch` moved up. `PersonFeature` and `PersonFeatureSearch`
+  stayed: the latter borrows for its whole life and is a call shape, not a
+  vocabulary. `DetectionStageContext` stayed `pub(crate)`.
+- **The scan the enrollment step needs became cancellable in `oxy-fs`.** This is
+  the one prerequisite the plan did not anticipate. `analysis.rs` registers a
+  whole folder before writing anything, so it must be able to stop during
+  enumeration and must not publish a partial snapshot when it does;
+  `oxy-fs` gained `FsError::Cancelled` and `scan_assets_with_progress_and_cancel`,
+  with `scan_assets_with_progress` delegating to it with `|| false`. It is its
+  own commit, because it is a change to a crate that has nothing to do with the
+  person domain.
+- **`oxy-people`'s pipeline needed the store, not the library.** `Cargo.toml`
+  gained `oxy-store` and dropped its `[dev-dependencies] oxy-library`. The crate
+  no longer reaches the database through a sibling; it holds the same
+  `Arc<Store>` every other domain holds. `People::new` is the whole constructor.
+- **`oxy-tags` gained a `[dev-dependencies]` edge to `oxy-people`.** Two of its
+  tests prove that an identity's claim lands as a `person` tag source, and they
+  do it by driving the real policy — create a folder person, create an instance,
+  review it, bind a tag. Reproducing that with raw repository calls would have
+  re-implemented the identity policy inside a test of the tag side. A
+  dev-dependency crosses a boundary that a production dependency may not, and
+  the audit test that reads `[dev-dependencies]` still passes because it only
+  forbids `rusqlite` there.
+
+**Conservation check.** `crates/oxy-library/src` held 75 `#[test]` functions at
+`5b1e090`; the four moved files carried 24 of them (`cache/analysis.rs` 11,
+`cache/features.rs` 6, `user/people.rs` 5, `cache/detections.rs` 2), so 51
+remain. `oxy-people` reports 46: its 18 pipeline tests, those 24, and 2 new
+audit tests. Measured now: `oxy-store` 12, `oxy-tags` 13, `oxy-library` 51
+(49 pass, 2 ignored), `oxy-people` 46 (44 pass, 2 ignored) — all green, and
+`cargo check --workspace --all-targets` is clean.
+
 ## Stages
 
 | Stage | Work | Touches | Gate |
@@ -435,7 +540,7 @@ tag method. Five things took a different shape than the sketch above.
 | A | `schema` into `oxy-store`; explicit class in `tables!`; all DDL into `schema/{cache,user}.rs`; `Store::open` runs the schema step | `oxy-store`, `oxy-library` | 94 tests green; `cargo check --workspace --all-targets` |
 | B | Repositories for favourites, tags, people (225 statements); `Library` keeps its methods for now, calling repos | `oxy-store`, `oxy-library` | tests green, no behaviour change |
 | C | New `oxy-tags`; `Library` tags methods **deleted**; 19 call sites become `state.tags.*`; `TagXmpPayload` moves | + `commands/tags.rs`, `commands/folder.rs` | tests green; `oxy-tags` has no `rusqlite` dependency |
-| D | `oxy-people::identity`; the ~445 lines of person logic currently in `tags.rs` land here; 31 call sites become `state.people.*`; unqualified unused methods dropped | + `commands/people.rs`, `commands/folder.rs` | tests green; `oxy-people` enters the dependency graph |
+| D | `oxy-people` owns identity, review, history, references, and the detection/feature/analysis caches; the ~445 lines of person logic leave `tags.rs` and the person caches leave `cache/`; 31 call sites become `state.people.*`; the analysis methods stay because the person WIP line already uses them | + `commands/people.rs`, `commands/folder.rs`, `oxy-fs` | tests green; `oxy-people` enters the dependency graph without `rusqlite` |
 | E | Cache repositories (158 statements, 3553 production lines) | `oxy-store`, `oxy-library` | **separate decision — see below** |
 | P | Extract `oxy-preview` from `apps/desktop/src-tauri/src/jobs/preview.rs` | new `oxy-preview`, `apps/desktop` | its 971 test lines run without Tauri |
 
@@ -473,21 +578,26 @@ emitter trait or a callback and the module becomes a crate.
 is the clearest violation, and the cost is concrete rather than stylistic: its
 tests cannot run without compiling and linking Tauri and its two plugins.
 
-Stage E needs its own judgement call. `cache/index.rs` and `cache/analysis.rs`
-are 1003 and 698 production lines whose queries *are* their logic: paged range
-queries, FTS, recursive directory walks, vector search. Lifting those into
+Stage E needs its own judgement call, and stage D shrank it: the person caches
+already left, so what remains is `cache/index.rs`, `cache/browsing.rs`, and
+`cache/projections.rs` — 1003, and two more files whose queries *are* their
+logic: paged range queries, FTS, recursive directory walks. Lifting those into
 repositories means publishing many large, parameter-heavy query functions and
 leaving `oxy-library` with orchestration only. That is defensible, but the gain
 is smaller than for user data, where rules and statements are genuinely
-different things. Recommended: finish A–D, then re-measure.
+different things. Recommended: re-measure now that A–D are in.
 
 ## Risks
 
-- **The person line and the refactor want the same files.** Stage D rewrites
-  `commands/people.rs` while that file is an untracked work in progress.
-- **`oxy-people` has no consumers** and 16 of its analysis methods have no
-  caller. Stage D changes that deliberately, and adds persistence to a crate
-  whose 2676 pipeline lines nothing exercises today.
+- **The person line and the refactor want the same files.** Stage D rewrote
+  `commands/people.rs` while that file was an untracked work in progress. It was
+  committed with the crate it belongs to; see "Resolved by stage D" above.
+- **`oxy-people` had no consumers** and 16 of its analysis methods had no
+  caller. Stage D changed that deliberately by landing them into a crate that
+  now owns both axes of the person domain; the tests followed, so the pipeline
+  is no longer a crate that nothing exercises. What is still unwired is the
+  *application*: no model-install command, no analysis-job IPC, and no candidate
+  query command reach the frontend yet.
 - **373 statement sites move.** Behaviour must be preserved, not improved.
   Existing inline tests (4263 lines) move with their modules and are the
   regression net; they are strongest in `tags.rs` (613) and `people.rs` (516).
@@ -497,11 +607,19 @@ different things. Recommended: finish A–D, then re-measure.
 
 ## Documents to update
 
-- `AGENTS.md`: "declare every table once in the module that owns it" becomes
+Done across stages A–D:
+
+- `AGENTS.md`: "declare every table once in the module that owns it" became
   "declare every table once in `oxy-store/src/schema`, with its class"; the
-  cross-namespace rule becomes "only `oxy-store` writes SQL; domain crates name a
+  cross-namespace rule became "only `oxy-store` writes SQL; domain crates name a
   repository function and do not depend on `rusqlite`"; the thin-`src-tauri`
-  rule gains the composition-root exception.
-- `docs/architecture/05-data-and-state.md`: ownership and the two axes.
+  rule gained the composition-root exception, and the sibling rule gained the
+  dev-dependency exception that `oxy-tags` uses.
+- `docs/architecture/05-data-and-state.md`: ownership and the two axes, the
+  repository layer, and the sibling crates.
 - `docs/architecture/06-extension-guide.md`, `docs/ARCHITECTURE.md`,
   `CONTRIBUTING.md`: crate inventory.
+- `docs/PERSON_WORKFLOW.md`: the module-responsibility table now describes the
+  crates that exist rather than the ones planned, and the paths it cites
+  (`oxy-people/identity.rs`, `analysis_runs.rs`, `features.rs`) are the real
+  ones.

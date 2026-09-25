@@ -11,9 +11,12 @@
 //! function on the owning module, so it shows up in review as a call instead of
 //! hiding inside a SQL string.
 //!
-//! Once the domains become separate crates this test is expected to disappear:
-//! a crate that cannot name another domain's tables cannot write them either,
-//! and the guarantee moves from a grep to the compiler.
+//! Once the remaining domains become separate crates this test is expected to
+//! disappear: a crate that cannot name another domain's tables cannot write
+//! them either, and the guarantee moves from a grep to the compiler. The tag
+//! and person namespaces already left that way, which is why `src/user` and
+//! `src/cache` are now down to the roots and the browsing/index/projection
+//! state this audit still guards.
 
 use oxy_store::schema::{rebuildable_tables, tables, user_owned_tables};
 use std::path::Path;

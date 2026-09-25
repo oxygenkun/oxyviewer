@@ -14,10 +14,10 @@ override them.
   0.1.3 (register, index, and status-bar feedback); remaining work is the
   real-device matrix and release-build comparison.
 - [Store, repository, and domain split](store-repository-split-plan.md): moves
-  every table definition and SQL statement into `oxy-store`, splits tags into
-  their own crate, and gives people identity to `oxy-people`. Stages 0-C are
-  done; D, E, and P remain, and the cache repositories are deliberately left as
-  a later decision.
+  every table definition and SQL statement into `oxy-store`, splits tags and
+  people into their own crates, and leaves the cache repositories in
+  `oxy-library`. Stages 0-D are done; E and P remain, and the cache repositories
+  are deliberately left as a later decision.
 
 Completed implementation plans are archived in
 [archive/plans](../archive/plans/README.md). Dated measurements and diagnoses

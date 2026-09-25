@@ -1,9 +1,14 @@
 //! Rebuildable model detections. Manual boxes and review decisions live in
 //! separate tables and are never written through this cache.
+//!
+//! The tables and the statements live in `oxy_store`; what stays here is what a
+//! detection *means* — that a box is inside the image, that a stage replaces
+//! its own set and nothing else's, and that a detection never answers a review
+//! decision.
 
-use crate::{Library, LibraryError};
+use crate::{People, PeopleError};
 use oxy_domain::DetectedPersonInstance;
-use rusqlite::{Transaction, params};
+use oxy_store::{Transaction, repo};
 use std::path::Path;
 
 fn valid_box(value: Option<[f64; 4]>) -> bool {
@@ -52,61 +57,56 @@ pub(crate) struct DetectionStageContext<'a> {
     pub run_id: &'a str,
 }
 
+/// Replaces one stage's detections for one asset, inside the caller's
+/// transaction.
+///
+/// Whole-set replacement is the rule: a stage that found nothing supplies an
+/// empty slice, which is not the same as supplying no slice at all.
 pub(crate) fn replace_stage_detections(
     transaction: &Transaction<'_>,
     context: &DetectionStageContext<'_>,
     detections: &[DetectedPersonInstance],
-) -> Result<(), LibraryError> {
+) -> Result<(), PeopleError> {
     if detections.len() > 1000 || detections.iter().any(|item| !valid_detection(item)) || {
         let mut ids = std::collections::HashSet::new();
         detections
             .iter()
             .any(|item| !ids.insert(item.instance_id.as_str()))
     } {
-        return Err(LibraryError::InvalidPersonDetection);
+        return Err(PeopleError::InvalidPersonDetection);
     }
-    transaction.execute(
-        "DELETE FROM person_instances_cache WHERE folder_path=?1 AND asset_path=?2
-           AND producer_fingerprint=?3",
-        params![
-            context.folder.to_string_lossy(),
-            context.asset.to_string_lossy(),
-            context.producer_fingerprint
-        ],
+    let folder = context.folder.to_string_lossy();
+    let asset = context.asset.to_string_lossy();
+    repo::person_cache::clear_stage_detections(
+        transaction,
+        &folder,
+        &asset,
+        context.producer_fingerprint,
     )?;
     for item in detections {
-        transaction.execute(
-            "INSERT INTO person_instances_cache(folder_path,asset_path,instance_id,source_revision,
-               producer_fingerprint,pipeline_fingerprint,run_id,face_box,face_landmarks,body_box,
-               face_score,body_score,association_score)
-             VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13)",
-            params![
-                context.folder.to_string_lossy(),
-                context.asset.to_string_lossy(),
-                item.instance_id,
-                context.source_revision,
-                context.producer_fingerprint,
-                context.pipeline_fingerprint,
-                context.run_id,
-                item.face_box
-                    .map(|value| serde_json::to_string(&value))
-                    .transpose()?,
-                item.face_landmarks
-                    .map(|value| serde_json::to_string(&value))
-                    .transpose()?,
-                item.body_box
-                    .map(|value| serde_json::to_string(&value))
-                    .transpose()?,
-                item.face_score,
-                item.body_score,
-                item.association_score
-            ],
+        repo::person_cache::insert_detection(
+            transaction,
+            &repo::person_cache::NewDetection {
+                folder_path: &folder,
+                asset_path: &asset,
+                instance_id: &item.instance_id,
+                source_revision: context.source_revision,
+                producer_fingerprint: context.producer_fingerprint,
+                pipeline_fingerprint: context.pipeline_fingerprint,
+                run_id: context.run_id,
+                face_box: item.face_box,
+                face_landmarks: item.face_landmarks,
+                body_box: item.body_box,
+                face_score: item.face_score,
+                body_score: item.body_score,
+                association_score: item.association_score,
+            },
         )?;
     }
     Ok(())
 }
 
-impl Library {
+impl People {
     /// Only returns detections for the caller's current source and producer.
     pub fn list_person_detections(
         &self,
@@ -114,69 +114,27 @@ impl Library {
         asset: &Path,
         source_revision: &str,
         producer_fingerprint: &str,
-    ) -> Result<Vec<DetectedPersonInstance>, LibraryError> {
+    ) -> Result<Vec<DetectedPersonInstance>, PeopleError> {
         if asset.parent() != Some(folder)
             || source_revision.is_empty()
             || producer_fingerprint.len() != 64
         {
-            return Err(LibraryError::InvalidPersonDetection);
+            return Err(PeopleError::InvalidPersonDetection);
         }
-        let connection = self.read_connection();
-        let mut query = connection.prepare(
-            "SELECT instance_id,face_box,face_landmarks,body_box,face_score,body_score,association_score
-             FROM person_instances_cache WHERE folder_path=?1 AND asset_path=?2
-               AND source_revision=?3 AND producer_fingerprint=?4 ORDER BY instance_id",
-        )?;
-        let rows = query.query_map(
-            params![
-                folder.to_string_lossy(),
-                asset.to_string_lossy(),
-                source_revision,
-                producer_fingerprint
-            ],
-            |row| {
-                let face: Option<String> = row.get("face_box")?;
-                let landmarks: Option<String> = row.get("face_landmarks")?;
-                let body: Option<String> = row.get("body_box")?;
-                let parse = |value: Option<String>| {
-                    value
-                        .map(|value| serde_json::from_str::<[f64; 4]>(&value))
-                        .transpose()
-                        .map_err(|error| {
-                            rusqlite::Error::FromSqlConversionFailure(
-                                1,
-                                rusqlite::types::Type::Text,
-                                Box::new(error),
-                            )
-                        })
-                };
-                Ok(DetectedPersonInstance {
-                    instance_id: row.get("instance_id")?,
-                    face_box: parse(face)?,
-                    face_landmarks: landmarks
-                        .map(|value| serde_json::from_str::<[[f32; 2]; 5]>(&value))
-                        .transpose()
-                        .map_err(|error| {
-                            rusqlite::Error::FromSqlConversionFailure(
-                                2,
-                                rusqlite::types::Type::Text,
-                                Box::new(error),
-                            )
-                        })?,
-                    body_box: parse(body)?,
-                    face_score: row.get("face_score")?,
-                    body_score: row.get("body_score")?,
-                    association_score: row.get("association_score")?,
-                })
-            },
-        )?;
-        Ok(rows.collect::<Result<Vec<_>, _>>()?)
+        Ok(repo::person_cache::list_detections(
+            &self.store.read(),
+            &folder.to_string_lossy(),
+            &asset.to_string_lossy(),
+            source_revision,
+            producer_fingerprint,
+        )?)
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::testing;
     use oxy_domain::{BeginPersonAnalysis, PersonAnalysisTaskInput};
 
     #[test]
@@ -185,12 +143,12 @@ mod tests {
         let folder = temporary.path().canonicalize().unwrap();
         let asset = folder.join("a.jpg");
         std::fs::write(&asset, b"image bytes").unwrap();
-        let library = Library::in_memory().unwrap();
+        let people = testing::in_memory();
         let source_revision = oxy_fs::observe_file(&asset).unwrap().revision_id();
         let stage_fingerprint = "b".repeat(64);
         let pipeline_fingerprint = "a".repeat(64);
         let start = |request_id: &str| {
-            let run = library
+            let run = people
                 .begin_person_analysis(&BeginPersonAnalysis {
                     folder_path: folder.clone(),
                     pipeline_id: "test".into(),
@@ -198,7 +156,7 @@ mod tests {
                     request_id: request_id.into(),
                 })
                 .unwrap();
-            library
+            people
                 .enqueue_person_analysis_tasks(
                     &run.run_id,
                     &[PersonAnalysisTaskInput {
@@ -210,7 +168,7 @@ mod tests {
                     }],
                 )
                 .unwrap();
-            library
+            people
                 .claim_person_analysis_task(&run.run_id)
                 .unwrap()
                 .unwrap()
@@ -228,26 +186,26 @@ mod tests {
         let mut invalid = detection.clone();
         invalid.face_score = Some(f32::NAN);
         assert!(matches!(
-            library.complete_person_analysis_task_with_detections(&first, &[], Some(&[invalid])),
-            Err(LibraryError::InvalidPersonDetection)
+            people.complete_person_analysis_task_with_detections(&first, &[], Some(&[invalid])),
+            Err(PeopleError::InvalidPersonDetection)
         ));
         let mut invalid_landmarks = detection.clone();
         invalid_landmarks.face_landmarks = Some([[f32::INFINITY, 0.0]; 5]);
         assert!(matches!(
-            library.complete_person_analysis_task_with_detections(
+            people.complete_person_analysis_task_with_detections(
                 &first,
                 &[],
                 Some(&[invalid_landmarks])
             ),
-            Err(LibraryError::InvalidPersonDetection)
+            Err(PeopleError::InvalidPersonDetection)
         ));
         assert!(
-            library
+            people
                 .list_person_detections(&folder, &asset, &source_revision, &stage_fingerprint)
                 .unwrap()
                 .is_empty()
         );
-        library
+        people
             .complete_person_analysis_task_with_detections(
                 &first,
                 &[],
@@ -255,23 +213,23 @@ mod tests {
             )
             .unwrap();
         assert_eq!(
-            library
+            people
                 .list_person_detections(&folder, &asset, &source_revision, &stage_fingerprint)
                 .unwrap(),
             vec![detection]
         );
         assert!(
-            library
+            people
                 .list_person_detections(&folder, &asset, "changed-source", &stage_fingerprint)
                 .unwrap()
                 .is_empty()
         );
         let second = start("detect-second");
-        library
+        people
             .complete_person_analysis_task_with_detections(&second, &[], Some(&[]))
             .unwrap();
         assert!(
-            library
+            people
                 .list_person_detections(&folder, &asset, &source_revision, &stage_fingerprint)
                 .unwrap()
                 .is_empty()
@@ -282,10 +240,10 @@ mod tests {
     fn incompatible_detection_cache_rebuild_preserves_manual_instance() {
         let temporary = tempfile::tempdir().unwrap();
         let database = temporary.path().join("library.sqlite");
-        let library = Library::open(&database).unwrap();
+        let people = testing::open(&database);
         let folder = std::path::Path::new("/photos");
         let asset = folder.join("a.jpg");
-        let manual = library
+        let manual = people
             .create_person_instance(&oxy_domain::CreatePersonInstance {
                 folder_path: folder.to_path_buf(),
                 asset_path: asset.clone(),
@@ -295,40 +253,48 @@ mod tests {
                 request_id: "manual".into(),
             })
             .unwrap();
-        library
-            .write()
-            .execute(
-                "INSERT INTO person_instances_cache(folder_path,asset_path,instance_id,
-               source_revision,producer_fingerprint,pipeline_fingerprint,run_id,face_box)
-             VALUES (?1,?2,?3,?4,?5,?6,?7,?8)",
-                params![
-                    "/photos",
-                    "/photos/a.jpg",
-                    "c".repeat(64),
-                    "source",
-                    "b".repeat(64),
-                    "a".repeat(64),
-                    "run",
-                    "[0.1,0.1,0.2,0.2]"
-                ],
+        let producer = "b".repeat(64);
+        let pipeline = "a".repeat(64);
+        {
+            let connection = people.store.write();
+            repo::person_cache::insert_detection(
+                &connection,
+                &repo::person_cache::NewDetection {
+                    folder_path: "/photos",
+                    asset_path: "/photos/a.jpg",
+                    instance_id: &"c".repeat(64),
+                    source_revision: "source",
+                    producer_fingerprint: &producer,
+                    pipeline_fingerprint: &pipeline,
+                    run_id: "run",
+                    face_box: Some([0.1, 0.1, 0.2, 0.2]),
+                    face_landmarks: None,
+                    body_box: None,
+                    face_score: None,
+                    body_score: None,
+                    association_score: None,
+                },
             )
             .unwrap();
-        library
-            .write()
-            .execute(
-                "UPDATE person_detection_cache_meta SET schema_version=1",
-                [],
-            )
-            .unwrap();
-        drop(library);
-        let reopened = Library::open(&database).unwrap();
+            // Pretend an earlier build wrote this cache. The marker belongs to
+            // `oxy_store::schema`, so only a direct write can stage that state;
+            // production code in this crate carries no SQL.
+            connection
+                .execute(
+                    "UPDATE person_detection_cache_meta SET schema_version=1",
+                    [],
+                )
+                .unwrap();
+        }
+        drop(people);
+        let reopened = testing::open(&database);
         assert_eq!(
             reopened.list_person_instances(folder, &asset).unwrap()[0].id,
             manual.id
         );
         assert!(
             reopened
-                .list_person_detections(folder, &asset, "source", &"b".repeat(64))
+                .list_person_detections(folder, &asset, "source", &producer)
                 .unwrap()
                 .is_empty()
         );

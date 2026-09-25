@@ -18,6 +18,12 @@ pub(crate) struct AppState {
     /// person rules must not be able to name each other, and the domain crates
     /// are independent over one file.
     pub(crate) tags: Arc<oxy_tags::Tags>,
+    /// The person domain, over the same store the library reads.
+    ///
+    /// A sibling for the same reason the tags are: a person rule and a tag rule
+    /// must not be able to name each other, so neither crate depends on the
+    /// other and the application is what hands them the same file.
+    pub(crate) people: Arc<oxy_people::People>,
     pub(crate) cache: Arc<cache::CacheManager>,
     pub(crate) heif: Arc<oxy_media::HeifDecodeService>,
     pub(crate) media_resources: oxy_media::ResourceRegistry,

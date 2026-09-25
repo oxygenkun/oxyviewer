@@ -49,6 +49,13 @@ pub enum StoreError {
     Sqlite(#[from] rusqlite::Error),
     #[error(transparent)]
     Io(#[from] std::io::Error),
+    /// A value that a column stores as JSON could not be encoded.
+    ///
+    /// The encoding belongs to the store because the column does: a caller
+    /// hands over a box or a landmark set, and how it is spelled on disk is
+    /// not something a domain rule should have to know.
+    #[error(transparent)]
+    Json(#[from] serde_json::Error),
 }
 
 impl StoreError {

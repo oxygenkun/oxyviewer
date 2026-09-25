@@ -58,14 +58,22 @@ Repository-specific rules for coding agents working on OxyViewer.
 - A domain crate must not depend on `rusqlite`. It names
   `oxy_store::{Connection, Transaction}` — both are re-exported for exactly
   this — and asks the error (`StoreError::is_constraint_violation`) rather than
-  matching the engine. `oxy-tags/src/audit.rs` asserts this, and asserts that
-  the crate carries no SQL of its own.
+  matching the engine. `oxy-tags/src/audit.rs` and `oxy-people/src/audit.rs`
+  assert this, and assert that each crate carries no SQL of its own.
 - Domain crates are siblings: `oxy-library`, `oxy-tags`, and `oxy-people` do not
   depend on one another, so a rule of one cannot name a rule of another. Where
   they need each other's rows, they call a repository function. The application
   is the composition root: it opens the `oxy_store::Store` once and hands it to
-  every domain crate (`Library::with_store`, `Tags::new`), which is the few
-  lines of wiring `src-tauri` is allowed to own.
+  every domain crate (`Library::with_store`, `Tags::new`, `People::new`), which
+  is the few lines of wiring `src-tauri` is allowed to own. A domain crate's
+  tests may drive a sibling through a `[dev-dependencies]` edge — `oxy-tags`
+  does, to prove an identity's claim lands as a `person` tag source — but no
+  production dependency may cross.
+- Both axes of the person domain are `oxy-people`'s: the identity, the reviews,
+  the history, and the references are `user` tables, while the detections, the
+  feature vectors, and the analysis-run ledger are `cache` tables. The crate
+  holds them together precisely so that emptying the second cannot be mistaken
+  for a reason to touch the first.
 - Declare every table once in `oxy-store/src/schema`, with its class and how it
   is created. One declaration produces the `CREATE TABLE`, the list of owned
   tables, and the `DELETE` statements, so a new table cannot be created without
@@ -83,7 +91,9 @@ Repository-specific rules for coding agents working on OxyViewer.
   `cache::index::forget_root`) instead of writing SQL against another
   namespace's tables. A source-level test in `oxy-library/src/audit.rs` fails
   the build's tests on any cross-namespace write, and a second one asserts that
-  `oxy-library/src/user` carries no SQL of its own. Once the cache namespace
+  `oxy-library/src/user` carries no SQL of its own. The person namespaces now
+  sit outside this crate, so what the pair still guards is the favourites
+  against the browsing, index, and projection state. Once the cache namespace
   follows the user namespace out of `oxy-library` (stage E of the split plan)
   the compiler replaces both.
 - Route file discovery and safe file operations through `oxy-fs`; do not add

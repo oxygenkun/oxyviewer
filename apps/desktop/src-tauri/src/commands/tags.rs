@@ -143,6 +143,21 @@ pub(crate) async fn get_asset_tag_assignments_by_path(
 }
 
 #[tauri::command]
+pub(crate) async fn get_asset_tag_source_kinds(
+    path: PathBuf,
+    tag_id: CustomTagId,
+    state: State<'_, AppState>,
+) -> Result<Vec<String>, String> {
+    let tags = Arc::clone(&state.tags);
+    tauri::async_runtime::spawn_blocking(move || {
+        tags.asset_tag_source_kinds(&path, tag_id)
+            .map_err(|error| error.to_string())
+    })
+    .await
+    .map_err(|error| error.to_string())?
+}
+
+#[tauri::command]
 pub(crate) fn create_custom_tag(
     parent_id: Option<CustomTagId>,
     name: String,

@@ -768,7 +768,7 @@ mod tests {
     #[test]
     fn reopening_migrates_unattributed_assignments_as_legacy() {
         let temporary = tempfile::tempdir().unwrap();
-        let database = temporary.path().join("library.sqlite");
+        let database = temporary.path().join("people.sqlite");
         let path = PathBuf::from("/photos/legacy.jpg");
         let store = Arc::new(Store::open(&database).unwrap());
         let tags = Tags::new(Arc::clone(&store));
@@ -800,16 +800,16 @@ mod tests {
     #[test]
     fn person_sources_require_last_belonging_instance_and_preserve_manual_tag() {
         use oxy_domain::{PersonReviewDecision, SetPersonReview};
-        use oxy_library::Library;
+        use oxy_people::People;
         use std::path::Path as StdPath;
 
         let (tags, store) = in_memory_with_store();
-        let library = Library::with_store(Arc::clone(&store));
+        let people = People::new(Arc::clone(&store));
         let folder = PathBuf::from("/photos");
         let image = folder.join("pair.jpg");
         let tag = tags.create_custom_tag(None, "Alex").unwrap();
-        let first = library.create_folder_person(&folder, "first").unwrap();
-        let second = library.create_folder_person(&folder, "second").unwrap();
+        let first = people.create_folder_person(&folder, "first").unwrap();
+        let second = people.create_folder_person(&folder, "second").unwrap();
         {
             let connection = store.write();
             repo::people::insert_historical_person(
@@ -826,7 +826,7 @@ mod tests {
         }
         let mut reviews = Vec::new();
         for (index, subject) in [&first, &second].into_iter().enumerate() {
-            let instance = library
+            let instance = people
                 .create_person_instance(&oxy_domain::CreatePersonInstance {
                     folder_path: folder.clone(),
                     asset_path: image.clone(),
@@ -836,7 +836,7 @@ mod tests {
                     request_id: format!("instance-{index}"),
                 })
                 .unwrap();
-            let review = library
+            let review = people
                 .set_person_review(&SetPersonReview {
                     folder_path: folder.clone(),
                     instance_id: instance.id,
@@ -856,8 +856,8 @@ mod tests {
             expected_revision: 0,
             request_id: "bind-tag".into(),
         };
-        let link = library.set_person_tag_link(&input).unwrap();
-        assert_eq!(link, library.set_person_tag_link(&input).unwrap());
+        let link = people.set_person_tag_link(&input).unwrap();
+        assert_eq!(link, people.set_person_tag_link(&input).unwrap());
         assert_eq!(
             tags.asset_tag_source_kinds(&image, tag.id).unwrap(),
             ["person"]
@@ -866,7 +866,7 @@ mod tests {
             tags.asset_tag_assignments(std::slice::from_ref(&image)).unwrap()[0].assigned_count,
             1
         );
-        library
+        people
             .set_person_review(&SetPersonReview {
                 folder_path: folder.clone(),
                 instance_id: reviews[0].instance.id.clone(),
@@ -888,16 +888,16 @@ mod tests {
             expected_revision: 0,
             request_id: "suppress-photo".into(),
         };
-        let suppressed = library.set_person_tag_override(&override_input).unwrap();
+        let suppressed = people.set_person_tag_override(&override_input).unwrap();
         assert_eq!(
             suppressed,
-            library.set_person_tag_override(&override_input).unwrap()
+            people.set_person_tag_override(&override_input).unwrap()
         );
         assert_eq!(
             tags.asset_tag_assignments(std::slice::from_ref(&image)).unwrap()[0].assigned_count,
             0
         );
-        library
+        people
             .set_person_tag_override(&oxy_domain::SetPersonTagOverride {
                 suppressed: false,
                 expected_revision: suppressed.revision,
@@ -915,7 +915,7 @@ mod tests {
             tags.asset_tag_source_kinds(&image, tag.id).unwrap(),
             ["manual", "person"]
         );
-        library
+        people
             .set_person_review(&SetPersonReview {
                 folder_path: folder,
                 instance_id: reviews[1].instance.id.clone(),
@@ -936,7 +936,7 @@ mod tests {
             0
         );
         tags.delete_custom_tag(tag.id).unwrap();
-        let broken = library
+        let broken = people
             .get_person_tag_link(StdPath::new(&input.folder_path), &input.subject_id)
             .unwrap()
             .unwrap();
@@ -950,16 +950,16 @@ mod tests {
     #[test]
     fn same_folder_rename_moves_person_facts_with_tag_sources() {
         use oxy_domain::{CreatePersonInstance, PersonReviewDecision, SetPersonReview, SetPersonTagLink};
-        use oxy_library::Library;
+        use oxy_people::People;
 
         let (tags, store) = in_memory_with_store();
-        let library = Library::with_store(Arc::clone(&store));
+        let people = People::new(Arc::clone(&store));
         let folder = PathBuf::from("/photos");
         let source = folder.join("before.jpg");
         let destination = folder.join("after.jpg");
         let tag = tags.create_custom_tag(None, "Alex").unwrap();
-        let person = library.create_folder_person(&folder, "new-person").unwrap();
-        let instance = library
+        let person = people.create_folder_person(&folder, "new-person").unwrap();
+        let instance = people
             .create_person_instance(&CreatePersonInstance {
                 folder_path: folder.clone(),
                 asset_path: source.clone(),
@@ -981,7 +981,7 @@ mod tests {
             .unwrap();
             repo::people::upsert_historical_link(&connection, &person.id, "history").unwrap();
         }
-        library
+        people
             .set_person_review(&SetPersonReview {
                 folder_path: folder.clone(),
                 instance_id: instance.id.clone(),
@@ -991,7 +991,7 @@ mod tests {
                 request_id: "belongs".into(),
             })
             .unwrap();
-        library
+        people
             .set_person_tag_link(&SetPersonTagLink {
                 folder_path: folder.clone(),
                 subject_id: person.id,
@@ -1003,13 +1003,13 @@ mod tests {
             .unwrap();
         tags.move_asset_state(&source, &destination).unwrap();
         assert!(
-            library
+            people
                 .list_person_instances(&folder, &source)
                 .unwrap()
                 .is_empty()
         );
         assert_eq!(
-            library
+            people
                 .list_person_instances(&folder, &destination)
                 .unwrap()[0]
                 .id,
@@ -1025,7 +1025,7 @@ mod tests {
                 .is_empty()
         );
         assert_eq!(
-            library.list_historical_people().unwrap()[0].reference_asset_path,
+            people.list_historical_people().unwrap()[0].reference_asset_path,
             destination
         );
         let elsewhere = PathBuf::from("/other/after.jpg");
@@ -1036,7 +1036,7 @@ mod tests {
                 .is_empty()
         );
         assert!(
-            library
+            people
                 .list_person_instances(&folder, &destination)
                 .unwrap()[0]
                 .needs_review

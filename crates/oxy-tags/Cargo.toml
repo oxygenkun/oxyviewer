@@ -16,5 +16,8 @@ thiserror.workspace = true
 
 [dev-dependencies]
 oxy-fs = { path = "../oxy-fs" }
-oxy-library = { path = "../oxy-library" }
+# The two cross-domain tests drive the real identity policy to prove an
+# identity's claim lands here as a `person` tag source. They need the person
+# domain to do that, so it is a test-only dependency, never a production one.
+oxy-people = { path = "../oxy-people" }
 tempfile.workspace = true

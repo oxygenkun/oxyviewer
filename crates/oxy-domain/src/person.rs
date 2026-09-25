@@ -231,6 +231,51 @@ pub struct DetectedPersonInstance {
     pub association_score: Option<f32>,
 }
 
+/// Which encoder produced a cached feature vector.
+///
+/// The stored spelling lives here rather than in the crate that reads the
+/// vector, so the feature-space contract in `person_feature_spaces` and the
+/// code that validates a vector against it cannot disagree about what "face"
+/// means. Face and body vectors are never interchangeable, even at equal
+/// dimension, so this is part of the feature-space identity.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FeatureModality {
+    Face,
+    Body,
+}
+
+impl FeatureModality {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Face => "face",
+            Self::Body => "body",
+        }
+    }
+
+    pub fn from_text(value: &str) -> Option<Self> {
+        match value {
+            "face" => Some(Self::Face),
+            "body" => Some(Self::Body),
+            _ => None,
+        }
+    }
+}
+
+/// One cached vector that scored above the query threshold.
+///
+/// It carries the row identity, the instance it belongs to, and the similarity
+/// the store computed, so the caller can page and de-duplicate without seeing
+/// the vector itself.
+#[derive(Debug, Clone, PartialEq)]
+pub struct PersonFeatureMatch {
+    pub feature_row_id: i64,
+    pub asset_path: PathBuf,
+    pub instance_id: String,
+    pub source_revision: String,
+    pub pipeline_fingerprint: String,
+    pub similarity: f32,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct PersonFilter {

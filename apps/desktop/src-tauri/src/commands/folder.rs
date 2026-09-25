@@ -65,6 +65,7 @@ pub(crate) async fn list_assets(
     let metadata = state.metadata.clone();
     let library = state.library.clone();
     let tags = state.tags.clone();
+    let people = state.people.clone();
     tauri::async_runtime::spawn_blocking(move || {
         let _foreground = library.foreground.enter();
         let started = Instant::now();
@@ -81,10 +82,11 @@ pub(crate) async fn list_assets(
         let _ = app.emit("directory-browse-progress", &progress);
         // Preserve existing library-wide search semantics. Ordinary browsing
         // uses independent snapshots even during an incomplete root index.
-        if query
-            .search
-            .as_ref()
-            .is_some_and(|search| !search.is_empty())
+        if query.person_filter.is_none()
+            && query
+                .search
+                .as_ref()
+                .is_some_and(|search| !search.is_empty())
         {
             if let Some(page) = library
                 .list_assets(&root, &directory, &query, cursor.unwrap_or(0))
@@ -148,6 +150,13 @@ pub(crate) async fn list_assets(
             )
         };
         let candidates = tagged_assets.as_deref().unwrap_or(&read.assets);
+        let person_assets = query
+            .person_filter
+            .as_ref()
+            .map(|filter| people.filter_assets_by_person(&directory, candidates, filter))
+            .transpose()
+            .map_err(|error| error.to_string())?;
+        let candidates = person_assets.as_deref().unwrap_or(candidates);
         let page = if query.needs_metadata_enrichment() {
             let mut assets = candidates.to_vec();
             metadata

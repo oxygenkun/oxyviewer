@@ -11,12 +11,12 @@
 //! what the data means and the source-level audit that the two namespaces do
 //! not write across their boundary.
 //!
-//! It no longer owns the tag vocabulary: that is `oxy-tags`, a sibling over the
-//! same store, because tag rules and person rules must not be able to name each
-//! other and only crates enforce that. What is left under `user` is the
-//! favourites and the person identity — including the person↔tag bridge, which
-//! reads the tag side through a repository statement rather than through
-//! `oxy-tags`.
+//! It owns neither the tag vocabulary nor the person domain. Those are
+//! `oxy-tags` and `oxy-people` — siblings over the same store, because domain
+//! rules must not be able to name each other and only crates enforce that.
+//! Both were carved out of this crate's `user` namespace; what remains under
+//! `user` is the favourites, and what remains under `cache` is browsing,
+//! indexing, and resource projections.
 //!
 //! The split is a safety property, not just layout: a cache migration, a
 //! preview clear, or a re-index must never be able to reach a person identity,
@@ -28,7 +28,6 @@ pub use cache::index::{IndexProgress, IndexStage, IndexStats};
 #[cfg(test)]
 mod audit;
 mod user;
-pub use oxy_domain::{DetectedPersonInstance, ManualPersonAnchor};
 
 use oxy_store::Store;
 use parking_lot::{Mutex, MutexGuard};
@@ -62,26 +61,6 @@ pub enum LibraryError {
     Json(#[from] serde_json::Error),
     #[error("folder order must contain every library root exactly once")]
     InvalidRootOrder,
-    #[error("tag parent does not exist")]
-    MissingTagParent,
-    #[error("person record changed; reload before saving")]
-    PersonConflict,
-    #[error("person record or instance was not found in this folder")]
-    MissingPersonRecord,
-    #[error("invalid person instance box or source revision")]
-    InvalidPersonInstance,
-    #[error("person vector search unavailable: {0}")]
-    PersonVectorUnavailable(String),
-    #[error("invalid person feature or feature-space contract")]
-    InvalidPersonFeature,
-    #[error("invalid automatic person instance or detection evidence")]
-    InvalidPersonDetection,
-    #[error("invalid person analysis request")]
-    InvalidPersonAnalysis,
-    #[error("person analysis run is missing")]
-    MissingPersonAnalysis,
-    #[error("person analysis request or generation changed")]
-    PersonAnalysisConflict,
 }
 
 /// The photo library: the roots the user added and the derived state over one
@@ -93,14 +72,13 @@ pub enum LibraryError {
 /// may run — and nothing about the file format, the WAL setup, or the pragmas.
 ///
 /// The store is shared rather than owned: the application opens the file once
-/// and gives it to every domain crate, so none of them wraps the others. The
-/// tags live in [`oxy_tags`], which is why nothing named `tag` except the
-/// person↔tag bridge is left here.
+/// and gives it to every domain crate, so none of them wraps the others. Tags
+/// live in [`oxy_tags`] and people in `oxy_people`, which is why nothing named
+/// `tag` and nothing named `person` is left here.
 pub struct Library {
     store: Arc<Store>,
     directory_snapshots: cache::browsing::DirectorySnapshots,
     pub foreground: oxy_runtime::ForegroundGate,
-    vector_status: Result<String, String>,
     indexing_roots: Mutex<HashSet<PathBuf>>,
     index_gate: Mutex<()>,
 }
@@ -149,13 +127,11 @@ impl Library {
     /// [`Store`], and one handle per domain crate over it. [`Library::open`]
     /// remains the shorter form for a caller that owns the file alone.
     pub fn with_store(store: Arc<Store>) -> Self {
-        let vector_status = store.vector_status();
         let directory_snapshots =
             cache::browsing::DirectorySnapshots::new(store.shared_connection());
         Self {
             store,
             directory_snapshots,
-            vector_status,
             indexing_roots: Mutex::new(HashSet::new()),
             index_gate: Mutex::new(()),
             foreground: oxy_runtime::ForegroundGate::default(),

@@ -15,8 +15,13 @@
 //!
 //! - [`library`] — the explicit roots the user added.
 //! - [`tags`] — the vocabulary, the assignments, and the XMP mirror.
-//! - [`people`] — identity, instances, reviews, references, history, and the
-//!   person caches, which are declared `cache` but belong to this domain.
+//! - [`people`] — identity, instances, reviews, references, and history: the
+//!   rows the user named, confirmed, or rejected.
+//! - [`person_cache`] — the person domain's rebuildable state: detections,
+//!   feature vectors, and the analysis run ledger. It sits beside [`people`]
+//!   rather than in [`library`] because the identity a detection is derived for
+//!   is a person row, and it is a separate module because the declarations that
+//!   create these tables also call them `cache`.
 //! - [`cross`] — the few functions that read or write two domains at once, and
 //!   the two acts — a file that moved, a file that is gone — that no single
 //!   domain can perform. They cannot live in a domain crate without making two
@@ -26,4 +31,5 @@
 pub mod cross;
 pub mod library;
 pub mod people;
+pub mod person_cache;
 pub mod tags;

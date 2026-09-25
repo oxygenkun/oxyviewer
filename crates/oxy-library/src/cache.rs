@@ -11,10 +11,7 @@
 //! behaviour over that state. Nothing here may delete from a [`crate::user`]
 //! table, and no module outside this one may empty a derived table by pattern.
 
-pub(crate) mod analysis;
 pub(crate) mod browsing;
-pub(crate) mod detections;
-pub(crate) mod features;
 pub(crate) mod index;
 pub(crate) mod projections;
 

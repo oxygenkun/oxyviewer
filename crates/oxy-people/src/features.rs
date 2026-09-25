@@ -1,12 +1,14 @@
 //! Rebuildable person feature cache. Manual identity facts never depend on it.
 //!
 //! The tables, their format marker, the sqlite-vec registration, and the
-//! statements that follow a rename or a delete live in `oxy_store`; what stays
-//! here is what a feature *means* — how a vector is validated against the
-//! feature space it claims to belong to, and what a rebuild may replace.
+//! statements that score, write, or follow a rename live in `oxy_store`; what
+//! stays here is what a feature *means* — how a vector is validated against the
+//! feature space it claims to belong to, what a rebuild may replace, and what
+//! makes a cached vector still eligible for a candidate query.
 
-use crate::{Library, LibraryError};
-use rusqlite::{OptionalExtension, Transaction, params};
+use crate::{People, PeopleError};
+use oxy_domain::{FeatureModality, PersonFeatureMatch};
+use oxy_store::{StoreError, Transaction, repo};
 use std::{collections::HashMap, path::PathBuf};
 
 #[derive(Debug, Clone)]
@@ -22,31 +24,6 @@ pub struct PersonFeature {
     pub values: Vec<f32>,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum FeatureModality {
-    Face,
-    Body,
-}
-
-impl FeatureModality {
-    fn as_str(self) -> &'static str {
-        match self {
-            Self::Face => "face",
-            Self::Body => "body",
-        }
-    }
-}
-
-#[derive(Debug, Clone, PartialEq)]
-pub struct PersonFeatureMatch {
-    pub feature_row_id: i64,
-    pub asset_path: PathBuf,
-    pub instance_id: String,
-    pub source_revision: String,
-    pub pipeline_fingerprint: String,
-    pub similarity: f32,
-}
-
 pub struct PersonFeatureSearch<'a> {
     pub folder_path: &'a std::path::Path,
     pub feature_space_id: &'a str,
@@ -56,9 +33,9 @@ pub struct PersonFeatureSearch<'a> {
     pub current_sources: &'a [(PathBuf, String)],
 }
 
-fn validate_vector(values: &[f32]) -> Result<(), LibraryError> {
+fn validate_vector(values: &[f32]) -> Result<(), PeopleError> {
     if values.is_empty() || values.len() > 4096 || values.iter().any(|value| !value.is_finite()) {
-        return Err(LibraryError::InvalidPersonFeature);
+        return Err(PeopleError::InvalidPersonFeature);
     }
     let norm = values
         .iter()
@@ -66,12 +43,12 @@ fn validate_vector(values: &[f32]) -> Result<(), LibraryError> {
         .sum::<f64>()
         .sqrt();
     if (norm - 1.0).abs() > 0.001 {
-        return Err(LibraryError::InvalidPersonFeature);
+        return Err(PeopleError::InvalidPersonFeature);
     }
     Ok(())
 }
 
-pub(crate) fn validate_feature(feature: &PersonFeature) -> Result<(), LibraryError> {
+pub(crate) fn validate_feature(feature: &PersonFeature) -> Result<(), PeopleError> {
     validate_vector(&feature.values)?;
     if feature.instance_id.is_empty()
         || feature.source_revision.is_empty()
@@ -80,7 +57,7 @@ pub(crate) fn validate_feature(feature: &PersonFeature) -> Result<(), LibraryErr
         || feature.pipeline_fingerprint.is_empty()
         || feature.asset_path.parent() != Some(feature.folder_path.as_path())
     {
-        return Err(LibraryError::InvalidPersonFeature);
+        return Err(PeopleError::InvalidPersonFeature);
     }
     Ok(())
 }
@@ -92,67 +69,61 @@ fn vector_blob(values: &[f32]) -> Vec<u8> {
         .collect()
 }
 
+/// Stores one vector after checking it against the feature space it claims.
+///
+/// A space belongs to the first producer that claimed it: the same id reused
+/// with another dimension or another producer is not a compatible vector, so it
+/// is rejected rather than silently overwritten.
 pub(crate) fn write_feature(
-    tx: &Transaction<'_>,
+    transaction: &Transaction<'_>,
     feature: &PersonFeature,
-) -> Result<(), LibraryError> {
-    tx.execute(
-        "INSERT OR IGNORE INTO person_feature_spaces(id,modality,dimension,producer_fingerprint)
-         VALUES (?1,?2,?3,?4)",
-        params![
-            feature.feature_space_id,
-            feature.modality.as_str(),
-            feature.values.len(),
-            feature.producer_fingerprint
-        ],
+) -> Result<(), PeopleError> {
+    repo::person_cache::ensure_feature_space(
+        transaction,
+        &feature.feature_space_id,
+        feature.modality,
+        feature.values.len(),
+        &feature.producer_fingerprint,
     )?;
-    let contract: (String, i64, String) = tx.query_row(
-        "SELECT modality,dimension,producer_fingerprint FROM person_feature_spaces WHERE id=?1",
-        [&feature.feature_space_id],
-        |row| {
-            Ok((
-                row.get("modality")?,
-                row.get("dimension")?,
-                row.get("producer_fingerprint")?,
-            ))
-        },
-    )?;
-    if contract
-        != (
-            feature.modality.as_str().to_owned(),
-            feature.values.len() as i64,
-            feature.producer_fingerprint.clone(),
-        )
+    let contract = repo::person_cache::feature_space_contract(transaction, &feature.feature_space_id)?;
+    let Some((stored_modality, stored_dimension, stored_producer)) = contract else {
+        return Err(PeopleError::InvalidPersonFeature);
+    };
+    if stored_modality != feature.modality.as_str()
+        || stored_dimension != feature.values.len() as i64
+        || stored_producer != feature.producer_fingerprint
     {
-        return Err(LibraryError::InvalidPersonFeature);
+        return Err(PeopleError::InvalidPersonFeature);
     }
-    tx.execute(
-        "INSERT INTO person_features_cache(folder_path,asset_path,instance_id,source_revision,feature_space_id,pipeline_fingerprint,vector)
-         VALUES (?1,?2,?3,?4,?5,?6,?7)
-         ON CONFLICT(folder_path,asset_path,instance_id,feature_space_id) DO UPDATE SET
-           source_revision=excluded.source_revision,pipeline_fingerprint=excluded.pipeline_fingerprint,
-           vector=excluded.vector,updated_at=unixepoch()",
-        params![feature.folder_path.to_string_lossy(),feature.asset_path.to_string_lossy(),
-            feature.instance_id,feature.source_revision,feature.feature_space_id,
-            feature.pipeline_fingerprint,vector_blob(&feature.values)],
+    repo::person_cache::upsert_feature(
+        transaction,
+        &repo::person_cache::NewFeature {
+            folder_path: &feature.folder_path.to_string_lossy(),
+            asset_path: &feature.asset_path.to_string_lossy(),
+            instance_id: &feature.instance_id,
+            source_revision: &feature.source_revision,
+            feature_space_id: &feature.feature_space_id,
+            pipeline_fingerprint: &feature.pipeline_fingerprint,
+            vector: &vector_blob(&feature.values),
+        },
     )?;
     Ok(())
 }
 
-impl Library {
+impl People {
     pub fn person_vector_status(&self) -> Result<&str, &str> {
         self.vector_status.as_deref().map_err(String::as_str)
     }
 
-    pub fn put_person_feature(&self, feature: &PersonFeature) -> Result<(), LibraryError> {
+    pub fn put_person_feature(&self, feature: &PersonFeature) -> Result<(), PeopleError> {
         self.vector_status
             .as_ref()
-            .map_err(|error| LibraryError::PersonVectorUnavailable(error.clone()))?;
+            .map_err(|error| PeopleError::PersonVectorUnavailable(error.clone()))?;
         validate_feature(feature)?;
-        let mut connection = self.write();
-        let tx = connection.transaction()?;
-        write_feature(&tx, feature)?;
-        tx.commit()?;
+        let mut connection = self.store.write();
+        let transaction = connection.transaction().map_err(StoreError::from)?;
+        write_feature(&transaction, feature)?;
+        transaction.commit().map_err(StoreError::from)?;
         Ok(())
     }
 
@@ -167,7 +138,7 @@ impl Library {
         min_similarity: f32,
         page: (usize, usize),
         current_sources: &[(PathBuf, String)],
-    ) -> Result<Vec<PersonFeatureMatch>, LibraryError> {
+    ) -> Result<Vec<PersonFeatureMatch>, PeopleError> {
         self.search_person_features_impl(
             PersonFeatureSearch {
                 folder_path,
@@ -188,13 +159,13 @@ impl Library {
         &self,
         search: PersonFeatureSearch<'_>,
         detection_producer_fingerprint: &str,
-    ) -> Result<Vec<PersonFeatureMatch>, LibraryError> {
+    ) -> Result<Vec<PersonFeatureMatch>, PeopleError> {
         if detection_producer_fingerprint.len() != 64
             || !detection_producer_fingerprint
                 .bytes()
                 .all(|byte| byte.is_ascii_hexdigit())
         {
-            return Err(LibraryError::InvalidPersonFeature);
+            return Err(PeopleError::InvalidPersonFeature);
         }
         self.search_person_features_impl(search, Some(detection_producer_fingerprint))
     }
@@ -203,7 +174,7 @@ impl Library {
         &self,
         search: PersonFeatureSearch<'_>,
         detection_producer_fingerprint: Option<&str>,
-    ) -> Result<Vec<PersonFeatureMatch>, LibraryError> {
+    ) -> Result<Vec<PersonFeatureMatch>, PeopleError> {
         let PersonFeatureSearch {
             folder_path,
             feature_space_id,
@@ -215,14 +186,14 @@ impl Library {
         let (limit, offset) = page;
         self.vector_status
             .as_ref()
-            .map_err(|error| LibraryError::PersonVectorUnavailable(error.clone()))?;
+            .map_err(|error| PeopleError::PersonVectorUnavailable(error.clone()))?;
         validate_vector(query)?;
         if !min_similarity.is_finite()
             || !(-1.0..=1.0).contains(&min_similarity)
             || limit == 0
             || limit > 1000
         {
-            return Err(LibraryError::InvalidPersonFeature);
+            return Err(PeopleError::InvalidPersonFeature);
         }
         let mut source_by_path = HashMap::with_capacity(current_sources.len());
         for (path, revision) in current_sources {
@@ -232,83 +203,45 @@ impl Library {
                     .insert(path.as_path(), revision.as_str())
                     .is_some()
             {
-                return Err(LibraryError::InvalidPersonFeature);
+                return Err(PeopleError::InvalidPersonFeature);
             }
         }
         if source_by_path.is_empty() {
             return Ok(Vec::new());
         }
-        let connection = self.read_connection();
-        let dimension: Option<i64> = connection
-            .query_row(
-                "SELECT dimension FROM person_feature_spaces WHERE id=?1",
-                [feature_space_id],
-                |row| row.get("dimension"),
-            )
-            .optional()?;
+        let connection = self.store.read();
+        let dimension = repo::person_cache::feature_space_dimension(&connection, feature_space_id)?;
         let Some(dimension) = dimension else {
             return Ok(Vec::new());
         };
         if dimension != query.len() as i64 {
-            return Err(LibraryError::InvalidPersonFeature);
+            return Err(PeopleError::InvalidPersonFeature);
         }
-        let vector = vector_blob(query);
-        let mut statement = connection.prepare(
-            "SELECT feature_row_id,asset_path,instance_id,source_revision,pipeline_fingerprint,
-               1.0-vec_distance_cosine(vector,?1) AS similarity
-             FROM person_features_cache AS f WHERE folder_path=?2 AND feature_space_id=?3
-               AND 1.0-vec_distance_cosine(vector,?1)>=?4
-               AND (?5 IS NULL OR EXISTS (
-                 SELECT 1 FROM person_instances_cache AS d
-                  WHERE d.folder_path=f.folder_path AND d.asset_path=f.asset_path
-                    AND d.instance_id=f.instance_id AND d.source_revision=f.source_revision
-                    AND d.producer_fingerprint=?5))
-             ORDER BY similarity DESC,asset_path,instance_id,feature_row_id",
-        )?;
-        let rows = statement.query_map(
-            params![
-                vector,
-                folder_path.to_string_lossy(),
+        let folder = folder_path.to_string_lossy();
+        let current: Vec<(String, String)> = current_sources
+            .iter()
+            .map(|(path, revision)| (path.to_string_lossy().into_owned(), revision.clone()))
+            .collect();
+        Ok(repo::person_cache::search_features(
+            &connection,
+            &repo::person_cache::FeatureQuery {
+                folder_path: &folder,
                 feature_space_id,
+                vector: &vector_blob(query),
                 min_similarity,
-                detection_producer_fingerprint
-            ],
-            |row| {
-                Ok(PersonFeatureMatch {
-                    feature_row_id: row.get("feature_row_id")?,
-                    asset_path: row.get::<_, String>("asset_path")?.into(),
-                    instance_id: row.get("instance_id")?,
-                    source_revision: row.get("source_revision")?,
-                    pipeline_fingerprint: row.get("pipeline_fingerprint")?,
-                    similarity: row.get("similarity")?,
-                })
+                detection_producer_fingerprint,
+                current_sources: &current,
+                page: (limit, offset),
             },
-        )?;
-        let mut matches = Vec::with_capacity(limit);
-        let mut eligible_seen = 0usize;
-        for row in rows {
-            let candidate = row?;
-            if source_by_path.get(candidate.asset_path.as_path()).copied()
-                != Some(candidate.source_revision.as_str())
-            {
-                continue;
-            }
-            if eligible_seen >= offset {
-                matches.push(candidate);
-                if matches.len() == limit {
-                    break;
-                }
-            }
-            eligible_seen += 1;
-        }
-        Ok(matches)
+        )?)
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::cache::detections::{DetectionStageContext, replace_stage_detections};
+    use crate::detections::{DetectionStageContext, replace_stage_detections};
+    use crate::testing;
     use oxy_domain::DetectedPersonInstance;
     use std::path::Path;
 
@@ -341,8 +274,8 @@ mod tests {
 
     #[test]
     fn vector_search_is_exhaustive_scoped_and_stably_paged() {
-        let library = Library::in_memory().unwrap();
-        assert!(library.person_vector_status().is_ok());
+        let people = testing::in_memory();
+        assert!(people.person_vector_status().is_ok());
         let original = feature(
             "first",
             "a.jpg",
@@ -365,7 +298,7 @@ mod tests {
             [0.0, 1.0, 0.0],
         );
         for item in [&original, &near, &unrelated] {
-            library.put_person_feature(item).unwrap();
+            people.put_person_feature(item).unwrap();
         }
         let body = feature(
             "body",
@@ -374,9 +307,9 @@ mod tests {
             FeatureModality::Body,
             [1.0, 0.0, 0.0],
         );
-        library.put_person_feature(&body).unwrap();
+        people.put_person_feature(&body).unwrap();
         let sources = current(&[&original, &near, &unrelated, &body]);
-        let first_page = library
+        let first_page = people
             .search_person_features(
                 Path::new("/photos"),
                 "face-v1",
@@ -386,7 +319,7 @@ mod tests {
                 &sources,
             )
             .unwrap();
-        let second_page = library
+        let second_page = people
             .search_person_features(
                 Path::new("/photos"),
                 "face-v1",
@@ -400,8 +333,8 @@ mod tests {
         assert_eq!(second_page[0].instance_id, "second");
         let mut same_producer = original.clone();
         same_producer.pipeline_fingerprint = "pipeline-with-new-body-v2".into();
-        library.put_person_feature(&same_producer).unwrap();
-        let changed_pipeline = library
+        people.put_person_feature(&same_producer).unwrap();
+        let changed_pipeline = people
             .search_person_features(
                 Path::new("/photos"),
                 "face-v1",
@@ -418,12 +351,12 @@ mod tests {
         let mut changed_producer = original;
         changed_producer.producer_fingerprint = "face-stage-v2".into();
         assert!(matches!(
-            library.put_person_feature(&changed_producer),
-            Err(LibraryError::InvalidPersonFeature)
+            people.put_person_feature(&changed_producer),
+            Err(PeopleError::InvalidPersonFeature)
         ));
         let mut changed_sources = sources.clone();
         changed_sources[0].1 = "new-source".into();
-        let eligible_first = library
+        let eligible_first = people
             .search_person_features(
                 Path::new("/photos"),
                 "face-v1",
@@ -435,7 +368,7 @@ mod tests {
             .unwrap();
         assert_eq!(eligible_first[0].instance_id, "second");
         assert!(
-            library
+            people
                 .search_person_features(
                     Path::new("/photos"),
                     "face-v1",
@@ -448,7 +381,7 @@ mod tests {
                 .is_empty()
         );
         assert!(
-            library
+            people
                 .search_person_features(
                     Path::new("/other"),
                     "face-v1",
@@ -461,7 +394,7 @@ mod tests {
                 .is_empty()
         );
         assert_eq!(
-            library
+            people
                 .search_person_features(
                     Path::new("/photos"),
                     "face-v1",
@@ -475,27 +408,27 @@ mod tests {
             3
         );
         assert!(matches!(
-            library.put_person_feature(&feature(
+            people.put_person_feature(&feature(
                 "bad",
                 "e.jpg",
                 "face-v1",
                 FeatureModality::Body,
                 [1.0, 0.0, 0.0]
             )),
-            Err(LibraryError::InvalidPersonFeature)
+            Err(PeopleError::InvalidPersonFeature)
         ));
         assert!(matches!(
-            library.put_person_feature(&feature(
+            people.put_person_feature(&feature(
                 "bad",
                 "e.jpg",
                 "face-v1",
                 FeatureModality::Face,
                 [f32::NAN, 0.0, 0.0]
             )),
-            Err(LibraryError::InvalidPersonFeature)
+            Err(PeopleError::InvalidPersonFeature)
         ));
         assert!(matches!(
-            library.search_person_features(
+            people.search_person_features(
                 Path::new("/photos"),
                 "face-v1",
                 &[1.0, 0.0],
@@ -503,13 +436,13 @@ mod tests {
                 (10, 0),
                 &sources
             ),
-            Err(LibraryError::InvalidPersonFeature)
+            Err(PeopleError::InvalidPersonFeature)
         ));
     }
 
     #[test]
     fn instance_cache_ids_are_scoped_to_the_asset() {
-        let library = Library::in_memory().unwrap();
+        let people = testing::in_memory();
         let first = feature(
             "face-0",
             "a.jpg",
@@ -524,9 +457,9 @@ mod tests {
             FeatureModality::Face,
             [0.0, 1.0, 0.0],
         );
-        library.put_person_feature(&first).unwrap();
-        library.put_person_feature(&second).unwrap();
-        let result = library
+        people.put_person_feature(&first).unwrap();
+        people.put_person_feature(&second).unwrap();
+        let result = people
             .search_person_features(
                 Path::new("/photos"),
                 "face-v1",
@@ -542,7 +475,7 @@ mod tests {
 
     #[test]
     fn product_search_excludes_vectors_after_detection_is_removed() {
-        let library = Library::in_memory().unwrap();
+        let people = testing::in_memory();
         let producer = "b".repeat(64);
         let mut cached = feature(
             &"a".repeat(64),
@@ -552,10 +485,10 @@ mod tests {
             [1.0, 0.0, 0.0],
         );
         cached.source_revision = "c".repeat(64);
-        library.put_person_feature(&cached).unwrap();
+        people.put_person_feature(&cached).unwrap();
         let sources = current(&[&cached]);
         let search = || {
-            library
+            people
                 .search_current_detected_person_features(
                     PersonFeatureSearch {
                         folder_path: Path::new("/photos"),
@@ -588,14 +521,14 @@ mod tests {
             run_id: "run-1",
         };
         {
-            let mut connection = library.write();
+            let mut connection = people.store.write();
             let transaction = connection.transaction().unwrap();
             replace_stage_detections(&transaction, &context, &[detection]).unwrap();
             transaction.commit().unwrap();
         }
         assert_eq!(search().len(), 1);
         {
-            let mut connection = library.write();
+            let mut connection = people.store.write();
             let transaction = connection.transaction().unwrap();
             replace_stage_detections(&transaction, &context, &[]).unwrap();
             transaction.commit().unwrap();
@@ -607,7 +540,7 @@ mod tests {
     fn feature_cache_survives_reopen_and_replaces_a_new_source_revision() {
         let temporary = tempfile::tempdir().unwrap();
         let database = temporary.path().join("library.sqlite");
-        let library = Library::open(&database).unwrap();
+        let people = testing::open(&database);
         let first = feature(
             "instance",
             "a.jpg",
@@ -615,9 +548,9 @@ mod tests {
             FeatureModality::Face,
             [1.0, 0.0, 0.0],
         );
-        library.put_person_feature(&first).unwrap();
-        drop(library);
-        let reopened = Library::open(&database).unwrap();
+        people.put_person_feature(&first).unwrap();
+        drop(people);
+        let reopened = testing::open(&database);
         let mut replacement = first;
         replacement.source_revision = "11:21".into();
         replacement.values = vec![0.0, 1.0, 0.0];
@@ -638,7 +571,7 @@ mod tests {
         {
             // The same-folder-move rule lives with the relocation act, which
             // spans the tag rows, the person rows, and this cache.
-            let mut connection = reopened.write();
+            let mut connection = reopened.store.write();
             let transaction = connection.transaction().unwrap();
             oxy_store::repo::cross::relocate_asset(
                 &transaction,
@@ -666,8 +599,8 @@ mod tests {
     fn incompatible_vector_cache_rebuild_preserves_manual_people() {
         let temporary = tempfile::tempdir().unwrap();
         let database = temporary.path().join("library.sqlite");
-        let library = Library::open(&database).unwrap();
-        let person = library
+        let people = testing::open(&database);
+        let person = people
             .create_folder_person(Path::new("/photos"), "manual")
             .unwrap();
         let cached = feature(
@@ -677,13 +610,14 @@ mod tests {
             FeatureModality::Face,
             [1.0, 0.0, 0.0],
         );
-        library.put_person_feature(&cached).unwrap();
-        library
+        people.put_person_feature(&cached).unwrap();
+        people
+            .store
             .write()
             .execute("UPDATE person_vector_cache_meta SET schema_version=0", [])
             .unwrap();
-        drop(library);
-        let reopened = Library::open(&database).unwrap();
+        drop(people);
+        let reopened = testing::open(&database);
         assert_eq!(
             reopened.list_folder_people(Path::new("/photos")).unwrap()[0].id,
             person.id
@@ -705,24 +639,24 @@ mod tests {
 
     #[test]
     fn unavailable_extension_does_not_block_manual_people() {
-        let mut library = Library::in_memory().unwrap();
-        library.vector_status = Err("test unavailable".into());
-        let person = library
+        let mut people = testing::in_memory();
+        people.vector_status = Err("test unavailable".into());
+        let person = people
             .create_folder_person(Path::new("/photos"), "manual")
             .unwrap();
         assert_eq!(
-            library.list_folder_people(Path::new("/photos")).unwrap()[0].id,
+            people.list_folder_people(Path::new("/photos")).unwrap()[0].id,
             person.id
         );
         assert!(matches!(
-            library.put_person_feature(&feature(
+            people.put_person_feature(&feature(
                 "one",
                 "a.jpg",
                 "face-v1",
                 FeatureModality::Face,
                 [1.0, 0.0, 0.0]
             )),
-            Err(LibraryError::PersonVectorUnavailable(_))
+            Err(PeopleError::PersonVectorUnavailable(_))
         ));
     }
 }

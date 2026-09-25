@@ -20,6 +20,7 @@ flowchart TD
     rustArea -->|XMP 或 EXIF| metadataCrate["oxy-metadata"]
     rustArea -->|收藏夹与索引| libraryCrate["oxy-library"]
     rustArea -->|标签| tagsCrate["oxy-tags"]
+    rustArea -->|人物| peopleCrate["oxy-people"]
     rustArea -->|通用作业词汇| runtimeCrate["oxy-runtime"]
 ```
 
@@ -31,10 +32,15 @@ flowchart TD
 数据库，也不依赖 `rusqlite`——事务需要 `oxy_store::{Connection, Transaction}`，唯一约束被拒
 时用 `StoreError::is_constraint_violation()` 判断。
 
-领域 crate 之间是平级的：`oxy-library`、`oxy-tags`（以及规划中的 `oxy-people::identity`）互不
-依赖，需要对方的数据时调用 `oxy-store::repo` 的语句。跨领域的语句——包括「文件移动了」与
-「文件没了」这两个动作——都在 `oxy-store/src/repo/cross.rs`。应用层是组合根：它打开一次
-`oxy_store::Store`，再交给每个领域 crate（`Library::with_store`、`Tags::new`）。
+领域 crate 之间是平级的：`oxy-library`、`oxy-tags`、`oxy-people` 互不依赖，需要对方的数据时
+调用 `oxy-store::repo` 的语句。跨领域的语句——包括「文件移动了」与「文件没了」这两个动作——
+都在 `oxy-store/src/repo/cross.rs`。应用层是组合根：它打开一次 `oxy_store::Store`，再交给每个
+领域 crate（`Library::with_store`、`Tags::new`、`People::new`）。测试可以有一条
+`[dev-dependencies]` 边跨到兄弟 crate（`oxy-tags` 用它驱动真实的人物身份策略），生产依赖不行。
+
+人物的两张面孔分属两个类别，但在同一个 crate 里：身份、审阅、历史、参考是 `user`，检测、特征
+向量、分析运行账本是 `cache`。`oxy-people` 同时持有两者，正是为了让「清空缓存」不可能顺手碰到
+一次审阅决定。
 
 ## 2. 新增 Tauri command
 

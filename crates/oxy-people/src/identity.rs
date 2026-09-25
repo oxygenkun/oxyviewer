@@ -15,17 +15,17 @@
 //! It also holds the bridge to the tag vocabulary — the one tag the identity
 //! pushes onto its photos, and the per-photo exceptions to it. That bridge is
 //! person policy: it decides what a link *means*, and it changes before the
-//! tag side does. It reaches the tags through repository statements, so the
-//! two crates stay independent.
+//! tag side does. It reaches the tags through repository statements, so
+//! `oxy-people` and `oxy-tags` stay independent.
 
-use crate::{Library, LibraryError};
+use crate::{People, PeopleError};
 use oxy_domain::{
     AssetSummary, ConfirmFolderPerson, CreatePersonInstance, FolderPerson, HistoricalPerson,
     LinkHistoricalPerson, PersonFilter, PersonFilterState, PersonInstance, PersonReview,
     PersonReviewDecision, PersonTagLink, PersonTagOverride, ResetFolderPerson, SetPersonReview,
     SetPersonTagLink, SetPersonTagOverride, UnlinkHistoricalPerson, UpdatePersonInstance,
 };
-use oxy_store::repo;
+use oxy_store::{StoreError, repo};
 use std::{collections::HashMap, path::Path};
 
 fn path_text(path: &Path) -> String {
@@ -49,18 +49,18 @@ fn valid_source_identity(value: Option<&str>) -> bool {
         .is_none_or(|value| value.len() == 64 && value.bytes().all(|byte| byte.is_ascii_hexdigit()))
 }
 
-impl Library {
-    pub fn list_historical_people(&self) -> Result<Vec<HistoricalPerson>, LibraryError> {
-        Ok(repo::people::list_historical_people(&self.read_connection())?)
+impl People {
+    pub fn list_historical_people(&self) -> Result<Vec<HistoricalPerson>, PeopleError> {
+        Ok(repo::people::list_historical_people(&self.store.read())?)
     }
 
     pub fn get_historical_link(
         &self,
         folder_path: &Path,
         subject_id: &str,
-    ) -> Result<Option<String>, LibraryError> {
+    ) -> Result<Option<String>, PeopleError> {
         Ok(repo::people::historical_link(
-            &self.read_connection(),
+            &self.store.read(),
             &path_text(folder_path),
             subject_id,
         )?)
@@ -69,12 +69,12 @@ impl Library {
     pub fn link_historical_person(
         &self,
         input: &LinkHistoricalPerson,
-    ) -> Result<HistoricalPerson, LibraryError> {
+    ) -> Result<HistoricalPerson, PeopleError> {
         if input.request_id.is_empty() {
-            return Err(LibraryError::InvalidPersonInstance);
+            return Err(PeopleError::InvalidPersonInstance);
         }
-        let mut connection = self.write();
-        let transaction = connection.transaction()?;
+        let mut connection = self.store.write();
+        let transaction = connection.transaction().map_err(StoreError::from)?;
         let history_id = if let Some((operation, id)) =
             repo::people::request_result(&transaction, &input.request_id)?
         {
@@ -87,7 +87,7 @@ impl Library {
                     .as_ref()
                     .is_some_and(|expected| expected != &id)
             {
-                return Err(LibraryError::PersonConflict);
+                return Err(PeopleError::PersonConflict);
             }
             id
         } else {
@@ -98,16 +98,16 @@ impl Library {
                 input.expected_revision,
             )?;
             let Some((name, asset, revision)) = source else {
-                return Err(LibraryError::PersonConflict);
+                return Err(PeopleError::PersonConflict);
             };
             let previous =
                 repo::people::historical_link_of_subject(&transaction, &input.subject_id)?;
             if previous.is_some() && input.historical_person_id.is_none() {
-                return Err(LibraryError::PersonConflict);
+                return Err(PeopleError::PersonConflict);
             }
             let id = if let Some(id) = &input.historical_person_id {
                 if !repo::people::historical_person_exists(&transaction, id)? {
-                    return Err(LibraryError::MissingPersonRecord);
+                    return Err(PeopleError::MissingPersonRecord);
                 }
                 id.clone()
             } else {
@@ -116,7 +116,7 @@ impl Library {
                 id
             };
             if previous.as_deref() == Some(id.as_str()) {
-                return Err(LibraryError::PersonConflict);
+                return Err(PeopleError::PersonConflict);
             }
             repo::people::upsert_historical_link(&transaction, &input.subject_id, &id)?;
             repo::people::bump_subject_revision(&transaction, &input.subject_id)?;
@@ -137,25 +137,25 @@ impl Library {
             id
         };
         let result = repo::people::historical_person(&transaction, &history_id)?
-            .ok_or(LibraryError::MissingPersonRecord)?;
-        transaction.commit()?;
+            .ok_or(PeopleError::MissingPersonRecord)?;
+        transaction.commit().map_err(StoreError::from)?;
         Ok(result)
     }
 
     pub fn unlink_historical_person(
         &self,
         input: &UnlinkHistoricalPerson,
-    ) -> Result<(), LibraryError> {
+    ) -> Result<(), PeopleError> {
         if input.request_id.is_empty() {
-            return Err(LibraryError::InvalidPersonInstance);
+            return Err(PeopleError::InvalidPersonInstance);
         }
-        let mut connection = self.write();
-        let transaction = connection.transaction()?;
+        let mut connection = self.store.write();
+        let transaction = connection.transaction().map_err(StoreError::from)?;
         if let Some((operation, subject)) =
             repo::people::request_result(&transaction, &input.request_id)?
         {
             if operation != "unlinkHistory" || subject != input.subject_id {
-                return Err(LibraryError::PersonConflict);
+                return Err(PeopleError::PersonConflict);
             }
         } else {
             let history_id = repo::people::historical_link_at_revision(
@@ -164,7 +164,7 @@ impl Library {
                 &input.subject_id,
                 input.expected_revision,
             )?
-            .ok_or(LibraryError::PersonConflict)?;
+            .ok_or(PeopleError::PersonConflict)?;
             repo::people::delete_historical_link(&transaction, &input.subject_id)?;
             repo::people::bump_subject_revision(&transaction, &input.subject_id)?;
             repo::people::insert_history_event(
@@ -182,7 +182,7 @@ impl Library {
             )?;
             repo::cross::reconcile_person_sources_for_subject(&transaction, &input.subject_id)?;
         }
-        transaction.commit()?;
+        transaction.commit().map_err(StoreError::from)?;
         Ok(())
     }
 
@@ -197,9 +197,9 @@ impl Library {
         &self,
         folder_path: &Path,
         subject_id: &str,
-    ) -> Result<Option<PersonTagLink>, LibraryError> {
+    ) -> Result<Option<PersonTagLink>, PeopleError> {
         Ok(repo::people::person_tag_link(
-            &self.read_connection(),
+            &self.store.read(),
             folder_path,
             subject_id,
         )?)
@@ -208,28 +208,28 @@ impl Library {
     pub fn set_person_tag_link(
         &self,
         input: &SetPersonTagLink,
-    ) -> Result<PersonTagLink, LibraryError> {
+    ) -> Result<PersonTagLink, PeopleError> {
         if input.request_id.is_empty() || (input.enabled && input.tag_id.is_none()) {
-            return Err(LibraryError::PersonConflict);
+            return Err(PeopleError::PersonConflict);
         }
-        let mut connection = self.write();
-        let transaction = connection.transaction()?;
+        let mut connection = self.store.write();
+        let transaction = connection.transaction().map_err(StoreError::from)?;
         let historical_id =
             repo::people::historical_person_of_subject(&transaction, &input.folder_path, &input.subject_id)?
-                .ok_or(LibraryError::MissingPersonRecord)?;
+                .ok_or(PeopleError::MissingPersonRecord)?;
         if let Some((operation, id)) = repo::people::request_result(&transaction, &input.request_id)? {
             if operation != "setPersonTagLink" || id != historical_id {
-                return Err(LibraryError::PersonConflict);
+                return Err(PeopleError::PersonConflict);
             }
         } else {
             let revision = repo::people::person_tag_link_revision(&transaction, &historical_id)?;
             if revision.unwrap_or(0) != input.expected_revision {
-                return Err(LibraryError::PersonConflict);
+                return Err(PeopleError::PersonConflict);
             }
             if let Some(tag_id) = input.tag_id
                 && !repo::tags::tag_exists(&transaction, tag_id)?
             {
-                return Err(LibraryError::MissingTagParent);
+                return Err(PeopleError::MissingTagParent);
             }
             repo::people::upsert_person_tag_link(&transaction, &historical_id, input.tag_id, input.enabled)?;
             for subject in repo::people::subjects_of_historical_person(&transaction, &historical_id)? {
@@ -243,8 +243,8 @@ impl Library {
             )?;
         }
         let result = repo::people::person_tag_link_of(&transaction, &historical_id)?
-            .ok_or(LibraryError::MissingPersonRecord)?;
-        transaction.commit()?;
+            .ok_or(PeopleError::MissingPersonRecord)?;
+        transaction.commit().map_err(StoreError::from)?;
         Ok(result)
     }
 
@@ -253,9 +253,9 @@ impl Library {
         folder_path: &Path,
         subject_id: &str,
         asset_path: &Path,
-    ) -> Result<Option<PersonTagOverride>, LibraryError> {
+    ) -> Result<Option<PersonTagOverride>, PeopleError> {
         Ok(repo::people::person_tag_override(
-            &self.read_connection(),
+            &self.store.read(),
             folder_path,
             subject_id,
             asset_path,
@@ -270,28 +270,28 @@ impl Library {
     pub fn set_person_tag_override(
         &self,
         input: &SetPersonTagOverride,
-    ) -> Result<PersonTagOverride, LibraryError> {
+    ) -> Result<PersonTagOverride, PeopleError> {
         if input.request_id.is_empty()
             || input.asset_path.parent() != Some(input.folder_path.as_path())
         {
-            return Err(LibraryError::PersonConflict);
+            return Err(PeopleError::PersonConflict);
         }
-        let mut connection = self.write();
-        let transaction = connection.transaction()?;
+        let mut connection = self.store.write();
+        let transaction = connection.transaction().map_err(StoreError::from)?;
         let historical_id =
             repo::people::historical_person_of_subject(&transaction, &input.folder_path, &input.subject_id)?
-                .ok_or(LibraryError::MissingPersonRecord)?;
+                .ok_or(PeopleError::MissingPersonRecord)?;
         let request_entity = format!("{}:{}", historical_id, input.asset_path.display());
         let asset_path = input.asset_path.to_string_lossy();
         if let Some((operation, entity)) = repo::people::request_result(&transaction, &input.request_id)? {
             if operation != "setPersonTagOverride" || entity != request_entity {
-                return Err(LibraryError::PersonConflict);
+                return Err(PeopleError::PersonConflict);
             }
         } else {
             let revision =
                 repo::people::person_tag_override_revision(&transaction, &historical_id, &asset_path)?;
             if revision.unwrap_or(0) != input.expected_revision {
-                return Err(LibraryError::PersonConflict);
+                return Err(PeopleError::PersonConflict);
             }
             repo::people::upsert_person_tag_override(
                 &transaction,
@@ -310,8 +310,8 @@ impl Library {
             )?;
         }
         let result = repo::people::person_tag_override_of(&transaction, &historical_id, &asset_path)?
-            .ok_or(LibraryError::MissingPersonRecord)?;
-        transaction.commit()?;
+            .ok_or(PeopleError::MissingPersonRecord)?;
+        transaction.commit().map_err(StoreError::from)?;
         Ok(result)
     }
 
@@ -321,9 +321,9 @@ impl Library {
         folder: &Path,
         assets: &[AssetSummary],
         filter: &PersonFilter,
-    ) -> Result<Vec<AssetSummary>, LibraryError> {
+    ) -> Result<Vec<AssetSummary>, PeopleError> {
         let records = repo::people::instance_records(
-            &self.read_connection(),
+            &self.store.read(),
             &path_text(folder),
             filter.subject_id.as_deref(),
         )?;
@@ -378,7 +378,7 @@ impl Library {
     pub fn update_person_instance(
         &self,
         input: &UpdatePersonInstance,
-    ) -> Result<PersonInstance, LibraryError> {
+    ) -> Result<PersonInstance, PeopleError> {
         self.update_person_instance_with_source_identity(input, None)
     }
 
@@ -386,7 +386,7 @@ impl Library {
         &self,
         input: &UpdatePersonInstance,
         source_identity_revision: Option<&str>,
-    ) -> Result<PersonInstance, LibraryError> {
+    ) -> Result<PersonInstance, PeopleError> {
         if input.request_id.is_empty()
             || input.source_revision.is_empty()
             || !valid_source_identity(source_identity_revision)
@@ -394,19 +394,19 @@ impl Library {
             || !valid_box(input.body_box)
             || (input.face_box.is_none() && input.body_box.is_none())
         {
-            return Err(LibraryError::InvalidPersonInstance);
+            return Err(PeopleError::InvalidPersonInstance);
         }
-        let mut connection = self.write();
-        let tx = connection.transaction()?;
+        let mut connection = self.store.write();
+        let tx = connection.transaction().map_err(StoreError::from)?;
         if let Some((operation, entity)) =
             repo::people::request_result(&tx, &input.request_id)?
         {
             if operation != "updateInstance" || entity != input.instance_id {
-                return Err(LibraryError::PersonConflict);
+                return Err(PeopleError::PersonConflict);
             }
             let stored = repo::people::source_identity_revision(&tx, &input.instance_id)?;
             if stored.as_deref() != source_identity_revision {
-                return Err(LibraryError::PersonConflict);
+                return Err(PeopleError::PersonConflict);
             }
         } else {
             let previous = repo::people::instance(
@@ -414,9 +414,9 @@ impl Library {
                 &input.instance_id,
                 &path_text(&input.folder_path),
             )?
-            .ok_or(LibraryError::MissingPersonRecord)?;
+            .ok_or(PeopleError::MissingPersonRecord)?;
             if previous.revision != input.expected_revision {
-                return Err(LibraryError::PersonConflict);
+                return Err(PeopleError::PersonConflict);
             }
             repo::people::insert_instance_event(
                 &tx,
@@ -466,20 +466,20 @@ impl Library {
         }
         let result =
             repo::people::instance(&tx, &input.instance_id, &path_text(&input.folder_path))?
-                .ok_or(LibraryError::MissingPersonRecord)?;
-        tx.commit()?;
+                .ok_or(PeopleError::MissingPersonRecord)?;
+        tx.commit().map_err(StoreError::from)?;
         Ok(result)
     }
 
-    pub fn reset_folder_person(&self, input: &ResetFolderPerson) -> Result<(), LibraryError> {
+    pub fn reset_folder_person(&self, input: &ResetFolderPerson) -> Result<(), PeopleError> {
         if input.request_id.is_empty() {
-            return Err(LibraryError::InvalidPersonInstance);
+            return Err(PeopleError::InvalidPersonInstance);
         }
-        let mut connection = self.write();
-        let tx = connection.transaction()?;
+        let mut connection = self.store.write();
+        let tx = connection.transaction().map_err(StoreError::from)?;
         if let Some((operation, entity)) = repo::people::request_result(&tx, &input.request_id)? {
             if operation != "resetPerson" || entity != input.subject_id {
-                return Err(LibraryError::PersonConflict);
+                return Err(PeopleError::PersonConflict);
             }
         } else {
             let name = input.display_name.trim();
@@ -491,7 +491,7 @@ impl Library {
                 input.expected_revision,
             )?;
             if changed != 1 {
-                return Err(LibraryError::PersonConflict);
+                return Err(PeopleError::PersonConflict);
             }
             repo::people::carry_links_into_events(&tx, &input.subject_id, &input.request_id)?;
             repo::people::delete_historical_link(&tx, &input.subject_id)?;
@@ -512,7 +512,7 @@ impl Library {
             )?;
             repo::cross::reconcile_person_sources_for_subject(&tx, &input.subject_id)?;
         }
-        tx.commit()?;
+        tx.commit().map_err(StoreError::from)?;
         Ok(())
     }
 
@@ -520,26 +520,26 @@ impl Library {
         &self,
         folder_path: &Path,
         id: &str,
-    ) -> Result<PersonInstance, LibraryError> {
-        repo::people::instance(&self.read_connection(), id, &path_text(folder_path))?
-            .ok_or(LibraryError::MissingPersonRecord)
+    ) -> Result<PersonInstance, PeopleError> {
+        repo::people::instance(&self.store.read(), id, &path_text(folder_path))?
+            .ok_or(PeopleError::MissingPersonRecord)
     }
 
     pub fn confirm_folder_person(
         &self,
         input: &ConfirmFolderPerson,
-    ) -> Result<FolderPerson, LibraryError> {
+    ) -> Result<FolderPerson, PeopleError> {
         let name = input.display_name.trim();
         if name.is_empty() || input.request_id.is_empty() {
-            return Err(LibraryError::InvalidPersonInstance);
+            return Err(PeopleError::InvalidPersonInstance);
         }
-        let mut connection = self.write();
-        let transaction = connection.transaction()?;
+        let mut connection = self.store.write();
+        let transaction = connection.transaction().map_err(StoreError::from)?;
         if let Some((operation, entity)) =
             repo::people::request_result(&transaction, &input.request_id)?
         {
             if operation != "confirmPerson" || entity != input.subject_id {
-                return Err(LibraryError::PersonConflict);
+                return Err(PeopleError::PersonConflict);
             }
         } else {
             let source_revision = repo::people::reference_source_revision(
@@ -548,7 +548,7 @@ impl Library {
                 &path_text(&input.folder_path),
                 &input.subject_id,
             )?
-            .ok_or(LibraryError::MissingPersonRecord)?;
+            .ok_or(PeopleError::MissingPersonRecord)?;
             let changed = repo::people::confirm_identity(
                 &transaction,
                 &input.subject_id,
@@ -557,7 +557,7 @@ impl Library {
                 input.expected_revision,
             )?;
             if changed != 1 {
-                return Err(LibraryError::PersonConflict);
+                return Err(PeopleError::PersonConflict);
             }
             repo::people::delete_references_of_subject(&transaction, &input.subject_id)?;
             repo::people::replace_reference(
@@ -586,17 +586,17 @@ impl Library {
             &input.subject_id,
             &path_text(&input.folder_path),
         )?
-        .ok_or(LibraryError::MissingPersonRecord)?;
-        transaction.commit()?;
+        .ok_or(PeopleError::MissingPersonRecord)?;
+        transaction.commit().map_err(StoreError::from)?;
         Ok(result)
     }
 
     pub fn list_folder_people(
         &self,
         folder_path: &Path,
-    ) -> Result<Vec<FolderPerson>, LibraryError> {
+    ) -> Result<Vec<FolderPerson>, PeopleError> {
         Ok(repo::people::list_folder_people(
-            &self.read_connection(),
+            &self.store.read(),
             &path_text(folder_path),
         )?)
     }
@@ -605,17 +605,17 @@ impl Library {
         &self,
         folder_path: &Path,
         request_id: &str,
-    ) -> Result<FolderPerson, LibraryError> {
+    ) -> Result<FolderPerson, PeopleError> {
         if request_id.is_empty() {
-            return Err(LibraryError::InvalidPersonInstance);
+            return Err(PeopleError::InvalidPersonInstance);
         }
-        let mut connection = self.write();
-        let transaction = connection.transaction()?;
+        let mut connection = self.store.write();
+        let transaction = connection.transaction().map_err(StoreError::from)?;
         let id = if let Some((operation, id)) =
             repo::people::request_result(&transaction, request_id)?
         {
             if operation != "createPerson" {
-                return Err(LibraryError::PersonConflict);
+                return Err(PeopleError::PersonConflict);
             }
             id
         } else {
@@ -625,15 +625,15 @@ impl Library {
             id
         };
         let result = repo::people::folder_person(&transaction, &id, &path_text(folder_path))?
-            .ok_or(LibraryError::MissingPersonRecord)?;
-        transaction.commit()?;
+            .ok_or(PeopleError::MissingPersonRecord)?;
+        transaction.commit().map_err(StoreError::from)?;
         Ok(result)
     }
 
     pub fn create_person_instance(
         &self,
         input: &CreatePersonInstance,
-    ) -> Result<PersonInstance, LibraryError> {
+    ) -> Result<PersonInstance, PeopleError> {
         self.create_person_instance_with_source_identity(input, None)
     }
 
@@ -641,7 +641,7 @@ impl Library {
         &self,
         input: &CreatePersonInstance,
         source_identity_revision: Option<&str>,
-    ) -> Result<PersonInstance, LibraryError> {
+    ) -> Result<PersonInstance, PeopleError> {
         if input.source_revision.is_empty()
             || input.request_id.is_empty()
             || !valid_source_identity(source_identity_revision)
@@ -649,19 +649,19 @@ impl Library {
             || !valid_box(input.face_box)
             || !valid_box(input.body_box)
         {
-            return Err(LibraryError::InvalidPersonInstance);
+            return Err(PeopleError::InvalidPersonInstance);
         }
-        let mut connection = self.write();
-        let transaction = connection.transaction()?;
+        let mut connection = self.store.write();
+        let transaction = connection.transaction().map_err(StoreError::from)?;
         let id = if let Some((operation, id)) =
             repo::people::request_result(&transaction, &input.request_id)?
         {
             if operation != "createInstance" {
-                return Err(LibraryError::PersonConflict);
+                return Err(PeopleError::PersonConflict);
             }
             let stored = repo::people::source_identity_revision(&transaction, &id)?;
             if stored.as_deref() != source_identity_revision {
-                return Err(LibraryError::PersonConflict);
+                return Err(PeopleError::PersonConflict);
             }
             id
         } else {
@@ -695,8 +695,8 @@ impl Library {
             id
         };
         let result = repo::people::instance(&transaction, &id, &path_text(&input.folder_path))?
-            .ok_or(LibraryError::MissingPersonRecord)?;
-        transaction.commit()?;
+            .ok_or(PeopleError::MissingPersonRecord)?;
+        transaction.commit().map_err(StoreError::from)?;
         Ok(result)
     }
 
@@ -704,9 +704,9 @@ impl Library {
         &self,
         folder_path: &Path,
         asset_path: &Path,
-    ) -> Result<Vec<PersonInstance>, LibraryError> {
+    ) -> Result<Vec<PersonInstance>, PeopleError> {
         Ok(repo::people::list_instances(
-            &self.read_connection(),
+            &self.store.read(),
             &path_text(folder_path),
             &path_text(asset_path),
         )?)
@@ -716,26 +716,26 @@ impl Library {
         &self,
         folder_path: &Path,
         asset_path: &Path,
-    ) -> Result<Vec<oxy_domain::ManualPersonAnchor>, LibraryError> {
+    ) -> Result<Vec<oxy_domain::ManualPersonAnchor>, PeopleError> {
         Ok(repo::people::list_anchors(
-            &self.read_connection(),
+            &self.store.read(),
             &path_text(folder_path),
             &path_text(asset_path),
         )?)
     }
 
-    pub fn set_person_review(&self, input: &SetPersonReview) -> Result<PersonReview, LibraryError> {
+    pub fn set_person_review(&self, input: &SetPersonReview) -> Result<PersonReview, PeopleError> {
         if input.request_id.is_empty() {
-            return Err(LibraryError::InvalidPersonInstance);
+            return Err(PeopleError::InvalidPersonInstance);
         }
-        let mut connection = self.write();
-        let transaction = connection.transaction()?;
+        let mut connection = self.store.write();
+        let transaction = connection.transaction().map_err(StoreError::from)?;
         let key = format!("{}:{}", input.instance_id, input.subject_id);
         if let Some((operation, entity)) =
             repo::people::request_result(&transaction, &input.request_id)?
         {
             if operation != "setReview" || entity != key {
-                return Err(LibraryError::PersonConflict);
+                return Err(PeopleError::PersonConflict);
             }
         } else {
             let present = repo::people::review_allowed(
@@ -745,7 +745,7 @@ impl Library {
                 &path_text(&input.folder_path),
             )?;
             if !present {
-                return Err(LibraryError::MissingPersonRecord);
+                return Err(PeopleError::MissingPersonRecord);
             }
             let current = repo::people::review_revision(
                 &transaction,
@@ -753,7 +753,7 @@ impl Library {
                 &input.subject_id,
             )?;
             if current.unwrap_or(0) != input.expected_revision {
-                return Err(LibraryError::PersonConflict);
+                return Err(PeopleError::PersonConflict);
             }
             repo::people::upsert_review_decision(
                 &transaction,
@@ -792,9 +792,9 @@ impl Library {
         let Some((instance, decision, revision)) =
             repo::people::review(&transaction, &input.instance_id, &input.subject_id)?
         else {
-            return Err(LibraryError::MissingPersonRecord);
+            return Err(PeopleError::MissingPersonRecord);
         };
-        transaction.commit()?;
+        transaction.commit().map_err(StoreError::from)?;
         Ok(PersonReview {
             instance,
             subject_id: input.subject_id.clone(),
@@ -807,9 +807,9 @@ impl Library {
         &self,
         folder_path: &Path,
         subject_id: &str,
-    ) -> Result<Vec<PersonReview>, LibraryError> {
+    ) -> Result<Vec<PersonReview>, PeopleError> {
         Ok(repo::people::list_reviews(
-            &self.read_connection(),
+            &self.store.read(),
             &path_text(folder_path),
             subject_id,
         )?)
@@ -819,7 +819,7 @@ impl Library {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use rusqlite::Connection;
+    use crate::testing;
     use std::path::PathBuf;
 
     #[test]
@@ -829,7 +829,7 @@ mod tests {
         let folder = temporary.path().join("photos");
         let other_folder = temporary.path().join("other");
         let image = folder.join("group.jpg");
-        let library = Library::open(&database).unwrap();
+        let library = testing::open(&database);
         let first = library.create_folder_person(&folder, "create-one").unwrap();
         let second = library.create_folder_person(&folder, "create-two").unwrap();
         assert_eq!(
@@ -879,7 +879,7 @@ mod tests {
                 expected_revision: first.revision,
                 request_id: "too-early".into(),
             }),
-            Err(LibraryError::MissingPersonRecord)
+            Err(PeopleError::MissingPersonRecord)
         ));
         let request = SetPersonReview {
             folder_path: folder.clone(),
@@ -898,7 +898,7 @@ mod tests {
                 decision: PersonReviewDecision::DoesNotBelong,
                 ..request
             }),
-            Err(LibraryError::PersonConflict)
+            Err(PeopleError::PersonConflict)
         ));
         assert!(
             library
@@ -948,11 +948,11 @@ mod tests {
                 request_id: "history-stale".into(),
                 ..link_request
             }),
-            Err(LibraryError::PersonConflict)
+            Err(PeopleError::PersonConflict)
         ));
         drop(library);
 
-        let reopened = Library::open(&database).unwrap();
+        let reopened = testing::open(&database);
         assert_eq!(
             reopened.list_person_reviews(&folder, &first.id).unwrap(),
             vec![review]
@@ -1015,7 +1015,7 @@ mod tests {
 
     #[test]
     fn filters_whole_snapshot_and_preserves_manual_history_after_corrections() {
-        let library = Library::in_memory().unwrap();
+        let library = testing::in_memory();
         let folder = PathBuf::from("/photos");
         let subject = library.create_folder_person(&folder, "person").unwrap();
         let assets = (0..301)
@@ -1145,7 +1145,7 @@ mod tests {
                 request_id: "stale-correct".into(),
                 ..correction
             }),
-            Err(LibraryError::PersonConflict)
+            Err(PeopleError::PersonConflict)
         ));
         assert_eq!(
             library
@@ -1196,7 +1196,7 @@ mod tests {
                 .len(),
             3
         );
-        let connection = library.read_connection();
+        let connection = library.store.read();
         assert_eq!(
             connection
                 .query_row("SELECT count(*) FROM person_instance_events", [], |row| row
@@ -1208,7 +1208,7 @@ mod tests {
 
     #[test]
     fn rejects_invalid_boxes_and_cross_folder_subjects() {
-        let library = Library::in_memory().unwrap();
+        let library = testing::in_memory();
         let folder = PathBuf::from("/one");
         let subject = library.create_folder_person(&folder, "subject").unwrap();
         let invalid = CreatePersonInstance {
@@ -1221,7 +1221,7 @@ mod tests {
         };
         assert!(matches!(
             library.create_person_instance(&invalid),
-            Err(LibraryError::InvalidPersonInstance)
+            Err(PeopleError::InvalidPersonInstance)
         ));
         let instance = library
             .create_person_instance(&CreatePersonInstance {
@@ -1239,7 +1239,7 @@ mod tests {
                 expected_revision: 0,
                 request_id: "cross-folder".into(),
             }),
-            Err(LibraryError::MissingPersonRecord)
+            Err(PeopleError::MissingPersonRecord)
         ));
     }
 
@@ -1247,7 +1247,7 @@ mod tests {
     fn full_source_identity_is_persisted_only_when_observed() {
         let temporary = tempfile::tempdir().unwrap();
         let database = temporary.path().join("library.sqlite");
-        let library = Library::open(&database).unwrap();
+        let library = testing::open(&database);
         let folder = PathBuf::from("/photos");
         let legacy = CreatePersonInstance {
             folder_path: folder.clone(),
@@ -1282,7 +1282,7 @@ mod tests {
         );
         assert!(matches!(
             library.create_person_instance_with_source_identity(&fresh, Some(&"b".repeat(64))),
-            Err(LibraryError::PersonConflict)
+            Err(PeopleError::PersonConflict)
         ));
         let update = UpdatePersonInstance {
             folder_path: folder.clone(),
@@ -1297,7 +1297,7 @@ mod tests {
             .update_person_instance_with_source_identity(&update, Some(&revision))
             .unwrap();
         drop(library);
-        let reopened = Library::open(&database).unwrap();
+        let reopened = testing::open(&database);
         for path in [&legacy.asset_path, &fresh.asset_path] {
             let anchors = reopened.list_manual_person_anchors(&folder, path).unwrap();
             assert_eq!(
@@ -1311,7 +1311,7 @@ mod tests {
     fn older_manual_table_migrates_without_assigning_unproven_identity() {
         let temporary = tempfile::tempdir().unwrap();
         let database = temporary.path().join("library.sqlite");
-        let connection = Connection::open(&database).unwrap();
+        let connection = oxy_store::Connection::open(&database).unwrap();
         connection
             .execute_batch(
                 "CREATE TABLE person_manual_instances (
@@ -1325,7 +1325,7 @@ mod tests {
             )
             .unwrap();
         drop(connection);
-        let library = Library::open(&database).unwrap();
+        let library = testing::open(&database);
         let anchors = library
             .list_manual_person_anchors(Path::new("/photos"), Path::new("/photos/a.jpg"))
             .unwrap();

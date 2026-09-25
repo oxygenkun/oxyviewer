@@ -94,9 +94,11 @@ Rust projection 与前端显示镜像失效。
 这些写入受益于批次交接，但尚未与队列锁完全解耦。
 
 存储机制与数据含义分属两个 crate。`oxy-store` 拥有 `oxyviewer.sqlite` 本身——连接、WAL 只读读
-连接、事务、表声明宏、每一句 `CREATE TABLE`，以及把旧文件升级到当前格式的迁移。它不知道照片、
-标签或人物的*规则*，但知道每一行数据属于哪一类。`oxy-library` 拥有这些行*意味着什么*，并按数据
-归属分成两个命名空间，磁盘上仍是同一个 `oxyviewer.sqlite`：
+连接、事务、表声明宏、每一句 `CREATE TABLE`、每一句语句（`repo`，一个函数一句 SQL），以及把旧
+文件升级到当前格式的迁移。它不知道照片、标签或人物的*规则*，但知道每一行数据属于哪一类。这些行
+*意味着什么*由三个互不依赖的领域 crate 分担——`oxy-library`、`oxy-tags`、`oxy-people`——它们各自
+持有同一个 `oxy_store::Store`，磁盘上仍是同一个 `oxyviewer.sqlite`。分类跨越领域：人的姓名是
+`user`，从他的照片算出来的特征向量是 `cache`，而这两张表现在同属 `oxy-people`：
 
 | 类别 | 含义 | 谁能删 |
 | --- | --- | --- |
@@ -152,45 +154,57 @@ oxy_store::table::tables! {
 必须走 `cache::index::forget_root`；标签域在移动或删除照片时清理人物缓存，走的是
 `oxy_store::repo::cross::{relocate_asset, forget_asset}`，而不是自己写 SQL。`oxy-library/src/audit.rs`
 里有一个源码级测试扫描 `src/cache` 与 `src/user`，任何跨命名空间的写 SQL 都会让测试失败，这样跨界
-删除在 review 里是一次命名函数调用，而不是藏在 SQL 字符串里。等领域拆成互不依赖的 crate 之后，这条
-审计由编译器接手：拿不到另一方的表，就写不出它的 SQL。缓存迁移（`person_instances_cache`、
-`person_features_cache` 的 schema 版本）只 DROP 自己的缓存表与 meta，人工资料不受影响。
+删除在 review 里是一次命名函数调用，而不是藏在 SQL 字符串里。标签与人物两个领域已经各自独立成
+crate，这条审计在那里由编译器接手：拿不到另一方的表，就写不出它的 SQL；`oxy-library` 里残余的这
+一对测试现在只守护「收藏夹」与「浏览/索引/投影」之间那条边界，等缓存命名空间也搬走（阶段 E）即可
+删除。缓存迁移（`person_instances_cache`、`person_features_cache` 的 schema 版本）只 DROP 自己的
+缓存表与 meta，人工资料不受影响。
 
-**用户域的每一句 SQL 住在 `oxy-store/src/repo`。** 一个仓库函数拥有一个查询，接收连接——或者接收
-`Transaction`，因为 `Transaction` 会解引用成 `Connection`——返回 `oxy-domain` 类型，或者返回一个紧挨着
-查询声明的小行结构（`InstanceRecord`、`NewInstance`）。仓库函数**不开启事务**，也不做任何判断：
-「这四下写是一个原子动作」「同一文件夹内的移动保留人物来源」「改过的框需要重新审阅」都是规则，留在拥有
-该领域的 crate 里；仓库只知道语句本身。`asset_tags` 只有一个语句会从 `asset_tag_sources` 派生
-（`reconcile_effective`），来源增删不再可能让派生集合漂移。`oxy-library/src/audit.rs` 里另一个源码级
-测试断言 `src/user` 的**生产代码**不再出现任何 SQL 动词；缓存域的语句（`src/cache/index.rs` 的分页、
+**语句的归属是 `oxy-store/src/repo`，按表分模块而不是按调用顺序。** 一个仓库函数拥有一个查询，接收
+连接——或者接收 `Transaction`，因为 `Transaction` 会解引用成 `Connection`——返回 `oxy-domain` 类型，
+或者返回一个紧挨着查询声明的小行结构（`InstanceRecord`、`NewInstance`、`NewDetection`、
+`FeatureQuery`）。仓库函数**不开启事务**，也不做任何判断：「这四下写是一个原子动作」「同一文件夹内
+的移动保留人物来源」「改过的框需要重新审阅」都是规则，留在拥有该领域的 crate 里；仓库只知道语句本身。
+`asset_tags` 只有一个语句会从 `asset_tag_sources` 派生（`reconcile_effective`），来源增删不再可能让
+派生集合漂移。人物派生缓存的 35 句语句（34 个仓库函数，含 `RUN_COLUMNS` 这类拼接的列清单）集中在
+`repo/person_cache.rs`，紧挨着 `repo/people.rs` 而不是
+`repo/library.rs`：它们行里的每一张表都只属于人物，把它们按「缓存」二字归到 library 会让模块归属与
+表归属开始分家。`oxy-people/src/audit.rs` 的第二个源码级测试断言这个 crate 的**生产代码**不出现任何
+SQL 动词；`oxy-library` 里同名的测试仍覆盖 `src/user`，而缓存域的语句（`src/cache/index.rs` 的分页、
 FTS、递归目录、向量检索）仍在原处，属于后续阶段。
 
-**标签是独立的 crate。** `oxy-tags` 拥有词汇、层级不变量、赋值来源与 XMP 镜像，和 `oxy-library`
-一样只持有同一个 `oxy_store::Store`：
+**标签与人物各自是独立的 crate。** `oxy-tags` 拥有词汇、层级不变量、赋值来源与 XMP 镜像；`oxy-people`
+拥有身份、审阅、历史、参考、身份↔标签投影决策，以及检测/特征/分析运行的可重建缓存。它们和
+`oxy-library` 一样只持有同一个 `oxy_store::Store`：
 
 ```text
 apps/desktop（组合根）
-  └─ Store::open 一次，交给 Library::with_store / Tags::new
-       ├─ oxy-library  收藏夹、人物身份、索引与缓存
+  └─ Store::open 一次，交给 Library::with_store / Tags::new / People::new
+       ├─ oxy-library  收藏夹，浏览/索引/投影缓存
        ├─ oxy-tags     标签词汇、赋值、XMP 镜像
-       └─ oxy-people   人物推理管线（身份部分待迁）
+       └─ oxy-people   人物身份、审阅、历史，以及检测/特征/分析缓存
 ```
 
-两者互不依赖，因此「标签不能命名人物」从约定变成了编译错误。标签域操作人物行只有一处：文件移动或
-删除时，`oxy-tags` 调 `repo::cross::relocate_asset` / `forget_asset`——这是**跨领域的动作**，语句住在
-`repo/cross.rs`，而「同一文件夹内的移动保留人物来源」这条规则由 `same_folder` 参数表达。
-`oxy-tags/src/audit.rs` 断言两件事：这个 crate 不依赖 `rusqlite`（事务用 `oxy_store::{Connection,
-Transaction}`，唯一约束被拒时问 `StoreError::is_constraint_violation()`），以及它自己不含任何 SQL。
-人物↔标签的桥接（一个身份推给照片的那一个标签、以及每张照片的例外）留在 `oxy-library/src/user/people.rs`，
-因为那是人物策略；它经由仓库语句读标签侧，而不是调用 `oxy-tags`。
+三者互不依赖，因此「标签不能命名人物」和「人物不能命名标签」都从约定变成了编译错误。人物域操作标签行
+只有一处：文件移动或删除时，`oxy-people` 调 `repo::cross::relocate_asset` / `forget_asset`——这是
+**跨领域的动作**，语句住在 `repo/cross.rs`，而「同一文件夹内的移动保留人物来源」这条规则由
+`same_folder` 参数表达。`oxy-tags/src/audit.rs` 与 `oxy-people/src/audit.rs` 各断言两件事：这个 crate
+不依赖 `rusqlite`（事务用 `oxy_store::{Connection, Transaction}`，唯一约束被拒时问
+`StoreError::is_constraint_violation()`），以及它自己不含任何 SQL。人物↔标签的桥接（一个身份推给照片
+的那一个标签、以及每张照片的例外）现在在 `oxy-people/src/identity.rs`，因为那是人物策略；它经由仓库
+语句读标签侧，而不是调用 `oxy-tags`。
+
+`oxy-tags` 的测试有一条 `[dev-dependencies]` 边指向 `oxy-people`：那两个跨领域用例必须驱动真实的身份
+策略（建人物、建实例、审阅、绑定标签），才能证明身份的主张会落成 `person` 标签来源。生产依赖没有这条
+边，边界仍然由编译器守着。
 
 跨领域的少数函数（人物身份推标签：读 `person_*` 的决定，写 `asset_tag_sources` 与 `asset_tags`）放在
 `repo/cross.rs`，因为任何领域 crate 都不能拥有它而不依赖同级 crate。
 
 `oxy-store::Store::open` 在 app data 目录创建 `oxyviewer.sqlite`、启用 WAL、注册向量扩展，然后运行
-schema 步骤（先是用户表，再是缓存表）；应用层打开一次 `Store`，用 `Library::with_store(store.clone())`
-和 `oxy_tags::Tags::new(store)` 各自组装一个领域句柄，因此没有任何一个领域 crate 包住另一个。确保
-以下逻辑结构存在：
+schema 步骤（先是用户表，再是缓存表）；应用层打开一次 `Store`，用 `Library::with_store(store.clone())`、
+`oxy_tags::Tags::new(store.clone())` 和 `oxy_people::People::new(store)` 各自组装一个领域句柄，因此没有
+任何一个领域 crate 包住另一个。确保以下逻辑结构存在：
 
 ```mermaid
 erDiagram

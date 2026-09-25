@@ -185,6 +185,7 @@ pub fn run() {
             // One store, one handle per domain crate. Nothing here wraps
             // anything else: the application is the composition root.
             let tags = Arc::new(oxy_tags::Tags::new(library.store()));
+            let people = Arc::new(oxy_people::People::new(library.store()));
             let external_apps = Arc::new(state::external_apps::ExternalAppManager::load(data_dir.join("external-apps.json")));
             let metadata_provider = Arc::new(ProviderManager::load(data_dir));
             let files = Arc::new(FsCatalog::default());
@@ -211,6 +212,7 @@ pub fn run() {
                 jobs: JobRegistry::default(),
                 library,
                 tags,
+                people,
                 cache,
                 heif,
                 media_resources,
@@ -269,8 +271,28 @@ pub fn run() {
             list_library_roots,
             reorder_library_roots,
             list_custom_tags,
+            list_folder_people,
+            list_historical_people,
+            get_historical_link,
+            get_person_tag_link,
+            set_person_tag_link,
+            get_person_tag_override,
+            set_person_tag_override,
+            get_folder_person_reference_asset,
+            get_historical_reference_asset,
+            link_historical_person,
+            unlink_historical_person,
+            create_folder_person,
+            confirm_folder_person,
+            create_person_instance,
+            list_person_instances,
+            list_person_reviews,
+            set_person_review,
+            update_person_instance,
+            reset_folder_person,
             get_asset_tag_assignments,
             get_asset_tag_assignments_by_path,
+            get_asset_tag_source_kinds,
             create_custom_tag,
             update_custom_tag,
             get_custom_tag_delete_impact,
