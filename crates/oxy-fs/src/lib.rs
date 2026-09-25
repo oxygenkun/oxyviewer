@@ -31,6 +31,8 @@ const MAX_PAGE_SIZE: usize = 1_000;
 
 #[derive(Debug, Error)]
 pub enum FsError {
+    #[error("folder scan was cancelled")]
+    Cancelled,
     #[error("folder does not exist or is not a directory: {0}")]
     InvalidFolder(PathBuf),
     #[error("folder session was not found: {0}")]
@@ -723,25 +725,50 @@ pub fn scan_assets_with_progress(
     root: &Path,
     report: impl FnMut(ScanProgress),
 ) -> Result<Vec<AssetSummary>, FsError> {
+    scan_assets_with_progress_and_cancel(root, report, || false)
+}
+
+/// A non-recursive scan that can stop during enumeration and attribute reads.
+/// Cancelled scans publish no partial asset snapshot to the caller.
+pub fn scan_assets_with_progress_and_cancel(
+    root: &Path,
+    report: impl FnMut(ScanProgress),
+    cancelled: impl Fn() -> bool,
+) -> Result<Vec<AssetSummary>, FsError> {
     #[cfg(target_os = "macos")]
     let mut report = report;
     #[cfg(target_os = "macos")]
-    if let Some(assets) = bulk_attributes::scan(root, &mut report)? {
+    if let Some(assets) = bulk_attributes::scan(root, &mut report, &cancelled)? {
         return Ok(assets);
     }
-    scan_assets_portable(root, report)
+    scan_assets_portable_cancellable(root, report, cancelled)
 }
 
+#[cfg(all(test, target_os = "macos"))]
 fn scan_assets_portable(
     root: &Path,
     mut report: impl FnMut(ScanProgress),
 ) -> Result<Vec<AssetSummary>, FsError> {
+    scan_assets_portable_cancellable(root, &mut report, || false)
+}
+
+fn scan_assets_portable_cancellable(
+    root: &Path,
+    mut report: impl FnMut(ScanProgress),
+    cancelled: impl Fn() -> bool,
+) -> Result<Vec<AssetSummary>, FsError> {
+    if cancelled() {
+        return Err(FsError::Cancelled);
+    }
     let started = Instant::now();
     let mut progress = ScanProgress::default();
     report(progress);
     let mut entries = Vec::new();
     let mut sidecars = HashSet::new();
     for (entry_index, entry) in fs::read_dir(root)?.enumerate() {
+        if cancelled() {
+            return Err(FsError::Cancelled);
+        }
         let entry = entry?;
         let path = entry.path();
         let file_type = entry.file_type()?;
@@ -775,6 +802,9 @@ fn scan_assets_portable(
     let attributes_started = Instant::now();
     let mut assets = Vec::with_capacity(entries.len());
     for (entry_index, (entry, is_symlink)) in entries.into_iter().enumerate() {
+        if cancelled() {
+            return Err(FsError::Cancelled);
+        }
         let path = entry.path();
         let metadata = if is_symlink {
             fs::metadata(&path)
@@ -800,6 +830,9 @@ fn scan_assets_portable(
     progress.discovered_count = assets.len();
     progress.attributes_ms = attributes_started.elapsed().as_millis() as u64;
     report(progress);
+    if cancelled() {
+        return Err(FsError::Cancelled);
+    }
     Ok(assets)
 }
 
@@ -1342,6 +1375,25 @@ mod tests {
             "progress was not batched: {}",
             progress.len()
         );
+    }
+
+    #[test]
+    fn cancellable_scan_stops_without_returning_a_partial_snapshot() {
+        let directory = tempdir().unwrap();
+        for index in 0..600 {
+            fs::write(directory.path().join(format!("image-{index:04}.jpg")), b"x").unwrap();
+        }
+        let cancelled = std::cell::Cell::new(false);
+        let result = scan_assets_with_progress_and_cancel(
+            directory.path(),
+            |progress| {
+                if progress.discovered_count >= 256 {
+                    cancelled.set(true);
+                }
+            },
+            || cancelled.get(),
+        );
+        assert!(matches!(result, Err(FsError::Cancelled)));
     }
 
     #[test]

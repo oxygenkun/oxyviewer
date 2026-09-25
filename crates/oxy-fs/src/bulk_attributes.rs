@@ -33,7 +33,11 @@ const COMMON: u32 = libc::ATTR_CMN_NAME
 pub(super) fn scan(
     root: &Path,
     report: &mut impl FnMut(ScanProgress),
+    cancelled: &impl Fn() -> bool,
 ) -> Result<Option<Vec<AssetSummary>>, FsError> {
+    if cancelled() {
+        return Err(FsError::Cancelled);
+    }
     let directory = File::open(root)?;
     let mut attributes = libc::attrlist {
         bitmapcount: libc::ATTR_BIT_MAP_COUNT,
@@ -52,6 +56,9 @@ pub(super) fn scan(
     let mut assets = Vec::new();
     let mut sidecars = HashSet::new();
     loop {
+        if cancelled() {
+            return Err(FsError::Cancelled);
+        }
         // SAFETY: directory owns a readable fd, attributes is fully initialized,
         // and the aligned output allocation has exactly the supplied byte size.
         let count = unsafe {
@@ -82,6 +89,9 @@ pub(super) fn scan(
             unsafe { std::slice::from_raw_parts(buffer.as_ptr().cast::<u8>(), buffer.len() * 8) };
         let mut remaining = bytes;
         for _ in 0..count {
+            if cancelled() {
+                return Err(FsError::Cancelled);
+            }
             let length = u32_at(remaining, 0)? as usize;
             if length < HEADER_SIZE || length % 8 != 0 || length > remaining.len() {
                 return Err(invalid_record().into());
@@ -167,11 +177,17 @@ pub(super) fn scan(
     report(progress);
     let pairing_started = Instant::now();
     for asset in &mut assets {
+        if cancelled() {
+            return Err(FsError::Cancelled);
+        }
         asset.has_sidecar = sidecars.contains(&sidecar_key(&sidecar_path(&asset.path)));
     }
     progress.attributes_ms = pairing_started.elapsed().as_millis() as u64;
     progress.discovered_count = assets.len();
     report(progress);
+    if cancelled() {
+        return Err(FsError::Cancelled);
+    }
     Ok(Some(assets))
 }
 
@@ -261,7 +277,7 @@ mod tests {
         symlink(root.join("missing.jpg"), root.join("broken.jpg")).unwrap();
         fs::create_dir(root.join("nested.png")).unwrap();
         fs::write(root.join("nested.png/ignored.jpg"), b"nested").unwrap();
-        let mut bulk = scan(root, &mut |_| {})
+        let mut bulk = scan(root, &mut |_| {}, &|| false)
             .unwrap()
             .expect("APFS bulk attributes");
         let mut portable = super::super::scan_assets_portable(root, |_| {}).unwrap();
