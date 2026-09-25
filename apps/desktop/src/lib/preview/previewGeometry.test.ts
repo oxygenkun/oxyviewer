@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { previewContentStyles, validPreviewGeometry } from "./previewGeometry";
-import { resolveLoupeSourceSize } from "./loupe";
+import { matchDisplayOrientation, resolveLoupeSourceSize } from "./loupe";
 import { mapFocusRegions } from "@/lib/ui/focusArea";
 import type { FocusInfo } from "@/types";
 
@@ -49,5 +49,20 @@ describe("preview content geometry", () => {
       expect(previewCanvas).toEqual(fullCanvas);
       expect(mapFocusRegions(focus, previewCanvas, metadata)).toEqual(full);
     }
+  });
+
+  it("infers a full-frame preview when the complete image is reported pre-rotation", () => {
+    const focus = {
+      coordinateWidth: 4672, coordinateHeight: 7008,
+      regions: [{ centerX: 2132, centerY: 941, width: 219, height: 219 }],
+    } as FocusInfo;
+    const preview = { width: 7008, height: 4672 };
+    const preRotation = { width: 4672, height: 7008 };
+    // Comparing a pre-rotation complete image against the orientation on screen
+    // drops the round into the "cropped preview" branch, whose inferred crop can
+    // omit every region instead of drawing it.
+    expect(mapFocusRegions(focus, preview, preRotation)).toEqual([]);
+    expect(mapFocusRegions(focus, preview, matchDisplayOrientation(preRotation, preview)))
+      .toEqual(mapFocusRegions(focus, preview, preview));
   });
 });

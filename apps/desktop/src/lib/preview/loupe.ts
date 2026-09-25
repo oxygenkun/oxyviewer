@@ -105,7 +105,7 @@ export function resolveLoupeSourceSize(
 }
 
 /** Metadata may be stored pre-rotation; match the on-screen orientation. */
-function matchDisplayOrientation(reference: Size, displayed: Size): Size {
+export function matchDisplayOrientation(reference: Size, displayed: Size): Size {
   const referencePortrait = reference.height > reference.width;
   const displayedPortrait = displayed.height > displayed.width;
   return referencePortrait === displayedPortrait

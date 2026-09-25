@@ -23,6 +23,7 @@ import {
   fitSize,
   getNavigatorViewport,
   MAX_PIXEL_ZOOM_PERCENT,
+  matchDisplayOrientation,
   nextCycleZoom,
   panByNavigatorDelta,
   panFromNavigatorPoint,
@@ -156,12 +157,25 @@ export function Loupe({
   const navigatorImageSize = fitSize(NAVIGATOR_MAX_SIZE, sourceSize);
   const currentNaturalSize = naturalSize?.assetId === active.id ? naturalSize.size : undefined;
   const currentHeifSize = heifFullSize?.assetId === active.id ? heifFullSize.size : undefined;
-  const displayedNaturalSize = active.kind === "heif"
-    ? currentHeifSize ?? currentNaturalSize?.geometry?.displaySize ?? currentNaturalSize ?? metadataSize
-    : currentNaturalSize ?? metadataSize;
+  // Focus coordinates describe the camera's frame and the overlay draws in
+  // fractions of the content the loupe paints, so the preview has to be the
+  // display size with preview padding removed — never the padded raster.
+  // `previewGeometry.test.ts` locks that rule down.
+  const focusPreviewSize = currentNaturalSize?.geometry?.displaySize
+    ?? currentHeifSize
+    ?? currentNaturalSize
+    ?? metadataSize;
+  // `mapFocusRegions` decides whether that preview is the whole frame or an
+  // in-camera crop by comparing aspects against the complete image, and
+  // `oxy-media` reports that complete size pre-rotation. Match it to the
+  // on-screen orientation first, or a portrait frame is mistaken for a
+  // cropped preview and its crop can discard every region.
+  const focusFullSize = metadataSize && focusPreviewSize
+    ? matchDisplayOrientation(metadataSize, focusPreviewSize)
+    : metadataSize;
   const mappedFocusRegions = useMemo(
-    () => mapFocusRegions(details.data?.focusInfo, displayedNaturalSize, metadataSize),
-    [details.data?.focusInfo, displayedNaturalSize, metadataSize],
+    () => mapFocusRegions(details.data?.focusInfo, focusPreviewSize, focusFullSize),
+    [details.data?.focusInfo, focusPreviewSize, focusFullSize],
   );
   const showFocusAreas = focusAreasVisible !== focusTemporarilyInverted;
 
@@ -509,12 +523,12 @@ export function Loupe({
                   <i
                     key={index}
                     className={`loupe__focus-frame ${region.syntheticFrame ? "is-estimated" : ""}`}
-                  style={{
-                    left: `${region.left * 100}%`,
-                    top: `${region.top * 100}%`,
-                    width: `${region.width * 100}%`,
-                    height: `${region.height * 100}%`,
-                  }}
+                    style={{
+                      left: `${region.left * 100}%`,
+                      top: `${region.top * 100}%`,
+                      width: `${region.width * 100}%`,
+                      height: `${region.height * 100}%`,
+                    }}
                   />
                 ))}
               </div>

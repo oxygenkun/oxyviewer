@@ -115,6 +115,11 @@ loupe 的 thumbnail 状态保留实际栅格与 geometry；full 尺寸回调只�
 `mapFocusRegions` 的目标尺寸使用 displaySize，不再传带边 thumbnail 的 naturalSize。
 full 首像素/完整 artifact 就绪后的升级沿用该画布，因此只改变清晰度。
 
+完整图像尺寸也要先按显示方向归一化再传给 `mapFocusRegions`（`matchDisplayOrientation`）：
+`oxy-media` 报出的是旋转前的尺寸，而 `mapFocusRegions` 靠“预览宽高比 vs 完整图像宽高比”
+判断预览是整幅还是机内裁幅。竖构图若拿旋转前的完整尺寸去比，会落进裁幅分支，
+其裁剪框足以把对焦区域整个丢掉。
+
 无 geometry 路径也不在 session 创建时提前改变对焦映射。首版在 full 首像素绘制时
 切换到该表示的尺寸。若可信 primary metadata 与实际 decoder 尺寸冲突，tile canvas 会保持隐藏，
 等所有 tiles 成功绘制后再提交画布及尺寸，避免和旧 thumbnail 混合。
