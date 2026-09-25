@@ -977,6 +977,33 @@ pub fn person_tag_override_of(
         .optional()?)
 }
 
+/// Points cached feature rows at a renamed file.
+///
+/// A move inside one folder is still the same photo, so the cached vectors
+/// stay valid and only the name changes. The statement lives here rather than
+/// in the crate that validates features, so an asset relocation can carry the
+/// cache without the relocating crate depending on that one.
+pub fn rename_cached_features(
+    connection: &Connection,
+    source: &str,
+    destination: &str,
+) -> Result<(), StoreError> {
+    connection.execute(
+        "UPDATE person_features_cache SET asset_path=?2 WHERE asset_path=?1",
+        params![source, destination],
+    )?;
+    Ok(())
+}
+
+/// Drops cached feature rows for a file that no longer exists at that path.
+pub fn forget_cached_features(connection: &Connection, asset_path: &str) -> Result<(), StoreError> {
+    connection.execute(
+        "DELETE FROM person_features_cache WHERE asset_path=?1",
+        params![asset_path],
+    )?;
+    Ok(())
+}
+
 /// Points every row that names one asset at another path.
 ///
 /// Only the same-folder move uses this: the photo is the same photo, so its

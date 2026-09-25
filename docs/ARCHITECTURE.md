@@ -96,6 +96,7 @@ flowchart LR
         metadataCrate["oxy-metadata 元数据"]
         libraryCrate["oxy-library 本地资料库"]
         runtimeCrate["oxy-runtime 作业状态"]
+        tagsCrate["oxy-tags 标签"]
         storeCrate["oxy-store 存储与 schema"]
     end
 
@@ -144,9 +145,10 @@ crates/oxy-fs/                文件发现、会话、分页、路径校验、�
 crates/oxy-media/             尺寸读取、预览生成、RAW/HEIF/native adapters
 crates/oxy-metadata-parser/   进程内 EXIF/XMP/IPTC/ICC/MakerNote 解析器
 crates/oxy-metadata/          元数据归一化、sidecar 与可选 ExifTool 能力边界
-crates/oxy-library/           资料库数据含义：用户资料、可重建缓存及其所有权
+crates/oxy-library/           资料库数据含义：收藏夹、人物身份、可重建缓存及其所有权
 crates/oxy-runtime/           作业 ID、优先级和取消标记
 crates/oxy-store/             SQLite 文件、连接、事务、全部表声明与 schema 迁移
+crates/oxy-tags/              标签词汇、赋值与 XMP 镜像的规则
 docs/adr/                     重要且难以逆转的架构决策
 ```
 
@@ -161,9 +163,15 @@ docs/adr/                     重要且难以逆转的架构决策
 | `oxy-media` | 解码、预览、缓存、HEIF 会话 | React/Tauri 组件逻辑 |
 | `oxy-metadata-parser` | 解析图片容器与通用/私有元数据标签 | UI 投影、sidecar 写入、启动外部进程 |
 | `oxy-metadata` | XMP/ExifTool 策略；通用 EXIF、图片格式与厂商 MakerNotes 分层归一化 | 任意文件浏览、跨厂商复用私有标签数值表 |
-| `oxy-library` | 资料库数据含义：用户资料与可重建缓存各自的行为规则 | 存储机制(连接、WAL、事务、表声明、schema 迁移) |
+| `oxy-library` | 资料库数据含义：收藏夹、人物身份、标签↔人物桥接，以及可重建缓存各自的行为规则 | 存储机制(连接、WAL、事务、表声明、schema 迁移)；标签词汇本身(那是 `oxy-tags`) |
 | `oxy-runtime` | 后台作业的通用控制词汇 | 具体媒体算法 |
-| `oxy-store` | SQLite 文件、连接与 WAL 读连接、事务、表声明与 schema 迁移 | 照片、标签、人物的业务规则(标签成环、审阅 revision) |
+| `oxy-store` | SQLite 文件、连接与 WAL 读连接、事务、表声明、全部语句(`repo`)与 schema 迁移 | 照片、标签、人物的业务规则(标签成环、审阅 revision) |
+| `oxy-tags` | 标签词汇、层级不变量、赋值来源、XMP 镜像，以及文件移动/复制/删除后的标签状态 | 人物规则、存储机制(不得依赖 `rusqlite`) |
+
+领域 crate 之间互不依赖：`oxy-library`、`oxy-tags`(以及规划中的
+`oxy-people::identity`)各自持有同一个 `oxy_store::Store`，需要对方的数据时调用
+`oxy-store::repo` 的语句，而不是调用对方。跨两个领域的语句——包括「文件移动了」和
+「文件没了」这两个动作——集中在 `oxy-store/src/repo/cross.rs`。
 
 ## 6. 三条最重要的运行路径
 

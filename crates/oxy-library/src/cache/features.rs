@@ -1,40 +1,13 @@
 //! Rebuildable person feature cache. Manual identity facts never depend on it.
 //!
-//! The tables, their format marker, and the sqlite-vec registration live in
-//! `oxy_store`; what stays here is what a feature *means* — how a vector is
-//! validated against its feature space, and what a rename or a delete does to
-//! the cached rows.
+//! The tables, their format marker, the sqlite-vec registration, and the
+//! statements that follow a rename or a delete live in `oxy_store`; what stays
+//! here is what a feature *means* — how a vector is validated against the
+//! feature space it claims to belong to, and what a rebuild may replace.
 
 use crate::{Library, LibraryError};
 use rusqlite::{OptionalExtension, Transaction, params};
 use std::{collections::HashMap, path::PathBuf};
-
-/// Points cached features at a renamed file. Called from [`crate::user`] when
-/// a photo moves inside one folder, where the cache is still valid.
-pub(crate) fn rename_asset(
-    transaction: &Transaction<'_>,
-    source: &str,
-    destination: &str,
-) -> Result<(), rusqlite::Error> {
-    transaction.execute(
-        "UPDATE person_features_cache SET asset_path=?2 WHERE asset_path=?1",
-        params![source, destination],
-    )?;
-    Ok(())
-}
-
-/// Drops cached features for a file that no longer exists at that path. Called
-/// from [`crate::user`] when a photo is deleted or moved out of its folder.
-pub(crate) fn forget_asset(
-    transaction: &Transaction<'_>,
-    path: &str,
-) -> Result<(), rusqlite::Error> {
-    transaction.execute(
-        "DELETE FROM person_features_cache WHERE asset_path=?1",
-        params![path],
-    )?;
-    Ok(())
-}
 
 #[derive(Debug, Clone)]
 pub struct PersonFeature {
@@ -662,9 +635,20 @@ mod tests {
         assert_eq!(results.len(), 1);
         assert_eq!(results[0].source_revision, "11:21");
         let moved = PathBuf::from("/photos/renamed.jpg");
-        reopened
-            .move_asset_tag_state(&replacement.asset_path, &moved)
+        {
+            // The same-folder-move rule lives with the relocation act, which
+            // spans the tag rows, the person rows, and this cache.
+            let mut connection = reopened.write();
+            let transaction = connection.transaction().unwrap();
+            oxy_store::repo::cross::relocate_asset(
+                &transaction,
+                &replacement.asset_path.to_string_lossy(),
+                &moved.to_string_lossy(),
+                true,
+            )
             .unwrap();
+            transaction.commit().unwrap();
+        }
         let moved_results = reopened
             .search_person_features(
                 Path::new("/photos"),

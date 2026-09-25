@@ -24,6 +24,7 @@ oxy-library = { path = "../../../crates/oxy-library" }
 oxy-media = { path = "../../../crates/oxy-media" }
 oxy-metadata = { path = "../../../crates/oxy-metadata" }
 oxy-runtime = { path = "../../../crates/oxy-runtime" }
+oxy-tags = { path = "../../../crates/oxy-tags" }
 flate2 = "1.1"
 semver.workspace = true
 serde.workspace = true

@@ -311,8 +311,9 @@ gets rewritten in stage D.
 | --- | --- | --- |
 | 0 — extract `oxy-store` | done | `b66602e` |
 | A — schema into `oxy-store` | done | `1143b0d` |
-| B — repositories for favourites, tags, people | done | this commit |
-| C, D, E, P | not started | |
+| B — repositories for favourites, tags, people | done | `b3c57ea` |
+| C — `oxy-tags` extracted, `Library` tags methods deleted | done | this commit |
+| D, E, P | not started | |
 
 ### What stage B settled
 
@@ -370,6 +371,62 @@ Clearing is derived from the class — `cache` is emptied by a clear, `user` and
 `marker` are not — so the old `preserve` keyword is gone rather than renamed,
 and the two audit tests that need a live database moved next to the
 declarations they check, into `oxy_store::schema`.
+
+### What stage C settled
+
+The tags domain is now a crate of its own and `Library` no longer has a single
+tag method. Five things took a different shape than the sketch above.
+
+- **`oxy-tags` carries no dependency on the storage engine.** `oxy-store`
+  re-exports `Connection` and `Transaction`, so `Tags` can open the transaction
+  without naming `rusqlite`. Constraint rejection is mapped through
+  `StoreError::is_constraint_violation()` rather than by matching
+  `rusqlite::ErrorCode`, which is what makes "repeated tag name" a
+  `TagError::DuplicateTagName` in one place. `parking_lot` is deliberately absent
+  too: the crate would compile with it, but the point of the boundary is that a
+  domain crate names its store and nothing below it.
+- **Four tag↔person bridge methods stayed in `oxy-library`, not `oxy-tags`.**
+  `get/set_person_tag_link` and `get/set_person_tag_override` lived in
+  `user/tags.rs` but are person-side statements: they begin with
+  `historical_person_of_subject(folder, subject)` and only then read or write the
+  tag side. Moving them to `oxy-tags` would have required `oxy-tags` to depend on
+  `oxy-people`, reversing the direction the split exists to enforce. They are now
+  in `user/people.rs`, reading both sides through `repo::*` statements, so
+  `oxy-tags` and `oxy-library` still do not know about each other. The plan's
+  "`Library` tags methods deleted" is therefore scoped to the vocabulary,
+  assignment, XMP-sync, and per-asset tag-state methods — 19 call sites — and
+  the four bridges are counted on the person side, where stage D will move them.
+- **Two cross-domain statements became cross-domain *acts*** in
+  `repo::cross`: `relocate_asset(source, destination, same_folder)` and
+  `forget_asset(path)`. A file move is a tag action and a person action at once —
+  four writes in a fixed order — so it is one function next to the other
+  statements that read both domains. The *rule* that decides `same_folder`
+  (`source.parent() == destination.parent()`, pure `std::path`) stays in
+  `oxy-tags` as `move_asset_state`, which is why the crate needs no `oxy-fs`
+  dependency to move tag state. `repo::people` gained `rename_cached_features`
+  and `forget_cached_features` for the same reason: the cached-feature rows are
+  person data that a tag-side move has to repoint.
+- **`Library` hands out its store instead of wrapping it.** The plan's
+  composition-root sketch assumed each domain constructs its own handle; in
+  practice the application owns one `Store` and every domain needs *that* one.
+  So `Library` holds `Arc<Store>`, gained `with_store(Arc<Store>)` and
+  `store()`, and lost the private `from_store`. `lib.rs` now does
+  `Tags::new(library.store())`, and `AppState.tags` sits beside
+  `AppState.library` as a sibling. `LibraryError` lost `InvalidTagName`,
+  `TagHierarchyCycle`, and `DuplicateTagName` with the code that raised them;
+  `MissingTagParent` stayed because the person-side bridges still reject a link
+  to a tag that does not exist.
+- **The guard is now two tests in `oxy-tags/src/audit.rs`.** One reads the
+  crate's own `Cargo.toml` and asserts `rusqlite` does not appear before
+  `[dev-dependencies]` — the gate this stage was defined by. The other asserts
+  that no SQL verb appears under `oxy-tags/src` in production code. The second
+  has to skip `audit.rs` itself, since a checker has to spell the verbs it looks
+  for; the same reason `oxy-library/src/audit.rs` carries the identical skip.
+
+**Conservation check.** `crates/oxy-library/src` held 86 `#[test]` functions at
+`b3c57ea`; 75 remain there and the 11 from `user/tags.rs` run in `oxy-tags`, so
+`oxy-tags` reports 13 (11 moved + 2 new audit tests). Measured now: `oxy-store`
+12, `oxy-tags` 13, `oxy-library` 75 (73 pass, 2 ignored) — all green.
 
 ## Stages
 

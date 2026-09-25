@@ -18,15 +18,23 @@ flowchart TD
     rustArea -->|路径和文件操作| fsCrate["oxy-fs"]
     rustArea -->|解码和预览| mediaCrate["oxy-media"]
     rustArea -->|XMP 或 EXIF| metadataCrate["oxy-metadata"]
-    rustArea -->|SQLite 索引| libraryCrate["oxy-library"]
+    rustArea -->|收藏夹与索引| libraryCrate["oxy-library"]
+    rustArea -->|标签| tagsCrate["oxy-tags"]
     rustArea -->|通用作业词汇| runtimeCrate["oxy-runtime"]
 ```
 
 如果 command 中开始出现可独立测试的循环、缓存、格式 fallback 或 SQL，把它下沉到对应 crate。
 
-存储机制与表定义不属于任何领域 crate：连接、WAL、事务、`tables!` 声明宏、每一句 `CREATE TABLE`
-以及版本迁移都在 `oxy-store`（表声明在 `oxy-store/src/schema`）。领域 crate 写自己对行的*规则*，
-但不建表、不迁移 schema、也不各自打开数据库。
+存储机制与表定义不属于任何领域 crate：连接、WAL、事务、`tables!` 声明宏、每一句 `CREATE TABLE`、
+每一句语句（`oxy-store/src/repo`，一个函数一句 SQL）以及版本迁移都在 `oxy-store`（表声明在
+`oxy-store/src/schema`）。领域 crate 写自己对行的*规则*，但不建表、不迁移 schema、不各自打开
+数据库，也不依赖 `rusqlite`——事务需要 `oxy_store::{Connection, Transaction}`，唯一约束被拒
+时用 `StoreError::is_constraint_violation()` 判断。
+
+领域 crate 之间是平级的：`oxy-library`、`oxy-tags`（以及规划中的 `oxy-people::identity`）互不
+依赖，需要对方的数据时调用 `oxy-store::repo` 的语句。跨领域的语句——包括「文件移动了」与
+「文件没了」这两个动作——都在 `oxy-store/src/repo/cross.rs`。应用层是组合根：它打开一次
+`oxy_store::Store`，再交给每个领域 crate（`Library::with_store`、`Tags::new`）。
 
 ## 2. 新增 Tauri command
 

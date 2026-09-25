@@ -7,6 +7,13 @@
 //! own that without depending on a sibling, and the plan's whole point is that
 //! the siblings do not depend on each other — so the statement lives here.
 //!
+//! The same is true of a file that moved or was deleted. One asset's path
+//! changing is not one domain's business: its tag assignments and mirrored
+//! keywords follow, its person instances and identity references follow, and
+//! its cached features follow. [`relocate_asset`] and [`forget_asset`] are the
+//! acts that span all three, which is exactly why they are not in a domain
+//! crate.
+//!
 //! What stays out of here is the atomicity: these take the transaction a caller
 //! opened, so a user action can still be one act.
 
@@ -17,6 +24,43 @@ use std::collections::HashMap;
 
 /// The source kind a person identity writes when it tags an asset.
 const PERSON_SOURCE: &str = "person";
+
+/// Carries every row that names an asset to a new path, after the file moved.
+///
+/// A move inside one folder is still the same photo: the person facts and the
+/// cached features follow the new name, so a review already made stays valid.
+/// A move to another folder is a different asset — the person side is left
+/// behind for review and the cache is dropped, because nothing has looked at
+/// the new path yet. The tag vocabulary is unaffected either way: the file
+/// carries the same tags wherever it lives.
+pub fn relocate_asset(
+    connection: &Connection,
+    source: &str,
+    destination: &str,
+    same_folder: bool,
+) -> Result<(), StoreError> {
+    repo::tags::copy_source_rows(connection, source, destination, same_folder)?;
+    repo::tags::copy_effective_rows(connection, source, destination, same_folder)?;
+    if same_folder {
+        repo::people::rename_cached_features(connection, source, destination)?;
+        repo::people::repoint_asset_rows(connection, source, destination)?;
+    } else {
+        repo::people::forget_cached_features(connection, source)?;
+        repo::people::require_review_for_asset(connection, source)?;
+    }
+    repo::tags::move_xmp_state(connection, source, destination)?;
+    repo::tags::forget_asset_rows(connection, source)
+}
+
+/// Drops every row belonging to an asset that is gone.
+///
+/// Deleting a photo is not one domain's business either: its cached features
+/// and its tag rows go in the same act, so nothing is left pointing at a path
+/// that no longer exists.
+pub fn forget_asset(connection: &Connection, asset_path: &str) -> Result<(), StoreError> {
+    repo::people::forget_cached_features(connection, asset_path)?;
+    repo::tags::forget_asset_rows(connection, asset_path)
+}
 
 /// Makes the tag assignments of one asset agree with what the person identity
 /// currently says about it.

@@ -1,0 +1,20 @@
+[package]
+name = "oxy-tags"
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+version.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+oxy-domain = { path = "../oxy-domain" }
+oxy-store = { path = "../oxy-store" }
+serde_json.workspace = true
+thiserror.workspace = true
+
+[dev-dependencies]
+oxy-fs = { path = "../oxy-fs" }
+oxy-library = { path = "../oxy-library" }
+tempfile.workspace = true

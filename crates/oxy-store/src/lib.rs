@@ -27,9 +27,17 @@ pub mod table;
 mod vector;
 
 use parking_lot::{Mutex, MutexGuard};
-use rusqlite::{Connection, OpenFlags};
+use rusqlite::OpenFlags;
 use std::{path::Path, sync::Arc};
 use thiserror::Error;
+
+/// Handed to a domain crate that owns a transaction boundary.
+///
+/// The transaction belongs to the layer that decides which writes are one act,
+/// so that layer has to name the type — but it should not have to name
+/// `rusqlite` to do it. Re-exporting the two handles is what keeps the storage
+/// engine behind this crate's boundary.
+pub use rusqlite::{Connection, Transaction};
 
 /// Failures from opening or using the SQLite store itself.
 ///
@@ -41,6 +49,21 @@ pub enum StoreError {
     Sqlite(#[from] rusqlite::Error),
     #[error(transparent)]
     Io(#[from] std::io::Error),
+}
+
+impl StoreError {
+    /// Whether SQLite refused the write because a declared constraint failed.
+    ///
+    /// A domain crate maps this to the rule it means — a tag name repeated
+    /// among its siblings, an identity claimed twice — without naming the
+    /// engine, which is what lets `oxy-tags` depend on this crate alone.
+    pub fn is_constraint_violation(&self) -> bool {
+        matches!(
+            self,
+            Self::Sqlite(rusqlite::Error::SqliteFailure(failure, _))
+                if failure.code == rusqlite::ErrorCode::ConstraintViolation
+        )
+    }
 }
 
 /// A SQLite file, its connections, and the schema they share.

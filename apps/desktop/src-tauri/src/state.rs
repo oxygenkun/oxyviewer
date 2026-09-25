@@ -12,6 +12,12 @@ pub(crate) struct AppState {
     pub(crate) files: Arc<FsCatalog>,
     pub(crate) jobs: JobRegistry,
     pub(crate) library: Arc<Library>,
+    /// The tag vocabulary, over the same store the library reads.
+    ///
+    /// It is a sibling rather than a method on the library: tag rules and
+    /// person rules must not be able to name each other, and the domain crates
+    /// are independent over one file.
+    pub(crate) tags: Arc<oxy_tags::Tags>,
     pub(crate) cache: Arc<cache::CacheManager>,
     pub(crate) heif: Arc<oxy_media::HeifDecodeService>,
     pub(crate) media_resources: oxy_media::ResourceRegistry,

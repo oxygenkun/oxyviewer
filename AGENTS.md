@@ -20,7 +20,9 @@ Repository-specific rules for coding agents working on OxyViewer.
 - Opening a folder must remain cheap, non-recursive, and paged. Defer indexing,
   metadata, preview generation, and decode work from the interactive open path.
 - Keep `apps/desktop/src-tauri` thin. Put reusable behavior in the appropriate
-  Rust crate.
+  Rust crate. Wiring is the exception: opening the store and building one handle
+  per domain crate is the application's job, because there is no crate left that
+  could do it without depending on all of them.
 - Put public serialized Rust contracts in `oxy-domain` with camelCase serde
   names. Keep frontend IPC wrappers in `apps/desktop/src/lib/api.ts`, updating
   TypeScript types and browser-demo behavior with command changes.
@@ -49,7 +51,21 @@ Repository-specific rules for coding agents working on OxyViewer.
   source" are rules: they stay in the crate that owns the domain, which opens
   the transaction and calls repositories inside it. Statements that read or
   write two domains at once live in `oxy-store/src/repo/cross.rs`, because no
-  domain crate may own one without depending on a sibling.
+  domain crate may own one without depending on a sibling. That is also where
+  the two acts no single domain can perform live: `relocate_asset` (a file
+  moved) and `forget_asset` (a file is gone), each of which carries tag rows,
+  person rows, and cached features in one transaction.
+- A domain crate must not depend on `rusqlite`. It names
+  `oxy_store::{Connection, Transaction}` — both are re-exported for exactly
+  this — and asks the error (`StoreError::is_constraint_violation`) rather than
+  matching the engine. `oxy-tags/src/audit.rs` asserts this, and asserts that
+  the crate carries no SQL of its own.
+- Domain crates are siblings: `oxy-library`, `oxy-tags`, and `oxy-people` do not
+  depend on one another, so a rule of one cannot name a rule of another. Where
+  they need each other's rows, they call a repository function. The application
+  is the composition root: it opens the `oxy_store::Store` once and hands it to
+  every domain crate (`Library::with_store`, `Tags::new`), which is the few
+  lines of wiring `src-tauri` is allowed to own.
 - Declare every table once in `oxy-store/src/schema`, with its class and how it
   is created. One declaration produces the `CREATE TABLE`, the list of owned
   tables, and the `DELETE` statements, so a new table cannot be created without
@@ -64,11 +80,12 @@ Repository-specific rules for coding agents working on OxyViewer.
   (`row.get(0)`). Reordering a `SELECT` list must not silently shift values.
 - A module may read across the cache/user boundary but never write across it.
   Call a named function on the owning module (for example
-  `cache::index::forget_root` or `cache::features::forget_asset`) instead of
-  writing SQL against another namespace's tables. A source-level test in
-  `oxy-library/src/audit.rs` fails the build's tests on any cross-namespace
-  write, and a second one asserts that `oxy-library/src/user` carries no SQL of
-  its own. Once the domains are separate crates the compiler replaces both.
+  `cache::index::forget_root`) instead of writing SQL against another
+  namespace's tables. A source-level test in `oxy-library/src/audit.rs` fails
+  the build's tests on any cross-namespace write, and a second one asserts that
+  `oxy-library/src/user` carries no SQL of its own. Once the cache namespace
+  follows the user namespace out of `oxy-library` (stage E of the split plan)
+  the compiler replaces both.
 - Route file discovery and safe file operations through `oxy-fs`; do not add
   ad hoc frontend filesystem access.
 - Treat native dependencies as pinned inputs. Do not change submodules, the

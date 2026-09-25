@@ -9,6 +9,7 @@ use oxy_metadata::{
     MetadataDocument, MetadataFacade, MetadataObservation, metadata_source_revision,
 };
 use oxy_runtime::CoalescingPriorityQueue;
+use oxy_tags::Tags;
 use std::{
     collections::HashMap,
     path::PathBuf,
@@ -48,6 +49,9 @@ pub struct MetadataQueue {
     files: Arc<FsCatalog>,
     metadata: MetadataFacade,
     library: Arc<Library>,
+    /// A sidecar's keywords are the tag vocabulary's business, not the
+    /// library's.
+    tags: Arc<Tags>,
     work: Arc<(Mutex<WorkState>, Condvar)>,
     details: Arc<RwLock<HashMap<RequestKey, AssetDetailsResult>>>,
     request_generation: Arc<AtomicU64>,
@@ -59,11 +63,13 @@ impl MetadataQueue {
         files: Arc<FsCatalog>,
         metadata: MetadataFacade,
         library: Arc<Library>,
+        tags: Arc<Tags>,
     ) -> Self {
         let queue = Self {
             files,
             metadata,
             library,
+            tags,
             work: Arc::new((Mutex::new(WorkState::default()), Condvar::new())),
             details: Arc::new(RwLock::new(HashMap::new())),
             request_generation: Arc::new(AtomicU64::new(0)),
@@ -353,7 +359,7 @@ impl MetadataQueue {
                         .read_document_observation(&observation, display_dimensions);
                     if asset.has_sidecar
                         && let Ok((document, _)) = &document
-                        && let Err(error) = queue.library.import_sidecar_tags(
+                        && let Err(error) = queue.tags.import_sidecar_tags(
                             &asset.path,
                             &document.editable.keywords,
                             &document.editable.hierarchical_keywords,

@@ -15,10 +15,13 @@
 //!
 //! - [`library`] — the explicit roots the user added.
 //! - [`tags`] — the vocabulary, the assignments, and the XMP mirror.
-//! - [`people`] — identity, instances, reviews, references, history.
-//! - [`cross`] — the few functions that read or write two domains at once.
-//!   They cannot live in a domain crate without making two siblings depend on
-//!   each other, which is the boundary the split exists to hold.
+//! - [`people`] — identity, instances, reviews, references, history, and the
+//!   person caches, which are declared `cache` but belong to this domain.
+//! - [`cross`] — the few functions that read or write two domains at once, and
+//!   the two acts — a file that moved, a file that is gone — that no single
+//!   domain can perform. They cannot live in a domain crate without making two
+//!   siblings depend on each other, which is the boundary the split exists to
+//!   hold.
 
 pub mod cross;
 pub mod library;

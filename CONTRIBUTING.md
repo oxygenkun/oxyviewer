@@ -119,9 +119,10 @@ when intentionally regenerating application icons.
 - `crates/oxy-media`: previews, thumbnails, and native media adapters
 - `crates/oxy-metadata-parser`: in-process EXIF/XMP/IPTC/ICC/MakerNote parser
 - `crates/oxy-metadata`: normalized metadata, sidecars, and optional ExifTool boundary
-- `crates/oxy-library`: library data meaning: user facts, rebuildable caches, and their ownership
+- `crates/oxy-library`: library data meaning: the favourites, person identity, and the rebuildable caches
 - `crates/oxy-runtime`: job priority and cancellation vocabulary
-- `crates/oxy-store`: the SQLite file: connections, WAL readers, transactions, every table declaration, and the schema migrations
+- `crates/oxy-store`: the SQLite file: connections, WAL readers, transactions, every table declaration, every statement, and the schema migrations
+- `crates/oxy-tags`: the tag vocabulary, the assignments, the XMP mirror, and the tag state a file operation carries
 - `docs`: architecture, decisions, roadmap, formats, and performance budgets
 - `scripts`: repository tooling, grouped into `release/` and browser
   regression probes; see [scripts/README.md](scripts/README.md)

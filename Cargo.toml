@@ -11,6 +11,7 @@ members = [
   "crates/oxy-people",
   "crates/oxy-runtime",
   "crates/oxy-store",
+  "crates/oxy-tags",
 ]
 
 [workspace.package]

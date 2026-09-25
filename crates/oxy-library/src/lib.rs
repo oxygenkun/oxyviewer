@@ -1,4 +1,5 @@
-//! The local photo library: user facts and derived state over one SQLite store.
+//! The local photo library: the roots the user added and the derived state
+//! over one SQLite store.
 //!
 //! The store — the file, the connections, the table declarations, and the
 //! migrations — lives in [`oxy_store`]. This crate owns what the rows *mean*,
@@ -9,6 +10,13 @@
 //! the tables are, in `oxy_store::schema`; what stays here is every rule about
 //! what the data means and the source-level audit that the two namespaces do
 //! not write across their boundary.
+//!
+//! It no longer owns the tag vocabulary: that is `oxy-tags`, a sibling over the
+//! same store, because tag rules and person rules must not be able to name each
+//! other and only crates enforce that. What is left under `user` is the
+//! favourites and the person identity — including the person↔tag bridge, which
+//! reads the tag side through a repository statement rather than through
+//! `oxy-tags`.
 //!
 //! The split is a safety property, not just layout: a cache migration, a
 //! preview clear, or a re-index must never be able to reach a person identity,
@@ -28,11 +36,9 @@ use rusqlite::Connection;
 use std::{
     collections::HashSet,
     path::{Path, PathBuf},
+    sync::Arc,
     time::Duration,
 };
-// Only the test-only `shared_connection` shim names the shared write handle.
-#[cfg(test)]
-use std::sync::Arc;
 use thiserror::Error;
 
 pub(crate) const DEFAULT_PAGE_SIZE: usize = 250;
@@ -56,14 +62,8 @@ pub enum LibraryError {
     Json(#[from] serde_json::Error),
     #[error("folder order must contain every library root exactly once")]
     InvalidRootOrder,
-    #[error("tag name must not be empty or contain '|'")]
-    InvalidTagName,
     #[error("tag parent does not exist")]
     MissingTagParent,
-    #[error("a tag cannot be moved below itself")]
-    TagHierarchyCycle,
-    #[error("a tag with this name already exists at this level")]
-    DuplicateTagName,
     #[error("person record changed; reload before saving")]
     PersonConflict,
     #[error("person record or instance was not found in this folder")]
@@ -84,14 +84,20 @@ pub enum LibraryError {
     PersonAnalysisConflict,
 }
 
-/// The photo library: user facts and derived state over one SQLite store.
+/// The photo library: the roots the user added and the derived state over one
+/// SQLite store.
 ///
-/// The storage mechanism lives in [`oxy_store`]; this type owns what the data
+/// The storage mechanism lives in [`oxy_store`]; this crate owns what the data
 /// *means*. It holds the [`Store`], the in-memory directory snapshots, the
 /// rebuildable index bookkeeping, and the schedule that decides whether a scan
 /// may run — and nothing about the file format, the WAL setup, or the pragmas.
+///
+/// The store is shared rather than owned: the application opens the file once
+/// and gives it to every domain crate, so none of them wraps the others. The
+/// tags live in [`oxy_tags`], which is why nothing named `tag` except the
+/// person↔tag bridge is left here.
 pub struct Library {
-    store: Store,
+    store: Arc<Store>,
     directory_snapshots: cache::browsing::DirectorySnapshots,
     pub foreground: oxy_runtime::ForegroundGate,
     vector_status: Result<String, String>,
@@ -129,15 +135,20 @@ impl Library {
     /// about the schema is decided here, so a storage version bump cannot be
     /// something this constructor forgets to run.
     pub fn open(path: &Path) -> Result<Self, LibraryError> {
-        Ok(Self::from_store(Store::open(path)?))
+        Ok(Self::with_store(Arc::new(Store::open(path)?)))
     }
 
     /// Opens a library that lives only in this process.
     pub fn in_memory() -> Result<Self, LibraryError> {
-        Ok(Self::from_store(Store::in_memory()?))
+        Ok(Self::with_store(Arc::new(Store::in_memory()?)))
     }
 
-    fn from_store(store: Store) -> Self {
+    /// Builds the library over a store the caller already holds.
+    ///
+    /// This is the constructor a composition root uses: one file, one
+    /// [`Store`], and one handle per domain crate over it. [`Library::open`]
+    /// remains the shorter form for a caller that owns the file alone.
+    pub fn with_store(store: Arc<Store>) -> Self {
         let vector_status = store.vector_status();
         let directory_snapshots =
             cache::browsing::DirectorySnapshots::new(store.shared_connection());
@@ -149,6 +160,11 @@ impl Library {
             index_gate: Mutex::new(()),
             foreground: oxy_runtime::ForegroundGate::default(),
         }
+    }
+
+    /// The store this library reads, so a sibling domain can be built over it.
+    pub fn store(&self) -> Arc<Store> {
+        Arc::clone(&self.store)
     }
 }
 
@@ -438,7 +454,11 @@ mod tests {
                         .unwrap()
                         .is_some()
                 );
-                assert!(library.custom_tags().unwrap().is_empty());
+                assert!(
+                    oxy_store::repo::tags::list_tags(&library.store().read())
+                        .unwrap()
+                        .is_empty()
+                );
                 sender.send(()).unwrap();
             });
             let completed = receiver.recv_timeout(Duration::from_secs(2));

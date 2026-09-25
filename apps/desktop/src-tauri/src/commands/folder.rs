@@ -44,7 +44,7 @@ pub(crate) async fn open_folder(
             .schedule(app, session.root_path.clone());
     }
     schedule_tag_xmp_sync(
-        state.library.clone(),
+        state.tags.clone(),
         state.files.clone(),
         state.metadata.clone(),
     );
@@ -64,6 +64,7 @@ pub(crate) async fn list_assets(
     let files = state.files.clone();
     let metadata = state.metadata.clone();
     let library = state.library.clone();
+    let tags = state.tags.clone();
     tauri::async_runtime::spawn_blocking(move || {
         let _foreground = library.foreground.enter();
         let started = Instant::now();
@@ -142,8 +143,7 @@ pub(crate) async fn list_assets(
             None
         } else {
             Some(
-                library
-                    .filter_assets_by_tags(&read.assets, &query)
+                tags.filter_assets_by_tags(&read.assets, &query)
                     .map_err(|error| error.to_string())?,
             )
         };
@@ -368,6 +368,7 @@ pub(crate) async fn execute_file_operation(
     state: State<'_, AppState>,
 ) -> Result<FileOperationResult, String> {
     let library = state.library.clone();
+    let tags = state.tags.clone();
     tauri::async_runtime::spawn_blocking(move || {
         let result =
             oxy_fs::execute_file_operation(&operation).map_err(|error| error.to_string())?;
@@ -377,8 +378,7 @@ pub(crate) async fn execute_file_operation(
                     .parent()
                     .unwrap_or_else(|| std::path::Path::new(""))
                     .join(new_name);
-                library
-                    .move_asset_tag_state(source, &destination)
+                tags.move_asset_state(source, &destination)
                     .map_err(|error| error.to_string())?;
             }
             FileOperation::Copy {
@@ -387,8 +387,7 @@ pub(crate) async fn execute_file_operation(
             } => {
                 for source in sources {
                     if let Some(name) = source.file_name() {
-                        library
-                            .copy_asset_tag_state(source, &destination_dir.join(name))
+                        tags.copy_asset_state(source, &destination_dir.join(name))
                             .map_err(|error| error.to_string())?;
                     }
                 }
@@ -399,16 +398,14 @@ pub(crate) async fn execute_file_operation(
             } => {
                 for source in sources {
                     if let Some(name) = source.file_name() {
-                        library
-                            .move_asset_tag_state(source, &destination_dir.join(name))
+                        tags.move_asset_state(source, &destination_dir.join(name))
                             .map_err(|error| error.to_string())?;
                     }
                 }
             }
             FileOperation::Trash { paths } | FileOperation::DeletePermanently { paths } => {
                 for path in paths {
-                    library
-                        .remove_asset_tag_state(path)
+                    tags.remove_asset_state(path)
                         .map_err(|error| error.to_string())?;
                 }
             }

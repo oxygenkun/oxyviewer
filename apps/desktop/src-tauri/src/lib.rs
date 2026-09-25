@@ -182,6 +182,9 @@ pub fn run() {
             )?);
             cache.schedule_prune(None);
             let library = Arc::new(Library::open(&data_dir.join("oxyviewer.sqlite"))?);
+            // One store, one handle per domain crate. Nothing here wraps
+            // anything else: the application is the composition root.
+            let tags = Arc::new(oxy_tags::Tags::new(library.store()));
             let external_apps = Arc::new(state::external_apps::ExternalAppManager::load(data_dir.join("external-apps.json")));
             let metadata_provider = Arc::new(ProviderManager::load(data_dir));
             let files = Arc::new(FsCatalog::default());
@@ -193,6 +196,7 @@ pub fn run() {
                 files.clone(),
                 metadata.clone(),
                 library.clone(),
+                tags.clone(),
             );
             let preview_queue = jobs::preview::PreviewQueue::new(
                 app.handle().clone(),
@@ -206,6 +210,7 @@ pub fn run() {
                 files,
                 jobs: JobRegistry::default(),
                 library,
+                tags,
                 cache,
                 heif,
                 media_resources,

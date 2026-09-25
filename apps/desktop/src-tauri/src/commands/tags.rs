@@ -4,41 +4,40 @@ use oxy_domain::{
     TagDeleteImpact, TagSyncStatus,
 };
 use oxy_fs::FsCatalog;
-use oxy_library::Library;
 use oxy_metadata::MetadataFacade;
+use oxy_tags::Tags;
 use std::{collections::HashSet, path::PathBuf, sync::Arc};
 use tauri::State;
 
 static TAG_SYNC_GATE: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
 pub(crate) fn schedule_tag_xmp_sync(
-    library: Arc<Library>,
+    tags: Arc<Tags>,
     files: Arc<FsCatalog>,
     metadata: MetadataFacade,
 ) {
     tauri::async_runtime::spawn_blocking(move || {
-        if let Err(error) = drain_tag_xmp_sync(&library, &files, &metadata) {
+        if let Err(error) = drain_tag_xmp_sync(&tags, &files, &metadata) {
             eprintln!("failed to run tag XMP sync: {error}");
         }
     });
 }
 
 fn drain_tag_xmp_sync(
-    library: &Library,
+    tags: &Tags,
     files: &FsCatalog,
     metadata: &MetadataFacade,
 ) -> Result<(), String> {
     let _gate = TAG_SYNC_GATE
         .lock()
         .map_err(|_| "tag XMP sync lock poisoned".to_owned())?;
-    for path in library
+    for path in tags
         .pending_tag_sync_paths()
         .map_err(|error| error.to_string())?
     {
-        let result = sync_path(library, files, metadata, &path);
+        let result = sync_path(tags, files, metadata, &path);
         if let Err(error) = result {
-            library
-                .fail_tag_xmp_sync(&path, &error)
+            tags.fail_tag_xmp_sync(&path, &error)
                 .map_err(|db_error| db_error.to_string())?;
         }
     }
@@ -46,7 +45,7 @@ fn drain_tag_xmp_sync(
 }
 
 fn sync_path(
-    library: &Library,
+    tags: &Tags,
     files: &FsCatalog,
     metadata: &MetadataFacade,
     path: &std::path::Path,
@@ -55,7 +54,7 @@ fn sync_path(
     let current = metadata
         .read_metadata(path, asset.kind)
         .map_err(|error| error.to_string())?;
-    let payload = library
+    let payload = tags
         .tag_xmp_payload(path)
         .map_err(|error| error.to_string())?;
     let subjects = merge_managed_values(
@@ -79,8 +78,7 @@ fn sync_path(
             },
         )
         .map_err(|error| error.to_string())?;
-    library
-        .complete_tag_xmp_sync(path, &payload.subjects, &payload.hierarchical)
+    tags.complete_tag_xmp_sync(path, &payload.subjects, &payload.hierarchical)
         .map_err(|error| error.to_string())?;
     if let Some(parent) = path.parent() {
         files.invalidate_directory(parent);
@@ -105,7 +103,7 @@ fn merge_managed_values(
 
 fn start_sync(state: &AppState) {
     schedule_tag_xmp_sync(
-        Arc::clone(&state.library),
+        Arc::clone(&state.tags),
         Arc::clone(&state.files),
         state.metadata.clone(),
     );
@@ -113,10 +111,7 @@ fn start_sync(state: &AppState) {
 
 #[tauri::command]
 pub(crate) fn list_custom_tags(state: State<'_, AppState>) -> Result<Vec<CustomTag>, String> {
-    state
-        .library
-        .custom_tags()
-        .map_err(|error| error.to_string())
+    state.tags.custom_tags().map_err(|error| error.to_string())
 }
 
 #[tauri::command]
@@ -124,10 +119,9 @@ pub(crate) async fn get_asset_tag_assignments(
     paths: Vec<PathBuf>,
     state: State<'_, AppState>,
 ) -> Result<Vec<AssetTagAssignment>, String> {
-    let library = Arc::clone(&state.library);
+    let tags = Arc::clone(&state.tags);
     tauri::async_runtime::spawn_blocking(move || {
-        library
-            .asset_tag_assignments(&paths)
+        tags.asset_tag_assignments(&paths)
             .map_err(|error| error.to_string())
     })
     .await
@@ -139,10 +133,9 @@ pub(crate) async fn get_asset_tag_assignments_by_path(
     paths: Vec<PathBuf>,
     state: State<'_, AppState>,
 ) -> Result<Vec<AssetTagAssignmentsByPath>, String> {
-    let library = Arc::clone(&state.library);
+    let tags = Arc::clone(&state.tags);
     tauri::async_runtime::spawn_blocking(move || {
-        library
-            .asset_tag_assignments_by_path(&paths)
+        tags.asset_tag_assignments_by_path(&paths)
             .map_err(|error| error.to_string())
     })
     .await
@@ -156,7 +149,7 @@ pub(crate) fn create_custom_tag(
     state: State<'_, AppState>,
 ) -> Result<CustomTag, String> {
     state
-        .library
+        .tags
         .create_custom_tag(parent_id, &name)
         .map_err(|error| error.to_string())
 }
@@ -169,7 +162,7 @@ pub(crate) fn update_custom_tag(
     state: State<'_, AppState>,
 ) -> Result<CustomTag, String> {
     let tag = state
-        .library
+        .tags
         .update_custom_tag(id, parent_id, &name)
         .map_err(|error| error.to_string())?;
     start_sync(&state);
@@ -182,7 +175,7 @@ pub(crate) fn get_custom_tag_delete_impact(
     state: State<'_, AppState>,
 ) -> Result<TagDeleteImpact, String> {
     state
-        .library
+        .tags
         .custom_tag_delete_impact(id)
         .map_err(|error| error.to_string())
 }
@@ -193,7 +186,7 @@ pub(crate) fn delete_custom_tag(
     state: State<'_, AppState>,
 ) -> Result<TagDeleteImpact, String> {
     let impact = state
-        .library
+        .tags
         .delete_custom_tag(id)
         .map_err(|error| error.to_string())?;
     start_sync(&state);
@@ -208,7 +201,7 @@ pub(crate) fn set_asset_custom_tag(
     state: State<'_, AppState>,
 ) -> Result<(), String> {
     state
-        .library
+        .tags
         .set_asset_tag(&paths, tag_id, assigned)
         .map_err(|error| error.to_string())?;
     start_sync(&state);
@@ -217,10 +210,7 @@ pub(crate) fn set_asset_custom_tag(
 
 #[tauri::command]
 pub(crate) fn get_tag_sync_status(state: State<'_, AppState>) -> Result<TagSyncStatus, String> {
-    state
-        .library
-        .tag_sync_status()
-        .map_err(|error| error.to_string())
+    state.tags.tag_sync_status().map_err(|error| error.to_string())
 }
 
 #[tauri::command]

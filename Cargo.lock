@@ -2606,6 +2606,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "oxy-tags"
+version = "0.1.4"
+dependencies = [
+ "oxy-domain",
+ "oxy-fs",
+ "oxy-library",
+ "oxy-store",
+ "serde_json",
+ "tempfile",
+ "thiserror 2.0.20",
+]
+
+[[package]]
 name = "oxyviewer"
 version = "0.1.4"
 dependencies = [
@@ -2616,6 +2629,7 @@ dependencies = [
  "oxy-media",
  "oxy-metadata",
  "oxy-runtime",
+ "oxy-tags",
  "semver",
  "serde",
  "serde_json",

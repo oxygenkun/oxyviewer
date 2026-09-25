@@ -11,13 +11,19 @@
 //! revision it was made against, that renaming a person is an event with a
 //! request id, and what unlinking a historical person does to the links that
 //! reference it.
+//!
+//! It also holds the bridge to the tag vocabulary — the one tag the identity
+//! pushes onto its photos, and the per-photo exceptions to it. That bridge is
+//! person policy: it decides what a link *means*, and it changes before the
+//! tag side does. It reaches the tags through repository statements, so the
+//! two crates stay independent.
 
 use crate::{Library, LibraryError};
 use oxy_domain::{
     AssetSummary, ConfirmFolderPerson, CreatePersonInstance, FolderPerson, HistoricalPerson,
     LinkHistoricalPerson, PersonFilter, PersonFilterState, PersonInstance, PersonReview,
-    PersonReviewDecision, ResetFolderPerson, SetPersonReview, UnlinkHistoricalPerson,
-    UpdatePersonInstance,
+    PersonReviewDecision, PersonTagLink, PersonTagOverride, ResetFolderPerson, SetPersonReview,
+    SetPersonTagLink, SetPersonTagOverride, UnlinkHistoricalPerson, UpdatePersonInstance,
 };
 use oxy_store::repo;
 use std::{collections::HashMap, path::Path};
@@ -178,6 +184,135 @@ impl Library {
         }
         transaction.commit()?;
         Ok(())
+    }
+
+    /// The tag an identity pushes onto the photos it belongs to, if any.
+    ///
+    /// The link is the person side's statement; the effect lands as a `person`
+    /// source on the tag side, which is why it is reconciled rather than
+    /// written here. Reading the tag vocabulary to reject a link to a tag that
+    /// does not exist goes through the repository, so this crate never names
+    /// `oxy_tags` — the direction between the two crates stays one-way.
+    pub fn get_person_tag_link(
+        &self,
+        folder_path: &Path,
+        subject_id: &str,
+    ) -> Result<Option<PersonTagLink>, LibraryError> {
+        Ok(repo::people::person_tag_link(
+            &self.read_connection(),
+            folder_path,
+            subject_id,
+        )?)
+    }
+
+    pub fn set_person_tag_link(
+        &self,
+        input: &SetPersonTagLink,
+    ) -> Result<PersonTagLink, LibraryError> {
+        if input.request_id.is_empty() || (input.enabled && input.tag_id.is_none()) {
+            return Err(LibraryError::PersonConflict);
+        }
+        let mut connection = self.write();
+        let transaction = connection.transaction()?;
+        let historical_id =
+            repo::people::historical_person_of_subject(&transaction, &input.folder_path, &input.subject_id)?
+                .ok_or(LibraryError::MissingPersonRecord)?;
+        if let Some((operation, id)) = repo::people::request_result(&transaction, &input.request_id)? {
+            if operation != "setPersonTagLink" || id != historical_id {
+                return Err(LibraryError::PersonConflict);
+            }
+        } else {
+            let revision = repo::people::person_tag_link_revision(&transaction, &historical_id)?;
+            if revision.unwrap_or(0) != input.expected_revision {
+                return Err(LibraryError::PersonConflict);
+            }
+            if let Some(tag_id) = input.tag_id
+                && !repo::tags::tag_exists(&transaction, tag_id)?
+            {
+                return Err(LibraryError::MissingTagParent);
+            }
+            repo::people::upsert_person_tag_link(&transaction, &historical_id, input.tag_id, input.enabled)?;
+            for subject in repo::people::subjects_of_historical_person(&transaction, &historical_id)? {
+                repo::cross::reconcile_person_sources_for_subject(&transaction, &subject)?;
+            }
+            repo::people::record_request_result(
+                &transaction,
+                &input.request_id,
+                "setPersonTagLink",
+                &historical_id,
+            )?;
+        }
+        let result = repo::people::person_tag_link_of(&transaction, &historical_id)?
+            .ok_or(LibraryError::MissingPersonRecord)?;
+        transaction.commit()?;
+        Ok(result)
+    }
+
+    pub fn get_person_tag_override(
+        &self,
+        folder_path: &Path,
+        subject_id: &str,
+        asset_path: &Path,
+    ) -> Result<Option<PersonTagOverride>, LibraryError> {
+        Ok(repo::people::person_tag_override(
+            &self.read_connection(),
+            folder_path,
+            subject_id,
+            asset_path,
+        )?)
+    }
+
+    /// Suppresses or restores the identity's tag for one photo.
+    ///
+    /// A whole folder can belong to a person while one picture in it does not,
+    /// so the exception is recorded per asset and the tag side is reconciled
+    /// for that asset alone.
+    pub fn set_person_tag_override(
+        &self,
+        input: &SetPersonTagOverride,
+    ) -> Result<PersonTagOverride, LibraryError> {
+        if input.request_id.is_empty()
+            || input.asset_path.parent() != Some(input.folder_path.as_path())
+        {
+            return Err(LibraryError::PersonConflict);
+        }
+        let mut connection = self.write();
+        let transaction = connection.transaction()?;
+        let historical_id =
+            repo::people::historical_person_of_subject(&transaction, &input.folder_path, &input.subject_id)?
+                .ok_or(LibraryError::MissingPersonRecord)?;
+        let request_entity = format!("{}:{}", historical_id, input.asset_path.display());
+        let asset_path = input.asset_path.to_string_lossy();
+        if let Some((operation, entity)) = repo::people::request_result(&transaction, &input.request_id)? {
+            if operation != "setPersonTagOverride" || entity != request_entity {
+                return Err(LibraryError::PersonConflict);
+            }
+        } else {
+            let revision =
+                repo::people::person_tag_override_revision(&transaction, &historical_id, &asset_path)?;
+            if revision.unwrap_or(0) != input.expected_revision {
+                return Err(LibraryError::PersonConflict);
+            }
+            repo::people::upsert_person_tag_override(
+                &transaction,
+                &historical_id,
+                &asset_path,
+                input.suppressed,
+            )?;
+            for subject in repo::people::subjects_of_historical_person(&transaction, &historical_id)? {
+                repo::cross::reconcile_person_source_for_asset(&transaction, &subject, &asset_path)?;
+            }
+            repo::people::record_request_result(
+                &transaction,
+                &input.request_id,
+                "setPersonTagOverride",
+                &request_entity,
+            )?;
+        }
+        let result = repo::people::person_tag_override_of(&transaction, &historical_id, &asset_path)?
+            .ok_or(LibraryError::MissingPersonRecord)?;
+        transaction.commit()?;
+        Ok(result)
     }
 
     /// Intersect the entire directory snapshot before sorting/paging, never a loaded UI page.
