@@ -13,7 +13,7 @@ use std::{
 
 // `preserve` because a root is the user's, not something a cache clear may
 // empty. Every table in [`crate::user`] is declared this way.
-crate::table::tables! {
+oxy_store::table::tables! {
     preserve library_roots =
         "path TEXT PRIMARY KEY NOT NULL,
         added_at INTEGER NOT NULL DEFAULT (unixepoch()),
@@ -21,7 +21,7 @@ crate::table::tables! {
 }
 
 pub(super) fn ensure_schema(connection: &mut Connection) -> Result<(), rusqlite::Error> {
-    crate::table::create_all(connection, DEFS)?;
+    oxy_store::table::create_all(connection, DEFS)?;
     let has_sort_order = connection
         .prepare("PRAGMA table_info(library_roots)")?
         .query_map([], |row| row.get::<_, String>("name"))?
@@ -60,7 +60,7 @@ fn normalize_root_order(connection: &mut Connection) -> Result<(), rusqlite::Err
 impl Library {
     pub fn add_root(&self, path: &Path) -> Result<(), LibraryError> {
         let canonical = path.canonicalize()?;
-        self.connection.lock().execute(
+        self.write().execute(
             "INSERT OR IGNORE INTO library_roots(path, sort_order)
              VALUES (?1, (SELECT COALESCE(MAX(sort_order), -1) + 1 FROM library_roots))",
             params![canonical.to_string_lossy()],
@@ -75,7 +75,7 @@ impl Library {
         let path = path.canonicalize().unwrap_or_else(|_| path.to_path_buf());
         self.invalidate_snapshot_root(&path)?;
         let root = path.to_string_lossy();
-        let mut connection = self.connection.lock();
+        let mut connection = self.write();
         let transaction = connection.transaction()?;
         transaction.execute("DELETE FROM library_roots WHERE path = ?1", params![root])?;
         // The index owns its own rows. Asking it to forget the root keeps the
@@ -96,7 +96,7 @@ impl Library {
     }
 
     pub fn reorder_roots(&self, paths: &[PathBuf]) -> Result<(), LibraryError> {
-        let mut connection = self.connection.lock();
+        let mut connection = self.write();
         let stored = connection
             .prepare("SELECT path FROM library_roots")?
             .query_map([], |row| row.get::<_, String>("path"))?

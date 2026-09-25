@@ -21,9 +21,9 @@ use rusqlite::Connection;
 /// outside the reach of a cache clear, so the only thing read from the
 /// declarations is their names.
 pub(crate) fn tables() -> impl Iterator<Item = &'static str> {
-    crate::table::names(roots::DEFS)
-        .chain(crate::table::names(tags::DEFS))
-        .chain(crate::table::names(people::DEFS))
+    oxy_store::table::names(roots::DEFS)
+        .chain(oxy_store::table::names(tags::DEFS))
+        .chain(oxy_store::table::names(people::DEFS))
 }
 
 /// Creates or migrates every user-owned table. Runs before the cache schema so

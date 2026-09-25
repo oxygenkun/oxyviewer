@@ -66,7 +66,7 @@ Rust projection 与前端显示镜像失效。
 
 - `FsCatalog` 的 folder sessions 与内存目录快照；
 - `JobRegistry` 的作业取消 flags；
-- `Library` 的 SQLite 写连接、浏览读取连接和资源缓存读取连接；
+- `Library` 持有的 `oxy_store::Store`——SQLite 写连接、浏览读取连接和资源缓存读取连接；
 - `CacheManager`（当前 preview cache directory、容量策略和配置文件）；
 - `MetadataQueue` / `PreviewQueue` 的 priority、pending/in-flight consumer 与 live projection；
 - `DirectoryTreeQueue` 的分层目录读取优先级；
@@ -92,17 +92,19 @@ Rust projection 与前端显示镜像失效。
 旧行清理仍是原子事务。预览与元数据入队阶段仍有持队列锁进行 projection 写入的路径，
 这些写入受益于批次交接，但尚未与队列锁完全解耦。
 
-`oxy-library` 按数据归属分成两个命名空间，磁盘上仍是同一个 `oxyviewer.sqlite`：
+存储机制与数据含义分属两个 crate。`oxy-store` 拥有 `oxyviewer.sqlite` 本身——连接、WAL 只读读
+连接、事务，以及 `oxy_store::table` 声明宏；它不知道照片、标签或人物的存在。`oxy-library`
+拥有这些行*意味着什么*，并按数据归属分成两个命名空间，磁盘上仍是同一个 `oxyviewer.sqlite`：
 
 | 命名空间 | 含义 | 谁能删 |
 | --- | --- | --- |
 | `oxy_library::cache` | 由照片或用户数据推导出的状态：`indexed_*`、FTS、`resource_projections`、`directory_snapshots`、人物检测/特征缓存、`person_analysis_*` | 建表的那个模块自己的 `clear()`，由 `Library::clear_rebuildable_cache()` 汇总调用 |
 | `oxy_library::user` | 用户输入的事实：`library_roots`、标签树与资产标签、人物身份与审阅、历史关联、人物↔标签映射、`person_request_results` 幂等账本 | 只由显式、经过确认的用户操作删除 |
 
-**删除跟随所有权，而不是跟随一份名单。** 每个模块用 `crate::table::tables!` 把自己的表声明一次：
+**删除跟随所有权，而不是跟随一份名单。** 每个模块用 `oxy_store::table::tables!` 把自己的表声明一次：
 
 ```rust
-crate::table::tables! {
+oxy_store::table::tables! {
     clear indexed_assets =
         "root_path TEXT NOT NULL, path TEXT NOT NULL, PRIMARY KEY(root_path, path)";
     preserve library_index_sequence =
@@ -143,8 +145,8 @@ crate::table::tables! {
 而不是藏在 SQL 字符串里。缓存迁移（`person_instances_cache`、`person_features_cache` 的 schema
 版本）只 DROP 自己的缓存表与 meta，人工资料不受影响。
 
-`oxy-library::Library::open` 在 app data 目录创建 `oxyviewer.sqlite`，启用 WAL，并确保以下逻辑
-结构存在：
+`oxy-store::Store::open` 在 app data 目录创建 `oxyviewer.sqlite` 并启用 WAL；`oxy-library::Library::open`
+随即在其写连接上运行本 crate 的建表步骤（先是用户表，再是缓存表），确保以下逻辑结构存在：
 
 ```mermaid
 erDiagram

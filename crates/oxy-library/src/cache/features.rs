@@ -57,7 +57,7 @@ pub(crate) fn probe_connections(
 
 const CACHE_SCHEMA_VERSION: i64 = 3;
 
-crate::table::tables! {
+oxy_store::table::tables! {
     preserve person_vector_cache_meta = "schema_version INTEGER NOT NULL";
     clear person_feature_spaces =
         "id TEXT PRIMARY KEY,
@@ -80,7 +80,7 @@ crate::table::tables! {
 
 pub(crate) fn ensure_schema(connection: &mut Connection) -> Result<(), rusqlite::Error> {
     let transaction = connection.transaction()?;
-    crate::table::create_all(&transaction, DEFS)?;
+    oxy_store::table::create_all(&transaction, DEFS)?;
     let current: Option<i64> = transaction
         .query_row(
             "SELECT schema_version FROM person_vector_cache_meta LIMIT 1",
@@ -100,7 +100,7 @@ pub(crate) fn ensure_schema(connection: &mut Connection) -> Result<(), rusqlite:
         )?;
     }
     // Runs again because a version mismatch dropped the tables above.
-    crate::table::create_all(&transaction, DEFS)?;
+    oxy_store::table::create_all(&transaction, DEFS)?;
     transaction.execute_batch(
         "CREATE INDEX IF NOT EXISTS person_features_folder_space
            ON person_features_cache(folder_path,feature_space_id,asset_path,instance_id);",
@@ -113,7 +113,7 @@ pub(crate) fn ensure_schema(connection: &mut Connection) -> Result<(), rusqlite:
 /// Feature spaces go with the vectors they describe. The schema marker
 /// survives; see [`crate::schema::preserved_on_clear`].
 pub(crate) fn clear(connection: &Connection) -> Result<(), rusqlite::Error> {
-    crate::table::clear_all(connection, DEFS)
+    oxy_store::table::clear_all(connection, DEFS)
 }
 
 /// Points cached features at a renamed file. Called from [`crate::user`] when
@@ -283,7 +283,7 @@ impl Library {
             .as_ref()
             .map_err(|error| LibraryError::PersonVectorUnavailable(error.clone()))?;
         validate_feature(feature)?;
-        let mut connection = self.connection.lock();
+        let mut connection = self.write();
         let tx = connection.transaction()?;
         write_feature(&tx, feature)?;
         tx.commit()?;
@@ -722,14 +722,14 @@ mod tests {
             run_id: "run-1",
         };
         {
-            let mut connection = library.connection.lock();
+            let mut connection = library.write();
             let transaction = connection.transaction().unwrap();
             replace_stage_detections(&transaction, &context, &[detection]).unwrap();
             transaction.commit().unwrap();
         }
         assert_eq!(search().len(), 1);
         {
-            let mut connection = library.connection.lock();
+            let mut connection = library.write();
             let transaction = connection.transaction().unwrap();
             replace_stage_detections(&transaction, &context, &[]).unwrap();
             transaction.commit().unwrap();
@@ -802,8 +802,7 @@ mod tests {
         );
         library.put_person_feature(&cached).unwrap();
         library
-            .connection
-            .lock()
+            .write()
             .execute("UPDATE person_vector_cache_meta SET schema_version=0", [])
             .unwrap();
         drop(library);

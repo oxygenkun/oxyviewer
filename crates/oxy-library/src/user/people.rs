@@ -8,7 +8,7 @@ use oxy_domain::{
 use rusqlite::{Connection, OptionalExtension, params};
 use std::path::{Path, PathBuf};
 
-crate::table::tables! {
+oxy_store::table::tables! {
     preserve folder_people =
         "id TEXT PRIMARY KEY,
         folder_path TEXT NOT NULL,
@@ -100,7 +100,7 @@ crate::table::tables! {
 /// Creates the declared tables. User-owned because this module lives in
 /// [`crate::user`]; nothing here is emptied by a cache clear.
 pub(crate) fn ensure_schema(connection: &Connection) -> Result<(), rusqlite::Error> {
-    crate::table::create_all(connection, DEFS)?;
+    oxy_store::table::create_all(connection, DEFS)?;
     connection.execute_batch(
         "CREATE INDEX IF NOT EXISTS folder_people_folder ON folder_people(folder_path);
          CREATE INDEX IF NOT EXISTS person_manual_instances_asset
@@ -248,7 +248,7 @@ impl Library {
         if input.request_id.is_empty() {
             return Err(LibraryError::InvalidPersonInstance);
         }
-        let mut connection = self.connection.lock();
+        let mut connection = self.write();
         let transaction = connection.transaction()?;
         let replay: Option<(String, String)> = transaction
             .query_row(
@@ -380,7 +380,7 @@ impl Library {
         if input.request_id.is_empty() {
             return Err(LibraryError::InvalidPersonInstance);
         }
-        let mut connection = self.connection.lock();
+        let mut connection = self.write();
         let transaction = connection.transaction()?;
         let replay: Option<(String, String)> = transaction
             .query_row(
@@ -519,7 +519,7 @@ impl Library {
         {
             return Err(LibraryError::InvalidPersonInstance);
         }
-        let mut connection = self.connection.lock();
+        let mut connection = self.write();
         let tx = connection.transaction()?;
         let replay: Option<(String, String)> = tx
             .query_row(
@@ -587,7 +587,7 @@ impl Library {
         if input.request_id.is_empty() {
             return Err(LibraryError::InvalidPersonInstance);
         }
-        let mut connection = self.connection.lock();
+        let mut connection = self.write();
         let tx = connection.transaction()?;
         let replay: Option<(String, String)> = tx
             .query_row(
@@ -646,7 +646,7 @@ impl Library {
         if name.is_empty() || input.request_id.is_empty() {
             return Err(LibraryError::InvalidPersonInstance);
         }
-        let mut connection = self.connection.lock();
+        let mut connection = self.write();
         let transaction = connection.transaction()?;
         let replay: Option<(String, String)> = transaction
             .query_row(
@@ -749,7 +749,7 @@ impl Library {
         if request_id.is_empty() {
             return Err(LibraryError::InvalidPersonInstance);
         }
-        let mut connection = self.connection.lock();
+        let mut connection = self.write();
         let transaction = connection.transaction()?;
         let existing: Option<(String, String)> = transaction
             .query_row(
@@ -808,7 +808,7 @@ impl Library {
         {
             return Err(LibraryError::InvalidPersonInstance);
         }
-        let mut connection = self.connection.lock();
+        let mut connection = self.write();
         let transaction = connection.transaction()?;
         let existing: Option<(String, String)> = transaction
             .query_row(
@@ -919,7 +919,7 @@ impl Library {
         if input.request_id.is_empty() {
             return Err(LibraryError::InvalidPersonInstance);
         }
-        let mut connection = self.connection.lock();
+        let mut connection = self.write();
         let transaction = connection.transaction()?;
         let replay: Option<(String, String)> = transaction
             .query_row(

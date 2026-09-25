@@ -6,20 +6,25 @@
 //! that empty them. Adding a table is one edit; forgetting to clear it is not
 //! possible, because clearing reads the same declaration that created it.
 //!
-//! This is intentionally not a query builder. The SQL in this crate is tuned by
-//! hand — FTS5 joins, `source_revision` filters, time-sliced batches, the
-//! sqlite-vec distance operator — and an abstraction over it would only hide
-//! the parts that matter. What this module borrows from an ORM is the schema
-//! being declared in one place, not the queries being generated.
+//! This module deliberately knows nothing about *which* tables exist. A domain
+//! crate declares its own with [`tables!`] and decides, per table, whether a
+//! cache clear may empty it. The macro emits a `pub const DEFS` in the module
+//! that declares it, so the declaration stays next to the DDL and the owner.
+//!
+//! This is intentionally not a query builder. The SQL in this application is
+//! tuned by hand — FTS5 joins, `source_revision` filters, time-sliced batches,
+//! the sqlite-vec distance operator — and an abstraction over it would only
+//! hide the parts that matter. What this module borrows from an ORM is the
+//! schema being declared in one place, not the queries being generated.
 
 use rusqlite::Connection;
 
 /// One table as declared by the module that owns it.
 ///
-/// `cleared` and `created` are separate because two tables in this crate are
-/// created outside the declaration: an FTS5 virtual table and a migration table
-/// that only exists after its backfill has run. Both still participate in a
-/// cache clear, so they are declared for that purpose and skipped at creation.
+/// `cleared` and `created` are separate because some tables are created outside
+/// the declaration: an FTS5 virtual table and a migration table that only
+/// exists after its backfill has run. Both still participate in a cache clear,
+/// so they are declared for that purpose and skipped at creation.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct TableDef {
     pub name: &'static str,
@@ -57,18 +62,32 @@ pub struct TableDef {
 ///
 /// Order matters: tables are created in declaration order and cleared in the
 /// same order, so a table that references another must be declared before it.
+///
+/// The generated `DEFS` is `pub` but lives in a `pub(crate)` module, so a
+/// declaring crate exposes its own table list through an explicit accessor
+/// rather than by re-exporting this constant.
+///
+/// `#[macro_export]` places the macro at this crate's root; the `pub use`
+/// below re-exports it at `oxy_store::table::tables`, so another crate can
+/// invoke it by path next to the type it produces.
+#[macro_export]
 macro_rules! tables {
     ( $( $mode:ident $name:ident $( = $ddl:literal )? );+ $(;)? ) => {
-        pub(crate) const DEFS: &[crate::table::TableDef] =
+        pub const DEFS: &[$crate::table::TableDef] =
             &[ $( $crate::table::table_def!($mode $name $( = $ddl )?) ),+ ];
     };
 }
 
-pub(crate) use tables;
+pub use crate::tables;
 
+/// The mode-to-[`TableDef`] expansion used by [`tables!`].
+///
+/// Re-exported at `oxy_store::table::table_def` so the `tables!` expansion can
+/// reach it by path from a crate that does not import it.
+#[macro_export]
 macro_rules! table_def {
     (clear $name:ident = $ddl:literal) => {
-        crate::table::TableDef {
+        $crate::table::TableDef {
             name: stringify!($name),
             ddl: $ddl,
             cleared: true,
@@ -76,7 +95,7 @@ macro_rules! table_def {
         }
     };
     (preserve $name:ident = $ddl:literal) => {
-        crate::table::TableDef {
+        $crate::table::TableDef {
             name: stringify!($name),
             ddl: $ddl,
             cleared: false,
@@ -84,7 +103,7 @@ macro_rules! table_def {
         }
     };
     (external $name:ident) => {
-        crate::table::TableDef {
+        $crate::table::TableDef {
             name: stringify!($name),
             ddl: "",
             cleared: true,
@@ -93,13 +112,10 @@ macro_rules! table_def {
     };
 }
 
-pub(crate) use table_def;
+pub use crate::table_def;
 
 /// Creates every declared table that this declaration owns.
-pub(crate) fn create_all(
-    connection: &Connection,
-    defs: &[TableDef],
-) -> Result<(), rusqlite::Error> {
+pub fn create_all(connection: &Connection, defs: &[TableDef]) -> Result<(), rusqlite::Error> {
     let mut sql = String::new();
     for def in defs.iter().filter(|def| def.created) {
         sql.push_str("CREATE TABLE IF NOT EXISTS ");
@@ -117,7 +133,7 @@ pub(crate) fn create_all(
 /// order — a table is created after the table it references — so clearing in
 /// reverse always empties the referencing table first and never leaves a
 /// foreign key pointing at a row that is about to disappear.
-pub(crate) fn clear_all(connection: &Connection, defs: &[TableDef]) -> Result<(), rusqlite::Error> {
+pub fn clear_all(connection: &Connection, defs: &[TableDef]) -> Result<(), rusqlite::Error> {
     let mut sql = String::new();
     for def in defs.iter().rev().filter(|def| def.cleared) {
         sql.push_str("DELETE FROM ");
@@ -128,12 +144,12 @@ pub(crate) fn clear_all(connection: &Connection, defs: &[TableDef]) -> Result<()
 }
 
 /// Every table a module declares, created by it or not.
-pub(crate) fn names(defs: &'static [TableDef]) -> impl Iterator<Item = &'static str> {
+pub fn names(defs: &'static [TableDef]) -> impl Iterator<Item = &'static str> {
     defs.iter().map(|def| def.name)
 }
 
 /// Declared tables a clear leaves in place.
-pub(crate) fn preserved(defs: &'static [TableDef]) -> impl Iterator<Item = &'static str> {
+pub fn preserved(defs: &'static [TableDef]) -> impl Iterator<Item = &'static str> {
     defs.iter().filter(|def| !def.cleared).map(|def| def.name)
 }
 
@@ -156,8 +172,8 @@ mod tests {
 
     #[test]
     fn generates_create_and_clear_sql_from_the_same_declaration() {
-        let library = crate::Library::in_memory().unwrap();
-        let connection = library.connection.lock();
+        let store = crate::Store::in_memory().unwrap();
+        let connection = store.write();
         create_all(&connection, DEFS).unwrap();
         // `made_elsewhere` is declared for clearing only, so it must not exist.
         let created: Vec<String> = connection
@@ -176,10 +192,10 @@ mod tests {
 
     #[test]
     fn clear_empties_only_what_the_declaration_allows() {
-        let library = crate::Library::in_memory().unwrap();
-        let connection = library.connection.lock();
+        let store = crate::Store::in_memory().unwrap();
+        let connection = store.write();
         create_all(&connection, DEFS).unwrap();
-        // Mirrors how the crate treats `external`: something else creates it,
+        // Mirrors how a caller treats `external`: something else creates it,
         // then the declaration still decides it is cleared.
         connection
             .execute("CREATE TABLE made_elsewhere(id TEXT NOT NULL)", [])
@@ -221,8 +237,8 @@ mod tests {
     /// still has rows fails. This is the whole reason clearing runs backwards.
     #[test]
     fn clearing_removes_referencing_rows_before_the_rows_they_reference() {
-        let library = crate::Library::in_memory().unwrap();
-        let connection = library.connection.lock();
+        let store = crate::Store::in_memory().unwrap();
+        let connection = store.write();
         create_all(&connection, referenced_parent::DEFS).unwrap();
         connection
             .execute("INSERT INTO parent_table(id) VALUES ('p')", [])

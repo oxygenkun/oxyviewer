@@ -24,6 +24,9 @@ flowchart TD
 
 如果 command 中开始出现可独立测试的循环、缓存、格式 fallback 或 SQL，把它下沉到对应 crate。
 
+存储机制不属于任何领域 crate：连接、WAL、事务与 `tables!` 表声明宏都在 `oxy-store`。领域 crate
+声明自己的表、写自己的 SQL，但不要各自打开数据库。
+
 ## 2. 新增 Tauri command
 
 按以下顺序：

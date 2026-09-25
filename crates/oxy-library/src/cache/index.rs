@@ -22,7 +22,7 @@ use std::{
     time::Instant,
 };
 
-crate::table::tables! {
+oxy_store::table::tables! {
     clear indexed_roots =
         "root_path TEXT PRIMARY KEY NOT NULL,
         indexed_at INTEGER NOT NULL DEFAULT (unixepoch()),
@@ -60,7 +60,7 @@ crate::table::tables! {
 }
 
 pub(super) fn ensure_schema(connection: &mut Connection) -> Result<(), rusqlite::Error> {
-    crate::table::create_all(connection, DEFS)?;
+    oxy_store::table::create_all(connection, DEFS)?;
     connection.execute_batch(
         "INSERT OR IGNORE INTO indexed_directory_roots(root_path, indexed_at, directory_count)
            SELECT root_path, indexed_at, directory_count FROM indexed_roots;
@@ -87,7 +87,7 @@ pub(super) fn ensure_schema(connection: &mut Connection) -> Result<(), rusqlite:
 /// declaration that created the tables, so a new table is cleared by default
 /// and marking one `preserve` is the only way to opt out.
 pub(super) fn clear(connection: &Connection) -> Result<(), rusqlite::Error> {
-    crate::table::clear_all(connection, DEFS)
+    oxy_store::table::clear_all(connection, DEFS)
 }
 
 /// Drops every derived row for one root.
@@ -514,7 +514,7 @@ impl Library {
 
     pub fn invalidate_index(&self, root: &Path) -> Result<(), LibraryError> {
         let root = root.canonicalize().unwrap_or_else(|_| root.to_owned());
-        let mut connection = self.connection.lock();
+        let mut connection = self.write();
         let transaction = connection.transaction()?;
         transaction.execute(
             "DELETE FROM indexed_roots WHERE root_path = ?1",
@@ -636,7 +636,7 @@ impl Library {
         directories: &[DirectorySummary],
     ) -> Result<(), LibraryError> {
         {
-            let mut connection = self.connection.lock();
+            let mut connection = self.write();
             let transaction = connection.transaction()?;
             if !root_is_registered(&transaction, &root.to_string_lossy())? {
                 return Ok(());
@@ -664,7 +664,7 @@ impl Library {
         while offset < directories.len() {
             let batch =
                 &directories[offset..directories.len().min(offset + INDEX_WRITE_BATCH_SIZE)];
-            let mut connection = self.connection.lock();
+            let mut connection = self.write();
             let started = Instant::now();
             let transaction = connection.transaction()?;
             if !root_is_registered(&transaction, &root.to_string_lossy())? {
@@ -712,7 +712,7 @@ impl Library {
         let mut offset = 0;
         while offset < assets.len() {
             let batch = &assets[offset..assets.len().min(offset + INDEX_WRITE_BATCH_SIZE)];
-            let mut connection = self.connection.lock();
+            let mut connection = self.write();
             let started = Instant::now();
             let transaction = connection.transaction()?;
             if !root_is_registered(&transaction, &root.to_string_lossy())? {
@@ -809,7 +809,7 @@ impl Library {
     }
 
     pub(crate) fn next_scan_id(&self) -> Result<i64, LibraryError> {
-        let mut connection = self.connection.lock();
+        let mut connection = self.write();
         let transaction = connection.transaction()?;
         let scan_id = transaction.query_row(
             "SELECT next_scan_id FROM library_index_sequence WHERE id = 1",
@@ -830,7 +830,7 @@ impl Library {
         scan_id: i64,
         directory_count: usize,
     ) -> Result<bool, LibraryError> {
-        let mut connection = self.connection.lock();
+        let mut connection = self.write();
         let transaction = connection.transaction()?;
         if !root_is_registered(&transaction, &root.to_string_lossy())? {
             return Ok(false);
@@ -858,7 +858,7 @@ impl Library {
         asset_count: usize,
         directory_count: usize,
     ) -> Result<(), LibraryError> {
-        let mut connection = self.connection.lock();
+        let mut connection = self.write();
         let transaction = connection.transaction()?;
         if !root_is_registered(&transaction, &root.to_string_lossy())? {
             return Ok(());

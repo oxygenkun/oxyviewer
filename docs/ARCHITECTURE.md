@@ -96,6 +96,7 @@ flowchart LR
         metadataCrate["oxy-metadata 元数据"]
         libraryCrate["oxy-library 本地资料库"]
         runtimeCrate["oxy-runtime 作业状态"]
+        storeCrate["oxy-store 存储机制"]
     end
 
     subgraph localData["本机资源"]
@@ -143,8 +144,9 @@ crates/oxy-fs/                文件发现、会话、分页、路径校验、�
 crates/oxy-media/             尺寸读取、预览生成、RAW/HEIF/native adapters
 crates/oxy-metadata-parser/   进程内 EXIF/XMP/IPTC/ICC/MakerNote 解析器
 crates/oxy-metadata/          元数据归一化、sidecar 与可选 ExifTool 能力边界
-crates/oxy-library/           SQLite 资料库和显式根目录
+crates/oxy-library/           资料库数据含义：用户资料、可重建缓存及其所有权
 crates/oxy-runtime/           作业 ID、优先级和取消标记
+crates/oxy-store/             SQLite 连接、WAL 读连接、事务与表声明宏
 docs/adr/                     重要且难以逆转的架构决策
 ```
 
@@ -159,8 +161,9 @@ docs/adr/                     重要且难以逆转的架构决策
 | `oxy-media` | 解码、预览、缓存、HEIF 会话 | React/Tauri 组件逻辑 |
 | `oxy-metadata-parser` | 解析图片容器与通用/私有元数据标签 | UI 投影、sidecar 写入、启动外部进程 |
 | `oxy-metadata` | XMP/ExifTool 策略；通用 EXIF、图片格式与厂商 MakerNotes 分层归一化 | 任意文件浏览、跨厂商复用私有标签数值表 |
-| `oxy-library` | 可重建索引、显式资料库根目录 | 成为照片的唯一事实来源 |
+| `oxy-library` | 资料库数据含义：用户资料、可重建缓存及两者的所有权边界 | 存储机制(连接、WAL、事务、建表) |
 | `oxy-runtime` | 后台作业的通用控制词汇 | 具体媒体算法 |
+| `oxy-store` | SQLite 文件、连接与 WAL 读连接、事务、声明式表定义 | 照片、标签、人物等业务语义 |
 
 ## 6. 三条最重要的运行路径
 

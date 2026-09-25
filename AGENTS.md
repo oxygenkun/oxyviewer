@@ -35,8 +35,13 @@ Repository-specific rules for coding agents working on OxyViewer.
   `person_request_results`) is user data: never delete it from a cache clear,
   cache migration, or re-index, and never add a deletion path that is not an
   explicit, confirmed user action.
-- Declare every table once with `crate::table::tables!` in the module that owns
-  it. One declaration produces the `CREATE TABLE`, the list of owned tables,
+- Keep storage mechanism out of domain code. `oxy-store` owns the SQLite file
+  itself: connections, WAL readers, transactions, and the `oxy_store::table`
+  declaration macro. `oxy-library` owns what the rows mean. Do not open a
+  database from a domain module, and do not put a photo, tag, or person concept
+  into `oxy-store`.
+- Declare every table once with `oxy_store::table::tables!` in the module that
+  owns it. One declaration produces the `CREATE TABLE`, the list of owned tables,
   and the `DELETE` statements, so a new table cannot be created without also
   being cleared. Declare in creation order; clearing walks that order backwards
   so a referencing table is always emptied first. Mark a table `preserve` only

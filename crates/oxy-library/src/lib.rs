@@ -1,10 +1,13 @@
-//! The local photo library: one SQLite file split into two namespaces.
+//! The local photo library: user facts and derived state over one SQLite store.
 //!
-//! [`cache`] holds derived state that can always be rebuilt from the original
-//! photos, and [`user`] holds facts the user typed, named, confirmed, or
-//! assigned. [`schema`] is the single registry that decides which table belongs
-//! to which side, and [`cache::clear`] is the only entry point allowed to
-//! delete derived rows.
+//! The storage mechanism — opening the file, WAL, reader fan-out, transactions,
+//! and the declarative table definitions — lives in [`oxy_store`]. This crate
+//! owns what the rows *mean*, and it splits them by ownership: [`cache`] holds
+//! derived state that can always be rebuilt from the original photos, and
+//! [`user`] holds facts the user typed, named, confirmed, or assigned.
+//! [`schema`] is the single audit that decides which table belongs to which
+//! side, and [`cache::clear`] is the only entry point allowed to delete derived
+//! rows.
 //!
 //! The split is a safety property, not just layout: a cache migration, a
 //! preview clear, or a re-index must never be able to reach a person identity,
@@ -15,19 +18,21 @@ pub use cache::browsing::DirectoryRead;
 pub use cache::index::{IndexProgress, IndexStage, IndexStats};
 mod schema;
 pub use schema::{DataClass, class_of, preserved_on_clear, rebuildable_tables, user_owned_tables};
-mod table;
 mod user;
 pub use oxy_domain::DetectedPersonInstance;
 pub use user::people::ManualPersonAnchor;
 
+use oxy_store::Store;
 use parking_lot::{Mutex, MutexGuard};
-use rusqlite::{Connection, OpenFlags};
+use rusqlite::Connection;
 use std::{
     collections::HashSet,
     path::{Path, PathBuf},
-    sync::Arc,
     time::Duration,
 };
+// Only the test-only `shared_connection` shim names the shared write handle.
+#[cfg(test)]
+use std::sync::Arc;
 use thiserror::Error;
 
 pub(crate) const DEFAULT_PAGE_SIZE: usize = 250;
@@ -39,6 +44,8 @@ pub(crate) const INDEX_WRITE_TIME_SLICE: Duration = Duration::from_millis(8);
 pub enum LibraryError {
     #[error("directory snapshot changed; reload the first page")]
     StaleDirectorySnapshot,
+    #[error(transparent)]
+    Store(#[from] oxy_store::StoreError),
     #[error(transparent)]
     Sqlite(#[from] rusqlite::Error),
     #[error(transparent)]
@@ -77,87 +84,96 @@ pub enum LibraryError {
     PersonAnalysisConflict,
 }
 
+/// The photo library: user facts and derived state over one SQLite store.
+///
+/// The storage mechanism lives in [`oxy_store`]; this type owns what the data
+/// *means*. It holds the [`Store`], the in-memory directory snapshots, the
+/// rebuildable index bookkeeping, and the schedule that decides whether a scan
+/// may run — and nothing about the file format, the WAL setup, or the pragmas.
 pub struct Library {
+    store: Store,
     directory_snapshots: cache::browsing::DirectorySnapshots,
     pub foreground: oxy_runtime::ForegroundGate,
-    connection: Arc<Mutex<Connection>>,
-    // Disk libraries use WAL readers that never acquire the writer mutex.
-    // Plain in-memory databases cannot share WAL; tests retain one connection.
-    reader: Option<Mutex<Connection>>,
-    projection_reader: Option<Mutex<Connection>>,
     vector_status: Result<String, String>,
     indexing_roots: Mutex<HashSet<PathBuf>>,
     index_gate: Mutex<()>,
 }
 
 impl Library {
+    /// The write connection. Domain modules hold it for the duration of a write.
+    fn write(&self) -> MutexGuard<'_, Connection> {
+        self.store.write()
+    }
+
+    /// A read connection that never waits for a background index write.
     fn read_connection(&self) -> MutexGuard<'_, Connection> {
-        self.reader.as_ref().unwrap_or(&self.connection).lock()
+        self.store.read()
     }
 
+    /// A read connection reserved for resource projections.
     fn read_projection_connection(&self) -> MutexGuard<'_, Connection> {
-        self.projection_reader
-            .as_ref()
-            .unwrap_or(&self.connection)
-            .lock()
+        self.store.read_projection()
     }
 
+    /// The shared write connection, for tests that drive the snapshot
+    /// persistence worker directly.
+    #[cfg(test)]
+    fn shared_connection(&self) -> Arc<Mutex<Connection>> {
+        self.store.shared_connection()
+    }
+
+    /// Opens the library and creates every table the domain declares.
+    ///
+    /// The store opens the file and enables WAL; the schema steps below are the
+    /// library's own, run user-owned tables first so a cache migration is never
+    /// the first thing to define user storage.
     pub fn open(path: &Path) -> Result<Self, LibraryError> {
         let vector_registration = cache::features::register_extension();
-        if let Some(parent) = path.parent() {
-            std::fs::create_dir_all(parent)?;
+        let store = Store::open(path)?;
+        {
+            let mut connection = store.write();
+            user::ensure_schema(&mut connection)?;
+            cache::ensure_schema(&mut connection)?;
         }
-        let mut connection = Connection::open(path)?;
-        connection.pragma_update(None, "journal_mode", "WAL")?;
-        connection.pragma_update(None, "foreign_keys", "ON")?;
-        // User facts first: a cache migration must never be the first thing to
-        // define user storage, and every cache table is derived from these.
-        user::ensure_schema(&mut connection)?;
-        cache::ensure_schema(&mut connection)?;
-        let open_reader = || -> Result<Mutex<Connection>, rusqlite::Error> {
-            let reader = Connection::open_with_flags(
-                path,
-                OpenFlags::SQLITE_OPEN_READ_ONLY | OpenFlags::SQLITE_OPEN_NO_MUTEX,
-            )?;
-            Ok(Mutex::new(reader))
-        };
-        let reader = open_reader()?;
-        let projection_reader = open_reader()?;
         let vector_status = vector_registration.and_then(|()| {
-            cache::features::probe_connections(&connection, Some(&reader), Some(&projection_reader))
+            let writer = store.write();
+            match (store.reader(), store.projection_reader()) {
+                (Some(reader), Some(projection_reader)) => {
+                    cache::features::probe_connections(&writer, Some(reader), Some(projection_reader))
+                }
+                _ => cache::features::probe_connections(&writer, None, None),
+            }
         });
-        let connection = Arc::new(Mutex::new(connection));
-        Ok(Self {
-            reader: Some(reader),
-            projection_reader: Some(projection_reader),
-            vector_status,
-            connection: connection.clone(),
-            indexing_roots: Mutex::new(HashSet::new()),
-            index_gate: Mutex::new(()),
-            directory_snapshots: cache::browsing::DirectorySnapshots::new(connection),
-            foreground: oxy_runtime::ForegroundGate::default(),
-        })
+        Ok(Self::with_store(store, vector_status))
     }
 
+    /// Opens a library that lives only in this process.
     pub fn in_memory() -> Result<Self, LibraryError> {
         let vector_registration = cache::features::register_extension();
-        let mut connection = Connection::open_in_memory()?;
-        connection.pragma_update(None, "foreign_keys", "ON")?;
-        user::ensure_schema(&mut connection)?;
-        cache::ensure_schema(&mut connection)?;
-        let vector_status = vector_registration
-            .and_then(|()| cache::features::probe_connections(&connection, None, None));
-        let connection = Arc::new(Mutex::new(connection));
-        Ok(Self {
-            connection: connection.clone(),
-            reader: None,
-            projection_reader: None,
+        let store = Store::in_memory()?;
+        {
+            let mut connection = store.write();
+            user::ensure_schema(&mut connection)?;
+            cache::ensure_schema(&mut connection)?;
+        }
+        let vector_status = vector_registration.and_then(|()| {
+            let writer = store.write();
+            cache::features::probe_connections(&writer, None, None)
+        });
+        Ok(Self::with_store(store, vector_status))
+    }
+
+    fn with_store(store: Store, vector_status: Result<String, String>) -> Self {
+        let directory_snapshots =
+            cache::browsing::DirectorySnapshots::new(store.shared_connection());
+        Self {
+            store,
+            directory_snapshots,
             vector_status,
             indexing_roots: Mutex::new(HashSet::new()),
             index_gate: Mutex::new(()),
-            directory_snapshots: cache::browsing::DirectorySnapshots::new(connection),
             foreground: oxy_runtime::ForegroundGate::default(),
-        })
+        }
     }
 }
 
@@ -301,8 +317,7 @@ mod tests {
 
         let library = Library::open(&database).unwrap();
         let columns = library
-            .connection
-            .lock()
+            .write()
             .prepare("PRAGMA table_info(resource_projections)")
             .unwrap()
             .query_map([], |row| row.get::<_, String>("name"))
@@ -427,7 +442,7 @@ mod tests {
 
         let (sender, receiver) = std::sync::mpsc::channel();
         let completed = std::thread::scope(|scope| {
-            let mut writer = library.connection.lock();
+            let mut writer = library.write();
             let transaction = writer.transaction().unwrap();
             transaction
                 .execute("UPDATE indexed_assets SET name = 'uncommitted.jpg'", [])
@@ -484,7 +499,7 @@ mod tests {
                 error: None,
             })
             .unwrap();
-        let writer = library.connection.lock();
+        let writer = library.write();
         let browsing = library.read_connection();
         let (sender, receiver) = std::sync::mpsc::channel();
         let completed = std::thread::scope(|scope| {
@@ -623,7 +638,7 @@ mod tests {
             );
             inserted += assets.len();
         }
-        let connection = library.connection.lock();
+        let connection = library.write();
         let count: usize = connection
             .query_row(
                 "SELECT COUNT(*) AS count FROM indexed_asset_search",
@@ -646,8 +661,7 @@ mod tests {
         library.index_root(&root).unwrap();
         // Simulate the pre-migration database, including a non-default FTS rowid.
         library
-            .connection
-            .lock()
+            .write()
             .execute_batch(
                 "UPDATE indexed_asset_search SET rowid = 1234;
              DROP TABLE indexed_asset_search_keys;",
@@ -679,7 +693,7 @@ mod tests {
                 .total,
             1
         );
-        let connection = library.connection.lock();
+        let connection = library.write();
         let (count, rowid): (usize, i64) = connection
             .query_row(
                 "SELECT COUNT(*) AS count, MIN(rowid) AS min_rowid FROM indexed_asset_search",
@@ -725,7 +739,7 @@ mod tests {
         );
         std::fs::remove_file(child.join("shared.jpg")).unwrap();
         library.index_root(&child).unwrap();
-        let connection = library.connection.lock();
+        let connection = library.write();
         for table in ["indexed_asset_search", "indexed_asset_search_keys"] {
             let count: usize = connection
                 .query_row(
@@ -772,8 +786,7 @@ mod tests {
             1
         );
         let search_rows = library
-            .connection
-            .lock()
+            .write()
             .query_row(
                 "SELECT COUNT(*) AS count FROM indexed_asset_search WHERE root_path = ?1",
                 params![canonical_root.to_string_lossy()],
@@ -859,7 +872,7 @@ mod tests {
 
         library
             .index_root_with_progress(root.path(), |_| {
-                let connection = library.connection.lock();
+                let connection = library.write();
                 let directory_rows = connection
                     .query_row(
                         "SELECT COUNT(*) AS count FROM indexed_directories",
@@ -1262,8 +1275,7 @@ mod tests {
         for incompatible in [obsolete.to_string(), "{".into()] {
             let accepted = library.accept_image_projection(projection.clone()).unwrap();
             library
-                .connection
-                .lock()
+                .write()
                 .execute(
                     "UPDATE resource_projections SET result_json = ?1 WHERE path = ?2",
                     params![incompatible, source.to_string_lossy()],

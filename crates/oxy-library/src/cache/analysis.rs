@@ -11,7 +11,7 @@ use oxy_domain::{
 use rusqlite::{Connection, OptionalExtension, Row, Transaction, params};
 use std::path::PathBuf;
 
-crate::table::tables! {
+oxy_store::table::tables! {
     clear person_analysis_heads = "folder_path TEXT PRIMARY KEY, generation INTEGER NOT NULL, run_id TEXT NOT NULL";
     clear person_analysis_runs =
         "run_id TEXT PRIMARY KEY,
@@ -45,7 +45,7 @@ crate::table::tables! {
 }
 
 pub(crate) fn ensure_schema(connection: &Connection) -> Result<(), rusqlite::Error> {
-    crate::table::create_all(connection, DEFS)?;
+    oxy_store::table::create_all(connection, DEFS)?;
     connection.execute_batch(
         "CREATE INDEX IF NOT EXISTS person_analysis_runs_folder
            ON person_analysis_runs(folder_path,generation DESC);
@@ -67,11 +67,11 @@ pub(crate) fn ensure_schema(connection: &Connection) -> Result<(), rusqlite::Err
     Ok(())
 }
 
-/// Empties every table declared above. [`crate::table::clear_all`] walks the
+/// Empties every table declared above. [`oxy_store::table::clear_all`] walks the
 /// declaration backwards, so tasks and requests go before the runs they
 /// reference.
 pub(crate) fn clear(connection: &Connection) -> Result<(), rusqlite::Error> {
-    crate::table::clear_all(connection, DEFS)
+    oxy_store::table::clear_all(connection, DEFS)
 }
 
 fn row_run(row: &Row<'_>) -> rusqlite::Result<PersonAnalysisRun> {
@@ -165,7 +165,7 @@ impl Library {
         {
             return Err(LibraryError::InvalidPersonAnalysis);
         }
-        let mut connection = self.connection.lock();
+        let mut connection = self.write();
         let transaction = connection.transaction()?;
         let replay: Option<(String, String)> = transaction
             .query_row(
@@ -257,7 +257,7 @@ impl Library {
         if run_id.is_empty() || request_id.trim().is_empty() {
             return Err(LibraryError::InvalidPersonAnalysis);
         }
-        let mut connection = self.connection.lock();
+        let mut connection = self.write();
         let transaction = connection.transaction()?;
         let replay: Option<(String, String)> = transaction
             .query_row(
@@ -310,7 +310,7 @@ impl Library {
         if tasks.is_empty() || tasks.len() > 256 {
             return Err(LibraryError::InvalidPersonAnalysis);
         }
-        let mut connection = self.connection.lock();
+        let mut connection = self.write();
         let transaction = connection.transaction()?;
         let run = current_run(&transaction, run_id)?;
         if run.enumeration_complete {
@@ -386,7 +386,7 @@ impl Library {
         &self,
         run_id: &str,
     ) -> Result<PersonAnalysisRun, LibraryError> {
-        let mut connection = self.connection.lock();
+        let mut connection = self.write();
         let transaction = connection.transaction()?;
         current_run(&transaction, run_id)?;
         transaction.execute(
@@ -411,7 +411,7 @@ impl Library {
         &self,
         run_id: &str,
     ) -> Result<Option<PersonAnalysisTask>, LibraryError> {
-        let mut connection = self.connection.lock();
+        let mut connection = self.write();
         let transaction = connection.transaction()?;
         current_run(&transaction, run_id)?;
         let mut task = transaction
@@ -461,7 +461,7 @@ impl Library {
     /// invalidated in the same transaction, so late workers cannot publish.
     /// Call this when starting or restarting the worker for a persisted run.
     pub fn recover_person_analysis_tasks(&self, run_id: &str) -> Result<usize, LibraryError> {
-        let mut connection = self.connection.lock();
+        let mut connection = self.write();
         let transaction = connection.transaction()?;
         current_run(&transaction, run_id)?;
         let recovered = transaction.execute(
@@ -534,7 +534,7 @@ impl Library {
         for feature in features {
             validate_feature(feature)?;
         }
-        let mut connection = self.connection.lock();
+        let mut connection = self.write();
         let transaction = connection.transaction()?;
         let run = current_run(&transaction, &task.run_id)?;
         if run.folder_path != task.folder_path {
@@ -631,7 +631,7 @@ impl Library {
         if error.trim().is_empty() || error.len() > 2048 {
             return Err(LibraryError::InvalidPersonAnalysis);
         }
-        let mut connection = self.connection.lock();
+        let mut connection = self.write();
         let transaction = connection.transaction()?;
         let run = current_run(&transaction, &task.run_id)?;
         if run.folder_path != task.folder_path {
@@ -1139,7 +1139,7 @@ mod tests {
             .unwrap();
         drop(connection);
         let library = Library::open(&database).unwrap();
-        let connection = library.connection.lock();
+        let connection = library.write();
         let found: (String, Option<String>) = connection
             .query_row(
                 "SELECT state,claim_token FROM person_analysis_tasks WHERE run_id='old-run'",

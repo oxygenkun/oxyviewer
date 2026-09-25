@@ -12,7 +12,7 @@ use oxy_domain::{
 use rusqlite::{Connection, OptionalExtension, Transaction, TransactionBehavior, params};
 use std::path::Path;
 
-crate::table::tables! {
+oxy_store::table::tables! {
     preserve resource_projection_sequence = "id INTEGER PRIMARY KEY CHECK(id = 1), next_revision INTEGER NOT NULL";
     clear resource_projections =
         "path TEXT NOT NULL,
@@ -31,7 +31,7 @@ crate::table::tables! {
 }
 
 pub(super) fn ensure_schema(connection: &mut Connection) -> Result<(), rusqlite::Error> {
-    crate::table::create_all(connection, DEFS)?;
+    oxy_store::table::create_all(connection, DEFS)?;
     connection.execute_batch(
         "INSERT OR IGNORE INTO resource_projection_sequence(id, next_revision) VALUES (1, 1);
          CREATE INDEX IF NOT EXISTS resource_projections_parent
@@ -69,14 +69,14 @@ pub(super) fn ensure_schema(connection: &mut Connection) -> Result<(), rusqlite:
 /// Empties every table declared above except the revision counter, which the
 /// declaration marks `preserve`; see [`crate::schema::preserved_on_clear`].
 pub(super) fn clear(connection: &Connection) -> Result<(), rusqlite::Error> {
-    crate::table::clear_all(connection, DEFS)
+    oxy_store::table::clear_all(connection, DEFS)
 }
 
 impl Library {
     /// Allocates a revision in SQLite so observations from separate native
     /// processes share one comparable acceptance order.
     pub fn next_resource_revision(&self) -> Result<u64, LibraryError> {
-        let mut connection = self.connection.lock();
+        let mut connection = self.write();
         let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
         let revision = next_resource_revision(&transaction)?;
         transaction.commit()?;
@@ -116,7 +116,7 @@ impl Library {
         &self,
         mut candidate: MetadataProjection,
     ) -> Result<MetadataProjection, LibraryError> {
-        let mut connection = self.connection.lock();
+        let mut connection = self.write();
         let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
         if let Some(current) = read_metadata_projection(&transaction, &candidate.path)?
             && current.valid_at > candidate.valid_at
@@ -177,7 +177,7 @@ impl Library {
         &self,
         mut candidate: ImageProjection,
     ) -> Result<ImageProjection, LibraryError> {
-        let mut connection = self.connection.lock();
+        let mut connection = self.write();
         let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
         if let Some(current) =
             read_image_projection(&transaction, &candidate.path, candidate.level)?
@@ -242,7 +242,7 @@ impl Library {
     }
 
     pub fn invalidate_resource_projections(&self, directory: &Path) -> Result<(), LibraryError> {
-        let mut connection = self.connection.lock();
+        let mut connection = self.write();
         let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
         let revision = next_resource_revision(&transaction)?;
         transaction.execute(
@@ -264,7 +264,7 @@ impl Library {
     }
 
     pub fn invalidate_image_projections(&self) -> Result<(), LibraryError> {
-        let mut connection = self.connection.lock();
+        let mut connection = self.write();
         let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
         let revision = next_resource_revision(&transaction)?;
         transaction.execute(

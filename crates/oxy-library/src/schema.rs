@@ -96,7 +96,7 @@ mod tests {
     #[test]
     fn every_table_has_a_declared_class() {
         let library = Library::in_memory().unwrap();
-        let connection = library.connection.lock();
+        let connection = library.write();
         let undeclared: Vec<String> = table_names(&connection)
             .into_iter()
             .filter(|name| class_of(name).is_none())
@@ -123,7 +123,7 @@ mod tests {
 
         library.clear_rebuildable_cache().unwrap();
 
-        let connection = library.connection.lock();
+        let connection = library.write();
         for table in user_owned_tables() {
             let count: i64 = connection
                 .query_row(
@@ -232,7 +232,7 @@ mod tests {
     }
 
     fn seed_user_facts(library: &Library) {
-        let connection = library.connection.lock();
+        let connection = library.write();
         connection
             .execute_batch(
                 "INSERT INTO custom_tags(id, name, name_key, sort_order) VALUES (1, 'People', 'people', 0);

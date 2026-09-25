@@ -8,7 +8,9 @@ members = [
   "crates/oxy-media",
   "crates/oxy-metadata",
   "crates/oxy-metadata-parser",
+  "crates/oxy-people",
   "crates/oxy-runtime",
+  "crates/oxy-store",
 ]
 
 [workspace.package]

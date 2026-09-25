@@ -214,7 +214,7 @@ fn record_persistence_error(slot: &Slot, item: &PersistenceItem, error: String) 
     }
 }
 
-crate::table::tables! {
+oxy_store::table::tables! {
     clear directory_snapshots =
         "root_path TEXT NOT NULL,
         directory_path TEXT NOT NULL,
@@ -223,14 +223,14 @@ crate::table::tables! {
 }
 
 pub(crate) fn ensure_schema(connection: &Connection) -> Result<(), rusqlite::Error> {
-    crate::table::create_all(connection, DEFS)
+    oxy_store::table::create_all(connection, DEFS)
 }
 
 /// Empties the table created by [`ensure_schema`]. In-memory slots are dropped
 /// separately by [`Library::clear_rebuildable_cache`], because a slot must not
 /// answer from rows that no longer exist.
 pub(crate) fn clear(connection: &Connection) -> Result<(), rusqlite::Error> {
-    crate::table::clear_all(connection, DEFS)
+    oxy_store::table::clear_all(connection, DEFS)
 }
 
 impl Library {
@@ -551,7 +551,7 @@ impl Library {
             state.validating = false;
             state.error = None;
         }
-        self.connection.lock().execute(
+        self.write().execute(
             "DELETE FROM directory_snapshots WHERE root_path=?1",
             [root.to_string_lossy()],
         )?;
@@ -608,7 +608,7 @@ impl Library {
             state.validating = false;
             state.error = None;
         }
-        let mut connection = self.connection.lock();
+        let mut connection = self.write();
         let mut paths = connection
             .prepare("SELECT root_path,directory_path FROM directory_snapshots")?
             .query_map([], |row| {
@@ -665,7 +665,7 @@ mod tests {
         let library = Library::in_memory().unwrap();
         let slot = library.directory_slot(&root, &root).unwrap();
         let assets = Arc::new(oxy_fs::scan_index_assets(&root).unwrap());
-        let connection = library.connection.lock();
+        let connection = library.write();
         library
             .publish_directory(&root, &root, &slot, 0, assets)
             .unwrap();
@@ -701,8 +701,7 @@ mod tests {
         fs::write(root.join("one.jpg"), "photo").unwrap();
         let library = Library::in_memory().unwrap();
         library
-            .connection
-            .lock()
+            .write()
             .execute("DROP TABLE directory_snapshots", [])
             .unwrap();
         let slot = library.directory_slot(&root, &root).unwrap();
@@ -732,8 +731,7 @@ mod tests {
         fs::write(root.join("one.jpg"), "photo").unwrap();
         let library = Library::in_memory().unwrap();
         library
-            .connection
-            .lock()
+            .write()
             .execute(
                 "INSERT INTO directory_snapshots(root_path,directory_path,assets_json) VALUES (?1,?2,'')",
                 params![root.to_string_lossy(), root.to_string_lossy()],
@@ -759,11 +757,10 @@ mod tests {
             });
         }
 
-        persist_pending_snapshots(&library.connection, &slot);
+        persist_pending_snapshots(&library.shared_connection(), &slot);
 
         let json: String = library
-            .connection
-            .lock()
+            .write()
             .query_row(
                 "SELECT assets_json FROM directory_snapshots WHERE root_path=?1 AND directory_path=?2",
                 params![root.to_string_lossy(), root.to_string_lossy()],
@@ -1015,8 +1012,7 @@ mod tests {
 
         let library = Library::open(&database).unwrap();
         let tombstone: String = library
-            .connection
-            .lock()
+            .write()
             .query_row(
                 "SELECT assets_json FROM directory_snapshots
                  WHERE root_path=?1 AND directory_path=?2",

@@ -25,12 +25,12 @@ use rusqlite::Connection;
 /// There is no registry to update: a module declares its tables once, and both
 /// the DDL and the delete statements are derived from that declaration.
 pub(crate) fn tables() -> impl Iterator<Item = &'static str> {
-    crate::table::names(index::DEFS)
-        .chain(crate::table::names(projections::DEFS))
-        .chain(crate::table::names(browsing::DEFS))
-        .chain(crate::table::names(detections::DEFS))
-        .chain(crate::table::names(features::DEFS))
-        .chain(crate::table::names(analysis::DEFS))
+    oxy_store::table::names(index::DEFS)
+        .chain(oxy_store::table::names(projections::DEFS))
+        .chain(oxy_store::table::names(browsing::DEFS))
+        .chain(oxy_store::table::names(detections::DEFS))
+        .chain(oxy_store::table::names(features::DEFS))
+        .chain(oxy_store::table::names(analysis::DEFS))
 }
 
 /// Cache tables a clear leaves their allocator or format marker in place.
@@ -40,12 +40,12 @@ pub(crate) fn tables() -> impl Iterator<Item = &'static str> {
 /// everything written after. Clearing a schema marker would only force a
 /// needless rebuild of an otherwise valid cache.
 pub(crate) fn preserved_on_clear() -> impl Iterator<Item = &'static str> {
-    crate::table::preserved(index::DEFS)
-        .chain(crate::table::preserved(projections::DEFS))
-        .chain(crate::table::preserved(browsing::DEFS))
-        .chain(crate::table::preserved(detections::DEFS))
-        .chain(crate::table::preserved(features::DEFS))
-        .chain(crate::table::preserved(analysis::DEFS))
+    oxy_store::table::preserved(index::DEFS)
+        .chain(oxy_store::table::preserved(projections::DEFS))
+        .chain(oxy_store::table::preserved(browsing::DEFS))
+        .chain(oxy_store::table::preserved(detections::DEFS))
+        .chain(oxy_store::table::preserved(features::DEFS))
+        .chain(oxy_store::table::preserved(analysis::DEFS))
 }
 
 /// Creates or migrates every rebuildable table. Called after the user-owned
@@ -85,7 +85,7 @@ impl Library {
     /// In-memory snapshots are dropped with the rows they mirror, so a slot
     /// cannot answer from data that no longer exists on disk.
     pub fn clear_rebuildable_cache(&self) -> Result<(), LibraryError> {
-        let mut connection = self.connection.lock();
+        let mut connection = self.write();
         clear(&mut connection)?;
         self.directory_snapshots.invalidate_all();
         Ok(())

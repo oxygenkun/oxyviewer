@@ -13,7 +13,7 @@ use std::{collections::HashMap, path::Path};
 // only an explicit delete removes them. `asset_tag_sources` is created by
 // `ensure_source_schema` instead, because its backfill has to run in its own
 // transaction once `asset_tags` exists.
-crate::table::tables! {
+oxy_store::table::tables! {
     preserve custom_tags =
         "id INTEGER PRIMARY KEY AUTOINCREMENT,
         parent_id INTEGER REFERENCES custom_tags(id) ON DELETE CASCADE,
@@ -41,7 +41,7 @@ crate::table::tables! {
 }
 
 pub(crate) fn ensure_schema(connection: &rusqlite::Connection) -> Result<(), rusqlite::Error> {
-    crate::table::create_all(connection, DEFS)?;
+    oxy_store::table::create_all(connection, DEFS)?;
     connection.execute_batch(
         "CREATE UNIQUE INDEX IF NOT EXISTS custom_tags_sibling_name
            ON custom_tags(COALESCE(parent_id, 0), name_key);
@@ -244,7 +244,7 @@ impl Library {
         if input.request_id.is_empty() || (input.enabled && input.tag_id.is_none()) {
             return Err(LibraryError::PersonConflict);
         }
-        let mut connection = self.connection.lock();
+        let mut connection = self.write();
         let tx = connection.transaction()?;
         let historical_id: String = tx
             .query_row(
@@ -369,7 +369,7 @@ impl Library {
         {
             return Err(LibraryError::PersonConflict);
         }
-        let mut connection = self.connection.lock();
+        let mut connection = self.write();
         let tx = connection.transaction()?;
         let historical_id: String = tx
             .query_row(
@@ -583,7 +583,7 @@ impl Library {
         name: &str,
     ) -> Result<CustomTag, LibraryError> {
         let (name, name_key) = normalize_name(name)?;
-        let mut connection = self.connection.lock();
+        let mut connection = self.write();
         let transaction = connection.transaction()?;
         if let Some(parent_id) = parent_id
             && !tag_exists(&transaction, parent_id)?
@@ -619,7 +619,7 @@ impl Library {
         name: &str,
     ) -> Result<CustomTag, LibraryError> {
         let (name, name_key) = normalize_name(name)?;
-        let mut connection = self.connection.lock();
+        let mut connection = self.write();
         let transaction = connection.transaction()?;
         let (current_parent_id, current_sort_order) = transaction
             .query_row(
@@ -707,7 +707,7 @@ impl Library {
 
     pub fn delete_custom_tag(&self, id: CustomTagId) -> Result<TagDeleteImpact, LibraryError> {
         let impact = self.custom_tag_delete_impact(id)?;
-        let mut connection = self.connection.lock();
+        let mut connection = self.write();
         let transaction = connection.transaction()?;
         let affected = descendant_asset_paths(&transaction, id)?;
         transaction.execute("DELETE FROM custom_tags WHERE id = ?1", params![id])?;
@@ -797,7 +797,7 @@ impl Library {
         tag_id: CustomTagId,
         assigned: bool,
     ) -> Result<(), LibraryError> {
-        let mut connection = self.connection.lock();
+        let mut connection = self.write();
         let transaction = connection.transaction()?;
         if !tag_exists(&transaction, tag_id)? {
             return Err(LibraryError::MissingTagParent);
@@ -887,7 +887,7 @@ impl Library {
         subjects: &[String],
         hierarchical: &[String],
     ) -> Result<(), LibraryError> {
-        let connection = self.connection.lock();
+        let connection = self.write();
         connection.execute(
             "INSERT INTO asset_tag_xmp_state(asset_path, subjects_json, hierarchical_json, synced_at)
              VALUES (?1, ?2, ?3, unixepoch())
@@ -914,7 +914,7 @@ impl Library {
     }
 
     pub fn fail_tag_xmp_sync(&self, path: &Path, error: &str) -> Result<(), LibraryError> {
-        self.connection.lock().execute(
+        self.write().execute(
             "UPDATE tag_xmp_sync_queue SET attempt_count=attempt_count + 1, last_error=?2
              WHERE asset_path=?1",
             params![path.to_string_lossy(), error],
@@ -950,7 +950,7 @@ impl Library {
         subjects: &[String],
         hierarchical: &[String],
     ) -> Result<(), LibraryError> {
-        let has_pending_write = self.connection.lock().query_row(
+        let has_pending_write = self.write().query_row(
             "SELECT EXISTS(SELECT 1 FROM tag_xmp_sync_queue WHERE asset_path = ?1) AS present",
             params![path.to_string_lossy()],
             |row| row.get::<_, bool>("present"),
@@ -965,8 +965,7 @@ impl Library {
             for segment in value.split('|') {
                 let (name, name_key) = normalize_name(segment)?;
                 let existing = self
-                    .connection
-                    .lock()
+                    .write()
                     .query_row(
                         "SELECT id FROM custom_tags WHERE parent_id IS ?1 AND name_key = ?2",
                         params![parent_id, name_key],
@@ -993,8 +992,7 @@ impl Library {
             }
             let (name, name_key) = normalize_name(subject)?;
             let existing = self
-                .connection
-                .lock()
+                .write()
                 .query_row(
                     "SELECT id FROM custom_tags WHERE parent_id IS NULL AND name_key = ?1",
                     params![name_key],
@@ -1007,7 +1005,7 @@ impl Library {
             };
             desired_tag_ids.insert(tag_id);
         }
-        let mut connection = self.connection.lock();
+        let mut connection = self.write();
         let transaction = connection.transaction()?;
         let existing_tag_ids = {
             let mut statement = transaction.prepare(
@@ -1077,7 +1075,7 @@ impl Library {
         destination: &Path,
         copy: bool,
     ) -> Result<(), LibraryError> {
-        let mut connection = self.connection.lock();
+        let mut connection = self.write();
         let transaction = connection.transaction()?;
         let same_folder_move = !copy && source.parent() == destination.parent();
         transaction.execute(
@@ -1152,7 +1150,7 @@ impl Library {
     }
 
     pub fn remove_asset_tag_state(&self, path: &Path) -> Result<(), LibraryError> {
-        let mut connection = self.connection.lock();
+        let mut connection = self.write();
         let transaction = connection.transaction()?;
         let path = path.to_string_lossy();
         forget_asset(&transaction, &path)?;
@@ -1568,8 +1566,7 @@ mod tests {
             vec![asset.clone()]
         );
         let sources: Vec<String> = library
-            .connection
-            .lock()
+            .write()
             .prepare("SELECT source_kind FROM asset_tag_sources WHERE asset_path=?1 AND tag_id=?2")
             .unwrap()
             .query_map(params![asset.to_string_lossy(), tag.id], |row| {
@@ -1589,8 +1586,7 @@ mod tests {
         let library = Library::open(&database).unwrap();
         let tag = library.create_custom_tag(None, "Legacy").unwrap();
         library
-            .connection
-            .lock()
+            .write()
             .execute(
                 "INSERT INTO asset_tags(asset_path,tag_id) VALUES (?1,?2)",
                 params![path.to_string_lossy(), tag.id],
@@ -1599,8 +1595,7 @@ mod tests {
         drop(library);
         let reopened = Library::open(&database).unwrap();
         let source: String = reopened
-            .connection
-            .lock()
+            .write()
             .query_row(
                 "SELECT source_kind FROM asset_tag_sources WHERE asset_path=?1 AND tag_id=?2",
                 params![path.to_string_lossy(), tag.id],
@@ -1627,7 +1622,7 @@ mod tests {
         let first = library.create_folder_person(&folder, "first").unwrap();
         let second = library.create_folder_person(&folder, "second").unwrap();
         {
-            let connection = library.connection.lock();
+            let connection = library.write();
             connection.execute("INSERT INTO historical_people(id,display_name,reference_asset_path,reference_source_revision) VALUES ('history','Alex',?1,'10:20')", [image.to_string_lossy()]).unwrap();
             for subject in [&first.id, &second.id] {
                 connection.execute("INSERT INTO folder_historical_links(subject_id,historical_person_id) VALUES (?1,'history')", [subject]).unwrap();
@@ -1792,7 +1787,7 @@ mod tests {
             })
             .unwrap();
         {
-            let connection = library.connection.lock();
+            let connection = library.write();
             connection.execute("INSERT INTO historical_people(id,display_name,reference_asset_path,reference_source_revision) VALUES ('history','Alex',?1,'10:20')",[source.to_string_lossy()]).unwrap();
             connection.execute("INSERT INTO folder_historical_links(subject_id,historical_person_id) VALUES (?1,'history')",[&person.id]).unwrap();
         }

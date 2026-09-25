@@ -8,7 +8,7 @@ use std::path::Path;
 
 const CACHE_SCHEMA_VERSION: i64 = 2;
 
-crate::table::tables! {
+oxy_store::table::tables! {
     preserve person_detection_cache_meta = "schema_version INTEGER NOT NULL";
     clear person_instances_cache =
         "folder_path TEXT NOT NULL,
@@ -30,7 +30,7 @@ crate::table::tables! {
 
 pub(crate) fn ensure_schema(connection: &mut Connection) -> Result<(), rusqlite::Error> {
     let transaction = connection.transaction()?;
-    crate::table::create_all(&transaction, DEFS)?;
+    oxy_store::table::create_all(&transaction, DEFS)?;
     let version: Option<i64> = transaction
         .query_row(
             "SELECT schema_version FROM person_detection_cache_meta LIMIT 1",
@@ -49,7 +49,7 @@ pub(crate) fn ensure_schema(connection: &mut Connection) -> Result<(), rusqlite:
         )?;
     }
     // Runs again because a version mismatch dropped the table above.
-    crate::table::create_all(&transaction, DEFS)?;
+    oxy_store::table::create_all(&transaction, DEFS)?;
     transaction.execute_batch(
         "CREATE INDEX IF NOT EXISTS person_instances_cache_asset
            ON person_instances_cache(folder_path,asset_path,source_revision,producer_fingerprint);",
@@ -62,7 +62,7 @@ pub(crate) fn ensure_schema(connection: &mut Connection) -> Result<(), rusqlite:
 /// The schema marker survives: it records the format of the cache, not the
 /// cache itself, and clearing it would only force a needless rebuild.
 pub(crate) fn clear(connection: &Connection) -> Result<(), rusqlite::Error> {
-    crate::table::clear_all(connection, DEFS)
+    oxy_store::table::clear_all(connection, DEFS)
 }
 
 fn valid_box(value: Option<[f64; 4]>) -> bool {
@@ -355,8 +355,7 @@ mod tests {
             })
             .unwrap();
         library
-            .connection
-            .lock()
+            .write()
             .execute(
                 "INSERT INTO person_instances_cache(folder_path,asset_path,instance_id,
                source_revision,producer_fingerprint,pipeline_fingerprint,run_id,face_box)
@@ -374,8 +373,7 @@ mod tests {
             )
             .unwrap();
         library
-            .connection
-            .lock()
+            .write()
             .execute(
                 "UPDATE person_detection_cache_meta SET schema_version=1",
                 [],
