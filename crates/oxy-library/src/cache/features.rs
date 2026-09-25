@@ -1,120 +1,13 @@
 //! Rebuildable person feature cache. Manual identity facts never depend on it.
+//!
+//! The tables, their format marker, and the sqlite-vec registration live in
+//! `oxy_store`; what stays here is what a feature *means* — how a vector is
+//! validated against its feature space, and what a rename or a delete does to
+//! the cached rows.
 
 use crate::{Library, LibraryError};
-use rusqlite::{Connection, OptionalExtension, Transaction, params};
-use std::{collections::HashMap, path::PathBuf, sync::OnceLock};
-
-static EXTENSION_REGISTRATION: OnceLock<Result<(), String>> = OnceLock::new();
-
-pub(crate) fn register_extension() -> Result<(), String> {
-    EXTENSION_REGISTRATION
-        .get_or_init(|| {
-            // The sqlite-vec crate exposes its C init symbol as an opaque function.
-            // SQLite calls it with the standard extension-init ABI after registration.
-            let init = unsafe {
-                std::mem::transmute::<
-                    *const (),
-                    unsafe extern "C" fn(
-                        *mut rusqlite::ffi::sqlite3,
-                        *mut *mut std::ffi::c_char,
-                        *const rusqlite::ffi::sqlite3_api_routines,
-                    ) -> std::ffi::c_int,
-                >(sqlite_vec::sqlite3_vec_init as *const ())
-            };
-            let code = unsafe { rusqlite::ffi::sqlite3_auto_extension(Some(init)) };
-            if code == rusqlite::ffi::SQLITE_OK {
-                Ok(())
-            } else {
-                Err(format!("SQLite extension registration failed: {code}"))
-            }
-        })
-        .clone()
-}
-
-pub(crate) fn probe_connections(
-    writer: &Connection,
-    reader: Option<&parking_lot::Mutex<Connection>>,
-    projection_reader: Option<&parking_lot::Mutex<Connection>>,
-) -> Result<String, String> {
-    let version = |connection: &Connection| {
-        connection
-            .query_row("SELECT vec_version() AS version", [], |row| {
-                row.get::<_, String>("version")
-            })
-            .map_err(|error| error.to_string())
-    };
-    let expected = version(writer)?;
-    for connection in [reader, projection_reader].into_iter().flatten() {
-        let actual = version(&connection.lock())?;
-        if actual != expected {
-            return Err(format!(
-                "sqlite-vec version mismatch: {expected} vs {actual}"
-            ));
-        }
-    }
-    Ok(expected)
-}
-
-const CACHE_SCHEMA_VERSION: i64 = 3;
-
-oxy_store::table::tables! {
-    preserve person_vector_cache_meta = "schema_version INTEGER NOT NULL";
-    clear person_feature_spaces =
-        "id TEXT PRIMARY KEY,
-        modality TEXT NOT NULL CHECK(modality IN ('face','body')),
-        dimension INTEGER NOT NULL CHECK(dimension > 0 AND dimension <= 4096),
-        producer_fingerprint TEXT NOT NULL,
-        format_version INTEGER NOT NULL DEFAULT 1";
-    clear person_features_cache =
-        "feature_row_id INTEGER PRIMARY KEY,
-        folder_path TEXT NOT NULL,
-        asset_path TEXT NOT NULL,
-        instance_id TEXT NOT NULL,
-        source_revision TEXT NOT NULL,
-        feature_space_id TEXT NOT NULL REFERENCES person_feature_spaces(id),
-        pipeline_fingerprint TEXT NOT NULL,
-        vector BLOB NOT NULL,
-        updated_at INTEGER NOT NULL DEFAULT (unixepoch()),
-        UNIQUE(folder_path,asset_path,instance_id,feature_space_id)";
-}
-
-pub(crate) fn ensure_schema(connection: &mut Connection) -> Result<(), rusqlite::Error> {
-    let transaction = connection.transaction()?;
-    oxy_store::table::create_all(&transaction, DEFS)?;
-    let current: Option<i64> = transaction
-        .query_row(
-            "SELECT schema_version FROM person_vector_cache_meta LIMIT 1",
-            [],
-            |row| row.get("schema_version"),
-        )
-        .optional()?;
-    if current != Some(CACHE_SCHEMA_VERSION) {
-        transaction.execute_batch(
-            "DROP TABLE IF EXISTS person_features_cache;
-             DROP TABLE IF EXISTS person_feature_spaces;
-             DELETE FROM person_vector_cache_meta;",
-        )?;
-        transaction.execute(
-            "INSERT INTO person_vector_cache_meta(schema_version) VALUES (?1)",
-            [CACHE_SCHEMA_VERSION],
-        )?;
-    }
-    // Runs again because a version mismatch dropped the tables above.
-    oxy_store::table::create_all(&transaction, DEFS)?;
-    transaction.execute_batch(
-        "CREATE INDEX IF NOT EXISTS person_features_folder_space
-           ON person_features_cache(folder_path,feature_space_id,asset_path,instance_id);",
-    )?;
-    transaction.commit()
-}
-
-/// Empties the tables declared above.
-///
-/// Feature spaces go with the vectors they describe. The schema marker
-/// survives; see [`crate::schema::preserved_on_clear`].
-pub(crate) fn clear(connection: &Connection) -> Result<(), rusqlite::Error> {
-    oxy_store::table::clear_all(connection, DEFS)
-}
+use rusqlite::{OptionalExtension, Transaction, params};
+use std::{collections::HashMap, path::PathBuf};
 
 /// Points cached features at a renamed file. Called from [`crate::user`] when
 /// a photo moves inside one folder, where the cache is still valid.

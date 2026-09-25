@@ -214,25 +214,6 @@ fn record_persistence_error(slot: &Slot, item: &PersistenceItem, error: String) 
     }
 }
 
-oxy_store::table::tables! {
-    clear directory_snapshots =
-        "root_path TEXT NOT NULL,
-        directory_path TEXT NOT NULL,
-        assets_json TEXT NOT NULL,
-        PRIMARY KEY(root_path, directory_path)";
-}
-
-pub(crate) fn ensure_schema(connection: &Connection) -> Result<(), rusqlite::Error> {
-    oxy_store::table::create_all(connection, DEFS)
-}
-
-/// Empties the table created by [`ensure_schema`]. In-memory slots are dropped
-/// separately by [`Library::clear_rebuildable_cache`], because a slot must not
-/// answer from rows that no longer exist.
-pub(crate) fn clear(connection: &Connection) -> Result<(), rusqlite::Error> {
-    oxy_store::table::clear_all(connection, DEFS)
-}
-
 impl Library {
     pub(crate) fn validated_directory_assets(
         &self,

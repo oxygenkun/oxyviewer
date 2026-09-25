@@ -12,66 +12,6 @@ use oxy_domain::{
 use rusqlite::{Connection, OptionalExtension, Transaction, TransactionBehavior, params};
 use std::path::Path;
 
-oxy_store::table::tables! {
-    preserve resource_projection_sequence = "id INTEGER PRIMARY KEY CHECK(id = 1), next_revision INTEGER NOT NULL";
-    clear resource_projections =
-        "path TEXT NOT NULL,
-        parent_path TEXT NOT NULL,
-        projection_kind TEXT NOT NULL,
-        source_revision TEXT NOT NULL,
-        valid_at INTEGER NOT NULL,
-        state_revision INTEGER NOT NULL,
-        status TEXT NOT NULL,
-        rating INTEGER,
-        color_label TEXT,
-        pick_label TEXT,
-        result_json TEXT,
-        error TEXT,
-        PRIMARY KEY(path, projection_kind)";
-}
-
-pub(super) fn ensure_schema(connection: &mut Connection) -> Result<(), rusqlite::Error> {
-    oxy_store::table::create_all(connection, DEFS)?;
-    connection.execute_batch(
-        "INSERT OR IGNORE INTO resource_projection_sequence(id, next_revision) VALUES (1, 1);
-         CREATE INDEX IF NOT EXISTS resource_projections_parent
-           ON resource_projections(parent_path);
-         ",
-    )?;
-    let projection_columns = connection
-        .prepare("PRAGMA table_info(resource_projections)")?
-        .query_map([], |row| row.get::<_, String>("name"))?
-        .collect::<Result<Vec<_>, _>>()?;
-    let has_state_revision = projection_columns
-        .iter()
-        .any(|column| column == "state_revision");
-    let has_legacy_projection_revision = projection_columns
-        .iter()
-        .any(|column| column == "projection_revision");
-    if !has_state_revision && has_legacy_projection_revision {
-        connection.execute(
-            "ALTER TABLE resource_projections RENAME COLUMN projection_revision TO state_revision",
-            [],
-        )?;
-    }
-    let has_pick_label = projection_columns
-        .iter()
-        .any(|column| column == "pick_label");
-    if !has_pick_label {
-        connection.execute(
-            "ALTER TABLE resource_projections ADD COLUMN pick_label TEXT",
-            [],
-        )?;
-    }
-    Ok(())
-}
-
-/// Empties every table declared above except the revision counter, which the
-/// declaration marks `preserve`; see [`crate::schema::preserved_on_clear`].
-pub(super) fn clear(connection: &Connection) -> Result<(), rusqlite::Error> {
-    oxy_store::table::clear_all(connection, DEFS)
-}
-
 impl Library {
     /// Allocates a revision in SQLite so observations from separate native
     /// processes share one comparable acceptance order.

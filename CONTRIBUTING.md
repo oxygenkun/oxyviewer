@@ -121,7 +121,7 @@ when intentionally regenerating application icons.
 - `crates/oxy-metadata`: normalized metadata, sidecars, and optional ExifTool boundary
 - `crates/oxy-library`: library data meaning: user facts, rebuildable caches, and their ownership
 - `crates/oxy-runtime`: job priority and cancellation vocabulary
-- `crates/oxy-store`: SQLite connections, WAL readers, transactions, and table declarations
+- `crates/oxy-store`: the SQLite file: connections, WAL readers, transactions, every table declaration, and the schema migrations
 - `docs`: architecture, decisions, roadmap, formats, and performance budgets
 - `scripts`: repository tooling, grouped into `release/` and browser
   regression probes; see [scripts/README.md](scripts/README.md)

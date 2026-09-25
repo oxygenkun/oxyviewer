@@ -3,67 +3,8 @@
 
 use crate::{Library, LibraryError};
 use oxy_domain::DetectedPersonInstance;
-use rusqlite::{Connection, OptionalExtension, Transaction, params};
+use rusqlite::{Transaction, params};
 use std::path::Path;
-
-const CACHE_SCHEMA_VERSION: i64 = 2;
-
-oxy_store::table::tables! {
-    preserve person_detection_cache_meta = "schema_version INTEGER NOT NULL";
-    clear person_instances_cache =
-        "folder_path TEXT NOT NULL,
-        asset_path TEXT NOT NULL,
-        instance_id TEXT NOT NULL,
-        source_revision TEXT NOT NULL,
-        producer_fingerprint TEXT NOT NULL,
-        pipeline_fingerprint TEXT NOT NULL,
-        run_id TEXT NOT NULL,
-        face_box TEXT,
-        face_landmarks TEXT,
-        body_box TEXT,
-        face_score REAL,
-        body_score REAL,
-        association_score REAL,
-        updated_at INTEGER NOT NULL DEFAULT (unixepoch()),
-        PRIMARY KEY(folder_path,asset_path,producer_fingerprint,instance_id)";
-}
-
-pub(crate) fn ensure_schema(connection: &mut Connection) -> Result<(), rusqlite::Error> {
-    let transaction = connection.transaction()?;
-    oxy_store::table::create_all(&transaction, DEFS)?;
-    let version: Option<i64> = transaction
-        .query_row(
-            "SELECT schema_version FROM person_detection_cache_meta LIMIT 1",
-            [],
-            |row| row.get("schema_version"),
-        )
-        .optional()?;
-    if version != Some(CACHE_SCHEMA_VERSION) {
-        transaction.execute_batch(
-            "DROP TABLE IF EXISTS person_instances_cache;
-             DELETE FROM person_detection_cache_meta;",
-        )?;
-        transaction.execute(
-            "INSERT INTO person_detection_cache_meta(schema_version) VALUES (?1)",
-            [CACHE_SCHEMA_VERSION],
-        )?;
-    }
-    // Runs again because a version mismatch dropped the table above.
-    oxy_store::table::create_all(&transaction, DEFS)?;
-    transaction.execute_batch(
-        "CREATE INDEX IF NOT EXISTS person_instances_cache_asset
-           ON person_instances_cache(folder_path,asset_path,source_revision,producer_fingerprint);",
-    )?;
-    transaction.commit()
-}
-
-/// Empties the detections declared above.
-///
-/// The schema marker survives: it records the format of the cache, not the
-/// cache itself, and clearing it would only force a needless rebuild.
-pub(crate) fn clear(connection: &Connection) -> Result<(), rusqlite::Error> {
-    oxy_store::table::clear_all(connection, DEFS)
-}
 
 fn valid_box(value: Option<[f64; 4]>) -> bool {
     value.is_none_or(|[x, y, width, height]| {

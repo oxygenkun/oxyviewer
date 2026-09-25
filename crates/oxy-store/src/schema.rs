@@ -1,76 +1,105 @@
-//! The audit view of who owns which table.
+//! Table classification and the schema step.
 //!
-//! This is deliberately *not* what cache clearing reads, and not where a table
-//! is registered. Deletion lives in the module that owns the table
-//! ([`crate::cache::index::clear`] and friends), which also lists the tables it
-//! creates. This module derives the classification from which namespace a table
-//! was declared in and asserts that the two agree:
+//! This crate owns every table: the declaration, the `CREATE TABLE`, the
+//! migration that upgrades an older file, and the `DELETE` that empties a
+//! derived table. [`table`] holds the mechanism; this module holds the
+//! declarations, split by class into [`cache`] and [`user`].
 //!
-//! - a table that exists in SQLite but in no namespace fails the tests;
-//! - a table declared rebuildable but not emptied by a clear fails too;
-//! - a module writing tables owned by the other namespace fails.
+//! The class is a word in each declaration rather than a consequence of the
+//! directory the declaring file sits in, because after this change one schema
+//! file declares tables of every class — a person's cached face vectors are
+//! derived, the person's name is not, and they are declared a few lines apart.
 //!
-//! Nothing may delete rows by table-name pattern. Cache tables are cleared by
-//! the module that created them, and [`crate::user`] tables are only ever
-//! removed by an explicit, confirmed user action.
+//! Two invariants are asserted here rather than trusted:
+//!
+//! - every table that exists in the database is declared, so a future cache
+//!   clear knows whether it may delete its rows;
+//! - emptying every rebuildable table leaves every user-owned table with its
+//!   rows, which is the whole reason the two classes are separated.
 
-/// What a table means to the user.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum DataClass {
-    /// Derived from the photos or from user data. Deleting it costs a rebuild.
-    Rebuildable,
-    /// Typed, named, confirmed, or assigned by the user. Deleting it costs the
-    /// user's work and requires an explicit, confirmed action.
-    UserOwned,
-}
+pub mod cache;
+pub mod user;
 
-/// Every table owned by the library, with the class that decides who may
+pub use crate::table::DataClass;
+
+use crate::table;
+use rusqlite::Connection;
+
+/// Every table the schema declares, with the class that decides who may
 /// delete from it.
 ///
-/// The class is stored nowhere. It follows from which namespace declares the
-/// table, so marking a user fact rebuildable means moving the module, not
-/// editing a field. This function exists to be audited and asserted against,
-/// not to be consulted before deleting.
+/// This exists to be audited and asserted against, not to be consulted before
+/// deleting: a clear reads the declaration's `DataClass` directly.
 pub fn tables() -> impl Iterator<Item = (&'static str, DataClass)> {
-    crate::cache::tables()
-        .map(|table| (table, DataClass::Rebuildable))
-        .chain(crate::user::tables().map(|table| (table, DataClass::UserOwned)))
+    cache::DEFS
+        .iter()
+        .chain(user::DEFS.iter())
+        .map(|def| (def.name, def.class))
 }
 
-/// Tables a cache clear may empty. Nothing outside [`crate::cache`] is here.
+/// Tables a cache clear may empty.
 pub fn rebuildable_tables() -> impl Iterator<Item = &'static str> {
-    crate::cache::tables()
+    table::names(cache::DEFS)
 }
 
 /// Tables that survive every cache clear, migration, and re-index.
 pub fn user_owned_tables() -> impl Iterator<Item = &'static str> {
-    crate::user::tables()
+    table::names(user::DEFS)
 }
 
-/// The class of a known table, if any namespace claims it.
-pub fn class_of(table: &str) -> Option<DataClass> {
+/// The class of a declared table, if the schema claims it.
+pub fn class_of(name: &str) -> Option<DataClass> {
     tables()
-        .find(|(name, _)| *name == table)
+        .find(|(table, _)| *table == name)
         .map(|(_, class)| class)
 }
 
 /// Rebuildable tables a cache clear empties of content but never of their
-/// allocator or format marker row, as declared by the module that owns them.
+/// allocator or format marker row.
 ///
 /// Resetting a revision counter would let a worker that started before the
 /// clear publish an older result with a higher revision and win over
 /// everything written after. Clearing a schema marker would only force a
 /// needless rebuild of an otherwise valid cache.
 pub fn preserved_on_clear() -> impl Iterator<Item = &'static str> {
-    crate::cache::preserved_on_clear()
+    table::preserved(cache::DEFS)
+}
+
+/// Creates or migrates every declared table.
+///
+/// User-owned tables come first. A cache migration must never be the first
+/// thing to define user storage, and the order is now readable in one place
+/// instead of inferred from directory layout.
+pub(crate) fn ensure(connection: &mut Connection) -> Result<(), rusqlite::Error> {
+    user::ensure_schema(connection)?;
+    cache::ensure_schema(connection)
+}
+
+/// Empties every rebuildable table. Never touches a user-owned one.
+pub(crate) fn clear_cache(connection: &mut Connection) -> Result<(), rusqlite::Error> {
+    cache::clear(connection)
+}
+
+/// Whether `table` has `column`, for the migrations that add one.
+///
+/// A missing table answers `false`, so the same call covers "column absent"
+/// and "table not created yet".
+pub(crate) fn has_column(
+    connection: &Connection,
+    table: &str,
+    column: &str,
+) -> Result<bool, rusqlite::Error> {
+    connection.query_row(
+        "SELECT EXISTS(SELECT 1 FROM pragma_table_info(?1) WHERE name = ?2) AS present",
+        rusqlite::params![table, column],
+        |row| row.get("present"),
+    )
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::Library;
-    use rusqlite::Connection;
-    use std::path::Path;
+    use crate::Store;
 
     fn table_names(connection: &Connection) -> Vec<String> {
         let mut statement = connection
@@ -91,12 +120,12 @@ mod tests {
             .collect()
     }
 
-    /// A table that is not in the registry has no defined owner, which means a
-    /// future cache clear would not know whether it may delete it.
+    /// A table that is not declared has no defined owner, so a future cache
+    /// clear would not know whether it may delete its rows.
     #[test]
     fn every_table_has_a_declared_class() {
-        let library = Library::in_memory().unwrap();
-        let connection = library.write();
+        let store = Store::in_memory().unwrap();
+        let connection = store.write();
         let undeclared: Vec<String> = table_names(&connection)
             .into_iter()
             .filter(|name| class_of(name).is_none())
@@ -112,18 +141,16 @@ mod tests {
         }
     }
 
-    /// The property this split exists to protect: nothing a user typed may
+    /// The property the two classes exist to protect: nothing a user typed may
     /// appear in the list a cache clear is allowed to empty.
     #[test]
     fn clearing_the_cache_preserves_every_user_fact() {
-        let library = Library::in_memory().unwrap();
-        let root = tempfile::tempdir().unwrap();
-        library.add_root(root.path()).unwrap();
-        seed_user_facts(&library);
+        let store = Store::in_memory().unwrap();
+        seed_user_facts(&store);
 
-        library.clear_rebuildable_cache().unwrap();
+        store.clear_rebuildable_cache().unwrap();
 
-        let connection = library.write();
+        let connection = store.write();
         for table in user_owned_tables() {
             let count: i64 = connection
                 .query_row(
@@ -157,85 +184,12 @@ mod tests {
         }
     }
 
-    /// Namespace is a promise, not just a directory. A module is allowed to
-    /// *read* across the boundary (the index looks up which roots exist) but
-    /// never to write: every cross-namespace write goes through a named
-    /// function on the owning module, so it shows up in review as a call
-    /// instead of hiding inside a SQL string.
-    #[test]
-    fn no_module_writes_tables_owned_by_the_other_namespace() {
-        let source_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
-        let offenders = namespace_offenders(&source_root.join("user"), user_owned_tables())
-            .into_iter()
-            .chain(namespace_offenders(
-                &source_root.join("cache"),
-                rebuildable_tables(),
-            ))
-            .collect::<Vec<_>>();
-        assert!(
-            offenders.is_empty(),
-            "modules must not write tables owned by the other namespace:\n{}",
-            offenders.join("\n")
-        );
-    }
-
-    /// Collects `file:line: table` for every SQL literal in `directory` that
-    /// writes to a table it does not own.
-    fn namespace_offenders(
-        directory: &Path,
-        owned: impl Iterator<Item = &'static str>,
-    ) -> Vec<String> {
-        let owned: Vec<&str> = owned.collect();
-        let foreign: Vec<&str> = tables()
-            .filter(|(name, _)| !owned.contains(name))
-            .map(|(name, _)| name)
-            .collect();
-
-        let mut offenders = Vec::new();
-        for entry in std::fs::read_dir(directory).expect("namespace directory must be readable") {
-            let path = entry.expect("directory entry").path();
-            if path.extension().and_then(|ext| ext.to_str()) != Some("rs") {
-                continue;
-            }
-            let source = std::fs::read_to_string(&path).expect("source must be readable");
-            let name = path.file_name().unwrap().to_string_lossy().into_owned();
-            for (index, line) in source.lines().enumerate() {
-                let sql = line.trim();
-                if !looks_like_sql(sql) {
-                    continue;
-                }
-                for table in &foreign {
-                    if writes_table(sql, table) {
-                        offenders.push(format!("{name}:{}: {table}", index + 1));
-                    }
-                }
-            }
-        }
-        offenders
-    }
-
-    /// True for lines that carry SQL, whether the statement is inline in an
-    /// `execute(...)` call or a standalone string literal. Uppercase verbs only
-    /// appear in SQL, so Rust code and prose drop out here.
-    fn looks_like_sql(line: &str) -> bool {
-        ["DELETE FROM ", "UPDATE ", "INSERT ", "REPLACE "]
-            .iter()
-            .any(|verb| line.contains(verb))
-    }
-
-    fn writes_table(sql: &str, table: &str) -> bool {
-        sql.contains(&format!("DELETE FROM {table}"))
-            || sql.contains(&format!("INTO {table}"))
-            || sql.contains(&format!("UPDATE {table}"))
-            || sql.contains(&format!("UPDATE OR REPLACE {table}"))
-            || sql.contains(&format!("UPDATE OR IGNORE {table}"))
-    }
-
-    fn seed_user_facts(library: &Library) {
-        let connection = library.write();
-        connection
+    fn seed_user_facts(store: &Store) {
+        store
+            .write()
             .execute_batch(
-                "INSERT INTO custom_tags(id, name, name_key, sort_order) VALUES (1, 'People', 'people', 0);
+                "INSERT INTO library_roots(path, sort_order) VALUES ('/photos', 0);
+                 INSERT INTO custom_tags(id, name, name_key, sort_order) VALUES (1, 'People', 'people', 0);
                  INSERT INTO asset_tags(asset_path, tag_id) VALUES ('/photo.jpg', 1);
                  INSERT INTO asset_tag_sources(asset_path, tag_id, source_kind, source_id)
                    VALUES ('/photo.jpg', 1, 'manual', '');

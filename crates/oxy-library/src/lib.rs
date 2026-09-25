@@ -1,13 +1,14 @@
 //! The local photo library: user facts and derived state over one SQLite store.
 //!
-//! The storage mechanism — opening the file, WAL, reader fan-out, transactions,
-//! and the declarative table definitions — lives in [`oxy_store`]. This crate
-//! owns what the rows *mean*, and it splits them by ownership: [`cache`] holds
-//! derived state that can always be rebuilt from the original photos, and
-//! [`user`] holds facts the user typed, named, confirmed, or assigned.
-//! [`schema`] is the single audit that decides which table belongs to which
-//! side, and [`cache::clear`] is the only entry point allowed to delete derived
-//! rows.
+//! The store — the file, the connections, the table declarations, and the
+//! migrations — lives in [`oxy_store`]. This crate owns what the rows *mean*,
+//! and it splits them by ownership: [`cache`] holds derived state that can
+//! always be rebuilt from the original photos, and [`user`] holds facts the
+//! user typed, named, confirmed, or assigned. Table classes, the list of
+//! rebuildable tables, and the cache-clearing entry point are declared where
+//! the tables are, in `oxy_store::schema`; what stays here is every rule about
+//! what the data means and the source-level audit that the two namespaces do
+//! not write across their boundary.
 //!
 //! The split is a safety property, not just layout: a cache migration, a
 //! preview clear, or a re-index must never be able to reach a person identity,
@@ -16,8 +17,8 @@
 mod cache;
 pub use cache::browsing::DirectoryRead;
 pub use cache::index::{IndexProgress, IndexStage, IndexStats};
-mod schema;
-pub use schema::{DataClass, class_of, preserved_on_clear, rebuildable_tables, user_owned_tables};
+#[cfg(test)]
+mod audit;
 mod user;
 pub use oxy_domain::DetectedPersonInstance;
 pub use user::people::ManualPersonAnchor;
@@ -122,48 +123,23 @@ impl Library {
         self.store.shared_connection()
     }
 
-    /// Opens the library and creates every table the domain declares.
+    /// Opens the library over the store at `path`.
     ///
-    /// The store opens the file and enables WAL; the schema steps below are the
-    /// library's own, run user-owned tables first so a cache migration is never
-    /// the first thing to define user storage.
+    /// The store creates the file, enables WAL, registers the vector extension,
+    /// and brings the schema up to date with user-owned tables first. Nothing
+    /// about the schema is decided here, so a storage version bump cannot be
+    /// something this constructor forgets to run.
     pub fn open(path: &Path) -> Result<Self, LibraryError> {
-        let vector_registration = cache::features::register_extension();
-        let store = Store::open(path)?;
-        {
-            let mut connection = store.write();
-            user::ensure_schema(&mut connection)?;
-            cache::ensure_schema(&mut connection)?;
-        }
-        let vector_status = vector_registration.and_then(|()| {
-            let writer = store.write();
-            match (store.reader(), store.projection_reader()) {
-                (Some(reader), Some(projection_reader)) => {
-                    cache::features::probe_connections(&writer, Some(reader), Some(projection_reader))
-                }
-                _ => cache::features::probe_connections(&writer, None, None),
-            }
-        });
-        Ok(Self::with_store(store, vector_status))
+        Ok(Self::from_store(Store::open(path)?))
     }
 
     /// Opens a library that lives only in this process.
     pub fn in_memory() -> Result<Self, LibraryError> {
-        let vector_registration = cache::features::register_extension();
-        let store = Store::in_memory()?;
-        {
-            let mut connection = store.write();
-            user::ensure_schema(&mut connection)?;
-            cache::ensure_schema(&mut connection)?;
-        }
-        let vector_status = vector_registration.and_then(|()| {
-            let writer = store.write();
-            cache::features::probe_connections(&writer, None, None)
-        });
-        Ok(Self::with_store(store, vector_status))
+        Ok(Self::from_store(Store::in_memory()?))
     }
 
-    fn with_store(store: Store, vector_status: Result<String, String>) -> Self {
+    fn from_store(store: Store) -> Self {
+        let vector_status = store.vector_status();
         let directory_snapshots =
             cache::browsing::DirectorySnapshots::new(store.shared_connection());
         Self {

@@ -30,25 +30,27 @@ Repository-specific rules for coding agents working on OxyViewer.
   priority, cancellation, generation, invalidation, lease, and stale-result
   semantics when replacing an implementation.
 - Treat the SQLite library and generated previews as rebuildable caches, but
-  only in `oxy-library::cache`. Everything in `oxy-library::user` (library
-  roots, tags, person identity, reviews, historical links, person tag mapping,
-  `person_request_results`) is user data: never delete it from a cache clear,
-  cache migration, or re-index, and never add a deletion path that is not an
-  explicit, confirmed user action.
+  only where the declaration says so. A table declares itself `cache` (derived;
+  a clear may empty it), `user` (typed, named, confirmed, or assigned; a clear
+  must never reach it), or `marker` (an allocator or cache-format version) in
+  `oxy-store/src/schema`. Never delete user data from a cache clear, cache
+  migration, or re-index, and never add a deletion path that is not an explicit,
+  confirmed user action.
 - Keep storage mechanism out of domain code. `oxy-store` owns the SQLite file
-  itself: connections, WAL readers, transactions, and the `oxy_store::table`
-  declaration macro. `oxy-library` owns what the rows mean. Do not open a
-  database from a domain module, and do not put a photo, tag, or person concept
-  into `oxy-store`.
-- Declare every table once with `oxy_store::table::tables!` in the module that
-  owns it. One declaration produces the `CREATE TABLE`, the list of owned tables,
-  and the `DELETE` statements, so a new table cannot be created without also
-  being cleared. Declare in creation order; clearing walks that order backwards
-  so a referencing table is always emptied first. Mark a table `preserve` only
-  if it is an allocator or cache-format marker, and `external` if something
-  other than the declaration creates it (FTS5, a backfill transaction).
-- Deletion follows ownership, not a list. `oxy-library::schema` derives each
-  table's class from the namespace that declared it and only audits the result.
+  and its schema: connections, WAL readers, transactions, the declaration macro,
+  every `CREATE TABLE`, and the migrations that upgrade a file written by an
+  earlier build. A domain crate owns what the rows mean. Do not open a database
+  from a domain module, and do not put a domain rule — a tag cycle, a review
+  revision — into `oxy-store`.
+- Declare every table once in `oxy-store/src/schema`, with its class and how it
+  is created. One declaration produces the `CREATE TABLE`, the list of owned
+  tables, and the `DELETE` statements, so a new table cannot be created without
+  also being cleared. Declare in creation order; clearing walks that order
+  backwards so a referencing table is always emptied first. Use `external` when
+  something other than the declaration creates the table (FTS5, a backfill
+  transaction), and `marker` for an allocator or a cache-format marker.
+- Deletion follows ownership, not a list. `oxy-store::schema` derives each
+  table's class from that table's own declaration and only audits the result.
   Never delete by table-name prefix and never drop the database.
 - Read a result row by column name (`row.get("path")`), never by position
   (`row.get(0)`). Reordering a `SELECT` list must not silently shift values.
@@ -56,7 +58,8 @@ Repository-specific rules for coding agents working on OxyViewer.
   Call a named function on the owning module (for example
   `cache::index::forget_root` or `cache::features::forget_asset`) instead of
   writing SQL against another namespace's tables. A source-level test in
-  `schema.rs` fails the build's tests on any cross-namespace write.
+  `oxy-library/src/audit.rs` fails the build's tests on any cross-namespace
+  write. Once the domains are separate crates the compiler replaces that test.
 - Route file discovery and safe file operations through `oxy-fs`; do not add
   ad hoc frontend filesystem access.
 - Treat native dependencies as pinned inputs. Do not change submodules, the

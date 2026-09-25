@@ -1,3 +1,12 @@
+//! The tag vocabulary the user built, the assignments they made, and the XMP
+//! state that mirrors them.
+//!
+//! Tags are facts the user entered, so they are never part of a cache rebuild;
+//! only an explicit delete removes them. The tables and their `user` class are
+//! declared in `oxy_store::schema::user`, next to the DDL. What stays here is
+//! what a tag *is*: that the name is unique among siblings, that a tag cannot
+//! be moved below itself, and what deleting one cascades into.
+
 use crate::{
     Library, LibraryError,
     cache::features::{forget_asset, rename_asset},
@@ -8,71 +17,6 @@ use oxy_domain::{
 };
 use rusqlite::{OptionalExtension, Transaction, params};
 use std::{collections::HashMap, path::Path};
-
-// Tags are facts the user entered, so they are never part of a cache rebuild;
-// only an explicit delete removes them. `asset_tag_sources` is created by
-// `ensure_source_schema` instead, because its backfill has to run in its own
-// transaction once `asset_tags` exists.
-oxy_store::table::tables! {
-    preserve custom_tags =
-        "id INTEGER PRIMARY KEY AUTOINCREMENT,
-        parent_id INTEGER REFERENCES custom_tags(id) ON DELETE CASCADE,
-        name TEXT NOT NULL,
-        name_key TEXT NOT NULL,
-        sort_order INTEGER NOT NULL,
-        created_at INTEGER NOT NULL DEFAULT (unixepoch()),
-        updated_at INTEGER NOT NULL DEFAULT (unixepoch())";
-    preserve asset_tags =
-        "asset_path TEXT NOT NULL,
-        tag_id INTEGER NOT NULL REFERENCES custom_tags(id) ON DELETE CASCADE,
-        assigned_at INTEGER NOT NULL DEFAULT (unixepoch()),
-        PRIMARY KEY(asset_path, tag_id)";
-    preserve asset_tag_xmp_state =
-        "asset_path TEXT PRIMARY KEY NOT NULL,
-        subjects_json TEXT NOT NULL DEFAULT '[]',
-        hierarchical_json TEXT NOT NULL DEFAULT '[]',
-        synced_at INTEGER NOT NULL DEFAULT (unixepoch())";
-    preserve tag_xmp_sync_queue =
-        "asset_path TEXT PRIMARY KEY NOT NULL,
-        requested_at INTEGER NOT NULL DEFAULT (unixepoch()),
-        attempt_count INTEGER NOT NULL DEFAULT 0,
-        last_error TEXT";
-    external asset_tag_sources;
-}
-
-pub(crate) fn ensure_schema(connection: &rusqlite::Connection) -> Result<(), rusqlite::Error> {
-    oxy_store::table::create_all(connection, DEFS)?;
-    connection.execute_batch(
-        "CREATE UNIQUE INDEX IF NOT EXISTS custom_tags_sibling_name
-           ON custom_tags(COALESCE(parent_id, 0), name_key);
-         CREATE INDEX IF NOT EXISTS custom_tags_parent
-           ON custom_tags(parent_id, sort_order, name);
-         CREATE INDEX IF NOT EXISTS asset_tags_tag ON asset_tags(tag_id, asset_path);
-         ",
-    )
-}
-
-pub(crate) fn ensure_source_schema(
-    connection: &rusqlite::Connection,
-) -> Result<(), rusqlite::Error> {
-    connection.execute_batch(
-        "BEGIN;
-         CREATE TABLE IF NOT EXISTS asset_tag_sources (
-           asset_path TEXT NOT NULL,
-           tag_id INTEGER NOT NULL REFERENCES custom_tags(id) ON DELETE CASCADE,
-           source_kind TEXT NOT NULL CHECK(source_kind IN ('legacy','manual','sidecar','person')),
-           source_id TEXT NOT NULL DEFAULT '',
-           PRIMARY KEY(asset_path,tag_id,source_kind,source_id)
-         );
-         CREATE INDEX IF NOT EXISTS asset_tag_sources_tag
-           ON asset_tag_sources(tag_id,source_kind,asset_path);
-         INSERT OR IGNORE INTO asset_tag_sources(asset_path,tag_id,source_kind,source_id)
-           SELECT a.asset_path,a.tag_id,'legacy','' FROM asset_tags a
-           WHERE NOT EXISTS (SELECT 1 FROM asset_tag_sources s
-             WHERE s.asset_path=a.asset_path AND s.tag_id=a.tag_id);
-         COMMIT;",
-    )
-}
 
 fn reconcile_effective_tag(
     transaction: &Transaction<'_>,

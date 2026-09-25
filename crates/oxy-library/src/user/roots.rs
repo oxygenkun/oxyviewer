@@ -2,60 +2,16 @@
 //!
 //! A root exists only because the user pointed OxyViewer at it. Nothing in
 //! this module is rebuilt by a scan, and removing a root is a user decision
-//! that never cascades into identifiers, reviews, or tags.
+//! that never cascades into identifiers, reviews, or tags. The table declares
+//! itself `user` in `oxy_store::schema::user`, which is what keeps a cache
+//! clear away from it; what stays here is what a root *means*.
 
 use crate::{Library, LibraryError, cache::index::forget_root};
-use rusqlite::{Connection, params};
+use rusqlite::params;
 use std::{
     collections::HashSet,
     path::{Path, PathBuf},
 };
-
-// `preserve` because a root is the user's, not something a cache clear may
-// empty. Every table in [`crate::user`] is declared this way.
-oxy_store::table::tables! {
-    preserve library_roots =
-        "path TEXT PRIMARY KEY NOT NULL,
-        added_at INTEGER NOT NULL DEFAULT (unixepoch()),
-        sort_order INTEGER";
-}
-
-pub(super) fn ensure_schema(connection: &mut Connection) -> Result<(), rusqlite::Error> {
-    oxy_store::table::create_all(connection, DEFS)?;
-    let has_sort_order = connection
-        .prepare("PRAGMA table_info(library_roots)")?
-        .query_map([], |row| row.get::<_, String>("name"))?
-        .collect::<Result<Vec<_>, _>>()?
-        .iter()
-        .any(|column| column == "sort_order");
-    if !has_sort_order {
-        connection.execute(
-            "ALTER TABLE library_roots ADD COLUMN sort_order INTEGER",
-            [],
-        )?;
-    }
-    normalize_root_order(connection)
-}
-
-fn normalize_root_order(connection: &mut Connection) -> Result<(), rusqlite::Error> {
-    let paths = {
-        let mut statement = connection.prepare(
-            "SELECT path FROM library_roots
-             ORDER BY sort_order IS NULL, sort_order, added_at, path",
-        )?;
-        statement
-            .query_map([], |row| row.get::<_, String>("path"))?
-            .collect::<Result<Vec<_>, _>>()?
-    };
-    let transaction = connection.transaction()?;
-    for (sort_order, path) in paths.iter().enumerate() {
-        transaction.execute(
-            "UPDATE library_roots SET sort_order = ?1 WHERE path = ?2",
-            params![sort_order as i64, path],
-        )?;
-    }
-    transaction.commit()
-}
 
 impl Library {
     pub fn add_root(&self, path: &Path) -> Result<(), LibraryError> {

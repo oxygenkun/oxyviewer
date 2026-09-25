@@ -8,71 +8,8 @@ use oxy_domain::{
     BeginPersonAnalysis, DetectedPersonInstance, PersonAnalysisRun, PersonAnalysisState,
     PersonAnalysisTask, PersonAnalysisTaskInput,
 };
-use rusqlite::{Connection, OptionalExtension, Row, Transaction, params};
+use rusqlite::{OptionalExtension, Row, Transaction, params};
 use std::path::PathBuf;
-
-oxy_store::table::tables! {
-    clear person_analysis_heads = "folder_path TEXT PRIMARY KEY, generation INTEGER NOT NULL, run_id TEXT NOT NULL";
-    clear person_analysis_runs =
-        "run_id TEXT PRIMARY KEY,
-        folder_path TEXT NOT NULL,
-        pipeline_id TEXT NOT NULL,
-        pipeline_fingerprint TEXT NOT NULL,
-        generation INTEGER NOT NULL,
-        state TEXT NOT NULL CHECK(state IN ('queued','running','completed','failed','cancelled')),
-        enumeration_complete INTEGER NOT NULL DEFAULT 0,
-        total_tasks INTEGER NOT NULL DEFAULT 0,
-        completed_tasks INTEGER NOT NULL DEFAULT 0,
-        failed_tasks INTEGER NOT NULL DEFAULT 0,
-        created_at INTEGER NOT NULL DEFAULT (unixepoch()),
-        updated_at INTEGER NOT NULL DEFAULT (unixepoch())";
-    clear person_analysis_requests =
-        "request_id TEXT PRIMARY KEY,
-        operation TEXT NOT NULL,
-        run_id TEXT NOT NULL REFERENCES person_analysis_runs(run_id)";
-    clear person_analysis_tasks =
-        "run_id TEXT NOT NULL REFERENCES person_analysis_runs(run_id),
-        asset_path TEXT NOT NULL,
-        source_revision TEXT NOT NULL,
-        stage_id TEXT NOT NULL,
-        stage_fingerprint TEXT NOT NULL,
-        stage_order INTEGER NOT NULL,
-        state TEXT NOT NULL CHECK(state IN ('queued','running','completed','failed')),
-        claim_token TEXT,
-        error TEXT,
-        PRIMARY KEY(run_id,asset_path,stage_id),
-        UNIQUE(run_id,asset_path,stage_order)";
-}
-
-pub(crate) fn ensure_schema(connection: &Connection) -> Result<(), rusqlite::Error> {
-    oxy_store::table::create_all(connection, DEFS)?;
-    connection.execute_batch(
-        "CREATE INDEX IF NOT EXISTS person_analysis_runs_folder
-           ON person_analysis_runs(folder_path,generation DESC);
-         CREATE INDEX IF NOT EXISTS person_analysis_tasks_next
-           ON person_analysis_tasks(run_id,state,asset_path,stage_order);",
-    )?;
-    let has_claim_token: bool = connection.query_row(
-        "SELECT EXISTS(SELECT 1 FROM pragma_table_info('person_analysis_tasks')
-           WHERE name='claim_token') AS present",
-        [],
-        |row| row.get("present"),
-    )?;
-    if !has_claim_token {
-        connection.execute(
-            "ALTER TABLE person_analysis_tasks ADD COLUMN claim_token TEXT",
-            [],
-        )?;
-    }
-    Ok(())
-}
-
-/// Empties every table declared above. [`oxy_store::table::clear_all`] walks the
-/// declaration backwards, so tasks and requests go before the runs they
-/// reference.
-pub(crate) fn clear(connection: &Connection) -> Result<(), rusqlite::Error> {
-    oxy_store::table::clear_all(connection, DEFS)
-}
 
 fn row_run(row: &Row<'_>) -> rusqlite::Result<PersonAnalysisRun> {
     let state: String = row.get("state")?;
@@ -700,6 +637,7 @@ impl Library {
 mod tests {
     use super::*;
     use crate::cache::features::FeatureModality;
+    use rusqlite::Connection;
     use std::path::Path;
 
     fn input(request_id: &str) -> BeginPersonAnalysis {

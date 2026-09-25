@@ -2518,7 +2518,6 @@ dependencies = [
  "parking_lot",
  "rusqlite",
  "serde_json",
- "sqlite-vec",
  "tempfile",
  "thiserror 2.0.20",
 ]
@@ -2599,6 +2598,7 @@ version = "0.1.4"
 dependencies = [
  "parking_lot",
  "rusqlite",
+ "sqlite-vec",
  "tempfile",
  "thiserror 2.0.20",
 ]

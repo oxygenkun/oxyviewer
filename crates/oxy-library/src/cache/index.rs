@@ -22,74 +22,6 @@ use std::{
     time::Instant,
 };
 
-oxy_store::table::tables! {
-    clear indexed_roots =
-        "root_path TEXT PRIMARY KEY NOT NULL,
-        indexed_at INTEGER NOT NULL DEFAULT (unixepoch()),
-        asset_count INTEGER NOT NULL,
-        directory_count INTEGER NOT NULL";
-    clear indexed_directory_roots =
-        "root_path TEXT PRIMARY KEY NOT NULL,
-        indexed_at INTEGER NOT NULL DEFAULT (unixepoch()),
-        directory_count INTEGER NOT NULL";
-    preserve library_index_sequence = "id INTEGER PRIMARY KEY CHECK(id = 1), next_scan_id INTEGER NOT NULL";
-    clear indexed_assets =
-        "root_path TEXT NOT NULL,
-        path TEXT NOT NULL,
-        parent_path TEXT NOT NULL,
-        id TEXT NOT NULL,
-        name TEXT NOT NULL,
-        extension TEXT NOT NULL,
-        kind TEXT NOT NULL,
-        modified_at_ms INTEGER NOT NULL,
-        size_bytes INTEGER NOT NULL,
-        has_sidecar INTEGER NOT NULL,
-        scan_id INTEGER NOT NULL,
-        PRIMARY KEY(root_path, path)";
-    clear indexed_directories =
-        "root_path TEXT NOT NULL,
-        path TEXT NOT NULL,
-        parent_path TEXT NOT NULL,
-        name TEXT NOT NULL,
-        has_children INTEGER NOT NULL,
-        scan_id INTEGER NOT NULL,
-        PRIMARY KEY(root_path, path)";
-    // A virtual table and a backfill table: created below, cleared here.
-    external indexed_asset_search;
-    external indexed_asset_search_keys;
-}
-
-pub(super) fn ensure_schema(connection: &mut Connection) -> Result<(), rusqlite::Error> {
-    oxy_store::table::create_all(connection, DEFS)?;
-    connection.execute_batch(
-        "INSERT OR IGNORE INTO indexed_directory_roots(root_path, indexed_at, directory_count)
-           SELECT root_path, indexed_at, directory_count FROM indexed_roots;
-         INSERT OR IGNORE INTO library_index_sequence(id, next_scan_id) VALUES (1, 1);
-         CREATE INDEX IF NOT EXISTS indexed_assets_parent
-           ON indexed_assets(root_path, parent_path);
-         CREATE INDEX IF NOT EXISTS indexed_directories_parent
-           ON indexed_directories(root_path, parent_path);
-         CREATE VIRTUAL TABLE IF NOT EXISTS indexed_asset_search USING fts5(
-           path UNINDEXED,
-           root_path UNINDEXED,
-           name,
-           directory,
-           tokenize = 'unicode61 remove_diacritics 2'
-         );
-         ",
-    )?;
-    ensure_search_keys(connection)
-}
-
-/// Empties every table declared above.
-///
-/// The delete list is not written here: it is derived from the same
-/// declaration that created the tables, so a new table is cleared by default
-/// and marking one `preserve` is the only way to opt out.
-pub(super) fn clear(connection: &Connection) -> Result<(), rusqlite::Error> {
-    oxy_store::table::clear_all(connection, DEFS)
-}
-
 /// Drops every derived row for one root.
 ///
 /// Removing a root is a user decision, but only the cache namespace may delete
@@ -126,32 +58,6 @@ pub(crate) fn forget_root(
         params![root],
     )?;
     Ok(())
-}
-
-/// Give FTS records an indexed, stable identity. FTS5 cannot efficiently look up
-/// equality predicates on its UNINDEXED path columns. Preserve existing rowids
-/// during migration so an interrupted index can resume without rebuilding search.
-fn ensure_search_keys(connection: &mut Connection) -> Result<(), rusqlite::Error> {
-    let transaction = connection.transaction()?;
-    let exists: bool = transaction.query_row(
-        "SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type = 'table'
-         AND name = 'indexed_asset_search_keys') AS present",
-        [],
-        |row| row.get("present"),
-    )?;
-    if !exists {
-        transaction.execute_batch(
-            "CREATE TABLE indexed_asset_search_keys (
-               search_rowid INTEGER PRIMARY KEY,
-               root_path TEXT NOT NULL,
-               path TEXT NOT NULL,
-               UNIQUE(root_path, path)
-             );
-             INSERT INTO indexed_asset_search_keys(search_rowid, root_path, path)
-               SELECT rowid, root_path, path FROM indexed_asset_search;",
-        )?;
-    }
-    transaction.commit()
 }
 
 #[derive(Debug, Eq, PartialEq)]

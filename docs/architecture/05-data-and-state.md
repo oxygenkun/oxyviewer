@@ -93,60 +93,71 @@ Rust projection 与前端显示镜像失效。
 这些写入受益于批次交接，但尚未与队列锁完全解耦。
 
 存储机制与数据含义分属两个 crate。`oxy-store` 拥有 `oxyviewer.sqlite` 本身——连接、WAL 只读读
-连接、事务，以及 `oxy_store::table` 声明宏；它不知道照片、标签或人物的存在。`oxy-library`
-拥有这些行*意味着什么*，并按数据归属分成两个命名空间，磁盘上仍是同一个 `oxyviewer.sqlite`：
+连接、事务、表声明宏、每一句 `CREATE TABLE`，以及把旧文件升级到当前格式的迁移。它不知道照片、
+标签或人物的*规则*，但知道每一行数据属于哪一类。`oxy-library` 拥有这些行*意味着什么*，并按数据
+归属分成两个命名空间，磁盘上仍是同一个 `oxyviewer.sqlite`：
 
-| 命名空间 | 含义 | 谁能删 |
+| 类别 | 含义 | 谁能删 |
 | --- | --- | --- |
-| `oxy_library::cache` | 由照片或用户数据推导出的状态：`indexed_*`、FTS、`resource_projections`、`directory_snapshots`、人物检测/特征缓存、`person_analysis_*` | 建表的那个模块自己的 `clear()`，由 `Library::clear_rebuildable_cache()` 汇总调用 |
-| `oxy_library::user` | 用户输入的事实：`library_roots`、标签树与资产标签、人物身份与审阅、历史关联、人物↔标签映射、`person_request_results` 幂等账本 | 只由显式、经过确认的用户操作删除 |
+| `cache` | 由照片或用户数据推导出的状态：`indexed_*`、FTS、`resource_projections`、`directory_snapshots`、人物检测/特征缓存、`person_analysis_*` | 缓存清空直接清掉 |
+| `user` | 用户输入的事实：`library_roots`、标签树与资产标签、人物身份与审阅、历史关联、人物↔标签映射、`person_request_results` 幂等账本 | 只由显式、经过确认的用户操作删除 |
+| `marker` | 分配器与缓存格式版本：`*_sequence`、`*_cache_meta` | 任何清空都不动 |
 
-**删除跟随所有权，而不是跟随一份名单。** 每个模块用 `oxy_store::table::tables!` 把自己的表声明一次：
+**删除跟随所有权，而不是跟随一份名单。** 每张表在 `oxy-store/src/schema` 里声明一次，类别直接写在
+声明里：
 
 ```rust
+// oxy-store/src/schema/cache.rs
 oxy_store::table::tables! {
-    clear indexed_assets =
+    cache  create   indexed_assets =
         "root_path TEXT NOT NULL, path TEXT NOT NULL, PRIMARY KEY(root_path, path)";
-    preserve library_index_sequence =
+    marker create   library_index_sequence =
         "id INTEGER PRIMARY KEY CHECK(id = 1), next_scan_id INTEGER NOT NULL";
-    external indexed_asset_search;
+    cache  external indexed_asset_search;
 }
 ```
 
-一份声明同时产出三样东西：`CREATE TABLE`、这个模块拥有的表清单、以及清空它们的 `DELETE`。
-新增一张表不可能「建了但没清」，因为清空读的就是建表用的那份声明。`preserve` 只用于分配器与
-缓存格式标记，`external` 用于不由这份声明创建、但仍参与清空的表（FTS5 虚表、需要独立事务回填的
-`asset_tag_sources`、`indexed_asset_search_keys`）。
+第一个词是类别，第二个词说明这张表由谁创建：`create` 产出 `CREATE TABLE`，`external` 只登记一张由
+别处创建的表（FTS5 虚表、需要独立事务回填的 `asset_tag_sources`、`indexed_asset_search_keys`），
+但仍参与清空。
+
+一份声明同时产出三样东西：`CREATE TABLE`、这张表所属的清单、以及清空它的 `DELETE`。新增一张表
+不可能「建了但没清」，因为清空读的就是建表用的那份声明。
+
+类别是声明里的一个词，而不是从「声明写在哪个目录」推导出来的——现在一个 schema 文件里同时声明
+三种类别：某个人的姓名是 `user`，从他的照片算出来的特征向量是 `cache`，两者相隔几行。
 
 声明顺序即创建顺序；**清空按声明的逆序执行**，因此引用别人的表总是先被清空，外键不会中途悬空
-（`person_features_cache` → `person_feature_spaces`、`person_analysis_tasks` → `_runs`）。
+（`person_features_cache` → `person_feature_spaces`、`person_analysis_tasks` → `_runs`）。用户表
+整体先于缓存表创建，所以一次缓存迁移永远不会是第一个定义用户存储的东西。
 
-`schema.rs` 里没有注册表：它从「表被哪个命名空间声明」推导出 `DataClass`，只做审计和测试：
+`oxy-store::schema` 里没有注册表：分类只是读取每份声明自己的字段，这个模块负责审计与测试：
 
-- 测试枚举 `sqlite_master`，断言每张表都被某个模块声明，新增表不会被默认当成可清理缓存；
-- `clear_rebuildable_cache()` 之后，断言每张 `Rebuildable` 表已清空、每张 `UserOwned` 表行数不变，
-  因此把某张表标成 `Rebuildable` 却没在模块里删它，测试同样会失败；
-- 序列表（`*_sequence`）和缓存格式标记（`*_cache_meta`）在清理时保留，否则清空前启动的 worker
-  可能用旧的更高 revision 覆盖新结果，或让一份仍然有效的缓存被无谓重建。保留哪些由各模块在声明里
-  标 `preserve`，`schema::preserved_on_clear()` 只做汇总。
+- 测试枚举 `sqlite_master`，断言每张表都被声明过，新增表不会被默认当成可清理缓存；
+- `clear_rebuildable_cache()` 之后，断言每张可清空表已清空、每张 `user` 表行数不变，因此把某张表
+  声明成 `cache` 却没在 schema 里清它，测试同样会失败；
+- 序列表（`*_sequence`）和缓存格式标记（`*_cache_meta`）声明为 `marker`，清理时保留，否则清空前
+  启动的 worker 可能用旧的更高 revision 覆盖新结果，或让一份仍然有效的缓存被无谓重建。
 
 **结果行一律按列名取值。** `row.get("path")` 而不是 `row.get(0)`：后者依赖 `SELECT` 列表的顺序，
 调整字段顺序会静默错位且编译器不会报警。少数表达式本身没有列名（`COUNT(*)`、`EXISTS(...)`、
 `COALESCE(...)`、标量子查询），这些查询必须显式写 `AS` 别名——`row_person` 依赖的两个标量子查询
 就是因此加上了 `AS reference_instance_id` / `AS pending_count`。
 
-因为分类是从命名空间推导的，把一张用户表标成可重建的唯一办法是把它的声明搬进 `cache/`——
-而那样做会立刻触发「该表在清空后仍有行」的失败。不存在一个可以填错的字段。
+因为类别就是声明里的一个词，把一张用户表标成可缓存清空的唯一办法是改那个词——而那样做会立刻触发
+「该表在清空后仍有行」的失败。不存在一个可以填错的字段。
 
 命名空间之间允许**读**、禁止**写**。`cache` 会查询 `library_roots` 判断根是否已注册，但删除索引行
 必须走 `cache::index::forget_root`；`user` 在移动/删除照片时清理特征缓存，必须走
-`cache::features::rename_asset` / `forget_asset`。`schema.rs` 里有一个源码级测试扫描 `src/cache`
-与 `src/user`，任何跨命名空间的写 SQL 都会让测试失败，这样跨界删除在 review 里是一次命名函数调用，
-而不是藏在 SQL 字符串里。缓存迁移（`person_instances_cache`、`person_features_cache` 的 schema
-版本）只 DROP 自己的缓存表与 meta，人工资料不受影响。
+`cache::features::rename_asset` / `forget_asset`。`oxy-library/src/audit.rs` 里有一个源码级测试扫描
+`src/cache` 与 `src/user`，任何跨命名空间的写 SQL 都会让测试失败，这样跨界删除在 review 里是一次
+命名函数调用，而不是藏在 SQL 字符串里。等领域拆成互不依赖的 crate 之后，这条审计由编译器接手：
+拿不到另一方的表，就写不出它的 SQL。缓存迁移（`person_instances_cache`、`person_features_cache`
+的 schema 版本）只 DROP 自己的缓存表与 meta，人工资料不受影响。
 
-`oxy-store::Store::open` 在 app data 目录创建 `oxyviewer.sqlite` 并启用 WAL；`oxy-library::Library::open`
-随即在其写连接上运行本 crate 的建表步骤（先是用户表，再是缓存表），确保以下逻辑结构存在：
+`oxy-store::Store::open` 在 app data 目录创建 `oxyviewer.sqlite`、启用 WAL、注册向量扩展，然后运行
+schema 步骤（先是用户表，再是缓存表）；`oxy-library::Library::open` 只是在此之上组装。确保以下逻辑
+结构存在：
 
 ```mermaid
 erDiagram
