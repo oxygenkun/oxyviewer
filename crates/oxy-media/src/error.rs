@@ -3,6 +3,10 @@ use thiserror::Error;
 
 #[derive(Debug, Error)]
 pub enum MediaError {
+    #[error("analysis input for this media format is not implemented")]
+    AnalysisFormatUnavailable,
+    #[error("analysis source detail is insufficient: {available} < {required} pixels")]
+    InsufficientAnalysisDetail { available: u32, required: u32 },
     #[error("format requires a native decoder that is not available")]
     NativeDecoderUnavailable,
     #[error("{backend} native decode failed: {message}")]

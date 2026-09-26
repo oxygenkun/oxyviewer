@@ -1,6 +1,7 @@
 #[cfg(not(any(target_os = "windows", target_os = "macos", target_os = "linux")))]
 compile_error!("oxy-media supports only Windows, macOS, and Linux");
 
+mod analysis_input;
 mod backends;
 #[cfg(feature = "bench-tools")]
 pub mod benchmark;
@@ -17,6 +18,7 @@ mod presentation;
 mod publication;
 mod raw_support;
 
+pub use analysis_input::{AnalysisInput, AnalysisRequirement, prepare_analysis_input};
 pub use raw_support::{raw_decoder_status, raw_retry_revision, request_raw_retry};
 
 pub use cache::{

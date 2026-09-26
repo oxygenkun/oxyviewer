@@ -413,7 +413,9 @@ pub(crate) fn platform_capability() -> HeifCapabilities {
 
 fn classify_error(error: &MediaError) -> AttemptOutcome {
     match error {
-        MediaError::NativeDecoderUnavailable => AttemptOutcome::Unavailable,
+        MediaError::NativeDecoderUnavailable
+        | MediaError::AnalysisFormatUnavailable
+        | MediaError::InsufficientAnalysisDetail { .. } => AttemptOutcome::Unavailable,
         MediaError::Io(_) => AttemptOutcome::Io,
         MediaError::Image(_) => AttemptOutcome::Corrupt,
         MediaError::BackendAttempts { source, .. } => classify_error(source),

@@ -33,6 +33,8 @@ HEVC 解码器或操作系统预览服务。即使原文件可解码，也不应
 前端 `renderPlan(kind, surface, platform)` 把等级映射到 renderer 类；后端
 `pipeline::dispatcher` 直接按 `AssetKind + RenderLevel` 分派，再由格式 executor 选择后端与
 fallback。多个等级可以指向同一产物。
+
+后台人物分析使用独立的 `prepare_analysis_input`，不会把展示缩略图当检测输入。目前它仅对 JPEG 复用 libjpeg 缩放 IDCT、解码预算和源版本校验，返回已校正方向的短生命周期 RGB 帧；RAW／HEIF 的合格表示选择仍待接入。该入口只由显式后台分析调用，不改变交互预览等级或文件夹打开路径。
 Windows RAW 的 codec 资格检查、可选扩展安装和重新显影流程见
 [Windows RAW 完整解析](../windows-raw.md)。
 最大 JPEG 选择会先补齐 LibRaw 未解析的候选尺寸（CR3 JPEG track），并补充 RW2
