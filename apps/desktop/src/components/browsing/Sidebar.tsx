@@ -9,16 +9,19 @@ import {
   Folder,
   FolderOpen,
   GripVertical,
+  Images,
   ListCollapse,
   LoaderCircle,
+  Pencil,
   Plus,
   RefreshCw,
   Search,
   Settings,
   Trash2,
+  Users,
   X,
 } from "lucide-react";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 import { collapseDirectoryTree, getDirectoryTree, searchDirectories, setDirectoryExpanded } from "@/lib/api";
 import {
@@ -35,12 +38,25 @@ import {
 import type { MessageKey } from "@/lib/i18n";
 import type { FolderRestoreState } from "@/lib/browse/folderRestoration";
 import { isSameOrDescendantPath, platformFileManager } from "@/lib/browse/folderPaths";
-import type { DirectorySummary, DirectoryTreeNode, DirectoryTreeSnapshot, FolderSession } from "@/types";
+import type { DirectorySummary, DirectoryTreeNode, DirectoryTreeSnapshot, FolderPerson, FolderSession, PersonFilterState } from "@/types";
 import { ConfirmTrashDialog } from "@/components/overlay/ConfirmTrashDialog";
 import { FolderNameButton } from "./FolderNameButton";
 
 interface SidebarProps {
+  peopleMode?: boolean;
+  onPeopleModeChange?: (value: boolean) => void;
+  people?: FolderPerson[];
+  selectedPersonId?: string;
+  onSelectPerson?: (id: string) => void;
+  onCreatePerson?: () => void;
+  personFilterState?: PersonFilterState | "off";
+  onPersonFilterChange?: (value: PersonFilterState | "off") => void;
+  showBoxes?: boolean;
+  onShowBoxesChange?: (value: boolean) => void;
+  personReview?: ReactNode;
+  onRenamePerson?: (id: string, displayName: string) => void;
   sessions: FolderSession[];
+  total?: number;
   folderRestoreStates?: FolderRestoreState[];
   activeSession?: FolderSession;
   currentPath?: string;
@@ -268,7 +284,20 @@ function HighlightedDirectoryName({ name, search }: { name: string; search: stri
 }
 
 export function Sidebar({
+  peopleMode = false,
+  onPeopleModeChange,
+  people = [],
+  selectedPersonId,
+  onSelectPerson,
+  onCreatePerson,
+  personFilterState = "off",
+  onPersonFilterChange,
+  showBoxes = true,
+  onShowBoxesChange,
+  personReview,
+  onRenamePerson,
   sessions,
+  total = 0,
   folderRestoreStates = [],
   activeSession,
   currentPath,
@@ -292,6 +321,10 @@ export function Sidebar({
 }: SidebarProps) {
   const queryClient = useQueryClient();
   const [searchOpen, setSearchOpen] = useState(false);
+  const [peopleFoldersOpen, setPeopleFoldersOpen] = useState(false);
+  const [personFilterOpen, setPersonFilterOpen] = useState(false);
+  const [renamingId, setRenamingId] = useState<string>();
+  const [renameValue, setRenameValue] = useState("");
   const [search, setSearch] = useState("");
   const [debouncedSearch, setDebouncedSearch] = useState("");
   const searchInputRef = useRef<HTMLInputElement>(null);
@@ -626,14 +659,122 @@ export function Sidebar({
   }, [clearFolderDrag, draggedRoot, onReorderFolders, sessions]);
 
   return (
-    <aside className="sidebar">
+    <aside className={`sidebar ${peopleMode ? "sidebar--people" : ""}`}>
       <div className="sidebar__brand">
         <div><strong>OxyViewer</strong><small>PHOTO DESK</small></div>
       </div>
 
-      <div className={`sidebar__section sidebar__folders ${showOnboarding ? "is-guided" : ""}`}>
+      <div className="person-sidebar-tabs" role="tablist" aria-label="Sidebar view">
+        <button role="tab" aria-selected={!peopleMode} onClick={() => onPeopleModeChange?.(false)}>
+          <Images size={15} />
+          <span>浏览</span>
+          <span className="person-sidebar-tabs__count">{total.toLocaleString()}</span>
+        </button>
+        <button role="tab" aria-selected={peopleMode} onClick={() => onPeopleModeChange?.(true)}>
+          <Users size={15} />
+          <span>人物</span>
+          <span className="person-sidebar-tabs__count">{people.length.toLocaleString()}</span>
+        </button>
+      </div>
+      {peopleMode ? <section className={`person-sidebar-section ${personFilterOpen ? "is-filter-open" : ""}`}>
+        <div className="person-sidebar-heading"><div><span>人物</span><strong>当前文件夹</strong></div><button onClick={onCreatePerson} disabled={!currentPath} aria-label="添加人物">＋ 添加</button></div>
+        {!people.length ? <p className="person-sidebar-empty">还没有人物。添加一位人物，然后在照片上标记并审阅。</p> : people.map((person, index) => {
+          const selected = selectedPersonId === person.id;
+          return (
+            <div key={person.id} className={`person-sidebar-item ${selected ? "is-selected" : ""} ${selected && personFilterOpen ? "is-expanded" : ""}`}>
+              {renamingId === person.id ? (
+                <form
+                  className="person-rename"
+                  onSubmit={(event) => {
+                    event.preventDefault();
+                    const next = renameValue.trim();
+                    if (next && next !== (person.displayName ?? "")) onRenamePerson?.(person.id, next);
+                    setRenamingId(undefined);
+                  }}
+                >
+                  <input
+                    autoFocus
+                    aria-label="人物名称"
+                    value={renameValue}
+                    onChange={(event) => setRenameValue(event.target.value)}
+                    onKeyDown={(event) => {
+                      if (event.key === "Escape") setRenamingId(undefined);
+                    }}
+                  />
+                  <button type="submit" disabled={!renameValue.trim()}>保存</button>
+                </form>
+              ) : (
+                <div className="person-sidebar-row">
+                  <button
+                    aria-expanded={selected ? personFilterOpen : undefined}
+                    onClick={() => {
+                      if (selected) {
+                        setPersonFilterOpen((open) => !open);
+                      } else {
+                        setPersonFilterOpen(false);
+                        onSelectPerson?.(person.id);
+                      }
+                    }}
+                  >
+                    <span className="person-sidebar-avatar" aria-hidden="true">{(person.displayName ?? `人物 ${index + 1}`).slice(0, 1)}</span>
+                    <span className="person-sidebar-details"><strong>{person.displayName ?? `匿名人物 ${index + 1}`}</strong><small>{person.identityConfirmed ? "身份已确认" : "身份待确认"}</small></span>
+                    {(person.pendingCount ?? 0) > 0 ? <span className="person-sidebar-pending" title={`${person.pendingCount} 个实例待审`}>{person.pendingCount}</span> : null}
+                    {selected ? personFilterOpen ? <ChevronDown className="person-sidebar-disclosure" size={13} /> : <ChevronRight className="person-sidebar-disclosure" size={13} /> : null}
+                  </button>
+                  <button
+                    className="person-sidebar-rename"
+                    title="改名"
+                    aria-label={`改名：${person.displayName ?? `匿名人物 ${index + 1}`}`}
+                    onClick={() => {
+                      setRenamingId(person.id);
+                      setRenameValue(person.displayName ?? "");
+                    }}
+                  >
+                    <Pencil size={12} />
+                  </button>
+                </div>
+              )}
+              {selected && personFilterOpen && onPersonFilterChange ? (
+                <div className="person-filter-panel">
+                  <span className="person-filter-panel__label">显示照片</span>
+                  <select
+                    aria-label="人物审阅过滤"
+                    value={personFilterState}
+                    onChange={(event) => onPersonFilterChange(event.target.value as PersonFilterState | "off")}
+                  >
+                    <option value="off">文件夹全部照片 · 手工添加</option>
+                    <option value="pending">待确认</option>
+                    <option value="belongs">已确认属于</option>
+                    <option value="all">全部候选</option>
+                    <option value="doesNotBelong">不属于</option>
+                    <option value="deferred">暂缓</option>
+                    <option value="unassigned">未加入此人物</option>
+                    <option value="needsReview">源图变化 · 待复核</option>
+                  </select>
+                  {personFilterState !== "off" ? (
+                    <button className="person-filter-panel__clear" onClick={() => onPersonFilterChange("off")}>清除人物过滤</button>
+                  ) : null}
+                  <label>
+                    <input
+                      type="checkbox"
+                      checked={showBoxes}
+                      onChange={(event) => onShowBoxesChange?.(event.target.checked)}
+                    />
+                    显示人物框
+                  </label>
+                  <span>与当前搜索、评级、标签取交集</span>
+                </div>
+              ) : null}
+            </div>
+          );
+        })}
+      </section> : null}
+
+      {personReview}
+
+      <div className={`sidebar__section sidebar__folders ${showOnboarding ? "is-guided" : ""} ${peopleMode && !peopleFoldersOpen ? "person-folders-collapsed" : ""}`}>
         <div className="sidebar__heading">
-          <span>{t("folders")}</span>
+          {peopleMode ? <button className="person-folder-toggle" onClick={() => setPeopleFoldersOpen((value) => !value)}>{peopleFoldersOpen ? "▾" : "▸"} {t("folders")} · {currentPath?.split(/[\\/]/).at(-1) ?? "—"}</button> : <span>{t("folders")}</span>}
           <div className="sidebar__heading-actions">
             <button
               className={searchOpen ? "is-active" : undefined}

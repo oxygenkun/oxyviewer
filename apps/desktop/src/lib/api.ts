@@ -5,6 +5,13 @@ import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { getCurrentWebview } from "@tauri-apps/api/webview";
 import { open } from "@tauri-apps/plugin-dialog";
 import type {
+  FolderPerson,
+  HistoricalPerson,
+  PersonTagLink,
+  PersonTagOverride,
+  PersonInstance,
+  PersonReview,
+  PersonReviewDecision,
   AboutLink,
   AppInfo,
   ExternalAppSettings,
@@ -49,6 +56,199 @@ import type {
   TagSyncStatus,
   WindowDragEvent,
 } from "@/types";
+
+const demoPeople = new Map<string, FolderPerson[]>();
+const demoPersonInstances = new Map<string, PersonInstance[]>();
+const demoPersonReviews = new Map<string, PersonReview>();
+const demoHistoricalPeople = new Map<string, HistoricalPerson>();
+const demoHistoricalLinks = new Map<string, string>();
+const demoPersonTagLinks = new Map<string, PersonTagLink>();
+const demoPersonTagOverrides = new Map<string, PersonTagOverride>();
+function demoEffectiveTagIds(path: string): Set<number> {
+  const ids = new Set(demoAssetTags.get(path) ?? []);
+  for (const [subjectId, historyId] of demoHistoricalLinks) {
+    const link = demoPersonTagLinks.get(historyId);
+    if (!link?.enabled || link.tagId === null || !demoTags.some(tag => tag.id === link.tagId)) continue;
+    if (demoPersonTagOverrides.get(`${historyId}:${path}`)?.suppressed) continue;
+    if ([...demoPersonReviews.values()].some(review => review.subjectId === subjectId && review.instance.assetPath === path && review.decision === "belongs" && !review.instance.needsReview)) ids.add(link.tagId);
+  }
+  return ids;
+}
+let demoPersonId = 0;
+const nextDemoPersonId = () => `demo-person-${++demoPersonId}`;
+
+export async function listHistoricalPeople(): Promise<HistoricalPerson[]> {
+  if (isTauri()) return invoke("list_historical_people");
+  return [...demoHistoricalPeople.values()].sort((a, b) => a.displayName.localeCompare(b.displayName));
+}
+
+export async function getHistoricalLink(folderPath: string, subjectId: string): Promise<string | null> {
+  if (isTauri()) return invoke("get_historical_link", { folderPath, subjectId });
+  if (!(demoPeople.get(folderPath) ?? []).some(person => person.id === subjectId)) return null;
+  return demoHistoricalLinks.get(subjectId) ?? null;
+}
+
+export async function getPersonTagLink(folderPath: string, subjectId: string): Promise<PersonTagLink | null> {
+  if (isTauri()) return invoke("get_person_tag_link", { folderPath, subjectId });
+  const historyId = demoHistoricalLinks.get(subjectId);
+  return historyId ? demoPersonTagLinks.get(historyId) ?? null : null;
+}
+
+export async function setPersonTagLink(person: FolderPerson, tagId: number | null, enabled: boolean, expectedRevision: number): Promise<PersonTagLink> {
+  const input = { folderPath: person.folderPath, subjectId: person.id, tagId, enabled, expectedRevision, requestId: crypto.randomUUID() };
+  if (isTauri()) return invoke("set_person_tag_link", { input });
+  const historyId = demoHistoricalLinks.get(person.id);
+  if (!historyId || (enabled && tagId === null) || (tagId !== null && !demoTags.some(tag => tag.id === tagId))) throw new Error("Historical identity or tag missing");
+  const previous = demoPersonTagLinks.get(historyId);
+  if ((previous?.revision ?? 0) !== expectedRevision) throw new Error("Person tag link changed");
+  const result = { historicalPersonId: historyId, tagId, enabled, revision: expectedRevision + 1 };
+  demoPersonTagLinks.set(historyId, result);
+  return result;
+}
+
+export async function getPersonTagOverride(folderPath: string, subjectId: string, assetPath: string): Promise<PersonTagOverride | null> {
+  if (isTauri()) return invoke("get_person_tag_override", { folderPath, subjectId, assetPath });
+  const historyId = demoHistoricalLinks.get(subjectId);
+  return historyId ? demoPersonTagOverrides.get(`${historyId}:${assetPath}`) ?? null : null;
+}
+
+export async function setPersonTagOverride(person: FolderPerson, assetPath: string, suppressed: boolean, expectedRevision: number): Promise<PersonTagOverride> {
+  const input = { folderPath: person.folderPath, subjectId: person.id, assetPath, suppressed, expectedRevision, requestId: crypto.randomUUID() };
+  if (isTauri()) return invoke("set_person_tag_override", { input });
+  const historyId = demoHistoricalLinks.get(person.id);
+  if (!historyId || !(demoAssets.some(item => item.path === assetPath))) throw new Error("Historical identity or asset missing");
+  const key = `${historyId}:${assetPath}`;
+  if ((demoPersonTagOverrides.get(key)?.revision ?? 0) !== expectedRevision) throw new Error("Person tag override changed");
+  const result = { historicalPersonId: historyId, assetPath, suppressed, revision: expectedRevision + 1 };
+  demoPersonTagOverrides.set(key, result);
+  return result;
+}
+
+export async function getFolderPersonReferenceAsset(folderPath: string, subjectId: string): Promise<AssetSummary | null> {
+  if (isTauri()) return invoke("get_folder_person_reference_asset", { folderPath, subjectId });
+  const person = (demoPeople.get(folderPath) ?? []).find(item => item.id === subjectId);
+  const instance = person?.referenceInstanceId ? (demoPersonInstances.get(folderPath) ?? []).find(item => item.id === person.referenceInstanceId) : undefined;
+  return demoAssets.find(item => item.path === instance?.assetPath && `${item.sizeBytes}:${item.modifiedAtMs}` === instance.sourceRevision) ?? null;
+}
+
+export async function getHistoricalReferenceAsset(historicalPersonId: string): Promise<AssetSummary | null> {
+  if (isTauri()) return invoke("get_historical_reference_asset", { historicalPersonId });
+  const person = demoHistoricalPeople.get(historicalPersonId);
+  return demoAssets.find(item => item.path === person?.referenceAssetPath && `${item.sizeBytes}:${item.modifiedAtMs}` === person.referenceSourceRevision) ?? null;
+}
+
+export async function linkHistoricalPerson(person: FolderPerson, historicalPersonId?: string): Promise<HistoricalPerson> {
+  const input = { folderPath: person.folderPath, subjectId: person.id, historicalPersonId: historicalPersonId ?? null, expectedRevision: person.revision, requestId: crypto.randomUUID() };
+  if (isTauri()) return invoke("link_historical_person", { input });
+  const current = (demoPeople.get(person.folderPath) ?? []).find(item => item.id === person.id);
+  const reference = person.referenceInstanceId ? demoPersonReviews.get(`${person.referenceInstanceId}:${person.id}`) : undefined;
+  if (!current || current.revision !== person.revision || !current.identityConfirmed || reference?.decision !== "belongs" || !reference.instance.faceBox) throw new Error("Confirmed folder identity and face reference required");
+  const previous = demoHistoricalLinks.get(person.id);
+  if (previous && (!historicalPersonId || previous === historicalPersonId)) throw new Error("Historical identity already linked");
+  const existing = historicalPersonId ? demoHistoricalPeople.get(historicalPersonId) : undefined;
+  if (historicalPersonId && !existing) throw new Error("Historical identity not found");
+  if (existing && !demoAssets.some(item => item.path === existing.referenceAssetPath && `${item.sizeBytes}:${item.modifiedAtMs}` === existing.referenceSourceRevision)) throw new Error("Historical reference changed");
+  const history: HistoricalPerson = existing ?? { id: nextDemoPersonId(), displayName: current.displayName ?? "", referenceAssetPath: reference.instance.assetPath, referenceSourceRevision: reference.instance.sourceRevision, revision: 1 };
+  demoHistoricalPeople.set(history.id, history);
+  demoHistoricalLinks.set(person.id, history.id);
+  demoPeople.set(person.folderPath, (demoPeople.get(person.folderPath) ?? []).map(item => item.id === person.id ? { ...item, revision: item.revision + 1 } : item));
+  return history;
+}
+
+export async function unlinkHistoricalPerson(person: FolderPerson): Promise<void> {
+  const input = { folderPath: person.folderPath, subjectId: person.id, expectedRevision: person.revision, requestId: crypto.randomUUID() };
+  if (isTauri()) return invoke("unlink_historical_person", { input });
+  const current = (demoPeople.get(person.folderPath) ?? []).find(item => item.id === person.id);
+  if (!current || current.revision !== person.revision || !demoHistoricalLinks.has(person.id)) throw new Error("Historical link changed");
+  demoHistoricalLinks.delete(person.id);
+  demoPeople.set(person.folderPath, (demoPeople.get(person.folderPath) ?? []).map(item => item.id === person.id ? { ...item, revision: item.revision + 1 } : item));
+}
+
+export async function listFolderPeople(folderPath: string): Promise<FolderPerson[]> {
+  if (isTauri()) return invoke("list_folder_people", { folderPath });
+  return (demoPeople.get(folderPath) ?? []).map(person => ({ ...person, pendingCount: [...demoPersonReviews.values()].filter(review => review.subjectId === person.id && review.decision === "pending").length }));
+}
+
+export async function createFolderPerson(folderPath: string): Promise<FolderPerson> {
+  const requestId = crypto.randomUUID();
+  if (isTauri()) return invoke("create_folder_person", { folderPath, requestId });
+  const person: FolderPerson = { id: nextDemoPersonId(), folderPath, displayName: null, identityConfirmed: false, revision: 1 };
+  demoPeople.set(folderPath, [...(demoPeople.get(folderPath) ?? []), person]);
+  return person;
+}
+
+export async function confirmFolderPerson(person: FolderPerson, displayName: string, referenceInstanceId: string): Promise<FolderPerson> {
+  const input = { folderPath: person.folderPath, subjectId: person.id, displayName, referenceInstanceId, expectedRevision: person.revision, requestId: crypto.randomUUID() };
+  if (isTauri()) return invoke("confirm_folder_person", { input });
+  const reference = demoPersonReviews.get(`${referenceInstanceId}:${person.id}`);
+  if (reference?.decision !== "belongs" || !reference.instance.faceBox) throw new Error("Confirm a reviewed face reference first");
+  if ((demoPeople.get(person.folderPath) ?? []).find((item) => item.id === person.id)?.revision !== person.revision) throw new Error("Person record changed");
+  const updated = { ...person, referenceInstanceId, displayName: displayName.trim(), identityConfirmed: true, revision: person.revision + 1 };
+  demoPeople.set(person.folderPath, (demoPeople.get(person.folderPath) ?? []).map((item) => item.id === person.id ? updated : item));
+  return updated;
+}
+
+export async function listPersonInstances(folderPath: string, assetPath: string): Promise<PersonInstance[]> {
+  if (isTauri()) return invoke("list_person_instances", { folderPath, assetPath });
+  return (demoPersonInstances.get(folderPath) ?? []).filter((item) => item.assetPath === assetPath);
+}
+
+export async function createPersonInstance(
+  folderPath: string,
+  asset: AssetSummary,
+  faceBox: [number, number, number, number] | null,
+  bodyBox: [number, number, number, number] | null = null,
+): Promise<PersonInstance> {
+  const input = { folderPath, assetPath: asset.path, sourceRevision: `${asset.sizeBytes}:${asset.modifiedAtMs}`, faceBox, bodyBox, requestId: crypto.randomUUID() };
+  if (isTauri()) return invoke("create_person_instance", { input });
+  const instance: PersonInstance = { id: nextDemoPersonId(), folderPath, assetPath: asset.path, sourceRevision: input.sourceRevision, faceBox, bodyBox, needsReview: false, revision: 1 };
+  demoPersonInstances.set(folderPath, [...(demoPersonInstances.get(folderPath) ?? []), instance]);
+  return instance;
+}
+
+export async function listPersonReviews(folderPath: string, subjectId: string): Promise<PersonReview[]> {
+  if (isTauri()) return invoke("list_person_reviews", { folderPath, subjectId });
+  return [...demoPersonReviews.values()].filter((item) => item.instance.folderPath === folderPath && item.subjectId === subjectId);
+}
+
+export async function setPersonReview(
+  folderPath: string,
+  instanceId: string,
+  subjectId: string,
+  decision: PersonReviewDecision,
+  expectedRevision: number,
+): Promise<PersonReview> {
+  const input = { folderPath, instanceId, subjectId, decision, expectedRevision, requestId: crypto.randomUUID() };
+  if (isTauri()) return invoke("set_person_review", { input });
+  const instance = (demoPersonInstances.get(folderPath) ?? []).find((item) => item.id === instanceId);
+  if (!instance) throw new Error("Person instance not found");
+  if (instance.folderPath !== folderPath || !(demoPeople.get(folderPath) ?? []).some((person) => person.id === subjectId)) throw new Error("Person is outside this folder");
+  if ((demoPersonReviews.get(`${instanceId}:${subjectId}`)?.revision ?? 0) !== expectedRevision) throw new Error("Person review changed");
+  const review = { instance, subjectId, decision, revision: expectedRevision + 1 };
+  demoPersonReviews.set(`${instanceId}:${subjectId}`, review);
+  if (decision !== "belongs") demoPeople.set(folderPath, (demoPeople.get(folderPath) ?? []).map(person => person.referenceInstanceId === instanceId && person.id === subjectId ? { ...person, referenceInstanceId: null, revision: person.revision + 1 } : person));
+  return review;
+}
+export async function updatePersonInstance(instance: PersonInstance, asset: AssetSummary, faceBox: PersonInstance["faceBox"], bodyBox: PersonInstance["bodyBox"]): Promise<PersonInstance> {
+  const input = { folderPath: instance.folderPath, instanceId: instance.id, sourceRevision: `${asset.sizeBytes}:${asset.modifiedAtMs}`, faceBox, bodyBox, expectedRevision: instance.revision, requestId: crypto.randomUUID() };
+  if (isTauri()) return invoke("update_person_instance", { input });
+  const current = (demoPersonInstances.get(instance.folderPath) ?? []).find(item => item.id === instance.id);
+  if (!current || current.revision !== instance.revision) throw new Error("Person instance changed");
+  const updated = { ...instance, faceBox, bodyBox, sourceRevision: input.sourceRevision, needsReview: false, revision: instance.revision + 1 };
+  demoPersonInstances.set(instance.folderPath, (demoPersonInstances.get(instance.folderPath) ?? []).map(item => item.id === instance.id ? updated : item));
+  for (const [key, review] of demoPersonReviews) if (review.instance.id === instance.id) demoPersonReviews.set(key, { ...review, instance: updated, decision: review.decision === "doesNotBelong" ? "doesNotBelong" : "pending", revision: review.revision + 1 });
+  demoPeople.set(instance.folderPath, (demoPeople.get(instance.folderPath) ?? []).map(person => person.referenceInstanceId === instance.id ? { ...person, referenceInstanceId: null, revision: person.revision + 1 } : person));
+  return updated;
+}
+
+export async function resetFolderPerson(person: FolderPerson, displayName: string): Promise<void> {
+  const input = { folderPath: person.folderPath, subjectId: person.id, displayName, expectedRevision: person.revision, requestId: crypto.randomUUID() };
+  if (isTauri()) return invoke("reset_folder_person", { input });
+  if ((demoPeople.get(person.folderPath) ?? []).find(item => item.id === person.id)?.revision !== person.revision) throw new Error("Person record changed");
+  demoPeople.set(person.folderPath, (demoPeople.get(person.folderPath) ?? []).map(item => item.id === person.id ? { ...item, displayName: displayName.trim(), identityConfirmed: false, referenceInstanceId: null, revision: item.revision + 1 } : item));
+  demoHistoricalLinks.delete(person.id);
+}
+
 import { getFolderThumbnail, getFolderThumbnailGeneration, preloadFolderThumbnail } from "@/lib/cache/folderThumbnailCache";
 import { browserPreloadQueue, orderedPriorityWeight } from "@/lib/preview/previewQueue";
 import { acceptImageProjection } from "@/lib/projection/imageProjection";
@@ -203,11 +403,22 @@ export async function listAssets(
       const root = demoTags.find((tag) => tag.id === id);
       return new Set(root ? demoTags.filter((tag) => tag.id === id || tag.path.startsWith(`${root.path}|`)).map((tag) => tag.id) : []);
     });
+    const personReviews = query.personFilter ? await listPersonReviews(directory, query.personFilter.subjectId ?? "") : [];
     const filtered = [...demoAssets]
+      .filter(asset => {
+        const filter = query.personFilter;
+        if (!filter) return true;
+        const instances = (demoPersonInstances.get(directory) ?? []).filter(item => item.assetPath === asset.path);
+        const valid = (item: PersonInstance) => !item.needsReview && item.sourceRevision === `${asset.sizeBytes}:${asset.modifiedAtMs}`;
+        const reviews = personReviews.filter(item => item.instance.assetPath === asset.path && valid(item.instance));
+        if (filter.state === "unassigned") return !reviews.length;
+        if (filter.state === "needsReview") return instances.some(item => !valid(item));
+        return reviews.some(item => filter.state === "all" ? item.decision !== "doesNotBelong" : item.decision === filter.state);
+      })
       .filter((asset) => !tagGroups.length || (query.tagMatch === "any"
-        ? tagGroups.some((group) => [...(demoAssetTags.get(asset.path) ?? [])].some((id) => group.has(id)))
-        : tagGroups.every((group) => [...(demoAssetTags.get(asset.path) ?? [])].some((id) => group.has(id)))))
-      .filter((asset) => (!query.tagIds?.length && needle) || asset.path.slice(0, asset.path.lastIndexOf("/")) === directory)
+        ? tagGroups.some((group) => [...demoEffectiveTagIds(asset.path)].some((id) => group.has(id)))
+        : tagGroups.every((group) => [...demoEffectiveTagIds(asset.path)].some((id) => group.has(id)))))
+      .filter((asset) => (!query.personFilter && !query.tagIds?.length && needle) || asset.path.slice(0, asset.path.lastIndexOf("/")) === directory)
       .filter((asset) => !query.kind || asset.kind === query.kind)
       .filter((asset) => !query.minimumRating || (asset.rating ?? 0) >= query.minimumRating)
       .filter((asset) => !query.colorLabels?.length ||
@@ -613,12 +824,26 @@ export async function getAssetTagAssignments(paths: string[]): Promise<AssetTagA
   if (!isTauri()) {
     return demoTags.map((tag) => ({
       tag: { ...tag },
-      assignedCount: paths.filter((path) => demoAssetTags.get(path)?.has(tag.id)).length,
+      assignedCount: paths.filter((path) => demoEffectiveTagIds(path).has(tag.id)).length,
       assetCount: paths.length,
     }));
   }
   return (await invoke<AssetTagAssignment[]>("get_asset_tag_assignments", { paths }))
     .map((assignment) => ({ ...assignment, tag: normalizeCustomTag(assignment.tag) }));
+}
+
+export async function getAssetTagSourceKinds(path: string, tagId: number): Promise<string[]> {
+  if (isTauri()) return invoke("get_asset_tag_source_kinds", { path, tagId });
+  const kinds: string[] = [];
+  if (demoAssetTags.get(path)?.has(tagId)) kinds.push("manual");
+  for (const [subjectId, historyId] of demoHistoricalLinks) {
+    const link = demoPersonTagLinks.get(historyId);
+    if (!link?.enabled || link.tagId !== tagId || demoPersonTagOverrides.get(`${historyId}:${path}`)?.suppressed) continue;
+    if ([...demoPersonReviews.values()].some(review => review.subjectId === subjectId && review.instance.assetPath === path && review.decision === "belongs" && !review.instance.needsReview)) {
+      kinds.push("person"); break;
+    }
+  }
+  return kinds;
 }
 
 export async function getAssetTagAssignmentsByPath(paths: string[]): Promise<AssetTagAssignmentsByPath[]> {
@@ -668,7 +893,8 @@ export async function getCustomTagDeleteImpact(id: number): Promise<TagDeleteImp
         }
       }
     }
-    const assetCount = [...demoAssetTags.values()].filter((ids) => [...descendants].some((tagId) => ids.has(tagId))).length;
+    const paths = new Set([...demoAssets.map(asset => asset.path), ...demoAssetTags.keys()]);
+    const assetCount = [...paths].filter(path => [...descendants].some(tagId => demoEffectiveTagIds(path).has(tagId))).length;
     return { tagCount: descendants.size, assetCount };
   }
   return invoke<TagDeleteImpact>("get_custom_tag_delete_impact", { id });
@@ -685,6 +911,7 @@ export async function deleteCustomTag(id: number): Promise<TagDeleteImpact> {
     collect(id);
     demoTags = demoTags.filter((tag) => !remove.has(tag.id));
     for (const ids of demoAssetTags.values()) for (const tagId of remove) ids.delete(tagId);
+    for (const [historyId, link] of demoPersonTagLinks) if (link.tagId !== null && remove.has(link.tagId)) demoPersonTagLinks.set(historyId, { ...link, tagId: null, enabled: false });
     return impact;
   }
   return invoke<TagDeleteImpact>("delete_custom_tag", { id });

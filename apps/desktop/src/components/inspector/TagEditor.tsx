@@ -5,7 +5,7 @@ import {
 } from "lucide-react";
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import {
-  createCustomTag, deleteCustomTag, getAssetTagAssignments, getCustomTagDeleteImpact,
+  createCustomTag, deleteCustomTag, getAssetTagAssignments, getAssetTagSourceKinds, getCustomTagDeleteImpact,
   getTagSyncStatus, listCustomTags, retryTagXmpSync, setAssetCustomTag, updateCustomTag,
 } from "@/lib/api";
 import type { MessageKey } from "@/lib/i18n";
@@ -84,6 +84,7 @@ export function TagEditor({
     await Promise.all([
       queryClient.invalidateQueries({ queryKey: ["custom-tags"] }),
       queryClient.invalidateQueries({ queryKey: ["asset-tag-assignments"] }),
+      queryClient.invalidateQueries({ queryKey: ["asset-tag-source-kinds"] }),
       queryClient.invalidateQueries({ queryKey: ["tag-sync-status"] }),
       queryClient.invalidateQueries({ queryKey: ["asset-details"] }),
       queryClient.invalidateQueries({ queryKey: ["assets"] }),
@@ -135,6 +136,11 @@ export function TagEditor({
     queryKey: ["custom-tag-delete-impact", deleteTarget?.id],
     queryFn: () => getCustomTagDeleteImpact(deleteTarget!.id),
     enabled: Boolean(deleteTarget),
+  });
+  const sourceQuery = useQuery({
+    queryKey: ["asset-tag-source-kinds", currentPath, removeTarget?.id],
+    queryFn: () => getAssetTagSourceKinds(currentPath, removeTarget!.id),
+    enabled: Boolean(removeTarget),
   });
   const deleteMutation = useMutation({
     mutationFn: (id: number) => deleteCustomTag(id),
@@ -335,6 +341,11 @@ export function TagEditor({
             <span title={displayTagPath(removeTarget.path)}>
               {t("removeTagFromCurrent")}
             </span>
+            {sourceQuery.isLoading ? <small>{t("tagSourcesLoading")}</small> : sourceQuery.isError ? <small role="alert">{String(sourceQuery.error)}</small> : <small>
+              {t("tagSourcePrefix")}{(sourceQuery.data ?? []).map(kind => ({ legacy: t("tagSourceLegacy"), manual: t("tagSourceManual"), sidecar: t("tagSourceSidecar"), person: t("tagSourcePerson") })[kind as "legacy" | "manual" | "sidecar" | "person"] ?? kind).join("、") || t("tagSourceNone")}。
+              {sourceQuery.data?.includes("person") ? t("tagPersonSourceHint") : null}
+              {sourceQuery.data?.includes("sidecar") ? t("tagSidecarSourceHint") : null}
+            </small>}
             <div>
               <button onClick={() => setRemoveTarget(undefined)} disabled={removeAssignmentMutation.isPending}>
                 {t("cancel")}
@@ -342,8 +353,8 @@ export function TagEditor({
               <button
                 className="is-danger"
                 onClick={() => removeAssignmentMutation.mutate(removeTarget.id)}
-                disabled={removeAssignmentMutation.isPending}
-              >{t("removeTag")}</button>
+                disabled={removeAssignmentMutation.isPending || sourceQuery.isLoading || !sourceQuery.data?.some(kind => kind === "manual" || kind === "legacy")}
+              >{t("removeManualTag")}</button>
             </div>
           </div>
         </div>

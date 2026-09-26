@@ -6,6 +6,60 @@ export type ThumbnailOrientation = "landscape" | "portrait";
 export type NavigatorPosition = "top-left" | "top-right" | "bottom-left" | "bottom-right";
 export type PickLabel = "rejected" | "pending" | "accepted";
 export type FileDeletionMode = "trash" | "permanent";
+export type PersonReviewDecision = "pending" | "belongs" | "doesNotBelong" | "deferred";
+
+export type PersonFilterState = PersonReviewDecision | "all" | "unassigned" | "needsReview";
+export interface PersonFilter { subjectId?: string; state: PersonFilterState }
+
+export interface FolderPerson {
+  referenceInstanceId?: string | null;
+  pendingCount?: number;
+  id: string;
+  folderPath: string;
+  displayName: string | null;
+  identityConfirmed: boolean;
+  revision: number;
+}
+
+export interface HistoricalPerson {
+  id: string;
+  displayName: string;
+  referenceAssetPath: string;
+  referenceSourceRevision: string;
+  revision: number;
+}
+
+export interface PersonTagLink {
+  historicalPersonId: string;
+  tagId: number | null;
+  enabled: boolean;
+  revision: number;
+}
+
+export interface PersonTagOverride {
+  historicalPersonId: string;
+  assetPath: string;
+  suppressed: boolean;
+  revision: number;
+}
+
+export interface PersonInstance {
+  id: string;
+  folderPath: string;
+  assetPath: string;
+  sourceRevision: string;
+  faceBox: [number, number, number, number] | null;
+  bodyBox: [number, number, number, number] | null;
+  needsReview: boolean;
+  revision: number;
+}
+
+export interface PersonReview {
+  instance: PersonInstance;
+  subjectId: string;
+  decision: PersonReviewDecision;
+  revision: number;
+}
 
 export interface FolderSession {
   id: string;
@@ -378,6 +432,7 @@ export interface RawDecoderStatus {
 }
 
 export interface AssetQuery {
+  personFilter?: PersonFilter;
   tagIds?: number[];
   tagMatch?: "all" | "any";
   search?: string;

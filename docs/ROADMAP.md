@@ -21,6 +21,40 @@ The main release blockers are:
 - file writes lack a session-scoped authorization contract, undo journal, and recovery;
 - accessibility, crash recovery, signing, notarization, and installer validation remain.
 
+## People workflow (2026-09-23 working tree)
+
+- [x] Model-independent manual instance review: folder-scoped subjects, face/body
+  boxes in Loupe, independent decisions for multiple people in one photo,
+  audit records, optimistic revision checks and SQLite reopen persistence.
+- [x] Shared Grid/Loupe person-state filtering before backend paging, plus manual
+  session identity and single-reference management. See [People workflow](PERSON_WORKFLOW.md).
+- [x] Manual historical identity linking and basic tag source accounting with
+  explicit Person tag synchronization.
+- [~] Rebuildable, versioned feature-space cache and exhaustive sqlite-vec
+  threshold query are implemented, including current-source eligibility before
+  paging. Pipeline manifest validation and dependency-scoped stage
+  fingerprinting have started in
+  `oxy-people`; HTTPS streaming and offline import share checksum, cancellation,
+  and atomic installation. A trusted product model catalog, user-triggered
+  installer command, inference, candidate IPC, and resource-qualified retrieval
+  still need integration.
+- [ ] Model installation, detection/embeddings, incremental jobs, and automatic
+  historical identity suggestions remain later stages.
+- [~] Analysis run state persists generations, idempotent start/cancel,
+  small task batches, stage order, and transactional feature/progress commits
+  fenced by generation, task key, claim token, and a fresh `oxy-fs` source
+  observation. Explicit restart requeue invalidates old claims. `oxy-people`
+  now performs a fresh non-recursive `oxy-fs` scan and enrolls per-asset stages
+  in bounded batches; wiring startup, workers, cancellation during enumeration,
+  and progress IPC remains open.
+- [~] Automatic instance cache commits normalized detection evidence with task
+  progress. New manual anchors retain the full source identity beside the
+  existing lightweight UI revision; conservative geometry alignment refuses
+  changed, ambiguous, or unverified anchors. Model outputs and candidate UI
+  are not yet connected.
+- Validation details and outstanding environment limitations are in the
+  [manual workflow report](research/2026-09-23-person-manual-workflow.md).
+
 ## Phase 1: Core Browser and Local Library
 
 This phase combines the former engineering-foundation, folder-browsing, and

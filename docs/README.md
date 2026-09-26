@@ -12,6 +12,8 @@ research reports explain measured results but do not override current contracts.
 | Browsing, preview cache, queues, cancellation, or diagnostics | [Performance invariants](PERFORMANCE_INVARIANTS.md) | [Performance budgets](PERFORMANCE.md), [E2E harness](PERF_E2E.md), and [queue observability](DEBUG_QUEUE_OBSERVABILITY.md) |
 | Media format, decoder, metadata, or platform fallback | [Format support](FORMAT_SUPPORT.md) | [Decode check sheet](MEDIA_DECODE_CHECK_SHEET.md), architecture topics, and platform guides |
 | FFmpeg source, sidecars, or installers | [FFmpeg packaging](FFMPEG_PACKAGING.md) | Relevant reports under [research](research/README.md) |
+| People module screens, review flow, identity states, or selected recognition approach | [People workflow and recognition design](PERSON_WORKFLOW.md) | Dated evidence linked from that document |
+| Local person annotation research datasets | [Research harness and v2 metadata](../model-research/README.md#lightweight-local-annotation-review) | [Image metadata schema](../model-research/datasets/image-meta.schema.json) |
 | Rust implementation or lint policy | [Rust style](RUST_STYLE.md) | [CONTRIBUTING.md](../CONTRIBUTING.md) for commands and workflow |
 | Product status or future work | [Roadmap](ROADMAP.md) | [Active task plans](tasks/README.md) |
 | Native dependency source or licensing | [Native component inventory](../3rdpart/README.md) | [Third-party notices](../THIRD_PARTY_NOTICES.md) |
