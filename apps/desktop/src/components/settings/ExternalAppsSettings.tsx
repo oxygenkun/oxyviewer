@@ -1,3 +1,5 @@
+import { Field } from "../ui/Field";
+import { Button } from "../ui/Button";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useRef, useState } from "react";
 import { chooseExternalApplication, isTauri, updateExternalAppSettings } from "@/lib/api";
@@ -39,7 +41,7 @@ export function ExternalAppsSettings({ t, focus }: { t: (key: MessageKey) => str
   return <div className="settings-panel__section external-apps-settings" ref={section}>
     <div className="settings-panel__section-heading">
       <span className="settings-panel__label">{t("externalApps")}</span>
-      <button disabled={busy || !settings || !!draft || !isTauri()} onClick={() => { save.reset(); void choose(); }}>{t("externalAdd")}</button>
+      <Button size="small" disabled={busy || !settings || !!draft || !isTauri()} onClick={() => { save.reset(); void choose(); }}>{t("externalAdd")}</Button>
     </div>
     <p className="external-apps-settings__hint">{t("externalDefaultHint")}</p>
     {!isTauri() ? <p className="external-apps-settings__hint">{t("externalDesktopOnly")}</p> : null}
@@ -52,20 +54,20 @@ export function ExternalAppsSettings({ t, focus }: { t: (key: MessageKey) => str
         <strong>{app.name}</strong>
       </label>
       <div className="external-apps-settings__actions">
-        <button disabled={busy || !!draft} onClick={() => { save.reset(); setDraft({ ...app }); }}>{t("externalEdit")}</button>
-        <button aria-label={`${t("externalUp")} ${app.name}`} disabled={busy || !!draft || index === 0} onClick={() => update(moveExternalApplication(settings, index, -1))}>{t("externalUp")}</button>
-        <button aria-label={`${t("externalDown")} ${app.name}`} disabled={busy || !!draft || index === settings.apps.length - 1} onClick={() => update(moveExternalApplication(settings, index, 1))}>{t("externalDown")}</button>
-        <button disabled={busy || !!draft} onClick={() => update(removeExternalApplication(settings, app.id))}>{t("externalRemove")}</button>
+        <Button size="small" disabled={busy || !!draft} onClick={() => { save.reset(); setDraft({ ...app }); }}>{t("externalEdit")}</Button>
+        <Button size="small" aria-label={`${t("externalUp")} ${app.name}`} disabled={busy || !!draft || index === 0} onClick={() => update(moveExternalApplication(settings, index, -1))}>{t("externalUp")}</Button>
+        <Button size="small" aria-label={`${t("externalDown")} ${app.name}`} disabled={busy || !!draft || index === settings.apps.length - 1} onClick={() => update(moveExternalApplication(settings, index, 1))}>{t("externalDown")}</Button>
+        <Button size="small" disabled={busy || !!draft} onClick={() => update(removeExternalApplication(settings, app.id))}>{t("externalRemove")}</Button>
       </div>
       <span className="external-apps-settings__path" title={app.executablePath}>{app.executablePath}</span>
     </div>)}
     {draft ? <fieldset className="external-apps-settings__editor" disabled={busy}>
-      <label>{t("externalName")}<input autoFocus value={draft.name} onChange={(event) => setDraft({ ...draft, name: event.target.value })} /></label>
-      <label>{t("externalProgram")}<input readOnly value={draft.executablePath} /></label>
+      <Field label={t("externalName")} autoFocus value={draft.name} onChange={(event) => setDraft({ ...draft, name: event.target.value })} />
+      <Field label={t("externalProgram")} readOnly value={draft.executablePath} />
       <div className="external-apps-settings__actions">
-        <button onClick={() => void choose(draft)} disabled={!isTauri()}>{t("externalChoose")}</button>
-        <button disabled={!draft.name.trim()} onClick={commit}>{t("externalSave")}</button>
-        <button onClick={() => { setDraft(undefined); save.reset(); setDialogError(undefined); }}>{t("externalCancel")}</button>
+        <Button size="small" onClick={() => void choose(draft)} disabled={!isTauri()}>{t("externalChoose")}</Button>
+        <Button size="small" disabled={!draft.name.trim()} onClick={commit}>{t("externalSave")}</Button>
+        <Button size="small" onClick={() => { setDraft(undefined); save.reset(); setDialogError(undefined); }}>{t("externalCancel")}</Button>
       </div>
     </fieldset> : null}
     {query.error || save.error || dialogError ? <p role="alert" className="settings-panel__error">{String(dialogError ?? save.error ?? query.error)}</p> : null}

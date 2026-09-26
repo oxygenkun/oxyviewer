@@ -81,7 +81,7 @@
   gap: 2px;
   padding: 6px 8px;
   border: 1px solid rgb(255 255 255 / 4%);
-  border-radius: 4px;
+  border-radius: var(--radius-control);
   background: rgb(9 10 11 / 78%);
   backdrop-filter: blur(8px);
   pointer-events: none;
@@ -96,10 +96,10 @@
   right: 14px;
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: var(--space-2);
   padding: 6px 8px;
   border: 1px solid rgb(255 255 255 / 7%);
-  border-radius: 4px;
+  border-radius: var(--radius-control);
   color: #b8bdc1;
   background: rgb(9 10 11 / 82%);
   backdrop-filter: blur(8px);
@@ -171,7 +171,7 @@
   min-width: 25px;
   height: 24px;
   padding: 0 6px;
-  border-radius: 4px;
+  border-radius: var(--radius-control);
   color: #858c91;
   background: transparent;
 }
@@ -189,7 +189,7 @@
   height: 24px;
   padding: 0 4px;
   border: 1px solid var(--accent);
-  border-radius: 4px;
+  border-radius: var(--radius-control);
   color: #c8cbc5;
   background: #111613;
   font: 0.5rem ui-monospace, monospace;
@@ -216,7 +216,7 @@
   justify-self: start;
   width: 168px;
   padding: 5px;
-  border: 1px solid #3b4247;
+  border: 1px solid var(--line-strong);
   border-radius: 5px;
   background: rgb(12 14 16 / 92%);
   box-shadow: 0 10px 32px rgb(0 0 0 / 45%);
@@ -256,7 +256,7 @@
 .loupe__navigator > span {
   display: flex;
   align-items: center;
-  gap: 4px;
+  gap: var(--space-1);
   margin-top: 5px;
   color: #959c95;
   font: 0.4375rem ui-monospace, monospace;
@@ -270,7 +270,7 @@
   left: clamp(13px, calc(50% + 112px), calc(100% - 219px));
   width: 206px;
   padding: 9px;
-  border: 1px solid #3b4247;
+  border: 1px solid var(--line-strong);
   border-radius: 6px;
   background: rgb(16 19 21 / 96%);
   box-shadow: 0 14px 38px rgb(0 0 0 / 48%);
@@ -282,7 +282,7 @@
   padding: 1px 2px 9px;
   border-bottom: 1px solid #292f33;
 }
-.loupe__settings header span { color: #dcddd7; font-size: 0.5625rem; font-weight: 700; letter-spacing: .7px; }
+.loupe__settings header span { color: var(--text); font-size: 0.5625rem; font-weight: 700; letter-spacing: .7px; }
 .loupe__settings header small { color: var(--faint); font: 0.4375rem ui-monospace, monospace; }
 .loupe__settings-toggle {
   display: flex;
@@ -316,7 +316,7 @@
 .loupe__settings-toggle > i.is-on { border-color: #647046; background: #2c3326; }
 .loupe__settings-toggle > i.is-on b { background: var(--accent); transform: translateX(11px); }
 .loupe__settings-label { display: block; margin: 3px 2px 6px; color: var(--faint); font-size: 0.4375rem; letter-spacing: .7px; text-transform: uppercase; }
-.loupe__position-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 4px; }
+.loupe__position-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: var(--space-1); }
 .loupe__position-grid button {
   position: relative;
   height: 34px;
@@ -367,14 +367,14 @@
   padding: 2px;
   overflow: hidden;
   border: 1px solid transparent;
-  border-radius: 4px;
+  border-radius: var(--radius-control);
   color: var(--muted);
   background: transparent;
 }
 .filmstrip--landscape button { min-width: 90px; aspect-ratio: 1.25; }
 .filmstrip--portrait button { min-width: 48px; aspect-ratio: .68; }
-.filmstrip__metadata { display: flex; align-items: center; justify-content: center; gap: 4px; min-width: 0; height: 14px; overflow: hidden; }
-.filmstrip__metadata .asset-metadata-badges { flex-shrink: 0; gap: 4px; }
+.filmstrip__metadata { display: flex; align-items: center; justify-content: center; gap: var(--space-1); min-width: 0; height: 14px; overflow: hidden; }
+.filmstrip__metadata .asset-metadata-badges { flex-shrink: 0; gap: var(--space-1); }
 .filmstrip button.is-selected { border-color: #68734b; border-style: dashed; }
 .filmstrip button.is-active { border-color: var(--accent); border-style: solid; }
 .filmstrip .thumbnail { min-height: 0; height: 100%; }
@@ -385,7 +385,7 @@
   position: absolute;
   top: 0;
   height: 100%;
-  border-radius: 4px;
+  border-radius: var(--radius-control);
   background: #15181b;
   opacity: .35;
 }

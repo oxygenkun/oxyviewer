@@ -13,6 +13,7 @@
     "tauri": "node scripts/tauri.mjs"
   },
   "dependencies": {
+    "@radix-ui/react-dialog": "^1.1.23",
     "@tanstack/react-query": "^5.102.8",
     "@tanstack/react-virtual": "^3.14.10",
     "@tauri-apps/api": "^2.11.1",

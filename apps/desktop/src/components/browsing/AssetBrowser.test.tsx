@@ -210,7 +210,7 @@ it("deletes the current multi-selection from the context menu", async () => {
   await act(async () => deleteButton?.click());
   expect(document.querySelector('[role="alertdialog"]')?.textContent).toContain("trashConfirmMultipleBody");
 
-  const confirm = [...document.querySelectorAll<HTMLButtonElement>(".trash-confirm-dialog button")]
+  const confirm = [...document.querySelectorAll<HTMLButtonElement>('[role="alertdialog"] button')]
     .find((button) => button.textContent === "confirmTrash");
   await act(async () => confirm?.click());
   expect(trashAssets).toHaveBeenCalledWith([assets[1], assets[2]]);

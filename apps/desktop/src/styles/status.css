@@ -23,7 +23,7 @@
   height: 22px;
   padding: 0;
   border: 1px solid #282e32;
-  border-radius: 4px;
+  border-radius: var(--radius-control);
   color: #626a70;
   background: var(--surface-input);
   line-height: 0;
@@ -36,7 +36,7 @@
   gap: 1px;
   padding: 1px;
   border: 1px solid #282e32;
-  border-radius: 4px;
+  border-radius: var(--radius-control);
   background: var(--surface-input);
 }
 .statusbar__thumbnail-orientation button {
@@ -61,7 +61,7 @@
 }
 .no-results strong, .workspace-error strong { color: #c5c7c4; font-size: 0.8125rem; }
 .workspace-loading svg { color: var(--accent); animation: rotate 1.7s linear infinite; }
-.workspace-error button { display: flex; align-items: center; gap: 6px; padding: 7px 10px; border-radius: 4px; color: #12150e; background: var(--accent); font-size: 0.5625rem; }
+.workspace-error button { display: flex; align-items: center; gap: var(--space-2); padding: 7px 10px; border-radius: var(--radius-control); color: #12150e; background: var(--accent); font-size: 0.5625rem; }
 
 .demo-pill { position: absolute; top: 14px; right: 14px; padding: 4px 7px; border: 1px solid #30373a; border-radius: 20px; color: #727a7b; font-size: 0.5rem; }
 .statusbar__notice {
@@ -76,7 +76,7 @@
   max-width: 300px;
   min-width: 0;
   padding: 2px 6px;
-  border-radius: 4px;
+  border-radius: var(--radius-control);
   color: #8b9397;
   background: transparent;
   font: inherit;
@@ -90,7 +90,7 @@
   left: 0;
   z-index: 12;
   display: grid;
-  gap: 6px;
+  gap: var(--space-2);
   width: max-content;
   max-width: min(460px, 60vw);
   max-height: 42vh;
@@ -127,7 +127,7 @@
   justify-self: end;
   padding: 2px 9px;
   border: 1px solid #42484d;
-  border-radius: 4px;
+  border-radius: var(--radius-control);
   color: inherit;
   background: transparent;
   font-size: 0.625rem;
@@ -137,7 +137,7 @@
 .statusbar__notice-action:hover { background: #ffffff14; }
 .debug-queue-launcher {
   position: fixed;
-  z-index: 9999;
+  z-index: var(--layer-debug);
   right: 12px;
   bottom: 12px;
   padding: 7px 10px;

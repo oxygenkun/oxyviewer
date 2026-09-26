@@ -4,7 +4,7 @@
   position: fixed;
   inset: 0;
   /* Above the debug queue launcher (9999) so the card really covers the window. */
-  z-index: 10000;
+  z-index: var(--layer-import);
   /* The window must still receive the native drop. */
   pointer-events: none;
   opacity: 0;
@@ -53,7 +53,7 @@
   display: flex;
   flex-wrap: wrap;
   justify-content: center;
-  gap: 6px;
+  gap: var(--space-2);
   margin: 10px 0 0;
   padding: 0;
   list-style: none;

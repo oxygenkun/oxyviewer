@@ -1,3 +1,5 @@
+import { Button, IconButton } from "../ui/Button";
+import { Field } from "../ui/Field";
 import {
   Check,
   Database,
@@ -6,7 +8,6 @@ import {
   HardDrive,
   Info,
   Keyboard,
-  LoaderCircle,
   Monitor,
   RotateCcw,
   SlidersHorizontal,
@@ -150,7 +151,7 @@ export function SettingsPanel({ t, activeAsset }: SettingsPanelProps) {
             <span id="settings-title">{t("settings")}</span>
             <small>{t("settingsSubtitle")}</small>
           </div>
-          <button aria-label={t("closeSettings")} onClick={toggleSettings}><X size={18} /></button>
+          <IconButton label={t("closeSettings")} onClick={toggleSettings}><X size={18} /></IconButton>
         </header>
         <div className="settings-panel__body">
           <nav aria-label={t("settings")} className="settings-panel__tabs" role="tablist">
@@ -253,20 +254,19 @@ export function SettingsPanel({ t, activeAsset }: SettingsPanelProps) {
                   <div><span>{settings?.isCustomLocation ? t("customLocation") : t("systemDefault")}</span><code title={settings?.location}>{settings?.location ?? t("loading")}</code></div>
                 </div>
                 <div className="settings-panel__cache-actions">
-                  <button disabled={!settings || cacheBusy} onClick={chooseLocation}><FolderOpen size={14} /> {t("chooseLocation")}</button>
-                  <button disabled={!settings?.isCustomLocation || cacheBusy} onClick={() => settings && updateCache.mutate({ customParent: null, maxSizeBytes: settings.maxSizeBytes })}><RotateCcw size={14} /> {t("restoreDefault")}</button>
+                  <Button disabled={!settings || cacheBusy} onClick={chooseLocation}><FolderOpen size={14} /> {t("chooseLocation")}</Button>
+                  <Button disabled={!settings?.isCustomLocation || cacheBusy} onClick={() => settings && updateCache.mutate({ customParent: null, maxSizeBytes: settings.maxSizeBytes })}><RotateCcw size={14} /> {t("restoreDefault")}</Button>
                 </div>
                 <p className="settings-panel__hint">{t("cacheLocationHint")}</p>
                 <div className="settings-panel__limit-row">
-                  <label htmlFor="cache-limit">{t("cacheLimit")}</label>
-                  <div className="settings-panel__limit-input"><input aria-invalid={!limitIsValid} id="cache-limit" max={MAX_CACHE_GB} min={MIN_CACHE_GB} onChange={(event) => setLimitGb(Number(event.target.value))} type="number" value={limitGb} /><span>GB</span></div>
-                  <button disabled={!settings || !limitIsValid || cacheBusy || limitGb === cacheLimitGb(settings.maxSizeBytes)} onClick={() => settings && updateCache.mutate({ customParent: settings.customParent ?? null, maxSizeBytes: limitGb * GIB })}>{t("apply")}</button>
+                  <Field label={t("cacheLimit")} suffix="GB" aria-invalid={!limitIsValid} id="cache-limit" max={MAX_CACHE_GB} min={MIN_CACHE_GB} onChange={event => setLimitGb(Number(event.target.value))} type="number" value={limitGb} />
+                  <Button disabled={!settings || !limitIsValid || cacheBusy || limitGb === cacheLimitGb(settings.maxSizeBytes)} onClick={() => settings && updateCache.mutate({ customParent: settings.customParent ?? null, maxSizeBytes: limitGb * GIB })}>{t("apply")}</Button>
                 </div>
                 <div className="settings-panel__cache-footer">
                   <span>{t("cacheLimitRange")}</span>
-                  <button className={clearArmed ? "is-armed" : ""} disabled={!settings || cacheBusy} onClick={() => clearArmed ? clearCache.mutate() : setClearArmed(true)}>
-                    {clearCache.isPending ? <LoaderCircle className="is-spinning" size={14} /> : <Trash2 size={14} />}{clearArmed ? t("confirmClearCache") : t("clearCache")}
-                  </button>
+                  <Button variant="danger" loading={clearCache.isPending} className={clearArmed ? "is-armed" : ""} disabled={!settings || cacheBusy} onClick={() => clearArmed ? clearCache.mutate() : setClearArmed(true)}>
+                    {!clearCache.isPending ? <Trash2 size={14} /> : null}{clearArmed ? t("confirmClearCache") : t("clearCache")}
+                  </Button>
                 </div>
                 {cacheError ? <p className="settings-panel__error">{String(cacheError)}</p> : null}
               </section>

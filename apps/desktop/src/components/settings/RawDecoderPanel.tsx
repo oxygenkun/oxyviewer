@@ -1,3 +1,4 @@
+import { Button } from "../ui/Button";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useState } from "react";
 import { getRawDecoderStatus, openRawDecoderInstallPage } from "@/lib/api";
@@ -75,21 +76,21 @@ export function RawDecoderPanel({ asset, compact = false, pending = false, faile
       {failed ? <p>{t("rawFullFailed")}</p> : fileFallback && !missing ? <p>{t("rawFileFallback")}</p> : null}
       {supported && <div className="raw-decoder__actions">
         {(missing || value.availability === "unavailable" || (!compact && value.installAvailable)) && <>
-          <button disabled={busy} onClick={() => install.mutate(false)}>{t("rawOpenStore")}</button>
-          <button disabled={busy} onClick={() => install.mutate(true)}>{t("rawOfficialPage")}</button>
+          <Button size="small" disabled={busy} onClick={() => install.mutate(false)}>{t("rawOpenStore")}</Button>
+          <Button size="small" disabled={busy} onClick={() => install.mutate(true)}>{t("rawOfficialPage")}</Button>
         </>}
-        <button disabled={busy} onClick={() => refresh.mutate()}>{t("rawCheckAgain")}</button>
-        {path && <button disabled={busy || pending} onClick={() => retry.mutate()}>{t("rawRetryFull")}</button>}
-        <button onClick={() => void copy()}>{t("rawCopyDiagnostics")}</button>
+        <Button size="small" disabled={busy} onClick={() => refresh.mutate()}>{t("rawCheckAgain")}</Button>
+        {path && <Button size="small" disabled={busy || pending} onClick={() => retry.mutate()}>{t("rawRetryFull")}</Button>}
+        <Button size="small" onClick={() => void copy()}>{t("rawCopyDiagnostics")}</Button>
       </div>}
       {installOpened && <p role="status">{t(refreshed && value.installAvailable ? "rawRestartHint" : "rawInstallReturnHint")}</p>}
       {!compact && value.codecs.map((codec) => <small key={codec.decoderId}>{codec.name} · {codec.version}</small>)}
     </>}
     {error && <p role="alert">{String(error)}</p>}
     {copyFailed && <textarea aria-label={t("rawCopyDiagnostics")} readOnly value={diagnostics} onFocus={(event) => event.currentTarget.select()} />}
-    {compact && !failed && <button className="raw-decoder__dismiss" onClick={() => {
+    {compact && !failed && <Button size="small" className="raw-decoder__dismiss" onClick={() => {
       setDismissed(true);
       try { localStorage.setItem(DISMISSED_KEY, "1"); } catch { /* Session dismissal still works. */ }
-    }}>{t("rawDismissHint")}</button>}
+    }}>{t("rawDismissHint")}</Button>}
   </section>;
 }

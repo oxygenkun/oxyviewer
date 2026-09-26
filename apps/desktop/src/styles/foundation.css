@@ -27,6 +27,28 @@
   --rating: #ffd34e;
   --popover-shadow: 0 12px 32px rgb(0 0 0 / 48%);
   --radius: 7px;
+  --radius-control: 4px;
+  --radius-panel: 8px;
+  --space-1: 4px;
+  --space-2: 6px;
+  --space-3: 8px;
+  --space-4: 12px;
+  --space-5: 20px;
+  --control-height-small: 26px;
+  --control-height: 32px;
+  --text-on-accent: #15180f;
+  --danger-text: #ffd0c8;
+  --danger-border: #a45d52;
+  --danger-surface: #552f2b;
+  --danger-hover: #874038;
+  /* Root-level overlays only; local canvas/thumbnail stacking stays local. */
+  --layer-settings: 20;
+  --layer-menu: 100;
+  --layer-tooltip: 1000;
+  --layer-person-dialog: 2000;
+  --layer-dialog: 3000;
+  --layer-debug: 9999;
+  --layer-import: 10000;
 }
 
 * { box-sizing: border-box; }

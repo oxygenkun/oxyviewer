@@ -1,0 +1,23 @@
+.overlay {
+  position: fixed;
+  inset: 0;
+  z-index: var(--layer-dialog);
+  display: grid;
+  place-items: center;
+  padding: var(--space-5);
+  overflow-y: auto;
+  background: rgb(0 0 0 / 58%);
+}
+.content {
+  width: min(440px, 100%);
+  max-height: calc(100dvh - 40px);
+  overflow: auto;
+  padding: var(--space-5);
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-panel);
+  background: var(--panel-raised);
+  color: var(--text);
+  box-shadow: var(--popover-shadow);
+}
+.title { margin: 0; font-size: .875rem; }
+.description { margin: var(--space-3) 0 var(--space-5); color: var(--muted); font-size: .75rem; line-height: 1.6; overflow-wrap: anywhere; }
