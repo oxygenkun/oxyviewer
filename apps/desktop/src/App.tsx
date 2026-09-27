@@ -1,3 +1,4 @@
+import type { RootRelocationPlan } from "@/types";
 import { PeopleContext } from "@/components/people/PeopleContext";
 import { useInfiniteQuery, useQuery, useQueryClient, type InfiniteData } from "@tanstack/react-query";
 import { Aperture, CircleAlert, FolderPlus, Layers2, RectangleHorizontal, RectangleVertical } from "lucide-react";
@@ -14,6 +15,8 @@ import { ResizeHandle } from "@/components/browsing/ResizeHandle";
 import { Toolbar } from "@/components/browsing/Toolbar";
 import {
   addLibraryRoot,
+  checkLibraryRoot,
+  relocateLibraryRoot,
   chooseFolder,
   confirmFolderPerson,
   createFolderPerson,
@@ -110,6 +113,8 @@ const IMPORT_NOTICE_MS = 6000;
 export function App({ perfScenario }: { perfScenario?: PerfScenario }) {
   const [workspace, setWorkspace] = useState(loadWorkspace);
   const [browseProgress, setBrowseProgress] = useState<DirectoryBrowseProgress>();
+  const retiredRoots = useRef(new Set<string>());
+  const [recoveryNotice, setRecoveryNotice] = useState<string>();
   const [folderRestoreStates, setFolderRestoreStates] = useState<FolderRestoreState[]>([]);
   const [folderImport, setFolderImport] = useState<FolderImportState>(IDLE_FOLDER_IMPORT);
   const [showOnboarding, setShowOnboarding] = useState(() => !hasSeenFolderOnboarding());
@@ -161,10 +166,11 @@ export function App({ perfScenario }: { perfScenario?: PerfScenario }) {
       const roots = await listLibraryRoots();
       recordBrowseTiming("workspace-roots", { elapsedMs: performance.now() - started, count: roots.length });
       await restoreFoldersProgressively(roots, workspace.activeRoot, openFolder, (session) => {
+        if (retiredRoots.current.has(session.rootPath)) return;
         recordBrowseTiming("workspace-root-ready", { root: session.rootPath, elapsedMs: performance.now() - started });
         queryClient.setQueryData<FolderSession[]>(["open-folders"], (current = []) =>
           insertRestoredFolder(current, session, roots));
-      }, setFolderRestoreStates);
+      }, states => setFolderRestoreStates(states.filter(state => !retiredRoots.current.has(state.rootPath))));
       // Do not replay completed results: users may have removed a ready root.
       return queryClient.getQueryData<FolderSession[]>(["open-folders"]) ?? [];
     },
@@ -533,8 +539,20 @@ export function App({ perfScenario }: { perfScenario?: PerfScenario }) {
     ? browseProgress : assetsQuery.data?.pages[0]?.progress;
   const importSummary = folderImportSummary(folderImport);
   const importNotice: StatusNotice | undefined = folderImportNotice(folderImport, t);
+  useEffect(() => {
+    if (!activeRootPath || (!assetsError && currentBrowseProgress?.stage !== "stale" && !error)) return;
+    let cancelled = false;
+    void checkLibraryRoot(activeRootPath).catch(cause => {
+      if (cancelled) return;
+      setFolderRestoreStates(current => current.some(item => item.rootPath === activeRootPath && item.status === "failed") ? current :
+        [...current.filter(item => item.rootPath !== activeRootPath), { rootPath: activeRootPath, status: "failed", error: String(cause) }]);
+    });
+    return () => { cancelled = true; };
+  }, [activeRootPath, assetsError, currentBrowseProgress?.stage, error]);
+
   const notice: StatusNotice | undefined = error || foldersQuery.isError
     ? { kind: "error", message: error ?? String(foldersQuery.error), detail: undefined }
+    : recoveryNotice ? { kind: "status", message: recoveryNotice, detail: undefined }
     : importNotice ?? (currentBrowseProgress?.stage === "stale"
       ? { kind: "status", message: t("browseSnapshotOffline"), detail: currentBrowseProgress.error }
       : currentBrowseProgress?.source === "snapshot"
@@ -687,6 +705,7 @@ export function App({ perfScenario }: { perfScenario?: PerfScenario }) {
   const dismissStatusNotice = useCallback(() => {
     setError(undefined);
     setNoticeExpanded(false);
+    setRecoveryNotice(undefined);
     setFolderImport(dismissFolderImport());
   }, []);
 
@@ -699,6 +718,61 @@ export function App({ perfScenario }: { perfScenario?: PerfScenario }) {
       currentDirectories: { ...current.currentDirectories, [session.rootPath]: path },
     }));
   }, [clearSelection, notifyActiveDirectory]);
+
+  const setRootFailure = useCallback((path: string, cause: unknown) => {
+    setFolderRestoreStates(current => [...current.filter(item => item.rootPath !== path), { rootPath: path, status: "failed", error: String(cause) }]);
+  }, []);
+
+  const recoverSession = useCallback(async (oldPath: string, path: string) => {
+    const session = await openFolder(path);
+    setError(undefined);
+    retiredRoots.current.add(path);
+    const roots = await listLibraryRoots();
+    clearSelection();
+    queryClient.setQueryData<FolderSession[]>(["open-folders"], (current = []) =>
+      insertRestoredFolder(current.filter(item => item.rootPath !== oldPath && item.rootPath !== path), session, roots));
+    setFolderRestoreStates(current => current.filter(item => item.rootPath !== oldPath && item.rootPath !== path));
+    setWorkspace(current => {
+      const currentDirectories = { ...current.currentDirectories };
+      delete currentDirectories[oldPath];
+      currentDirectories[path] = path;
+      return { ...current, activeRoot: path, currentDirectories };
+    });
+    await queryClient.invalidateQueries({ queryKey: ["folder-people"] });
+  }, [clearSelection, queryClient]);
+
+  const handleRetryRoot = useCallback(async (path: string) => {
+    try { await recoverSession(path, path); }
+    catch (cause) { setRootFailure(path, cause); throw cause; }
+  }, [recoverSession, setRootFailure]);
+
+  const handleRemoveRoot = useCallback(async (path: string) => {
+    const roots = await removeLibraryRoot(path);
+    setError(undefined);
+    retiredRoots.current.add(path);
+    setFolderRestoreStates(current => current.filter(item => item.rootPath !== path));
+    queryClient.setQueryData<FolderSession[]>(["open-folders"], (current = []) => current.filter(item => roots.includes(item.rootPath)));
+    setWorkspace(current => {
+      const currentDirectories = { ...current.currentDirectories }; delete currentDirectories[path];
+      return { ...current, currentDirectories, activeRoot: current.activeRoot === path ? roots[0] : current.activeRoot };
+    });
+    forgetThumbnailOrientation(path);
+    clearSelection();
+  }, [clearSelection, forgetThumbnailOrientation, queryClient]);
+
+  const handleRelocateRoot = useCallback(async (plan: RootRelocationPlan) => {
+    const result = await relocateLibraryRoot(plan);
+    retiredRoots.current.add(plan.oldRoot);
+    setFolderRestoreStates(current => current.filter(item => item.rootPath !== plan.oldRoot));
+    queryClient.setQueryData<FolderSession[]>(["open-folders"], (current = []) => current.filter(item => item.rootPath !== plan.oldRoot));
+    forgetThumbnailOrientation(plan.oldRoot);
+    const message = t("folderRecoverySummary").replace("{linked}", String(result.linkedFiles))
+      .replace("{review}", String(result.needsReview)).replace("{missing}", String(result.missingFiles))
+      .replace("{cached}", String(result.reusedArtifacts)).replace("{failed}", String(result.cacheFailures));
+    setRecoveryNotice(message);
+    try { await recoverSession(plan.oldRoot, result.rootPath); }
+    catch (cause) { setRootFailure(result.rootPath, cause); }
+  }, [forgetThumbnailOrientation, queryClient, recoverSession, setRootFailure, t]);
 
   const handleRemove = useCallback(async (session: FolderSession) => {
     setError(undefined);
@@ -944,6 +1018,9 @@ export function App({ perfScenario }: { perfScenario?: PerfScenario }) {
         sessions={sortedSessions}
         total={total}
         folderRestoreStates={folderRestoreStates}
+        onRetryRoot={handleRetryRoot}
+        onRemoveRoot={handleRemoveRoot}
+        onRelocateRoot={handleRelocateRoot}
         activeSession={activeSession}
         currentPath={currentPath}
         showOnboarding={showOnboarding && sessions.length === 0 && !restoringFolders}

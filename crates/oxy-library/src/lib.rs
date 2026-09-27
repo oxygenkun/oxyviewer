@@ -27,6 +27,7 @@ pub use cache::browsing::DirectoryRead;
 pub use cache::index::{IndexProgress, IndexStage, IndexStats};
 #[cfg(test)]
 mod audit;
+mod relocation;
 mod user;
 
 use oxy_store::Store;
@@ -61,6 +62,8 @@ pub enum LibraryError {
     Json(#[from] serde_json::Error),
     #[error("folder order must contain every library root exactly once")]
     InvalidRootOrder,
+    #[error("cannot relocate folder: {0}")]
+    InvalidRelocation(String),
 }
 
 /// The photo library: the roots the user added and the derived state over one

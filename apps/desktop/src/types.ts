@@ -610,3 +610,17 @@ export interface ExternalAppSettings {
 }
 
 export type ExternalOpenResult = "launched" | "cancelled";
+
+export interface RootRelocationPlan {
+  oldRoot: string;
+  newRoot: string;
+  entries: { oldPath: string; newPath: string; status: "verified" | "unverified" | "missing"; oldIdentityRevision: string | null; newIdentityRevision: string | null }[];
+}
+export interface RootRelocationResult {
+  rootPath: string;
+  linkedFiles: number;
+  needsReview: number;
+  missingFiles: number;
+  reusedArtifacts: number;
+  cacheFailures: number;
+}

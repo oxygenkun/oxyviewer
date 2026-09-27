@@ -11,6 +11,8 @@ mod about;
 pub use about::*;
 mod person;
 pub use person::*;
+mod relocation;
+pub use relocation::*;
 
 pub type AssetId = String;
 pub type JobId = String;

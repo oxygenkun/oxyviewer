@@ -39,6 +39,8 @@ import { isSameOrDescendantPath, platformFileManager } from "@/lib/browse/folder
 import type { DirectorySummary, DirectoryTreeNode, DirectoryTreeSnapshot, FolderPerson, FolderSession, PersonFilterState } from "@/types";
 import { ConfirmTrashDialog } from "@/components/overlay/ConfirmTrashDialog";
 import { FolderNameButton } from "./FolderNameButton";
+import { UnavailableFolder } from "./UnavailableFolder";
+import type { RootRelocationPlan } from "@/types";
 import { FolderSettingsMenu } from "./FolderSettingsMenu";
 
 interface SidebarProps {
@@ -57,6 +59,9 @@ interface SidebarProps {
   sessions: FolderSession[];
   total?: number;
   folderRestoreStates?: FolderRestoreState[];
+  onRetryRoot: (path: string) => Promise<void>;
+  onRemoveRoot: (path: string) => Promise<void>;
+  onRelocateRoot: (plan: RootRelocationPlan) => Promise<void>;
   activeSession?: FolderSession;
   currentPath?: string;
   showOnboarding: boolean;
@@ -292,6 +297,7 @@ export function Sidebar({
   sessions,
   total = 0,
   folderRestoreStates = [],
+  onRetryRoot, onRemoveRoot, onRelocateRoot,
   activeSession,
   currentPath,
   showOnboarding,
@@ -619,6 +625,19 @@ export function Sidebar({
     };
   }, [clearFolderDrag, draggedRoot, onReorderFolders, sessions]);
 
+  const unavailable = folderRestoreStates.filter(state => state.status !== "ready");
+  const folderRows: (FolderSession | FolderRestoreState)[] = displayedSessions.filter(session =>
+    !unavailable.some(state => state.rootPath === session.rootPath));
+  for (const state of unavailable) {
+    const rank = folderRestoreStates.findIndex(item => item.rootPath === state.rootPath);
+    const next = folderRows.findIndex(item => {
+      const position = folderRestoreStates.findIndex(candidate => candidate.rootPath === item.rootPath);
+      return position < 0 || position > rank;
+    });
+    folderRows.splice(next < 0 ? folderRows.length : next, 0, state);
+  }
+
+
   return (
     <aside className={`sidebar ${peopleMode ? "sidebar--people" : ""}`}>
       <div className="sidebar__brand">
@@ -802,13 +821,9 @@ export function Sidebar({
         ) : null}
 
         <div ref={folderTreeRef} className="sidebar__section--folders">
-          {folderRestoreStates.filter((state) => state.status !== "ready" &&
-            !sessions.some((session) => session.rootPath === state.rootPath)).map((state) => (
-            <div className="folder-search__state" key={state.rootPath} title={state.error ?? state.rootPath} role="status">
-              {state.status === "restoring" ? <LoaderCircle className="tree-row__loader" size={13} /> : null}
-              <span>{state.status === "restoring" ? t("restoringFolders") : t("folderRestoreFailed")}: {state.rootPath}</span>
-            </div>
-          ))}
+          {searchActive ? folderRestoreStates.filter(state => state.status !== "ready").map(state =>
+            <UnavailableFolder key={state.rootPath} path={state.rootPath} error={state.error} restoring={state.status === "restoring"}
+              onRetry={onRetryRoot} onRemove={onRemoveRoot} onRelocate={onRelocateRoot} t={t} />) : null}
           {searchActive ? (
             <div className="folder-search__results" aria-live="polite">
               {searchLoading ? (
@@ -843,7 +858,9 @@ export function Sidebar({
                 </>
               )}
             </div>
-          ) : displayedSessions.map((session) => {
+          ) : folderRows.map((session) => {
+            if ("status" in session) return <UnavailableFolder key={session.rootPath} path={session.rootPath} error={session.error} restoring={session.status === "restoring"}
+              onRetry={onRetryRoot} onRemove={onRemoveRoot} onRelocate={onRelocateRoot} t={t} />;
             const sessionIndex = sessions.findIndex((item) => item.id === session.id);
             const tree = directoryTreeQueries[sessionIndex]?.data ?? directoryTreePlaceholder(session);
             return (

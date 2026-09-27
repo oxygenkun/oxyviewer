@@ -24,7 +24,7 @@ mod bulk_attributes;
 pub mod external_apps;
 mod identity;
 
-pub use identity::{FileObservation, observe_file};
+pub use identity::{FileObservation, observe_file, relocation_directory};
 
 const DEFAULT_PAGE_SIZE: usize = 250;
 const MAX_PAGE_SIZE: usize = 1_000;

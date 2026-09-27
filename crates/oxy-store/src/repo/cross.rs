@@ -21,6 +21,7 @@ use crate::{StoreError, repo};
 use oxy_domain::CustomTagId;
 use rusqlite::Connection;
 use std::collections::HashMap;
+pub mod relocation;
 
 /// The source kind a person identity writes when it tags an asset.
 const PERSON_SOURCE: &str = "person";

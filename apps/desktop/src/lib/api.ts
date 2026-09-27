@@ -1,3 +1,4 @@
+import type { RootRelocationPlan, RootRelocationResult } from "@/types";
 import { normalizeCustomTag } from "@/lib/assets/tagTree";
 import { retainMediaResource, releaseUnretainedMediaResource } from "@/lib/cache/mediaResourceLease";
 import { invoke } from "@tauri-apps/api/core";
@@ -370,6 +371,7 @@ export async function chooseFolder(): Promise<string | null> {
 }
 
 export async function openFolder(path: string): Promise<FolderSession> {
+  if (!isTauri() && path === "/demo/Unavailable") throw new Error("Folder is unavailable");
   if (!isTauri()) {
     // The browser demo can open more than one folder, so the session must be
     // keyed by path rather than a single shared id.
@@ -965,7 +967,7 @@ export async function chooseAndConfigureExiftool(): Promise<ExiftoolStatus | nul
   return invoke<ExiftoolStatus>("configure_exiftool", { path: selection });
 }
 
-const demoRoots: string[] = [];
+const demoRoots: string[] = __OXY_DEBUG__ && typeof window !== "undefined" && new URLSearchParams(window.location.search).has("folderRecoveryDemo") ? ["/demo/Unavailable"] : [];
 
 export async function addLibraryRoot(path: string): Promise<string[]> {
   if (!isTauri()) {
@@ -1434,4 +1436,24 @@ export async function openAboutLink(target: AboutLink, releaseUrl?: string): Pro
     return;
   }
   await invoke("open_about_link", { target, releaseUrl: releaseUrl ?? null });
+}
+
+export async function checkLibraryRoot(path: string): Promise<void> {
+  if (!isTauri()) { if (path === "/demo/Unavailable") throw new Error("Folder is unavailable"); return; }
+  return invoke("check_library_root", { path });
+}
+export async function planRootRelocation(oldRoot: string, newRoot: string): Promise<RootRelocationPlan> {
+  if (isTauri()) return invoke("plan_root_relocation", { oldRoot, newRoot });
+  if (oldRoot === newRoot || demoRoots.includes(newRoot)) throw new Error("Destination is already registered");
+  return { oldRoot, newRoot, entries: ["verified", "unverified", "missing"].map((status, index) => ({
+    oldPath: `${oldRoot}/${index + 1}.jpg`, newPath: `${newRoot}/${index + 1}.jpg`,
+    status: status as "verified" | "unverified" | "missing", oldIdentityRevision: null, newIdentityRevision: null,
+  })) };
+}
+export async function relocateLibraryRoot(plan: RootRelocationPlan): Promise<RootRelocationResult> {
+  if (isTauri()) return invoke("relocate_library_root", { plan });
+  const index = demoRoots.indexOf(plan.oldRoot);
+  if (index < 0 || demoRoots.includes(plan.newRoot)) throw new Error("Folder list changed");
+  demoRoots[index] = plan.newRoot;
+  return { rootPath: plan.newRoot, linkedFiles: 2, needsReview: 2, missingFiles: 1, reusedArtifacts: 1, cacheFailures: 0 };
 }

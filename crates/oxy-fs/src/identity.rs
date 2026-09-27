@@ -58,6 +58,13 @@ pub fn observe_file(path: &Path) -> io::Result<FileObservation> {
     })
 }
 
+/// Resolve a user-selected recovery directory without recursively scanning it.
+pub fn relocation_directory(path: &Path) -> io::Result<PathBuf> {
+    let canonical = path.canonicalize()?;
+    fs::read_dir(&canonical)?;
+    Ok(canonical)
+}
+
 #[cfg(unix)]
 fn platform_file_identity(_file: &fs::File, metadata: &fs::Metadata) -> io::Result<String> {
     use std::os::unix::fs::MetadataExt;

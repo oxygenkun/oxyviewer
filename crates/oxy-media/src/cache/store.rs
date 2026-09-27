@@ -273,6 +273,153 @@ pub struct CacheUsage {
 }
 
 impl DiskMediaCache {
+    /// Explicit recovery operation only: never called on the browsing/open path.
+    pub fn relocation_sources(&self, root: &Path) -> Result<Vec<SourceRevision>, MediaError> {
+        let lock = self.open_cache_lock()?;
+        FileExt::lock_shared(&lock)?;
+        let generation = self.current_generation_unlocked()?;
+        let mut sources = Vec::new();
+        for prefix in fs::read_dir(&self.inner.root)? {
+            let prefix = prefix?;
+            if !prefix.file_type()?.is_dir()
+                || !is_lower_hex(&prefix.file_name().to_string_lossy(), 2)
+            {
+                continue;
+            }
+            for entry in fs::read_dir(prefix.path())? {
+                let entry = entry?;
+                if !entry.file_type()?.is_dir()
+                    || !is_lower_hex(&entry.file_name().to_string_lossy(), 64)
+                {
+                    continue;
+                }
+                let path = entry.path().join(MANIFEST_FILE);
+                if reject_symlink(&path).is_err() {
+                    continue;
+                }
+                let Ok(bytes) = fs::read(&path) else {
+                    continue;
+                };
+                let Ok(manifest) = serde_json::from_slice::<Manifest>(&bytes) else {
+                    continue;
+                };
+                if manifest.version == MANIFEST_VERSION
+                    && manifest.cache_generation == generation
+                    && manifest.source_revision.canonical_path.starts_with(root)
+                    && validate_source_revision(&manifest.source_revision).is_ok()
+                    && self.source_dir(&manifest.source_revision) == entry.path()
+                {
+                    sources.push(manifest.source_revision);
+                }
+            }
+        }
+        Ok(sources)
+    }
+
+    /// Cache migration after the user-record transaction has committed. Failures
+    /// are reported separately; they must not roll back a successful recovery.
+    pub fn reuse_root_relocation(
+        &self,
+        plan: &oxy_domain::RootRelocationPlan,
+        sources: &[SourceRevision],
+    ) -> oxy_domain::RootRelocationResult {
+        let sources: HashMap<_, _> = sources
+            .iter()
+            .map(|source| ((&source.canonical_path, &source.revision_id), source))
+            .collect();
+        let mut report = oxy_domain::RootRelocationResult {
+            root_path: plan.new_root.clone(),
+            linked_files: 0,
+            needs_review: 0,
+            missing_files: 0,
+            reused_artifacts: 0,
+            cache_failures: 0,
+        };
+        for entry in &plan.entries {
+            use oxy_domain::RelocationMatch;
+            match entry.status {
+                RelocationMatch::Missing => {
+                    report.missing_files += 1;
+                    report.needs_review += 1;
+                }
+                RelocationMatch::Unverified => {
+                    report.linked_files += 1;
+                    report.needs_review += 1;
+                }
+                RelocationMatch::Verified => {
+                    report.linked_files += 1;
+                    if let Some(old) = entry
+                        .old_identity_revision
+                        .as_ref()
+                        .and_then(|revision| sources.get(&(&entry.old_path, revision)))
+                    {
+                        match SourceRevision::observe(&entry.new_path)
+                            .and_then(|new| self.reuse_relocated_source(old, &new))
+                        {
+                            Ok(count) => report.reused_artifacts += count,
+                            Err(_) => report.cache_failures += 1,
+                        }
+                    }
+                }
+            }
+        }
+        report
+    }
+
+    /// Republish validated encoded pixels under a new source identity, without decoding.
+    /// Old files remain untouched for existing leases and normal cache maintenance.
+    pub fn reuse_relocated_source(
+        &self,
+        old: &SourceRevision,
+        new: &SourceRevision,
+    ) -> Result<usize, MediaError> {
+        validate_source_revision(old)?;
+        if old.file_identity != new.file_identity
+            || old.size_bytes != new.size_bytes
+            || old.modified != new.modified
+            || SourceRevision::observe(&new.canonical_path)? != *new
+        {
+            return Err(MediaError::StaleSourceRevision);
+        }
+        let pending = {
+            let lock = self.open_cache_lock()?;
+            FileExt::lock_shared(&lock)?;
+            let source_lock = self.open_source_lock(old)?;
+            FileExt::lock_shared(&source_lock)?;
+            let generation = self.current_generation_unlocked()?;
+            let mut manifest = self.load_manifest(old, generation)?;
+            let directory = self.source_dir(old);
+            retain_valid_artifacts(&directory, &mut manifest.artifacts)?;
+            let mut pending = Vec::new();
+            for artifact in manifest.artifacts {
+                if artifact.variant.policy_revision != super::model::MEDIA_CACHE_POLICY_REVISION {
+                    continue;
+                }
+                let path = directory.join(&artifact.file_name);
+                let Some(extension) = path.extension().and_then(|value| value.to_str()) else {
+                    continue;
+                };
+                let mut facts = artifact.facts;
+                facts.source.revision_id.clone_from(&new.revision_id);
+                pending.push(PendingArtifact {
+                    source_revision: new.clone(),
+                    variant: artifact.variant,
+                    facts,
+                    media_type: artifact.media_type,
+                    extension: extension.to_owned(),
+                    bytes: Arc::from(fs::read(&path)?),
+                    cache_generation: generation,
+                });
+            }
+            pending
+        };
+        let count = pending.len();
+        for artifact in pending {
+            self.publish(artifact)?;
+        }
+        Ok(count)
+    }
+
     pub fn new(cache_parent: impl AsRef<Path>, max_manifests: usize) -> Result<Self, MediaError> {
         Self::with_lease_ttl(cache_parent, max_manifests, DEFAULT_LEASE_TTL)
     }
@@ -1829,6 +1976,119 @@ mod tests {
             policy_revision: MEDIA_CACHE_POLICY_REVISION,
             allow_interim: false,
         }
+    }
+
+    #[test]
+    #[ignore = "requires OXY_RELOCATION_FIXTURE pointing at a real image"]
+    fn relocation_real_image_preserves_encoded_pixels() {
+        let fixture = std::env::var_os("OXY_RELOCATION_FIXTURE").expect("real fixture path");
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("source.png");
+        // Copy the fixture: never move or alter the user's original file.
+        fs::copy(fixture, &path).unwrap();
+        let source = SourceRevision::observe(&path).unwrap();
+        let decoded = image::open(&path).unwrap();
+        let mut encoded = Cursor::new(Vec::new());
+        decoded.write_to(&mut encoded, ImageFormat::Png).unwrap();
+        let bytes: Arc<[u8]> = Arc::from(encoded.into_inner());
+        let cache = DiskMediaCache::new(directory.path().join("cache"), 8).unwrap();
+        let mut artifact = pending(
+            &source,
+            decoded.width().max(decoded.height()),
+            cache.generation().unwrap(),
+        );
+        artifact.bytes = Arc::clone(&bytes);
+        artifact.extension = "png".into();
+        artifact.media_type = "image/png".into();
+        artifact.facts = crate::media_source::test_facts(
+            ImageOrigin::PrimaryImage,
+            (decoded.width(), decoded.height()).into(),
+            false,
+        );
+        cache.publish(artifact).unwrap();
+        let moved = directory.path().join("moved.png");
+        fs::rename(&path, &moved).unwrap();
+        let new = SourceRevision::observe(&moved).unwrap();
+        let start = Instant::now();
+        assert_eq!(cache.reuse_relocated_source(&source, &new).unwrap(), 1);
+        let hit = cache
+            .lookup(&request(&new, decoded.width().max(decoded.height())))
+            .unwrap()
+            .unwrap();
+        let ArtifactLocation::Managed(location) = &hit.artifact.location else {
+            panic!("managed artifact");
+        };
+        assert_eq!(fs::read(location).unwrap(), bytes.as_ref());
+        eprintln!(
+            "relocation real fixture: {}x{}, {} bytes, {:?}",
+            decoded.width(),
+            decoded.height(),
+            bytes.len(),
+            start.elapsed()
+        );
+    }
+
+    #[test]
+    fn relocation_reuses_valid_pixels_preserves_old_leases_and_respects_clear() {
+        let (directory, source) = fixture();
+        let cache = DiskMediaCache::new(directory.path().join("cache"), 8).unwrap();
+        let publication = cache
+            .publish(pending(&source, 512, cache.generation().unwrap()))
+            .unwrap();
+        let ArtifactLocation::Managed(old_artifact) = &publication.artifact.location else {
+            panic!("managed artifact");
+        };
+        let bytes = fs::read(old_artifact).unwrap();
+        assert_eq!(
+            cache
+                .relocation_sources(&directory.path().canonicalize().unwrap())
+                .unwrap(),
+            vec![source.clone()]
+        );
+        let new_path = directory.path().join("moved.jpg");
+        fs::rename(&source.canonical_path, &new_path).unwrap();
+        let new = SourceRevision::observe(&new_path).unwrap();
+        assert_eq!(cache.reuse_relocated_source(&source, &new).unwrap(), 1);
+        assert!(old_artifact.exists());
+        publication.lease.as_ref().unwrap().renew().unwrap();
+        let hit = cache.lookup(&request(&new, 512)).unwrap().unwrap();
+        assert_eq!(hit.artifact.facts.source.revision_id, new.revision_id);
+        let ArtifactLocation::Managed(new_artifact) = &hit.artifact.location else {
+            panic!("managed artifact");
+        };
+        assert_eq!(fs::read(new_artifact).unwrap(), bytes);
+        drop(hit);
+        cache.clear().unwrap();
+        assert_eq!(cache.reuse_relocated_source(&source, &new).unwrap(), 0);
+        assert!(cache.lookup(&request(&new, 512)).unwrap().is_none());
+    }
+
+    #[test]
+    fn relocation_does_not_reuse_replaced_sources_or_corrupt_payloads() {
+        let (directory, source) = fixture();
+        let cache = DiskMediaCache::new(directory.path().join("cache"), 8).unwrap();
+        let publication = cache
+            .publish(pending(&source, 512, cache.generation().unwrap()))
+            .unwrap();
+        let copy = directory.path().join("copy.jpg");
+        fs::copy(&source.canonical_path, &copy).unwrap();
+        assert!(
+            cache
+                .reuse_relocated_source(&source, &SourceRevision::observe(&copy).unwrap())
+                .is_err()
+        );
+        let moved = directory.path().join("moved.jpg");
+        fs::rename(&source.canonical_path, &moved).unwrap();
+        let ArtifactLocation::Managed(path) = &publication.artifact.location else {
+            panic!("managed artifact");
+        };
+        fs::write(path, b"corrupt").unwrap();
+        assert_eq!(
+            cache
+                .reuse_relocated_source(&source, &SourceRevision::observe(&moved).unwrap())
+                .unwrap(),
+            0
+        );
     }
 
     #[test]
