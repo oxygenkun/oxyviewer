@@ -1,0 +1,50 @@
+.trigger {
+  display: grid;
+  place-items: center;
+  flex: 0 0 20px;
+  width: 20px;
+  height: 22px;
+  padding: 0;
+  border-radius: var(--radius-control);
+  color: var(--muted);
+  background: transparent;
+}
+.trigger:hover, .trigger[data-state="open"] { color: var(--text); background: var(--surface-hover); }
+.trigger:focus-visible { outline-color: var(--muted); }
+/* Keep Radix focus restoration without leaving a ring after menu actions.
+   A fresh keyboard interaction or Tab visit restores the normal focus cue. */
+.trigger[data-restored-focus] { outline: none; }
+.trigger:disabled { opacity: .55; cursor: default; }
+.content {
+  z-index: var(--layer-menu);
+  min-width: 150px;
+  max-width: calc(100vw - 16px);
+  max-height: var(--radix-dropdown-menu-content-available-height);
+  overflow-y: auto;
+  padding: var(--space-1);
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-control);
+  background: var(--panel-raised);
+  color: var(--text);
+  box-shadow: var(--popover-shadow);
+}
+.item {
+  display: grid;
+  grid-template-columns: 16px minmax(0, 1fr) 14px;
+  align-items: center;
+  gap: var(--space-1);
+  min-height: var(--control-height-small);
+  padding: 0 var(--space-2);
+  border-radius: 3px;
+  font-size: .6875rem;
+  font-weight: 400;
+  letter-spacing: 0;
+  text-transform: none;
+  cursor: default;
+  outline: none;
+}
+.item[data-highlighted], .item[data-state="open"] { background: var(--surface-hover); }
+.item > span:nth-child(2) { white-space: nowrap; }
+.indicator { display: grid; place-items: center; }
+.indicator svg { display: block; }
+.separator { height: 1px; margin: var(--space-1); background: var(--line-strong); }

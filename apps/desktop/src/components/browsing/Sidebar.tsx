@@ -1,11 +1,9 @@
 import { useQueries, useQueryClient } from "@tanstack/react-query";
 import {
-  Check,
   ChevronDown,
   ChevronRight,
   Copy,
   Crosshair,
-  Ellipsis,
   Folder,
   FolderOpen,
   GripVertical,
@@ -41,6 +39,7 @@ import { isSameOrDescendantPath, platformFileManager } from "@/lib/browse/folder
 import type { DirectorySummary, DirectoryTreeNode, DirectoryTreeSnapshot, FolderPerson, FolderSession, PersonFilterState } from "@/types";
 import { ConfirmTrashDialog } from "@/components/overlay/ConfirmTrashDialog";
 import { FolderNameButton } from "./FolderNameButton";
+import { FolderSettingsMenu } from "./FolderSettingsMenu";
 
 interface SidebarProps {
   peopleMode?: boolean;
@@ -78,12 +77,6 @@ interface SidebarProps {
   onReorderFolders: (rootPaths: string[]) => void;
   t: (key: MessageKey) => string;
 }
-
-const FOLDER_SORT_OPTIONS = [
-  ["import", "folderSortImport"],
-  ["nameAscending", "folderSortNameAscending"],
-  ["nameDescending", "folderSortNameDescending"],
-] as const satisfies ReadonlyArray<readonly [FolderSort, MessageKey]>;
 
 const FILE_MANAGER_LABEL = {
   finder: "openInFinder",
@@ -345,13 +338,7 @@ export function Sidebar({
       container.classList.remove("is-scrolling");
     };
   }, []);
-  const sortMenuRef = useRef<HTMLDivElement>(null);
-  const sortMenuButtonRef = useRef<HTMLButtonElement>(null);
-  const sortPopoverRef = useRef<HTMLDivElement>(null);
-  const sortSubmenuButtonRef = useRef<HTMLButtonElement>(null);
   const [sortMenuOpen, setSortMenuOpen] = useState(false);
-  const [sortSubmenuOpen, setSortSubmenuOpen] = useState(false);
-  const [sortMenuPosition, setSortMenuPosition] = useState({ top: 0, left: 0 });
   const [contextMenu, setContextMenu] = useState<{
     session: FolderSession;
     entry: DirectorySummary;
@@ -493,31 +480,6 @@ export function Sidebar({
     if (searchOpen) searchInputRef.current?.focus();
   }, [searchOpen]);
 
-  useEffect(() => {
-    if (!sortMenuOpen) return;
-    sortPopoverRef.current?.querySelector<HTMLButtonElement>('[role="menuitem"]')?.focus();
-    const closeOnOutsidePress = (event: PointerEvent) => {
-      const target = event.target as Node;
-      if (!sortMenuRef.current?.contains(target) && !sortPopoverRef.current?.contains(target)) {
-        setSortMenuOpen(false);
-        setSortSubmenuOpen(false);
-      }
-    };
-    const closeOnEscape = (event: KeyboardEvent) => {
-      if (event.key === "Escape") {
-        setSortMenuOpen(false);
-        setSortSubmenuOpen(false);
-        sortMenuButtonRef.current?.focus();
-      }
-    };
-    document.addEventListener("pointerdown", closeOnOutsidePress);
-    document.addEventListener("keydown", closeOnEscape);
-    return () => {
-      document.removeEventListener("pointerdown", closeOnOutsidePress);
-      document.removeEventListener("keydown", closeOnEscape);
-    };
-  }, [sortMenuOpen]);
-
   const showFolderContextMenu = useCallback((
     event: React.MouseEvent,
     session: FolderSession,
@@ -526,7 +488,6 @@ export function Sidebar({
     event.preventDefault();
     event.stopPropagation();
     setSortMenuOpen(false);
-    setSortSubmenuOpen(false);
     setContextMenu({
       session,
       entry,
@@ -812,120 +773,12 @@ export function Sidebar({
             <button className="sidebar__add-folder" title={t("openFolder")} onClick={onOpen}>
               <Plus size={14} />
             </button>
-            <div className="folder-sort-control" ref={sortMenuRef}>
-              <button
-                ref={sortMenuButtonRef}
-                className="folder-sort-control__trigger"
-                title={t("folderActions")}
-                aria-label={t("folderActions")}
-                aria-haspopup="menu"
-                aria-expanded={sortMenuOpen}
-                disabled={sessions.length === 0}
-                onClick={(event) => {
-                  const rect = event.currentTarget.getBoundingClientRect();
-                  const sidebarRight = event.currentTarget
-                    .closest(".sidebar")
-                    ?.getBoundingClientRect().right;
-                  setSortMenuPosition({
-                    top: rect.bottom + 4,
-                    left: (sidebarRight ?? rect.right) + 2,
-                  });
-                  setSortSubmenuOpen(false);
-                  setSortMenuOpen((open) => !open);
-                }}
-              >
-                <Ellipsis size={14} />
-              </button>
-            </div>
+            <FolderSettingsMenu open={sortMenuOpen} onOpenChange={setSortMenuOpen}
+              disabled={sessions.length === 0} folderSort={folderSort}
+              onFolderSortChange={onFolderSortChange} folderDragEnabled={folderDragEnabled}
+              onFolderDragEnabledChange={onFolderDragEnabledChange} t={t} />
           </div>
         </div>
-
-        {sortMenuOpen ? createPortal(
-          <div
-            ref={sortPopoverRef}
-            className="folder-command-menu"
-            role="menu"
-            aria-label={t("folderActions")}
-            style={sortMenuPosition}
-          >
-            <button
-              className="folder-command-menu__submenu-trigger"
-              ref={sortSubmenuButtonRef}
-              role="menuitem"
-              aria-haspopup="menu"
-              aria-expanded={sortSubmenuOpen}
-              onMouseEnter={() => setSortSubmenuOpen(true)}
-              onClick={() => setSortSubmenuOpen((open) => !open)}
-              onKeyDown={(event) => {
-                if (event.key === "ArrowRight") {
-                  setSortSubmenuOpen(true);
-                  requestAnimationFrame(() => {
-                    sortPopoverRef.current
-                      ?.querySelector<HTMLButtonElement>('[role="menuitemradio"]')
-                      ?.focus();
-                  });
-                }
-              }}
-            >
-              <span className="folder-command-menu__label">{t("folderSort")}</span>
-              <ChevronRight size={13} />
-            </button>
-            <div className="folder-command-menu__separator" />
-            <button
-              className="folder-command-menu__checkable"
-              role="menuitemcheckbox"
-              aria-checked={folderDragEnabled}
-              onMouseEnter={() => setSortSubmenuOpen(false)}
-              onClick={() => {
-                onFolderDragEnabledChange(!folderDragEnabled);
-                setSortMenuOpen(false);
-                setSortSubmenuOpen(false);
-                sortMenuButtonRef.current?.focus();
-              }}
-            >
-              <span className="folder-command-menu__check">
-                {folderDragEnabled ? <Check size={13} /> : null}
-              </span>
-              <span className="folder-command-menu__label">{t("enableFolderDrag")}</span>
-              <span />
-            </button>
-            {sortSubmenuOpen ? (
-              <div
-                className="folder-command-menu folder-command-submenu"
-                role="menu"
-                aria-label={t("folderSort")}
-                onKeyDown={(event) => {
-                  if (event.key === "ArrowLeft") {
-                    setSortSubmenuOpen(false);
-                    sortSubmenuButtonRef.current?.focus();
-                  }
-                }}
-              >
-                {FOLDER_SORT_OPTIONS.map(([value, label]) => (
-                  <button
-                    key={value}
-                    className="folder-command-menu__checkable"
-                    role="menuitemradio"
-                    aria-checked={folderSort === value}
-                    onClick={() => {
-                      onFolderSortChange(value);
-                      setSortMenuOpen(false);
-                      setSortSubmenuOpen(false);
-                      sortMenuButtonRef.current?.focus();
-                    }}
-                  >
-                    <span className="folder-command-menu__check">
-                      {folderSort === value ? <Check size={13} /> : null}
-                    </span>
-                    <span className="folder-command-menu__label">{t(label)}</span>
-                    <span />
-                  </button>
-                ))}
-              </div>
-            ) : null}
-          </div>,
-          document.body,
-        ) : null}
 
         {searchOpen ? (
           <label className="folder-search">

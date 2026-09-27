@@ -29,7 +29,11 @@ OxyViewer 保留原生 CSS，通过 `styles/foundation.css` 统一语义颜色�
 RAW 操作按钮。删除确认默认聚焦取消；点击背景、Escape、取消按钮均可关闭；
 仅确认按钮触发文件操作。其专属旧全局样式已移除。
 
-设置窗口、人物管理与菜单尚未整体迁移到 Radix；后续按组件逐步接入，
+文件夹标题栏的更多操作使用 Radix Dropdown Menu，包含排序 RadioGroup 子菜单和
+拖动开关 CheckboxItem。定位、边缘避让、方向键导航和关闭后的焦点返回由 Radix 管理；
+菜单使用独立 CSS Module，键盘事件不冒泡到照片快捷键。
+
+设置窗口、人物管理与其他菜单尚未整体迁移到 Radix；后续按组件逐步接入，
 不同时引入 Tailwind 或另一套成套视觉系统。
 
 ## 验证
