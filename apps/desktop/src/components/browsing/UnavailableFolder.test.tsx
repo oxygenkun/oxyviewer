@@ -44,12 +44,20 @@ it("keeps an unavailable folder and reports a failed retry", async () => {
   expect(remove).not.toHaveBeenCalled();
 });
 it("only removes the list entry after explicit confirmation", async () => {
-  await menu(); await key("End"); await key("Enter");
+  await act(async () => host.querySelector<HTMLButtonElement>(".tree-row__remove")!.click());
   expect(document.querySelector('[role="dialog"]')?.textContent).toContain("folderRemoveHint");
   expect(remove).not.toHaveBeenCalled();
   await act(async () => button("cancel").click());
   expect(remove).not.toHaveBeenCalled();
-  await menu(); await key("End"); await key("Enter");
+  await act(async () => host.querySelector<HTMLButtonElement>(".tree-row__remove")!.click());
   await act(async () => button("folderRemoveEntry").click());
   expect(remove).toHaveBeenCalledExactlyOnceWith("/old");
+});
+
+it("offers exactly two link operations and a separate remove button", async () => {
+  expect(host.querySelector(".tree-row__remove svg.lucide-x")).not.toBeNull();
+  expect(host.querySelector("svg.lucide-link2, svg.lucide-link-2")).not.toBeNull();
+  await menu();
+  expect([...document.querySelectorAll('[role="menuitem"]')].map(item => item.textContent))
+    .toEqual(["folderRelocate", "folderRetry"]);
 });

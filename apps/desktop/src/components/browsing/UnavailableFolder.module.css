@@ -1,13 +1,18 @@
-.row { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2); margin: 3px 4px; padding: 7px; border-radius: var(--radius-control); color: var(--muted); background: var(--surface-control); }
-.name { display: grid; gap: 3px; flex: 1; min-width: 0; font-size: .75rem; }
-.name > span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.name small { font-size: .625rem; color: var(--faint); }
-.trigger { display: grid; place-items: center; flex-shrink: 0; width: 26px; height: 26px; padding: 0; color: var(--muted); background: transparent; border-radius: var(--radius-control); }
+.row { color: var(--faint); background: var(--surface-control); flex-shrink: 0; }
+.row:hover { color: var(--muted); }
+/* Separate availability groups without changing the shared 30px tree row. */
+:global(.folder-root) + .row,
+.row + :global(.folder-root) { margin-top: var(--space-2); }
+/* Reserve the remove slot so hovering cannot move Link under the pointer. */
+.row :global(.tree-row__remove) { flex-basis: 21px; width: 21px; }
+.name { overflow: hidden; }
+.trigger { display: grid; place-items: center; flex: 0 0 21px; width: 21px; height: 22px; padding: 0; color: var(--muted); background: transparent; border-radius: var(--radius-control); }
 .trigger:hover { color: var(--text); background: var(--surface-hover); }
+.trigger:disabled { cursor: default; }
+.srOnly { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
 .menu { z-index: var(--layer-menu); padding: var(--space-1); border: 1px solid var(--line-strong); border-radius: var(--radius-control); background: var(--panel-raised); color: var(--text); box-shadow: var(--popover-shadow); }
 .item { padding: 6px 10px; font-size: .75rem; outline: none; cursor: default; border-radius: var(--radius-control); }
 .item[data-highlighted] { background: var(--surface-hover); }
-.separator { height: 1px; background: var(--line); margin: 4px; }
 .paths { display: grid; gap: 6px; overflow-wrap: anywhere; font-size: .6875rem; }
 .summary { margin-top: 12px; font-size: .75rem; }
 .entries { max-height: 180px; overflow: auto; list-style: none; padding: 0; font-size: .6875rem; }
