@@ -1,7 +1,9 @@
+import type { FolderRestoreState } from "./folderRestoration";
 import type { FolderSort } from "./folderOrdering";
 import { clampLayoutSize, LAYOUT_SIZE_LIMITS, type LayoutRegion } from "@/lib/ui/layoutSizing";
 import type { ThumbnailOrientation } from "@/types";
 
+const FOLDER_FAILURES_KEY = "oxyviewer.folder-failures.v1";
 const WORKSPACE_KEY = "oxyviewer.workspace.v1";
 const ONBOARDING_KEY = "oxyviewer.folder-onboarding.v1";
 const FOCUS_AREAS_KEY = "oxyviewer.focus-areas-visible.v1";
@@ -30,6 +32,29 @@ export interface WorkspaceSnapshot {
 interface StorageLike {
   getItem(key: string): string | null;
   setItem(key: string, value: string): void;
+}
+
+/** Only settled failures are durable; an interrupted check retains its old failure. */
+export function loadFolderFailures(storage: StorageLike = window.localStorage): FolderRestoreState[] {
+  try {
+    const parsed: unknown = JSON.parse(storage.getItem(FOLDER_FAILURES_KEY) ?? "[]");
+    if (!Array.isArray(parsed)) return [];
+    const seen = new Set<string>();
+    return parsed.flatMap(item => {
+      if (!item || typeof item.rootPath !== "string" || !item.rootPath ||
+        item.status !== "failed" || seen.has(item.rootPath)) return [];
+      seen.add(item.rootPath);
+      return [{ rootPath: item.rootPath, status: "failed" as const,
+        error: typeof item.error === "string" ? item.error : undefined }];
+    });
+  } catch { return []; }
+}
+
+export function saveFolderFailures(states: FolderRestoreState[], storage: StorageLike = window.localStorage): void {
+  try {
+    storage.setItem(FOLDER_FAILURES_KEY, JSON.stringify(states.filter(state => state.status === "failed")
+      .map(({ rootPath, error }) => ({ rootPath, status: "failed", error }))));
+  } catch { /* Storage availability must not prevent browsing or retrying. */ }
 }
 
 const emptySnapshot = (): WorkspaceSnapshot => ({ currentDirectories: {} });

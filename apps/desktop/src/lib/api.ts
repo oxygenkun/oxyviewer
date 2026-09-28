@@ -370,8 +370,14 @@ export async function chooseFolder(): Promise<string | null> {
   return typeof selection === "string" ? selection : null;
 }
 
+// Development fixture: change the query flag before refreshing to simulate a reconnect.
+function isUnavailableDemoFolder(path: string): boolean {
+  return path === "/demo/Unavailable" && !(__OXY_DEBUG__ && typeof window !== "undefined" &&
+    new URLSearchParams(window.location.search).has("folderRecoveryOnline"));
+}
+
 export async function openFolder(path: string): Promise<FolderSession> {
-  if (!isTauri() && path === "/demo/Unavailable") throw new Error("Folder is unavailable");
+  if (!isTauri() && isUnavailableDemoFolder(path)) throw new Error("Folder is unavailable");
   if (!isTauri()) {
     // The browser demo can open more than one folder, so the session must be
     // keyed by path rather than a single shared id.
@@ -1439,7 +1445,7 @@ export async function openAboutLink(target: AboutLink, releaseUrl?: string): Pro
 }
 
 export async function checkLibraryRoot(path: string): Promise<void> {
-  if (!isTauri()) { if (path === "/demo/Unavailable") throw new Error("Folder is unavailable"); return; }
+  if (!isTauri()) { if (isUnavailableDemoFolder(path)) throw new Error("Folder is unavailable"); return; }
   return invoke("check_library_root", { path });
 }
 export async function planRootRelocation(oldRoot: string, newRoot: string): Promise<RootRelocationPlan> {

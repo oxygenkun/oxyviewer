@@ -1,7 +1,7 @@
 import { QueryClient } from "@tanstack/react-query";
 import { describe, expect, it, vi } from "vitest";
 import type { FolderSession } from "@/types";
-import { insertRestoredFolder, restoreFoldersProgressively, type FolderRestoreState } from "./folderRestoration";
+import { insertRestoredFolder, mergeFolderRestoreStates, restoreFoldersProgressively, type FolderRestoreState } from "./folderRestoration";
 
 const folder = (rootPath: string): FolderSession => ({
   id: rootPath, rootPath, displayName: rootPath, openedAtMs: 0, deletionMode: "trash",
@@ -81,4 +81,29 @@ describe("progressive folder restoration", () => {
     expect(open).not.toHaveBeenCalled();
     expect(report).toHaveBeenCalledWith([]);
   });
+});
+
+
+it("retains failed state during a recheck and recovers without trusting a cached session", async () => {
+  let states: FolderRestoreState[] = [{ rootPath: "photos", status: "failed", error: "offline" }];
+  const check = deferred<void>();
+  const open = vi.fn(async () => folder("photos"));
+  const publish = vi.fn();
+  const restore = restoreFoldersProgressively(["photos"], "photos", open, publish,
+    next => { states = mergeFolderRestoreStates(states, next); }, () => check.promise);
+  expect(states).toEqual([{ rootPath: "photos", status: "failed", error: "offline", checking: true }]);
+  expect(open).not.toHaveBeenCalled();
+  check.resolve(); await restore;
+  expect(states).toEqual([{ rootPath: "photos", status: "ready" }]);
+  expect(publish).toHaveBeenCalledOnce();
+  // The folder can go offline again even though open() has a cached session.
+  await restoreFoldersProgressively(["photos"], "photos", open, publish,
+    next => { states = mergeFolderRestoreStates(states, next); }, async () => { throw new Error("unplugged"); });
+  expect(states[0]).toMatchObject({ status: "failed", error: "Error: unplugged" });
+  expect(open).toHaveBeenCalledOnce();
+  expect(publish).toHaveBeenCalledOnce();
+});
+
+it("prunes persisted failures for roots removed from the library", () => {
+  expect(mergeFolderRestoreStates([{ rootPath: "removed", status: "failed" }], [])).toEqual([]);
 });

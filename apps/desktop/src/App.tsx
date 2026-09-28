@@ -49,7 +49,7 @@ import { recordBrowseTiming } from "@/lib/diagnostics/browseDiagnostics";
 import { firstBrowseCursor, nextBrowseCursor } from "@/lib/browse/browsePagination";
 import { removeAssetFromInfiniteData } from "@/lib/browse/assetQueryCache";
 import { useBackgroundAssetPagination } from "@/lib/hooks/useBackgroundAssetPagination";
-import { insertRestoredFolder, restoreFoldersProgressively, type FolderRestoreState } from "@/lib/browse/folderRestoration";
+import { insertRestoredFolder, mergeFolderRestoreStates, restoreFoldersProgressively, type FolderRestoreState } from "@/lib/browse/folderRestoration";
 import {
   applyEntryFailure,
   applyEntryOpened,
@@ -90,6 +90,8 @@ import {
   completeFolderOnboarding,
   hasSeenFolderOnboarding,
   loadWorkspace,
+  loadFolderFailures,
+  saveFolderFailures,
   recoverMissingCurrentDirectory,
   saveWorkspace,
 } from "@/lib/browse/workspacePersistence";
@@ -115,7 +117,7 @@ export function App({ perfScenario }: { perfScenario?: PerfScenario }) {
   const [browseProgress, setBrowseProgress] = useState<DirectoryBrowseProgress>();
   const retiredRoots = useRef(new Set<string>());
   const [recoveryNotice, setRecoveryNotice] = useState<string>();
-  const [folderRestoreStates, setFolderRestoreStates] = useState<FolderRestoreState[]>([]);
+  const [folderRestoreStates, setFolderRestoreStates] = useState<FolderRestoreState[]>(() => perfScenario ? [] : loadFolderFailures());
   const [folderImport, setFolderImport] = useState<FolderImportState>(IDLE_FOLDER_IMPORT);
   const [showOnboarding, setShowOnboarding] = useState(() => !hasSeenFolderOnboarding());
   const [error, setError] = useState<string>();
@@ -170,7 +172,8 @@ export function App({ perfScenario }: { perfScenario?: PerfScenario }) {
         recordBrowseTiming("workspace-root-ready", { root: session.rootPath, elapsedMs: performance.now() - started });
         queryClient.setQueryData<FolderSession[]>(["open-folders"], (current = []) =>
           insertRestoredFolder(current, session, roots));
-      }, states => setFolderRestoreStates(states.filter(state => !retiredRoots.current.has(state.rootPath))));
+      }, states => setFolderRestoreStates(current => mergeFolderRestoreStates(current,
+        states.filter(state => !retiredRoots.current.has(state.rootPath)))), checkLibraryRoot);
       // Do not replay completed results: users may have removed a ready root.
       return queryClient.getQueryData<FolderSession[]>(["open-folders"]) ?? [];
     },
@@ -190,7 +193,7 @@ export function App({ perfScenario }: { perfScenario?: PerfScenario }) {
   const activeRootRestoring = folderRestoreStates.some((state) =>
     state.rootPath === workspace.activeRoot && state.status === "restoring");
   const restoringFolders = foldersQuery.isLoading || folderRestoreStates.some((state) =>
-    state.status === "restoring");
+    state.status === "restoring" || state.checking);
   const activeSession = sessions.find((item) => item.rootPath === workspace.activeRoot) ??
     (activeRootRestoring ? undefined : sortedSessions[0]);
   const activeRootPath = activeSession?.rootPath;
@@ -284,6 +287,7 @@ export function App({ perfScenario }: { perfScenario?: PerfScenario }) {
   }, []);
 
   useEffect(() => saveWorkspace(workspace), [workspace]);
+  useEffect(() => { if (!perfScenario) saveFolderFailures(folderRestoreStates); }, [folderRestoreStates, perfScenario]);
 
   useEffect(() => {
     if (activeSession && currentPath) notifyActiveDirectory(activeSession, currentPath);
@@ -724,6 +728,7 @@ export function App({ perfScenario }: { perfScenario?: PerfScenario }) {
   }, []);
 
   const recoverSession = useCallback(async (oldPath: string, path: string) => {
+    await checkLibraryRoot(path);
     const session = await openFolder(path);
     setError(undefined);
     retiredRoots.current.add(path);
@@ -778,6 +783,8 @@ export function App({ perfScenario }: { perfScenario?: PerfScenario }) {
     setError(undefined);
     try {
       const roots = await removeLibraryRoot(session.rootPath);
+      retiredRoots.current.add(session.rootPath);
+      setFolderRestoreStates(current => current.filter(item => item.rootPath !== session.rootPath));
       clearSelection();
       queryClient.setQueryData<FolderSession[]>(["open-folders"], (current = []) =>
         current.filter((item) => roots.includes(item.rootPath)),
@@ -833,36 +840,54 @@ export function App({ perfScenario }: { perfScenario?: PerfScenario }) {
   }, [queryClient]);
 
   const handleRefresh = useCallback(async () => {
-    if (!activeSession || !currentPath || isRefreshing) return;
+    if (isRefreshing || restoringFolders) return;
     setError(undefined);
     setIsRefreshing(true);
     try {
+      const roots = await listLibraryRoots();
+      for (const root of roots) retiredRoots.current.delete(root);
+      const available = new Set<string>();
+      await restoreFoldersProgressively(roots, workspace.activeRoot, async path => {
+        const previous = sessions.find(session => session.rootPath === path);
+        const failed = folderRestoreStates.some(state => state.rootPath === path && state.status === "failed");
+        return previous && !failed ? previous : openFolder(path);
+      }, session => {
+        if (retiredRoots.current.has(session.rootPath)) return;
+        available.add(session.rootPath);
+        queryClient.setQueryData<FolderSession[]>(["open-folders"], (current = []) =>
+          insertRestoredFolder(current.filter(item => item.rootPath !== session.rootPath), session, roots));
+      }, states => setFolderRestoreStates(current => mergeFolderRestoreStates(current,
+        states.filter(state => !retiredRoots.current.has(state.rootPath)))), checkLibraryRoot);
+      if (!activeSession || !currentPath || !available.has(activeSession.rootPath)) return;
+      const refreshedSession = queryClient.getQueryData<FolderSession[]>(["open-folders"])
+        ?.find(session => session.rootPath === activeSession.rootPath);
+      if (!refreshedSession) return;
       await Promise.all([
-        queryClient.cancelQueries({ queryKey: ["assets", activeSession.id, currentPath] }),
-        queryClient.cancelQueries({ queryKey: ["preload-assets", activeSession.id, currentPath] }),
-        queryClient.cancelQueries({ queryKey: ["progressive-metadata-assets", activeSession.id, currentPath] }),
-        queryClient.cancelQueries({ queryKey: ["directory-tree", activeSession.id] }),
+        queryClient.cancelQueries({ queryKey: ["assets", refreshedSession.id, currentPath] }),
+        queryClient.cancelQueries({ queryKey: ["preload-assets", refreshedSession.id, currentPath] }),
+        queryClient.cancelQueries({ queryKey: ["progressive-metadata-assets", refreshedSession.id, currentPath] }),
+        queryClient.cancelQueries({ queryKey: ["directory-tree", refreshedSession.id] }),
       ]);
-      const tree = await refreshDirectory(activeSession.id, currentPath);
+      const tree = await refreshDirectory(refreshedSession.id, currentPath);
       queryClient.setQueryData<DirectoryTreeSnapshot>(
-        ["directory-tree", activeSession.id],
+        ["directory-tree", refreshedSession.id],
         (current) => acceptDirectoryTreeSnapshot(current, tree),
       );
       invalidateMetadataDirectory(currentPath);
       invalidateImageDirectory(currentPath);
       queryClient.removeQueries({ queryKey: ["asset-render"] });
       await Promise.all([
-        queryClient.invalidateQueries({ queryKey: ["assets", activeSession.id, currentPath] }),
-        queryClient.invalidateQueries({ queryKey: ["preload-assets", activeSession.id, currentPath] }),
-        queryClient.invalidateQueries({ queryKey: ["progressive-metadata-assets", activeSession.id, currentPath] }),
-        queryClient.invalidateQueries({ queryKey: ["directory-search", activeSession.id] }),
+        queryClient.invalidateQueries({ queryKey: ["assets", refreshedSession.id, currentPath] }),
+        queryClient.invalidateQueries({ queryKey: ["preload-assets", refreshedSession.id, currentPath] }),
+        queryClient.invalidateQueries({ queryKey: ["progressive-metadata-assets", refreshedSession.id, currentPath] }),
+        queryClient.invalidateQueries({ queryKey: ["directory-search", refreshedSession.id] }),
       ]);
     } catch (cause) {
       setError(String(cause));
     } finally {
       setIsRefreshing(false);
     }
-  }, [activeSession, currentPath, isRefreshing, queryClient]);
+  }, [activeSession, currentPath, isRefreshing, restoringFolders, sessions, folderRestoreStates, workspace.activeRoot, queryClient]);
 
   const handleTrashAssets = useCallback(async (targets: typeof assets) => {
     if (!targets.length) return;
@@ -1031,7 +1056,7 @@ export function App({ perfScenario }: { perfScenario?: PerfScenario }) {
         onCopyFolderPath={(session, path, relative) => void handleCopyPath(session.rootPath, path, relative)}
         onOpenInFileManager={(path) => void handleOpenInFileManager(path)}
         onRefresh={handleRefresh}
-        isRefreshing={isRefreshing}
+        isRefreshing={isRefreshing || restoringFolders}
         onDismissOnboarding={dismissOnboarding}
         onSettings={toggleSettings}
         folderSort={folderSort}

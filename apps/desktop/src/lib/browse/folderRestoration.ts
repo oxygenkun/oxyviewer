@@ -4,6 +4,18 @@ export interface FolderRestoreState {
   rootPath: string;
   status: "restoring" | "ready" | "failed";
   error?: string;
+  checking?: boolean;
+}
+
+// Keep the last known availability visible until a fresh probe settles.
+export function mergeFolderRestoreStates(
+  current: FolderRestoreState[], incoming: FolderRestoreState[],
+): FolderRestoreState[] {
+  return incoming.map(state => {
+    const previous = current.find(item => item.rootPath === state.rootPath);
+    return state.status === "restoring" && previous && previous.status !== "restoring"
+      ? { ...previous, checking: true } : state;
+  });
 }
 
 // Publish each result independently: an offline root must not hide ready roots.
@@ -13,6 +25,7 @@ export async function restoreFoldersProgressively(
   open: (path: string) => Promise<FolderSession>,
   publish: (session: FolderSession) => void,
   report: (states: FolderRestoreState[]) => void,
+  check?: (path: string) => Promise<void>,
 ): Promise<void> {
   const states: FolderRestoreState[] = [...new Set(roots)].map((rootPath) => ({
     rootPath, status: "restoring",
@@ -23,6 +36,7 @@ export async function restoreFoldersProgressively(
     Number(b.rootPath === activeRoot) - Number(a.rootPath === activeRoot));
   await Promise.all(prioritized.map(async (state) => {
     try {
+      if (check) await check(state.rootPath);
       const session = await open(state.rootPath);
       publish(session);
       state.status = "ready";

@@ -784,7 +784,7 @@ export function Sidebar({
             <button
               title={t("refreshFolder")}
               aria-label={t("refreshFolder")}
-              disabled={!activeSession || isRefreshing}
+              disabled={isRefreshing || (sessions.length === 0 && folderRestoreStates.length === 0)}
               onClick={onRefresh}
             >
               <RefreshCw className={isRefreshing ? "tree-row__loader" : undefined} size={13} />
@@ -822,7 +822,7 @@ export function Sidebar({
 
         <div ref={folderTreeRef} className="sidebar__section--folders">
           {searchActive ? folderRestoreStates.filter(state => state.status !== "ready").map(state =>
-            <UnavailableFolder key={state.rootPath} path={state.rootPath} error={state.error} restoring={state.status === "restoring"}
+            <UnavailableFolder key={state.rootPath} path={state.rootPath} error={state.error} restoring={state.status === "restoring" || state.checking}
               onRetry={onRetryRoot} onRemove={onRemoveRoot} onRelocate={onRelocateRoot} t={t} />) : null}
           {searchActive ? (
             <div className="folder-search__results" aria-live="polite">
@@ -859,7 +859,7 @@ export function Sidebar({
               )}
             </div>
           ) : folderRows.map((session) => {
-            if ("status" in session) return <UnavailableFolder key={session.rootPath} path={session.rootPath} error={session.error} restoring={session.status === "restoring"}
+            if ("status" in session) return <UnavailableFolder key={session.rootPath} path={session.rootPath} error={session.error} restoring={session.status === "restoring" || session.checking}
               onRetry={onRetryRoot} onRemove={onRemoveRoot} onRelocate={onRelocateRoot} t={t} />;
             const sessionIndex = sessions.findIndex((item) => item.id === session.id);
             const tree = directoryTreeQueries[sessionIndex]?.data ?? directoryTreePlaceholder(session);

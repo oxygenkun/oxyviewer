@@ -1,5 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
+  loadFolderFailures,
+  saveFolderFailures,
   loadFocusAreasVisible,
   loadLoupeControlsAutoHide,
   loadLayoutSize,
@@ -130,5 +132,31 @@ describe("workspace persistence", () => {
     expect(loadLayoutSize("leftPanel", storage)).toBe(320);
     saveLayoutSize("filmstrip", 10_000, storage);
     expect(loadLayoutSize("filmstrip", storage)).toBe(300);
+  });
+});
+
+
+describe("folder failure persistence", () => {
+  const storage = () => {
+    const values = new Map<string, string>();
+    return { getItem: (key: string) => values.get(key) ?? null,
+      setItem: (key: string, value: string) => { values.set(key, value); } };
+  };
+  it("retains failed roots across restart and interrupted rechecks, then clears recovered roots", () => {
+    const store = storage();
+    saveFolderFailures([{ rootPath: "/offline", status: "failed", error: "offline", checking: true },
+      { rootPath: "/opening", status: "restoring" }, { rootPath: "/online", status: "ready" }], store);
+    expect(loadFolderFailures(store)).toEqual([{ rootPath: "/offline", status: "failed", error: "offline" }]);
+    saveFolderFailures([{ rootPath: "/offline", status: "ready" }], store);
+    expect(loadFolderFailures(store)).toEqual([]);
+  });
+  it("ignores malformed data and never persists a transient checking flag", () => {
+    const store = storage();
+    store.setItem("oxyviewer.folder-failures.v1", JSON.stringify([null, { rootPath: 1, status: "failed" },
+      { rootPath: "a", status: "ready" }, { rootPath: "b", status: "failed", error: 8, checking: true },
+      { rootPath: "b", status: "failed" }]));
+    expect(loadFolderFailures(store)).toEqual([{ rootPath: "b", status: "failed", error: undefined }]);
+    store.setItem("oxyviewer.folder-failures.v1", "broken");
+    expect(loadFolderFailures(store)).toEqual([]);
   });
 });
