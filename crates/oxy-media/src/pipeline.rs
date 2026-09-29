@@ -9,3 +9,7 @@ pub(crate) mod raster;
 pub(crate) mod raw;
 pub(crate) mod system;
 pub(crate) mod thumbnail;
+
+pub(crate) mod input;
+pub(crate) mod pixels;
+mod resize;

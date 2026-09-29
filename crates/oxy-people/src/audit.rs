@@ -41,8 +41,19 @@ fn the_crate_does_not_depend_on_the_storage_engine() {
 fn the_crate_carries_no_sql_of_its_own() {
     let directory = Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
     let mut offenders = Vec::new();
-    for entry in std::fs::read_dir(&directory).expect("source directory must be readable") {
-        let path = entry.expect("directory entry").path();
+    let mut directories = vec![directory.clone()];
+    let mut files = Vec::new();
+    while let Some(directory) = directories.pop() {
+        for entry in std::fs::read_dir(directory).expect("source directory must be readable") {
+            let path = entry.expect("directory entry").path();
+            if path.is_dir() {
+                directories.push(path);
+            } else {
+                files.push(path);
+            }
+        }
+    }
+    for path in files {
         if path.extension().and_then(|ext| ext.to_str()) != Some("rs") {
             continue;
         }
@@ -52,7 +63,7 @@ fn the_crate_carries_no_sql_of_its_own() {
             continue;
         }
         let source = std::fs::read_to_string(&path).expect("source must be readable");
-        let name = path.file_name().unwrap().to_string_lossy().into_owned();
+        let name = path.strip_prefix(&directory).unwrap().to_string_lossy();
         let production = source.split("#[cfg(test)]").next().unwrap_or(&source);
         for (index, line) in production.lines().enumerate() {
             if looks_like_sql(line.trim()) {

@@ -1,8 +1,11 @@
-use super::{heif, raw, system};
+use super::{heif, input::MediaPixels, raw, system};
 use crate::{
-    MediaError, decode_control::DecodePriority, media_source::preview_result,
+    MediaError, MediaRequest, SourceRevision,
+    decode_control::{self, DecodePriority},
+    media_source::preview_result,
     pipeline::artifact::register_original_resource,
 };
+use oxy_domain::PixelDimensions;
 use oxy_domain::{AssetKind, PreviewKind, PreviewPriority, PreviewResult, RenderLevel};
 use oxy_runtime::CancellationToken;
 use std::{path::Path, sync::mpsc::Receiver};
@@ -145,4 +148,48 @@ fn execute(
     } else {
         Ok(result)
     }
+}
+
+pub(crate) fn prepare_pixels(
+    path: &Path,
+    kind: AssetKind,
+    revision: &SourceRevision,
+    dimensions: PixelDimensions,
+    request: MediaRequest,
+    cancellation: &CancellationToken,
+) -> Result<MediaPixels, MediaError> {
+    let target = request.max_size;
+    match kind {
+        AssetKind::Png | AssetKind::Webp => {
+            super::raster::decode_pixels(path, revision, target, cancellation)
+        }
+        AssetKind::Tiff => super::system::decode_pixels(path, revision, target, cancellation),
+        AssetKind::Jpeg => super::jpeg::decode_pixels(path, revision, request, cancellation),
+        AssetKind::Raw => {
+            super::raw::decode_pixels(path, revision, dimensions, request, cancellation)
+        }
+        AssetKind::Heif => {
+            let cost = super::pixels::estimate(dimensions, 8, revision.size_bytes)?;
+            let _permit =
+                decode_control::acquire_pixel_input(cost, &|| cancellation.is_cancelled())?;
+            // Same frame selector as viewing; only the requested detail differs.
+            let decoded =
+                crate::pipeline::heif::artifact::decode_frame(path, request, cancellation)?;
+            super::pixels::finish(
+                decoded.image,
+                decoded.facts,
+                revision,
+                decoded.presentation.color,
+                None,
+                target,
+                cancellation,
+            )
+        }
+    }
+}
+
+/// Encoded primary files already have cheap direct/scaled paths; prefer their
+/// source samples. Native camera containers benefit from qualified artifacts.
+pub(crate) const fn prefer_cached_pixels(kind: AssetKind) -> bool {
+    matches!(kind, AssetKind::Raw | AssetKind::Heif | AssetKind::Tiff)
 }

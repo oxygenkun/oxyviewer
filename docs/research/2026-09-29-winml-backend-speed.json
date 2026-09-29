@@ -1,0 +1,1461 @@
+{
+  "date": "2026-09-29",
+  "hardware": {
+    "cpu": "Intel Core i7-13700K",
+    "cpu_threads": 24,
+    "nvidia": "RTX 4090",
+    "nvidia_driver": "32.0.16.1714",
+    "intel_gpu": "UHD Graphics 770",
+    "intel_driver": "32.0.101.7088"
+  },
+  "initial": {
+    "catalog_ms": 2312.8794,
+    "catalog_warnings": [],
+    "devices": [
+      {
+        "ep": "CPUExecutionProvider",
+        "id": 7,
+        "index": 0,
+        "type": "CPU",
+        "vendor": "Intel"
+      },
+      {
+        "ep": "DmlExecutionProvider",
+        "id": 9860,
+        "index": 1,
+        "type": "GPU",
+        "vendor": "NVIDIA"
+      },
+      {
+        "ep": "DmlExecutionProvider",
+        "id": 42880,
+        "index": 2,
+        "type": "GPU",
+        "vendor": "Intel Corporation"
+      },
+      {
+        "ep": "DmlExecutionProvider",
+        "id": 9860,
+        "index": 3,
+        "type": "GPU",
+        "vendor": "NVIDIA"
+      },
+      {
+        "ep": "DmlExecutionProvider",
+        "id": 9860,
+        "index": 4,
+        "type": "GPU",
+        "vendor": "NVIDIA"
+      },
+      {
+        "ep": "DmlExecutionProvider",
+        "id": 9860,
+        "index": 5,
+        "type": "GPU",
+        "vendor": "NVIDIA"
+      },
+      {
+        "ep": "OpenVINOExecutionProvider",
+        "id": 42880,
+        "index": 6,
+        "type": "GPU",
+        "vendor": "Intel Corporation"
+      },
+      {
+        "ep": "OpenVINOExecutionProvider",
+        "id": 7,
+        "index": 7,
+        "type": "CPU",
+        "vendor": "Intel"
+      },
+      {
+        "ep": "OpenVINOExecutionProvider.AUTO",
+        "id": 42880,
+        "index": 8,
+        "type": "GPU",
+        "vendor": "Intel Corporation"
+      },
+      {
+        "ep": "OpenVINOExecutionProvider.AUTO",
+        "id": 7,
+        "index": 9,
+        "type": "CPU",
+        "vendor": "Intel"
+      },
+      {
+        "ep": "NvTensorRTRTXExecutionProvider",
+        "id": 9860,
+        "index": 10,
+        "type": "GPU",
+        "vendor": "NVIDIA"
+      }
+    ],
+    "inputs": [
+      {
+        "decode_ms": 296.7276,
+        "file": "DSC00835.jpg",
+        "input_size": [
+          1066,
+          1600
+        ],
+        "resize_ms": 438.6514,
+        "sha256": "3272e84cf83c1cc76ef6f48bc0511d371ed2d32d0d219d7ddddc7b69be0d24a6",
+        "source_size": [
+          6336,
+          9504
+        ]
+      },
+      {
+        "decode_ms": 270.42519999999996,
+        "file": "DSC00871.jpg",
+        "input_size": [
+          1066,
+          1600
+        ],
+        "resize_ms": 456.4875,
+        "sha256": "a60f742dca5f1d8cd3d86f35f031edbedcac0599454c6c3bdcadc25ed9998c5b",
+        "source_size": [
+          6336,
+          9504
+        ]
+      },
+      {
+        "decode_ms": 269.46799999999996,
+        "file": "DSC00908.jpg",
+        "input_size": [
+          1066,
+          1600
+        ],
+        "resize_ms": 443.5089,
+        "sha256": "7afe46aa243ce908b90ac6e923f9136a3b66600970ba452f1fa263f532df894c",
+        "source_size": [
+          6336,
+          9504
+        ]
+      },
+      {
+        "decode_ms": 282.3361,
+        "file": "DSC00945.jpg",
+        "input_size": [
+          1066,
+          1600
+        ],
+        "resize_ms": 438.4207,
+        "sha256": "1e46311ee42844c64e2fe5a21293dbf56e825fe94c53ad17c0eb29ca23d77aed",
+        "source_size": [
+          6336,
+          9504
+        ]
+      },
+      {
+        "decode_ms": 250.69920000000002,
+        "file": "DSC00982.jpg",
+        "input_size": [
+          1066,
+          1600
+        ],
+        "resize_ms": 438.0639,
+        "sha256": "4884d1b94813f8148dcb68b01f4a0145bcd6abc5337118d224b4a81679bead27",
+        "source_size": [
+          6336,
+          9504
+        ]
+      },
+      {
+        "decode_ms": 283.04970000000003,
+        "file": "DSC01019.jpg",
+        "input_size": [
+          1066,
+          1600
+        ],
+        "resize_ms": 441.7483,
+        "sha256": "20adf1c25077d80c4765247378936b35b0d8d0f202e1e3af2c9648411f32264e",
+        "source_size": [
+          6336,
+          9504
+        ]
+      },
+      {
+        "decode_ms": 263.9811,
+        "file": "DSC01056.jpg",
+        "input_size": [
+          1066,
+          1600
+        ],
+        "resize_ms": 438.71500000000003,
+        "sha256": "f67ad0b4bd2be09f2bf5fe5484251f146d96d0760dbd29824675cc5220f48496",
+        "source_size": [
+          6336,
+          9504
+        ]
+      },
+      {
+        "decode_ms": 257.6125,
+        "file": "DSC01092.jpg",
+        "input_size": [
+          1066,
+          1600
+        ],
+        "resize_ms": 437.9647,
+        "sha256": "fd33f512ddc7473f4f23384cfab21f75f7ad43d84baf10744d75da9f580cb13b",
+        "source_size": [
+          6336,
+          9504
+        ]
+      },
+      {
+        "decode_ms": 251.231,
+        "file": "DSC01129.jpg",
+        "input_size": [
+          1600,
+          1066
+        ],
+        "resize_ms": 438.1543,
+        "sha256": "034c48056b6d4e5d09e9cd0fdfb90f87958910b6b190d541101541b10e6fef9c",
+        "source_size": [
+          9504,
+          6336
+        ]
+      },
+      {
+        "decode_ms": 234.2069,
+        "file": "DSC01166.jpg",
+        "input_size": [
+          1066,
+          1600
+        ],
+        "resize_ms": 487.4885,
+        "sha256": "39b318f5dac7775411ddfc0c5fef1ae0c5034f2db4fccf38bb44483f32fe3f86",
+        "source_size": [
+          6336,
+          9504
+        ]
+      },
+      {
+        "decode_ms": 235.6331,
+        "file": "DSC01202.jpg",
+        "input_size": [
+          1066,
+          1600
+        ],
+        "resize_ms": 436.759,
+        "sha256": "f40ca9cb734d15b02cdcb2ec917f197f48b25e93b40e26c7afcb1f0d99683a23",
+        "source_size": [
+          6336,
+          9504
+        ]
+      },
+      {
+        "decode_ms": 227.1325,
+        "file": "DSC01239.jpg",
+        "input_size": [
+          1066,
+          1600
+        ],
+        "resize_ms": 438.2731,
+        "sha256": "9600b5b6fac60b269a0a463a7ae7ad466a69869a835390af0fe90b7076d7272a",
+        "source_size": [
+          6336,
+          9504
+        ]
+      },
+      {
+        "decode_ms": 239.90810000000002,
+        "file": "DSC01276.jpg",
+        "input_size": [
+          1066,
+          1600
+        ],
+        "resize_ms": 435.98789999999997,
+        "sha256": "a90e2faddbe267ac61d32be47c805fed8aab8dac8297e3cca8c537c88b938071",
+        "source_size": [
+          6336,
+          9504
+        ]
+      },
+      {
+        "decode_ms": 226.0884,
+        "file": "DSC01312.jpg",
+        "input_size": [
+          1066,
+          1600
+        ],
+        "resize_ms": 444.8722,
+        "sha256": "9a93bff0b5f63d1d6898947bceda738ba365898aba44df7c7425229e507cdf4b",
+        "source_size": [
+          6336,
+          9504
+        ]
+      },
+      {
+        "decode_ms": 256.0362,
+        "file": "DSC01349.jpg",
+        "input_size": [
+          1066,
+          1600
+        ],
+        "resize_ms": 424.5418,
+        "sha256": "11e119886b8c27f8cd728751f3abe56e4d2461c12ab7221f862d7e135016ceb0",
+        "source_size": [
+          6336,
+          9504
+        ]
+      },
+      {
+        "decode_ms": 231.2175,
+        "file": "DSC01386.jpg",
+        "input_size": [
+          1066,
+          1600
+        ],
+        "resize_ms": 422.1343,
+        "sha256": "c869589576504baa53e313e2906dd1d60d3e77c7f6050b9c068bfdd59bb1444f",
+        "source_size": [
+          6336,
+          9504
+        ]
+      }
+    ],
+    "results": [
+      {
+        "metrics": {
+          "detection": {
+            "mean_ms": 201.75458749999999,
+            "n": 48,
+            "p50_ms": 201.8811,
+            "p95_ms": 243.8116
+          },
+          "encoding_per_face": {
+            "mean_ms": 56.47438750000001,
+            "n": 48,
+            "p50_ms": 49.458299999999994,
+            "p95_ms": 87.6777
+          },
+          "face_count_mismatches": 0,
+          "face_counts": [
+            1,
+            1,
+            1,
+            2,
+            1,
+            0,
+            1,
+            1,
+            1,
+            1,
+            1,
+            1,
+            1,
+            1,
+            1,
+            1
+          ],
+          "first_image_ms": 291.9226,
+          "load_ms": 1619.642,
+          "minimum_cpu_embedding_cosine": 1.0,
+          "round_totals_ms": [
+            4287.329299999999,
+            3947.8578999999995,
+            4159.803599999999
+          ],
+          "total_per_image": {
+            "mean_ms": 258.22897500000005,
+            "n": 48,
+            "p50_ms": 255.05349999999999,
+            "p95_ms": 326.8261
+          }
+        },
+        "name": "CPU (2 threads)"
+      },
+      {
+        "metrics": {
+          "detection": {
+            "mean_ms": 66.64820625,
+            "n": 48,
+            "p50_ms": 62.4321,
+            "p95_ms": 97.38470000000001
+          },
+          "encoding_per_face": {
+            "mean_ms": 3.310247916666668,
+            "n": 48,
+            "p50_ms": 3.0331,
+            "p95_ms": 4.4117
+          },
+          "face_count_mismatches": 0,
+          "face_counts": [
+            1,
+            1,
+            1,
+            2,
+            1,
+            0,
+            1,
+            1,
+            1,
+            1,
+            1,
+            1,
+            1,
+            1,
+            1,
+            1
+          ],
+          "first_image_ms": 114.4067,
+          "load_ms": 2961.1261999999997,
+          "minimum_cpu_embedding_cosine": 0.9999994039535522,
+          "round_totals_ms": [
+            1154.5353,
+            978.6368,
+            1224.8337000000001
+          ],
+          "total_per_image": {
+            "mean_ms": 69.95845416666664,
+            "n": 48,
+            "p50_ms": 66.0576,
+            "p95_ms": 102.74029999999999
+          }
+        },
+        "name": "DmlExecutionProvider / GPU / 9860"
+      },
+      {
+        "metrics": {
+          "detection": {
+            "mean_ms": 372.5184666666668,
+            "n": 48,
+            "p50_ms": 373.3075,
+            "p95_ms": 400.09670000000006
+          },
+          "encoding_per_face": {
+            "mean_ms": 105.36951041666667,
+            "n": 48,
+            "p50_ms": 105.83879999999999,
+            "p95_ms": 107.0156
+          },
+          "face_count_mismatches": 0,
+          "face_counts": [
+            1,
+            1,
+            1,
+            2,
+            1,
+            0,
+            1,
+            1,
+            1,
+            1,
+            1,
+            1,
+            1,
+            1,
+            1,
+            1
+          ],
+          "first_image_ms": 538.8672,
+          "load_ms": 41792.990099999995,
+          "minimum_cpu_embedding_cosine": 0.9999982714653015,
+          "round_totals_ms": [
+            7653.7505999999985,
+            7651.2648,
+            7633.607499999999
+          ],
+          "total_per_image": {
+            "mean_ms": 477.8879770833333,
+            "n": 48,
+            "p50_ms": 476.8319,
+            "p95_ms": 570.5536
+          }
+        },
+        "name": "DmlExecutionProvider / GPU / 42880"
+      },
+      {
+        "metrics": {
+          "detection": {
+            "mean_ms": 54.439699999999995,
+            "n": 48,
+            "p50_ms": 51.9283,
+            "p95_ms": 73.714
+          },
+          "encoding_per_face": {
+            "mean_ms": 2.978531250000001,
+            "n": 48,
+            "p50_ms": 2.927,
+            "p95_ms": 3.4589
+          },
+          "face_count_mismatches": 0,
+          "face_counts": [
+            1,
+            1,
+            1,
+            2,
+            1,
+            0,
+            1,
+            1,
+            1,
+            1,
+            1,
+            1,
+            1,
+            1,
+            1,
+            1
+          ],
+          "first_image_ms": 75.4115,
+          "load_ms": 1707.4745,
+          "minimum_cpu_embedding_cosine": 0.9999994039535522,
+          "round_totals_ms": [
+            993.2079,
+            893.1270999999999,
+            869.7401000000001
+          ],
+          "total_per_image": {
+            "mean_ms": 57.41823125000001,
+            "n": 48,
+            "p50_ms": 55.21810000000001,
+            "p95_ms": 77.3853
+          }
+        },
+        "name": "DmlExecutionProvider / GPU / 9860"
+      },
+      {
+        "metrics": {
+          "detection": {
+            "mean_ms": 57.03879791666666,
+            "n": 48,
+            "p50_ms": 54.138,
+            "p95_ms": 78.22500000000001
+          },
+          "encoding_per_face": {
+            "mean_ms": 3.0993145833333333,
+            "n": 48,
+            "p50_ms": 2.9854,
+            "p95_ms": 3.8035
+          },
+          "face_count_mismatches": 0,
+          "face_counts": [
+            1,
+            1,
+            1,
+            2,
+            1,
+            0,
+            1,
+            1,
+            1,
+            1,
+            1,
+            1,
+            1,
+            1,
+            1,
+            1
+          ],
+          "first_image_ms": 68.8582,
+          "load_ms": 1571.2751,
+          "minimum_cpu_embedding_cosine": 0.9999994039535522,
+          "round_totals_ms": [
+            922.2561000000001,
+            987.5894999999999,
+            976.7838
+          ],
+          "total_per_image": {
+            "mean_ms": 60.138112500000005,
+            "n": 48,
+            "p50_ms": 57.3238,
+            "p95_ms": 81.84819999999999
+          }
+        },
+        "name": "DmlExecutionProvider / GPU / 9860"
+      },
+      {
+        "metrics": {
+          "detection": {
+            "mean_ms": 64.60958333333333,
+            "n": 48,
+            "p50_ms": 61.2329,
+            "p95_ms": 94.7341
+          },
+          "encoding_per_face": {
+            "mean_ms": 3.1399125000000008,
+            "n": 48,
+            "p50_ms": 3.1242,
+            "p95_ms": 3.6765
+          },
+          "face_count_mismatches": 0,
+          "face_counts": [
+            1,
+            1,
+            1,
+            2,
+            1,
+            0,
+            1,
+            1,
+            1,
+            1,
+            1,
+            1,
+            1,
+            1,
+            1,
+            1
+          ],
+          "first_image_ms": 77.6578,
+          "load_ms": 1625.6711,
+          "minimum_cpu_embedding_cosine": 0.9999994039535522,
+          "round_totals_ms": [
+            985.3641000000001,
+            1146.4802,
+            1120.1315000000002
+          ],
+          "total_per_image": {
+            "mean_ms": 67.74949583333334,
+            "n": 48,
+            "p50_ms": 65.2742,
+            "p95_ms": 97.937
+          }
+        },
+        "name": "DmlExecutionProvider / GPU / 9860"
+      },
+      {
+        "metrics": {
+          "detection": {
+            "mean_ms": 228.47639166666667,
+            "n": 48,
+            "p50_ms": 222.8552,
+            "p95_ms": 272.84520000000003
+          },
+          "encoding_per_face": {
+            "mean_ms": 107.26964583333334,
+            "n": 48,
+            "p50_ms": 107.40520000000001,
+            "p95_ms": 116.0224
+          },
+          "face_count_mismatches": 0,
+          "face_counts": [
+            1,
+            1,
+            1,
+            2,
+            1,
+            0,
+            1,
+            1,
+            1,
+            1,
+            1,
+            1,
+            1,
+            1,
+            1,
+            1
+          ],
+          "first_image_ms": 316.00919999999996,
+          "load_ms": 16289.068100000002,
+          "minimum_cpu_embedding_cosine": -0.05187246948480606,
+          "round_totals_ms": [
+            5244.567200000001,
+            5447.6415,
+            5423.601100000001
+          ],
+          "total_per_image": {
+            "mean_ms": 335.7460375,
+            "n": 48,
+            "p50_ms": 328.59860000000003,
+            "p95_ms": 416.95050000000003
+          }
+        },
+        "name": "OpenVINOExecutionProvider / GPU / 42880"
+      },
+      {
+        "metrics": {
+          "detection": {
+            "mean_ms": 191.8308854166667,
+            "n": 48,
+            "p50_ms": 190.0297,
+            "p95_ms": 224.0887
+          },
+          "encoding_per_face": {
+            "mean_ms": 48.08591458333334,
+            "n": 48,
+            "p50_ms": 45.8518,
+            "p95_ms": 58.1284
+          },
+          "face_count_mismatches": 0,
+          "face_counts": [
+            1,
+            1,
+            1,
+            2,
+            1,
+            0,
+            1,
+            1,
+            1,
+            1,
+            1,
+            1,
+            1,
+            1,
+            1,
+            1
+          ],
+          "first_image_ms": 290.82590000000005,
+          "load_ms": 1424.8501,
+          "minimum_cpu_embedding_cosine": 0.9999995231628418,
+          "round_totals_ms": [
+            3888.6254999999996,
+            3813.6706,
+            3813.7102999999997
+          ],
+          "total_per_image": {
+            "mean_ms": 239.9168,
+            "n": 48,
+            "p50_ms": 239.1255,
+            "p95_ms": 293.8129
+          }
+        },
+        "name": "OpenVINOExecutionProvider / CPU / 7"
+      },
+      {
+        "metrics": {
+          "detection": {
+            "mean_ms": 229.43046041666662,
+            "n": 48,
+            "p50_ms": 221.7303,
+            "p95_ms": 274.7327
+          },
+          "encoding_per_face": {
+            "mean_ms": 106.22934375,
+            "n": 48,
+            "p50_ms": 105.23140000000001,
+            "p95_ms": 117.83
+          },
+          "face_count_mismatches": 0,
+          "face_counts": [
+            1,
+            1,
+            1,
+            2,
+            1,
+            0,
+            1,
+            1,
+            1,
+            1,
+            1,
+            1,
+            1,
+            1,
+            1,
+            1
+          ],
+          "first_image_ms": 367.5669,
+          "load_ms": 2649.3105,
+          "minimum_cpu_embedding_cosine": -0.05187246948480606,
+          "round_totals_ms": [
+            5352.4783,
+            5130.3627,
+            5628.829599999999
+          ],
+          "total_per_image": {
+            "mean_ms": 335.6598041666667,
+            "n": 48,
+            "p50_ms": 326.4973,
+            "p95_ms": 416.46410000000003
+          }
+        },
+        "name": "OpenVINOExecutionProvider.AUTO / GPU / 42880"
+      },
+      {
+        "metrics": {
+          "detection": {
+            "mean_ms": 214.02915625000003,
+            "n": 48,
+            "p50_ms": 211.7587,
+            "p95_ms": 268.85540000000003
+          },
+          "encoding_per_face": {
+            "mean_ms": 60.29399166666666,
+            "n": 48,
+            "p50_ms": 50.0723,
+            "p95_ms": 93.57119999999999
+          },
+          "face_count_mismatches": 0,
+          "face_counts": [
+            1,
+            1,
+            1,
+            2,
+            1,
+            0,
+            1,
+            1,
+            1,
+            1,
+            1,
+            1,
+            1,
+            1,
+            1,
+            1
+          ],
+          "first_image_ms": 324.75730000000004,
+          "load_ms": 1500.9294,
+          "minimum_cpu_embedding_cosine": 0.9999995231628418,
+          "round_totals_ms": [
+            4003.1992,
+            4359.8361,
+            4804.4758
+          ],
+          "total_per_image": {
+            "mean_ms": 274.3231479166667,
+            "n": 48,
+            "p50_ms": 278.0604,
+            "p95_ms": 365.6046
+          }
+        },
+        "name": "OpenVINOExecutionProvider.AUTO / CPU / 7"
+      },
+      {
+        "metrics": {
+          "detection": {
+            "mean_ms": 49.295529166666654,
+            "n": 48,
+            "p50_ms": 48.63399999999999,
+            "p95_ms": 62.9357
+          },
+          "encoding_per_face": {
+            "mean_ms": 3.0602062500000007,
+            "n": 48,
+            "p50_ms": 2.9745000000000004,
+            "p95_ms": 3.3432
+          },
+          "face_count_mismatches": 0,
+          "face_counts": [
+            1,
+            1,
+            1,
+            2,
+            1,
+            0,
+            1,
+            1,
+            1,
+            1,
+            1,
+            1,
+            1,
+            1,
+            1,
+            1
+          ],
+          "first_image_ms": 80.4316,
+          "load_ms": 8558.9271,
+          "minimum_cpu_embedding_cosine": 0.9999983906745911,
+          "round_totals_ms": [
+            865.4895,
+            829.4151000000002,
+            818.1707
+          ],
+          "total_per_image": {
+            "mean_ms": 52.355735416666654,
+            "n": 48,
+            "p50_ms": 51.7327,
+            "p95_ms": 65.8958
+          }
+        },
+        "name": "NvTensorRTRTXExecutionProvider / GPU / 9860"
+      }
+    ],
+    "rounds": 3
+  },
+  "repeat": {
+    "catalog_ms": 2660.0182999999997,
+    "catalog_warnings": [],
+    "devices": [
+      {
+        "ep": "CPUExecutionProvider",
+        "id": 7,
+        "index": 0,
+        "type": "CPU",
+        "vendor": "Intel"
+      },
+      {
+        "ep": "DmlExecutionProvider",
+        "id": 9860,
+        "index": 1,
+        "type": "GPU",
+        "vendor": "NVIDIA"
+      },
+      {
+        "ep": "DmlExecutionProvider",
+        "id": 42880,
+        "index": 2,
+        "type": "GPU",
+        "vendor": "Intel Corporation"
+      },
+      {
+        "ep": "DmlExecutionProvider",
+        "id": 9860,
+        "index": 3,
+        "type": "GPU",
+        "vendor": "NVIDIA"
+      },
+      {
+        "ep": "DmlExecutionProvider",
+        "id": 9860,
+        "index": 4,
+        "type": "GPU",
+        "vendor": "NVIDIA"
+      },
+      {
+        "ep": "DmlExecutionProvider",
+        "id": 9860,
+        "index": 5,
+        "type": "GPU",
+        "vendor": "NVIDIA"
+      },
+      {
+        "ep": "OpenVINOExecutionProvider",
+        "id": 42880,
+        "index": 6,
+        "type": "GPU",
+        "vendor": "Intel Corporation"
+      },
+      {
+        "ep": "OpenVINOExecutionProvider",
+        "id": 7,
+        "index": 7,
+        "type": "CPU",
+        "vendor": "Intel"
+      },
+      {
+        "ep": "OpenVINOExecutionProvider.AUTO",
+        "id": 42880,
+        "index": 8,
+        "type": "GPU",
+        "vendor": "Intel Corporation"
+      },
+      {
+        "ep": "OpenVINOExecutionProvider.AUTO",
+        "id": 7,
+        "index": 9,
+        "type": "CPU",
+        "vendor": "Intel"
+      },
+      {
+        "ep": "NvTensorRTRTXExecutionProvider",
+        "id": 9860,
+        "index": 10,
+        "type": "GPU",
+        "vendor": "NVIDIA"
+      }
+    ],
+    "inputs": [
+      {
+        "decode_ms": 298.3879,
+        "file": "DSC00835.jpg",
+        "input_size": [
+          1066,
+          1600
+        ],
+        "resize_ms": 437.0485,
+        "sha256": "3272e84cf83c1cc76ef6f48bc0511d371ed2d32d0d219d7ddddc7b69be0d24a6",
+        "source_size": [
+          6336,
+          9504
+        ]
+      },
+      {
+        "decode_ms": 269.08,
+        "file": "DSC00871.jpg",
+        "input_size": [
+          1066,
+          1600
+        ],
+        "resize_ms": 435.98310000000004,
+        "sha256": "a60f742dca5f1d8cd3d86f35f031edbedcac0599454c6c3bdcadc25ed9998c5b",
+        "source_size": [
+          6336,
+          9504
+        ]
+      },
+      {
+        "decode_ms": 272.0303,
+        "file": "DSC00908.jpg",
+        "input_size": [
+          1066,
+          1600
+        ],
+        "resize_ms": 452.3534,
+        "sha256": "7afe46aa243ce908b90ac6e923f9136a3b66600970ba452f1fa263f532df894c",
+        "source_size": [
+          6336,
+          9504
+        ]
+      },
+      {
+        "decode_ms": 282.5858,
+        "file": "DSC00945.jpg",
+        "input_size": [
+          1066,
+          1600
+        ],
+        "resize_ms": 439.2117,
+        "sha256": "1e46311ee42844c64e2fe5a21293dbf56e825fe94c53ad17c0eb29ca23d77aed",
+        "source_size": [
+          6336,
+          9504
+        ]
+      },
+      {
+        "decode_ms": 250.7396,
+        "file": "DSC00982.jpg",
+        "input_size": [
+          1066,
+          1600
+        ],
+        "resize_ms": 438.8551,
+        "sha256": "4884d1b94813f8148dcb68b01f4a0145bcd6abc5337118d224b4a81679bead27",
+        "source_size": [
+          6336,
+          9504
+        ]
+      },
+      {
+        "decode_ms": 280.8136,
+        "file": "DSC01019.jpg",
+        "input_size": [
+          1066,
+          1600
+        ],
+        "resize_ms": 434.6115,
+        "sha256": "20adf1c25077d80c4765247378936b35b0d8d0f202e1e3af2c9648411f32264e",
+        "source_size": [
+          6336,
+          9504
+        ]
+      },
+      {
+        "decode_ms": 264.7652,
+        "file": "DSC01056.jpg",
+        "input_size": [
+          1066,
+          1600
+        ],
+        "resize_ms": 434.15340000000003,
+        "sha256": "f67ad0b4bd2be09f2bf5fe5484251f146d96d0760dbd29824675cc5220f48496",
+        "source_size": [
+          6336,
+          9504
+        ]
+      },
+      {
+        "decode_ms": 256.3143,
+        "file": "DSC01092.jpg",
+        "input_size": [
+          1066,
+          1600
+        ],
+        "resize_ms": 436.6977,
+        "sha256": "fd33f512ddc7473f4f23384cfab21f75f7ad43d84baf10744d75da9f580cb13b",
+        "source_size": [
+          6336,
+          9504
+        ]
+      },
+      {
+        "decode_ms": 252.97459999999998,
+        "file": "DSC01129.jpg",
+        "input_size": [
+          1600,
+          1066
+        ],
+        "resize_ms": 432.906,
+        "sha256": "034c48056b6d4e5d09e9cd0fdfb90f87958910b6b190d541101541b10e6fef9c",
+        "source_size": [
+          9504,
+          6336
+        ]
+      },
+      {
+        "decode_ms": 268.9162,
+        "file": "DSC01166.jpg",
+        "input_size": [
+          1066,
+          1600
+        ],
+        "resize_ms": 435.695,
+        "sha256": "39b318f5dac7775411ddfc0c5fef1ae0c5034f2db4fccf38bb44483f32fe3f86",
+        "source_size": [
+          6336,
+          9504
+        ]
+      },
+      {
+        "decode_ms": 247.5373,
+        "file": "DSC01202.jpg",
+        "input_size": [
+          1066,
+          1600
+        ],
+        "resize_ms": 435.636,
+        "sha256": "f40ca9cb734d15b02cdcb2ec917f197f48b25e93b40e26c7afcb1f0d99683a23",
+        "source_size": [
+          6336,
+          9504
+        ]
+      },
+      {
+        "decode_ms": 243.5879,
+        "file": "DSC01239.jpg",
+        "input_size": [
+          1066,
+          1600
+        ],
+        "resize_ms": 434.651,
+        "sha256": "9600b5b6fac60b269a0a463a7ae7ad466a69869a835390af0fe90b7076d7272a",
+        "source_size": [
+          6336,
+          9504
+        ]
+      },
+      {
+        "decode_ms": 252.9535,
+        "file": "DSC01276.jpg",
+        "input_size": [
+          1066,
+          1600
+        ],
+        "resize_ms": 435.8772,
+        "sha256": "a90e2faddbe267ac61d32be47c805fed8aab8dac8297e3cca8c537c88b938071",
+        "source_size": [
+          6336,
+          9504
+        ]
+      },
+      {
+        "decode_ms": 255.2491,
+        "file": "DSC01312.jpg",
+        "input_size": [
+          1066,
+          1600
+        ],
+        "resize_ms": 437.24,
+        "sha256": "9a93bff0b5f63d1d6898947bceda738ba365898aba44df7c7425229e507cdf4b",
+        "source_size": [
+          6336,
+          9504
+        ]
+      },
+      {
+        "decode_ms": 277.9289,
+        "file": "DSC01349.jpg",
+        "input_size": [
+          1066,
+          1600
+        ],
+        "resize_ms": 439.5075,
+        "sha256": "11e119886b8c27f8cd728751f3abe56e4d2461c12ab7221f862d7e135016ceb0",
+        "source_size": [
+          6336,
+          9504
+        ]
+      },
+      {
+        "decode_ms": 254.6465,
+        "file": "DSC01386.jpg",
+        "input_size": [
+          1066,
+          1600
+        ],
+        "resize_ms": 434.5299,
+        "sha256": "c869589576504baa53e313e2906dd1d60d3e77c7f6050b9c068bfdd59bb1444f",
+        "source_size": [
+          6336,
+          9504
+        ]
+      }
+    ],
+    "results": [
+      {
+        "metrics": {
+          "detection": {
+            "mean_ms": 145.53429375000002,
+            "n": 48,
+            "p50_ms": 143.1024,
+            "p95_ms": 160.1734
+          },
+          "encoding_per_face": {
+            "mean_ms": 45.216325000000005,
+            "n": 48,
+            "p50_ms": 44.645700000000005,
+            "p95_ms": 48.5713
+          },
+          "face_count_mismatches": 0,
+          "face_counts": [
+            1,
+            1,
+            1,
+            2,
+            1,
+            0,
+            1,
+            1,
+            1,
+            1,
+            1,
+            1,
+            1,
+            1,
+            1,
+            1
+          ],
+          "first_image_ms": 193.6223,
+          "load_ms": 1802.6357,
+          "minimum_cpu_embedding_cosine": 1.0,
+          "output_check_passed": true,
+          "per_image_minimum_cosines": [
+            1.0,
+            1.0,
+            1.0,
+            1.0,
+            1.0,
+            1.0,
+            1.0,
+            1.0,
+            1.0,
+            1.0,
+            1.0,
+            1.0,
+            1.0,
+            1.0,
+            1.0,
+            1.0
+          ],
+          "round_totals_ms": [
+            3015.2922000000003,
+            3082.3513,
+            3058.386200000001
+          ],
+          "total_per_image": {
+            "mean_ms": 190.75061875000003,
+            "n": 48,
+            "p50_ms": 187.88529999999997,
+            "p95_ms": 231.602
+          }
+        },
+        "name": "CPU (2 threads)"
+      },
+      {
+        "metrics": {
+          "detection": {
+            "mean_ms": 41.525435416666674,
+            "n": 48,
+            "p50_ms": 40.9623,
+            "p95_ms": 45.498999999999995
+          },
+          "encoding_per_face": {
+            "mean_ms": 3.2694875,
+            "n": 48,
+            "p50_ms": 3.0585,
+            "p95_ms": 4.355300000000001
+          },
+          "face_count_mismatches": 0,
+          "face_counts": [
+            1,
+            1,
+            1,
+            2,
+            1,
+            0,
+            1,
+            1,
+            1,
+            1,
+            1,
+            1,
+            1,
+            1,
+            1,
+            1
+          ],
+          "first_image_ms": 65.2263,
+          "load_ms": 8630.67,
+          "minimum_cpu_embedding_cosine": 0.9999983906745911,
+          "output_check_passed": true,
+          "per_image_minimum_cosines": [
+            0.9999992847442627,
+            0.9999992251396179,
+            0.9999984502792358,
+            0.9999991655349731,
+            0.9999988079071045,
+            1.0,
+            0.9999986290931702,
+            0.9999985098838806,
+            0.9999992847442627,
+            0.9999986290931702,
+            0.9999990463256836,
+            0.9999995827674866,
+            0.9999995231628418,
+            0.9999988675117493,
+            0.9999992847442627,
+            0.9999983906745911
+          ],
+          "round_totals_ms": [
+            734.1984,
+            709.5906,
+            706.3673000000001
+          ],
+          "total_per_image": {
+            "mean_ms": 44.79492291666667,
+            "n": 48,
+            "p50_ms": 44.232099999999996,
+            "p95_ms": 49.911500000000004
+          }
+        },
+        "name": "NvTensorRTRTXExecutionProvider / GPU / 9860"
+      },
+      {
+        "metrics": {
+          "detection": {
+            "mean_ms": 198.65523541666667,
+            "n": 48,
+            "p50_ms": 198.62750000000003,
+            "p95_ms": 199.48940000000002
+          },
+          "encoding_per_face": {
+            "mean_ms": 99.87608333333333,
+            "n": 48,
+            "p50_ms": 99.81700000000001,
+            "p95_ms": 101.05590000000001
+          },
+          "face_count_mismatches": 0,
+          "face_counts": [
+            1,
+            1,
+            1,
+            2,
+            1,
+            0,
+            1,
+            1,
+            1,
+            1,
+            1,
+            1,
+            1,
+            1,
+            1,
+            1
+          ],
+          "first_image_ms": 311.7029,
+          "load_ms": 2839.3053,
+          "minimum_cpu_embedding_cosine": -0.05187246948480606,
+          "output_check_passed": false,
+          "per_image_minimum_cosines": [
+            0.024596717208623886,
+            0.06225656345486641,
+            0.0033061373978853226,
+            -0.032342579215765,
+            0.0017066339496523142,
+            1.0,
+            0.018597740679979324,
+            0.07022105157375336,
+            0.008136410266160965,
+            -0.042703550308942795,
+            -0.05187246948480606,
+            -0.016406627371907234,
+            0.027838395908474922,
+            -0.019320961087942123,
+            -0.0009201474022120237,
+            0.07107195258140564
+          ],
+          "round_totals_ms": [
+            4773.5582,
+            4779.014800000001,
+            4776.9303
+          ],
+          "total_per_image": {
+            "mean_ms": 298.53131875,
+            "n": 48,
+            "p50_ms": 298.3875,
+            "p95_ms": 397.62120000000004
+          }
+        },
+        "name": "OpenVINOExecutionProvider / GPU / 42880"
+      },
+      {
+        "metrics": {
+          "detection": {
+            "mean_ms": 147.88773749999996,
+            "n": 48,
+            "p50_ms": 145.9601,
+            "p95_ms": 163.3348
+          },
+          "encoding_per_face": {
+            "mean_ms": 45.71115625000001,
+            "n": 48,
+            "p50_ms": 44.8814,
+            "p95_ms": 50.5901
+          },
+          "face_count_mismatches": 0,
+          "face_counts": [
+            1,
+            1,
+            1,
+            2,
+            1,
+            0,
+            1,
+            1,
+            1,
+            1,
+            1,
+            1,
+            1,
+            1,
+            1,
+            1
+          ],
+          "first_image_ms": 259.7132,
+          "load_ms": 1699.2948000000001,
+          "minimum_cpu_embedding_cosine": 0.9999995231628418,
+          "output_check_passed": true,
+          "per_image_minimum_cosines": [
+            0.9999998807907104,
+            1.0,
+            0.9999999403953552,
+            0.9999995231628418,
+            1.0,
+            1.0,
+            1.0,
+            0.9999999403953552,
+            1.0,
+            1.0,
+            1.0,
+            1.0,
+            0.9999995231628418,
+            0.9999997615814209,
+            0.9999999403953552,
+            1.0
+          ],
+          "round_totals_ms": [
+            3143.2762000000007,
+            3050.5686,
+            3098.9021000000002
+          ],
+          "total_per_image": {
+            "mean_ms": 193.59889375000003,
+            "n": 48,
+            "p50_ms": 192.0308,
+            "p95_ms": 230.772
+          }
+        },
+        "name": "OpenVINOExecutionProvider / CPU / 7"
+      }
+    ],
+    "rounds": 3
+  }
+}

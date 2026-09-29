@@ -17,11 +17,11 @@ pub fn dimensions(path: &Path) -> Result<ImageDimensions, MediaError> {
     })
 }
 
-pub fn decode_scaled(
+pub(crate) fn decode_frame(
     path: &Path,
-    max_size: u32,
-    allow_undersized_thumbnail: bool,
+    request: crate::request::MediaRequest,
 ) -> Result<crate::media_source::DecodedImage, MediaError> {
+    let max_size = request.max_size;
     let context = open(path)?;
     let handle = context
         .primary_image_handle()
@@ -36,13 +36,36 @@ pub fn decode_scaled(
         let mut thumbnails = ids
             .into_iter()
             .filter_map(|id| handle.thumbnail(id).ok().map(|thumbnail| (id, thumbnail)))
+            .filter(|(id, thumbnail)| {
+                let source =
+                    oxy_domain::DisplayDimensions((thumbnail.width(), thumbnail.height()).into());
+                let scale = (f64::from(max_size)
+                    / f64::from(thumbnail.width().max(thumbnail.height())))
+                .min(1.0);
+                let output = oxy_domain::DisplayDimensions(
+                    (
+                        (f64::from(thumbnail.width()) * scale).round().max(1.0) as u32,
+                        (f64::from(thumbnail.height()) * scale).round().max(1.0) as u32,
+                    )
+                        .into(),
+                );
+                let facts = crate::media_source::decoded_facts(
+                    oxy_domain::ImageOrigin::EmbeddedPreview,
+                    format!("heif-thumbnail-item:{id}"),
+                    source,
+                    oxy_domain::DisplayDimensions((handle.width(), handle.height()).into()),
+                    output,
+                    "libheif",
+                );
+                request.accepts(&facts)
+            })
             .collect::<Vec<_>>();
         thumbnails.sort_by_key(|(_, thumbnail)| thumbnail.width().max(thumbnail.height()));
         let thumbnail = thumbnails
             .iter()
             .find(|(_, thumbnail)| thumbnail.width().max(thumbnail.height()) >= max_size)
             .or_else(|| {
-                may_use_undersized_thumbnail(allow_undersized_thumbnail)
+                may_use_undersized_thumbnail(request.allow_interim)
                     .then(|| thumbnails.last())
                     .flatten()
             });
@@ -59,10 +82,12 @@ pub fn decode_scaled(
                 oxy_domain::DisplayDimensions((output.width(), output.height()).into()),
                 "libheif",
             );
-            return Ok(crate::media_source::DecodedImage {
-                image: output,
-                facts,
-            });
+            if request.accepts(&facts) {
+                return Ok(crate::media_source::DecodedImage {
+                    image: output,
+                    facts,
+                });
+            }
         }
     }
 

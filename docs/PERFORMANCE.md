@@ -27,6 +27,53 @@ and local cold/warm previews. Scroll long tasks were eliminated in the measured 
 The existing 100k-file first-page target remains unmet (570 ms versus the original build's
 555 ms), and startup/GPU frame gaps plus a Sony warm-start tail sample remain visible in the report.
 
+## Background person analysis
+
+Explicit person analysis uses one separate 512 MiB admission slot for temporary
+media input preparation. JPEG uses scaled IDCT; RAW prefers a qualified camera
+JPEG; HEIF shares loupe backend ordering and requirement-based frame selection;
+PNG/WebP/TIFF decode under the same admission budget. RAW/HEIF/TIFF can reuse valid
+display artifacts with their leases, without producing a second analysis cache.
+Estimates include decoder working space, compressed input, scaled buffers and
+scratch (including worst-case JPEG progressive coefficients); oversized inputs
+fail with an explicit budget error. The existing thumbnail conversion pool stays
+at 256 MiB. Analysis uses concurrent preparation, inference and persistence
+stages, with one worker per stage and capacity-one channels. A single frame is
+shared by detection and encoding, and released before result publication can
+block. At most three transported RGB frames (active preparation, queued input,
+active inference), each bounded to long edge 1600, add at most about 23 MiB.
+Model sessions and native allocations are additional; this is not a total
+process-memory limit. No preview queue workers run inference. Windows uses
+standalone ORT DirectML device 0, sequential session execution and two host
+threads per session. The [Release pipeline measurement](research/2026-09-29-ort-directml-pipeline.md)
+compares real JPEG decoding, GPU inference and SQLite commits; it does not
+qualify foreground responsiveness during analysis. See
+[People workflow](PERSON_WORKFLOW.md) for format and delivery limits.
+
+JPEG pixel preparation above the 512-edge thumbnail tier uses single-threaded
+SIMD triangle convolution with RGB16 intermediates and eight fractional bits. Fractional samples are retained
+until the final RGB8 conversion; integer intermediate rounding failed the
+real-face embedding parity gate and is not used. Admission reserves the larger
+of coefficient decoding and three RGB16 resampling buffers, with encoded input
+and scratch; the one-slot 512 MiB limit remains unchanged. Thumbnail encoding
+retains its prior resampler. Stage timings are opt-in via `OXY_ANALYSIS_TIMING=1`.
+See [input bottleneck attribution and optimization](research/2026-09-29-analysis-input-optimization.md)
+for the same-fixture performance and numeric parity results.
+The [Windows three-image smoke test](research/2026-09-28-person-download-folder-ui.md)
+records the original budget failure and subsequent 60 MP JPEG success; it does
+not replace the large-folder or cross-platform performance gates.
+The [format input measurements](research/2026-09-28-analysis-media-input.md)
+separate native preparation from model inference and qualify real RAW/HIF inputs.
+The shared HEIF selector prepares the measured Sony 1600-edge RGB frame in
+703–761 ms without a display artifact (previous libheif path: 2693–2781 ms),
+and 307 ms from a qualified display artifact in the latest serial run.
+Format preparation and qualification are shared, while direct encoded display and
+progressive tiles retain their existing delivery paths. Compatible display producers
+can hand off a leased resource to pixel consumers with at most 50 ms waiting,
+without reserving a decoder slot or waiting for persistence; this is bounded
+opportunistic reuse, not a global merge of UI and background work.
+These are local Release input timings, not NAS or model-inference guarantees.
+
 ## Loupe zoom rendering
 
 Loupe computes its render box from the displayed image aspect and requested pixel

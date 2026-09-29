@@ -19,6 +19,10 @@ static FULL_DECODE_GATE: LazyLock<DecodeGate> =
     LazyLock::new(|| DecodeGate::with_capacity(oxy_runtime::loupe_worker_count()));
 const CONVERSION_BYTES: usize = 256 * 1024 * 1024;
 static CONVERSION_GATE: DecodeGate = DecodeGate::with_budget(2, CONVERSION_BYTES);
+// An explicit person-analysis job may read a 60 MP camera JPEG, whose
+// conservative progressive-coefficient estimate exceeds the thumbnail pool.
+// Give that work one separately bounded slot instead of raising preview limits.
+static PIXEL_INPUT_GATE: DecodeGate = DecodeGate::with_budget(1, 512 * 1024 * 1024);
 // A stale selection may finish writing its rebuildable JPEG without blocking
 // the foreground decode gate needed by the newly selected HEIF.
 static HEIF_SESSION_CACHE_WRITE_LOCK: Mutex<()> = Mutex::new(());
@@ -210,6 +214,30 @@ pub(crate) fn acquire_conversion(
     CONVERSION_GATE.acquire_bytes(priority, bytes, cancelled)
 }
 
+/// One temporary source-preparation frame for explicit background analysis.
+/// Model weights and the retained, downscaled frame are owned by its worker.
+pub(crate) fn acquire_pixel_input(
+    bytes: usize,
+    cancelled: &impl Fn() -> bool,
+) -> Result<DecodePermit<'static>, crate::MediaError> {
+    PIXEL_INPUT_GATE
+        .acquire_bytes(DecodePriority::Background, bytes, cancelled)
+        .map_err(|error| match error {
+            crate::MediaError::ResourceBudgetExhausted {
+                current,
+                limit,
+                requested,
+                ..
+            } => crate::MediaError::ResourceBudgetExhausted {
+                budget: "background media pixels",
+                current,
+                limit,
+                requested,
+            },
+            error => error,
+        })
+}
+
 /// Acquire capacity within the requested render lane. Native decoders must
 /// observe the same cancellation signal during their work.
 pub(crate) fn acquire_decode<F: Fn() -> bool>(
@@ -330,6 +358,25 @@ mod tests {
             DecodePriority::from(PreviewPriority::Loupe),
             DecodePriority::Foreground
         );
+    }
+
+    #[test]
+    fn analysis_input_has_one_bounded_slot_independent_of_thumbnail_admission() {
+        let permit = acquire_pixel_input(404_075_487, &|| false).unwrap();
+        let foreground = acquire_conversion(DecodePriority::Foreground, 1024, &|| false).unwrap();
+        assert!(matches!(
+            acquire_pixel_input(1024, &|| true),
+            Err(crate::MediaError::Cancelled)
+        ));
+        drop(permit);
+        drop(foreground);
+        assert!(matches!(
+            acquire_pixel_input(512 * 1024 * 1024 + 1, &|| false),
+            Err(crate::MediaError::ResourceBudgetExhausted {
+                budget: "background media pixels",
+                ..
+            })
+        ));
     }
 
     #[test]

@@ -24,6 +24,8 @@ pub(crate) struct AppState {
     /// must not be able to name each other, so neither crate depends on the
     /// other and the application is what hands them the same file.
     pub(crate) people: Arc<oxy_people::People>,
+    pub(crate) person_operations: Arc<oxy_people::execution::operations::PersonOperations>,
+    pub(crate) person_model_dir: std::path::PathBuf,
     pub(crate) cache: Arc<cache::CacheManager>,
     pub(crate) heif: Arc<oxy_media::HeifDecodeService>,
     pub(crate) media_resources: oxy_media::ResourceRegistry,

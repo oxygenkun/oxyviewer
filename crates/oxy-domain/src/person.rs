@@ -180,6 +180,45 @@ pub struct PersonAnalysisRun {
     pub failed_tasks: u64,
 }
 
+/// Snapshot of an explicitly started background operation. Progress polling
+/// reads this small snapshot rather than hashing model files or scanning images.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct PersonOperationStatus {
+    pub operation_id: String,
+    pub folder_path: Option<PathBuf>,
+    pub state: PersonOperationState,
+    pub completed: u64,
+    pub total: u64,
+    pub detail: String,
+    pub error: Option<String>,
+    pub run: Option<PersonAnalysisRun>,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub enum PersonOperationState {
+    Downloading,
+    Preparing,
+    Analysing,
+    Completed,
+    Cancelled,
+    Failed,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct PersonModelStatus {
+    pub id: String,
+    pub name: String,
+    pub size_bytes: u64,
+    pub installed: bool,
+    pub download_available: bool,
+    pub source_url: String,
+    pub usage: String,
+    pub error: Option<String>,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct BeginPersonAnalysis {
@@ -229,6 +268,13 @@ pub struct DetectedPersonInstance {
     pub face_score: Option<f32>,
     pub body_score: Option<f32>,
     pub association_score: Option<f32>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PersonDetectionSnapshot {
+    pub source_revision: String,
+    pub instances: Vec<DetectedPersonInstance>,
 }
 
 /// Which encoder produced a cached feature vector.

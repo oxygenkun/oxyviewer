@@ -10,6 +10,8 @@ mod decode_control;
 mod delivery;
 mod error;
 mod formats;
+mod request;
+pub use request::MediaRequest;
 mod heif_service;
 mod media_source;
 mod pipeline;
@@ -18,7 +20,9 @@ mod presentation;
 mod publication;
 mod raw_support;
 
-pub use analysis_input::{AnalysisInput, AnalysisRequirement, prepare_analysis_input};
+pub use analysis_input::{
+    AnalysisInput, AnalysisInputService, AnalysisRequirement, prepare_analysis_input,
+};
 pub use raw_support::{raw_decoder_status, raw_retry_revision, request_raw_retry};
 
 pub use cache::{
@@ -62,3 +66,5 @@ pub(crate) fn sony_hif_fixture() -> Option<std::path::PathBuf> {
 
 #[cfg(test)]
 mod tests;
+
+pub use pipeline::input::{MediaPixels, MediaService};

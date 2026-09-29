@@ -33,6 +33,22 @@ pub enum ArtifactInstallError {
 
 fn verify_reader(
     artifact: &PersonModelArtifact,
+    input: impl Read,
+    output: Option<&mut File>,
+    progress: &mut impl FnMut(u64, u64) -> bool,
+) -> Result<(), ArtifactInstallError> {
+    verify_content(
+        artifact.size_bytes,
+        &artifact.sha256,
+        input,
+        output,
+        progress,
+    )
+}
+
+pub(crate) fn verify_content(
+    size_bytes: u64,
+    sha256: &str,
     mut input: impl Read,
     mut output: Option<&mut File>,
     progress: &mut impl FnMut(u64, u64) -> bool,
@@ -41,7 +57,7 @@ fn verify_reader(
     let mut count = 0_u64;
     let mut buffer = [0_u8; 64 * 1024];
     loop {
-        if !progress(count, artifact.size_bytes) {
+        if !progress(count, size_bytes) {
             return Err(ArtifactInstallError::Cancelled);
         }
         let size = input.read(&mut buffer)?;
@@ -51,7 +67,7 @@ fn verify_reader(
         count = count
             .checked_add(size as u64)
             .ok_or(ArtifactInstallError::InvalidContent)?;
-        if count > artifact.size_bytes {
+        if count > size_bytes {
             return Err(ArtifactInstallError::InvalidContent);
         }
         digest.update(&buffer[..size]);
@@ -59,12 +75,10 @@ fn verify_reader(
             writer.write_all(&buffer[..size])?;
         }
     }
-    if count != artifact.size_bytes
-        || format!("{:x}", digest.finalize()) != artifact.sha256.to_ascii_lowercase()
-    {
+    if count != size_bytes || format!("{:x}", digest.finalize()) != sha256.to_ascii_lowercase() {
         return Err(ArtifactInstallError::InvalidContent);
     }
-    if !progress(count, artifact.size_bytes) {
+    if !progress(count, size_bytes) {
         return Err(ArtifactInstallError::Cancelled);
     }
     Ok(())
@@ -172,6 +186,7 @@ pub fn download_artifact(
         .tls_config(
             ureq::tls::TlsConfig::builder()
                 .provider(ureq::tls::TlsProvider::NativeTls)
+                .root_certs(ureq::tls::RootCerts::PlatformVerifier)
                 .build(),
         )
         .timeout_connect(Some(Duration::from_secs(20)))

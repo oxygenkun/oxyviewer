@@ -13,6 +13,8 @@ mod person;
 pub use person::*;
 mod relocation;
 pub use relocation::*;
+mod analysis_image;
+pub use analysis_image::*;
 
 pub type AssetId = String;
 pub type JobId = String;

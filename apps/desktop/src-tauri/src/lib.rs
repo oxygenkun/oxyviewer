@@ -130,7 +130,14 @@ pub fn run() {
             },
         )
         .plugin(tauri_plugin_dialog::init())
-        .plugin(tauri_plugin_log::Builder::new().build())
+        .plugin(
+            tauri_plugin_log::Builder::new()
+                // HTTP trace logging includes body hex dumps. Large model
+                // downloads must not turn their bytes into application logs.
+                .level_for("ureq", tauri_plugin_log::log::LevelFilter::Warn)
+                .level_for("ureq_proto", tauri_plugin_log::log::LevelFilter::Warn)
+                .build(),
+        )
         .on_page_load(|webview, _payload| {
             let window = webview.window();
             // Dev reloads can occasionally leave the webview underneath the native title bar.
@@ -186,6 +193,7 @@ pub fn run() {
             // anything else: the application is the composition root.
             let tags = Arc::new(oxy_tags::Tags::new(library.store()));
             let people = Arc::new(oxy_people::People::new(library.store()));
+            let person_model_dir = data_dir.join("person-models");
             let external_apps = Arc::new(state::external_apps::ExternalAppManager::load(data_dir.join("external-apps.json")));
             let metadata_provider = Arc::new(ProviderManager::load(data_dir));
             let files = Arc::new(FsCatalog::default());
@@ -213,6 +221,8 @@ pub fn run() {
                 library,
                 tags,
                 people,
+                person_operations: Arc::new(oxy_people::execution::operations::PersonOperations::default()),
+                person_model_dir,
                 cache,
                 heif,
                 media_resources,
@@ -275,6 +285,14 @@ pub fn run() {
             reorder_library_roots,
             list_custom_tags,
             list_folder_people,
+            get_person_models,
+            get_person_operation,
+            get_person_detections,
+            adopt_person_detection,
+            start_person_model_download,
+            import_person_model,
+            start_folder_person_analysis,
+            cancel_person_operation,
             list_historical_people,
             get_historical_link,
             get_person_tag_link,

@@ -17,5 +17,7 @@ pub(crate) fn in_memory() -> People {
 }
 
 pub(crate) fn open(path: &Path) -> People {
-    People::new(Arc::new(Store::open(path).expect("the test store must open")))
+    People::new(Arc::new(
+        Store::open(path).expect("the test store must open"),
+    ))
 }

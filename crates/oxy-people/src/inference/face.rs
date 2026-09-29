@@ -4,8 +4,8 @@
 
 use crate::{
     alignment::detection_cache_id,
-    artifact_store::{ArtifactInstallError, installed_artifact},
-    face_input::{FaceInputError, adaface_input, scrfd_input},
+    environment::artifacts::{ArtifactInstallError, installed_artifact},
+    inference::input::{FaceInputError, adaface_input, scrfd_input},
     require_installable,
 };
 use image::RgbImage;
@@ -35,6 +35,11 @@ pub enum OnnxProvider {
         device_id: i32,
         intra_threads: usize,
     },
+    #[cfg(windows)]
+    WindowsDevice {
+        index: usize,
+        intra_threads: usize,
+    },
     #[cfg(target_os = "macos")]
     CoreMl {
         compute_units: MacComputeUnits,
@@ -51,11 +56,36 @@ pub enum MacComputeUnits {
 }
 
 impl OnnxProvider {
+    pub fn description(self) -> String {
+        match self {
+            Self::Cpu { .. } => "CPU".into(),
+            #[cfg(windows)]
+            Self::DirectMl { device_id, .. } => format!("DirectML / GPU {device_id}"),
+            #[cfg(windows)]
+            Self::WindowsDevice { index, .. } => ort::environment::Environment::current()
+                .ok()
+                .and_then(|env| {
+                    env.devices().nth(index).map(|device| {
+                        format!(
+                            "{} / {:?}",
+                            device.ep().unwrap_or("Windows ML"),
+                            device.hardware_device().ty()
+                        )
+                    })
+                })
+                .unwrap_or_else(|| "Windows ML".into()),
+            #[cfg(target_os = "macos")]
+            Self::CoreMl { .. } => "Core ML".into(),
+        }
+    }
+
     fn threads(self) -> usize {
         match self {
             Self::Cpu { intra_threads } => intra_threads,
             #[cfg(windows)]
             Self::DirectMl { intra_threads, .. } => intra_threads,
+            #[cfg(windows)]
+            Self::WindowsDevice { intra_threads, .. } => intra_threads,
             #[cfg(target_os = "macos")]
             Self::CoreMl { intra_threads, .. } => intra_threads,
         }
@@ -111,6 +141,7 @@ pub struct FaceDetection {
     pub score: f32,
 }
 
+#[derive(Clone, Copy)]
 pub struct OnnxFaceModelRequest<'a> {
     pub manifest: &'a PipelineManifest,
     pub detector_stage_id: &'a str,
@@ -150,7 +181,7 @@ fn digest_matches(path: &Path, expected: &str) -> Result<bool, OnnxFaceError> {
     Ok(format!("{:x}", hasher.finalize()) == expected.to_ascii_lowercase())
 }
 
-fn initialize_runtime(path: &Path) -> Result<(), OnnxFaceError> {
+pub(crate) fn initialize_runtime(path: &Path) -> Result<(), OnnxFaceError> {
     static LOADED_PATH: OnceLock<Mutex<Option<PathBuf>>> = OnceLock::new();
     let path = path.canonicalize()?;
     let loaded = LOADED_PATH.get_or_init(|| Mutex::new(None));
@@ -174,7 +205,7 @@ fn initialize_runtime(path: &Path) -> Result<(), OnnxFaceError> {
 fn build_session(
     path: &Path,
     provider: OnnxProvider,
-    batch_dimension: Option<&str>,
+    input_dimension: Option<(&str, u32)>,
     #[cfg(target_os = "macos")] coreml_cache_dir: Option<&Path>,
 ) -> Result<Session, OnnxFaceError> {
     let mut builder = Session::builder()
@@ -183,9 +214,17 @@ fn build_session(
         .map_err(|error| OnnxFaceError::Ort(error.to_string()))?
         .with_intra_threads(provider.threads())
         .map_err(|error| OnnxFaceError::Ort(error.to_string()))?;
-    if let Some(dimension) = batch_dimension {
+    #[cfg(test)]
+    if let Some(directory) = std::env::var_os("OXY_TEST_ORT_PROFILE_DIR") {
+        static SEQUENCE: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+        let index = SEQUENCE.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         builder = builder
-            .with_dimension_override(dimension, 1)
+            .with_profiling(PathBuf::from(directory).join(format!("session-{index}")))
+            .map_err(|error| OnnxFaceError::Ort(error.to_string()))?;
+    }
+    if let Some((dimension, size)) = input_dimension {
+        builder = builder
+            .with_dimension_override(dimension, i64::from(size))
             .map_err(|error| OnnxFaceError::Ort(error.to_string()))?;
     }
     #[cfg(windows)]
@@ -217,6 +256,22 @@ fn build_session(
         }
         builder = builder
             .with_execution_providers([coreml.build().error_on_failure()])
+            .map_err(|error| OnnxFaceError::Ort(error.to_string()))?;
+    }
+    #[cfg(windows)]
+    if let OnnxProvider::WindowsDevice { index, .. } = provider {
+        let env = ort::environment::Environment::current()
+            .map_err(|error| OnnxFaceError::Ort(error.to_string()))?;
+        let device = env
+            .devices()
+            .nth(index)
+            .ok_or(OnnxFaceError::InvalidContract)?;
+        builder = builder
+            .with_memory_pattern(false)
+            .map_err(|error| OnnxFaceError::Ort(error.to_string()))?
+            .with_parallel_execution(false)
+            .map_err(|error| OnnxFaceError::Ort(error.to_string()))?
+            .with_devices([device], None)
             .map_err(|error| OnnxFaceError::Ort(error.to_string()))?;
     }
     builder
@@ -315,14 +370,14 @@ impl OnnxFaceModels {
         let detector = build_session(
             &detector_path,
             providers.detector,
-            None,
+            Some(("?", detector_canvas)),
             #[cfg(target_os = "macos")]
             coreml_cache_dir,
         )?;
         let encoder = build_session(
             &encoder_path,
             providers.encoder,
-            Some("batch_size"),
+            Some(("batch_size", 1)),
             #[cfg(target_os = "macos")]
             coreml_cache_dir,
         )?;
@@ -343,6 +398,14 @@ impl OnnxFaceModels {
 
     pub fn providers(&self) -> OnnxFaceProviders {
         self.providers
+    }
+
+    #[cfg(all(test, windows, target_arch = "x86_64"))]
+    pub(crate) fn finish_profiles(&mut self) -> Vec<String> {
+        vec![
+            self.detector.end_profiling().unwrap(),
+            self.encoder.end_profiling().unwrap(),
+        ]
     }
 
     /// Returns nine raw SCRFD heads and their input transform. Decode and
@@ -755,7 +818,7 @@ mod tests {
         initialize_runtime(&runtime).unwrap();
         let mut models = OnnxFaceModels {
             detector: build_session(&detector, provider, None).unwrap(),
-            encoder: build_session(&encoder, provider, Some("batch_size")).unwrap(),
+            encoder: build_session(&encoder, provider, Some(("batch_size", 1))).unwrap(),
             detector_canvas: 640,
             providers: OnnxFaceProviders {
                 detector: provider,
@@ -804,7 +867,7 @@ mod tests {
         initialize_runtime(&runtime).unwrap();
         let mut models = OnnxFaceModels {
             detector: build_session(&detector, provider, None).unwrap(),
-            encoder: build_session(&encoder, provider, Some("batch_size")).unwrap(),
+            encoder: build_session(&encoder, provider, Some(("batch_size", 1))).unwrap(),
             detector_canvas: 640,
             providers: OnnxFaceProviders {
                 detector: provider,

@@ -1,5 +1,5 @@
 import type { RootRelocationPlan } from "@/types";
-import { PeopleContext } from "@/components/people/PeopleContext";
+import { PeopleContext, PersonDetectionContext } from "@/components/people/PeopleContext";
 import { useInfiniteQuery, useQuery, useQueryClient, type InfiniteData } from "@tanstack/react-query";
 import { Aperture, CircleAlert, FolderPlus, Layers2, RectangleHorizontal, RectangleVertical } from "lucide-react";
 import { useCallback, useDeferredValue, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties } from "react";
@@ -20,6 +20,8 @@ import {
   chooseFolder,
   confirmFolderPerson,
   createFolderPerson,
+  adoptPersonDetection,
+  setPersonReview,
   listFolderPeople,
   resetFolderPerson,
   listPersonReviews,
@@ -1016,6 +1018,20 @@ export function App({ perfScenario }: { perfScenario?: PerfScenario }) {
     await Promise.all(["person-instances", "person-reviews", "folder-people", "assets"].map(key => queryClient.invalidateQueries({ queryKey: [key] })));
   };
   return (
+    <PersonDetectionContext.Provider value={peopleMode && currentPath ? { folderPath: currentPath, showBoxes, adopt: async (asset, sourceRevision, instanceId) => {
+      const folder = currentPath;
+      const instance = await adoptPersonDetection(folder, asset.path, sourceRevision, instanceId);
+      const subject = selectedPerson ?? await createFolderPerson(folder);
+      const reviews = await listPersonReviews(folder, subject.id);
+      if (!reviews.some(review => review.instance.id === instance.id)) {
+        await setPersonReview(folder, instance.id, subject.id, "pending", 0);
+      }
+      if (browseTarget.current.directory === folder) {
+        setPersonSelections(old => ({ ...old, [folder]: { id: subject.id, filter: "off" } }));
+        selectInstance(instance.id);
+      }
+      await refreshPeople(asset);
+    } } : undefined}>
     <PeopleContext.Provider value={peopleMode && currentPath && selectedPerson ? { folderPath: currentPath, person: selectedPerson, selectedInstanceId, selectInstance, draw, setDraw: mode => { setDraw(mode); if(mode) setShowBoxes(true); }, editInstance, setEditInstance, showBoxes, changed: refreshPeople } : undefined}>
     <div
       ref={appShellRef}
@@ -1240,5 +1256,6 @@ export function App({ perfScenario }: { perfScenario?: PerfScenario }) {
       ) : null}
     </div>
     </PeopleContext.Provider>
+    </PersonDetectionContext.Provider>
   );
 }

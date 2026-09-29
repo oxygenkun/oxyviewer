@@ -1,0 +1,223 @@
+{
+  "fixture_count": 16,
+  "rounds": [
+    {
+      "elapsed_ms": 5523.5285,
+      "face_counts": [
+        1,
+        1,
+        1,
+        2,
+        1,
+        0,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1
+      ],
+      "mode": "serial",
+      "round": 0
+    },
+    {
+      "elapsed_ms": 4385.0271999999995,
+      "face_counts": [
+        1,
+        1,
+        1,
+        2,
+        1,
+        0,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1
+      ],
+      "mode": "pipeline",
+      "round": 0
+    },
+    {
+      "elapsed_ms": 4345.4493999999995,
+      "face_counts": [
+        1,
+        1,
+        1,
+        2,
+        1,
+        0,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1
+      ],
+      "mode": "pipeline",
+      "round": 1
+    },
+    {
+      "elapsed_ms": 6223.6846000000005,
+      "face_counts": [
+        1,
+        1,
+        1,
+        2,
+        1,
+        0,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1
+      ],
+      "mode": "serial",
+      "round": 1
+    },
+    {
+      "elapsed_ms": 6011.3107,
+      "face_counts": [
+        1,
+        1,
+        1,
+        2,
+        1,
+        0,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1
+      ],
+      "mode": "serial",
+      "round": 2
+    },
+    {
+      "elapsed_ms": 4547.872200000001,
+      "face_counts": [
+        1,
+        1,
+        1,
+        2,
+        1,
+        0,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1
+      ],
+      "mode": "pipeline",
+      "round": 2
+    }
+  ],
+  "fixtures": [
+    {
+      "name": "DSC00835.jpg",
+      "sha256": "3272e84cf83c1cc76ef6f48bc0511d371ed2d32d0d219d7ddddc7b69be0d24a6"
+    },
+    {
+      "name": "DSC00871.jpg",
+      "sha256": "a60f742dca5f1d8cd3d86f35f031edbedcac0599454c6c3bdcadc25ed9998c5b"
+    },
+    {
+      "name": "DSC00908.jpg",
+      "sha256": "7afe46aa243ce908b90ac6e923f9136a3b66600970ba452f1fa263f532df894c"
+    },
+    {
+      "name": "DSC00945.jpg",
+      "sha256": "1e46311ee42844c64e2fe5a21293dbf56e825fe94c53ad17c0eb29ca23d77aed"
+    },
+    {
+      "name": "DSC00982.jpg",
+      "sha256": "4884d1b94813f8148dcb68b01f4a0145bcd6abc5337118d224b4a81679bead27"
+    },
+    {
+      "name": "DSC01019.jpg",
+      "sha256": "20adf1c25077d80c4765247378936b35b0d8d0f202e1e3af2c9648411f32264e"
+    },
+    {
+      "name": "DSC01056.jpg",
+      "sha256": "f67ad0b4bd2be09f2bf5fe5484251f146d96d0760dbd29824675cc5220f48496"
+    },
+    {
+      "name": "DSC01092.jpg",
+      "sha256": "fd33f512ddc7473f4f23384cfab21f75f7ad43d84baf10744d75da9f580cb13b"
+    },
+    {
+      "name": "DSC01129.jpg",
+      "sha256": "034c48056b6d4e5d09e9cd0fdfb90f87958910b6b190d541101541b10e6fef9c"
+    },
+    {
+      "name": "DSC01166.jpg",
+      "sha256": "39b318f5dac7775411ddfc0c5fef1ae0c5034f2db4fccf38bb44483f32fe3f86"
+    },
+    {
+      "name": "DSC01202.jpg",
+      "sha256": "f40ca9cb734d15b02cdcb2ec917f197f48b25e93b40e26c7afcb1f0d99683a23"
+    },
+    {
+      "name": "DSC01239.jpg",
+      "sha256": "9600b5b6fac60b269a0a463a7ae7ad466a69869a835390af0fe90b7076d7272a"
+    },
+    {
+      "name": "DSC01276.jpg",
+      "sha256": "a90e2faddbe267ac61d32be47c805fed8aab8dac8297e3cca8c537c88b938071"
+    },
+    {
+      "name": "DSC01312.jpg",
+      "sha256": "9a93bff0b5f63d1d6898947bceda738ba365898aba44df7c7425229e507cdf4b"
+    },
+    {
+      "name": "DSC01349.jpg",
+      "sha256": "11e119886b8c27f8cd728751f3abe56e4d2461c12ab7221f862d7e135016ceb0"
+    },
+    {
+      "name": "DSC01386.jpg",
+      "sha256": "c869589576504baa53e313e2906dd1d60d3e77c7f6050b9c068bfdd59bb1444f"
+    }
+  ],
+  "gpu_profiles": [
+    {
+      "profile": "session-0_2026-09-29_11-24-13.json",
+      "provider_events": {
+        "DmlExecutionProvider": 2
+      }
+    },
+    {
+      "profile": "session-1_2026-09-29_11-24-15.json",
+      "provider_events": {
+        "DmlExecutionProvider": 2
+      }
+    }
+  ]
+}

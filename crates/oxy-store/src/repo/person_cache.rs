@@ -357,7 +357,9 @@ pub fn search_features(
     let mut eligible_seen = 0usize;
     for row in rows {
         let candidate = row?;
-        if current.get(candidate.asset_path.to_string_lossy().as_ref()).copied()
+        if current
+            .get(candidate.asset_path.to_string_lossy().as_ref())
+            .copied()
             != Some(candidate.source_revision.as_str())
         {
             continue;
@@ -411,7 +413,10 @@ pub fn analysis_run_exists(connection: &Connection, run_id: &str) -> Result<bool
 }
 
 /// The generation and run the folder's head currently points at.
-pub fn analysis_head(connection: &Connection, folder_path: &str) -> Result<Option<(i64, String)>, StoreError> {
+pub fn analysis_head(
+    connection: &Connection,
+    folder_path: &str,
+) -> Result<Option<(i64, String)>, StoreError> {
     Ok(connection
         .query_row(
             "SELECT generation,run_id FROM person_analysis_heads WHERE folder_path=?1",
@@ -459,9 +464,11 @@ pub fn cancel_analysis_run(connection: &Connection, run_id: &str) -> Result<usiz
 
 /// A fresh opaque id, as the runs and tasks tables use them.
 pub fn new_cache_id(connection: &Connection) -> Result<String, StoreError> {
-    Ok(connection.query_row("SELECT lower(hex(randomblob(16))) AS id", [], |row| {
-        row.get("id")
-    })?)
+    Ok(
+        connection.query_row("SELECT lower(hex(randomblob(16))) AS id", [], |row| {
+            row.get("id")
+        })?,
+    )
 }
 
 pub struct NewAnalysisRun<'a> {
@@ -637,6 +644,8 @@ pub fn seal_analysis_run(connection: &Connection, run_id: &str) -> Result<(), St
 pub fn claimable_task(
     connection: &Connection,
     run_id: &str,
+    stage_id: Option<&str>,
+    asset_path: Option<&str>,
 ) -> Result<Option<PersonAnalysisTask>, StoreError> {
     Ok(connection
         .query_row(
@@ -644,11 +653,12 @@ pub fn claimable_task(
                     t.stage_fingerprint,t.stage_order
              FROM person_analysis_tasks t JOIN person_analysis_runs r ON r.run_id=t.run_id
              WHERE t.run_id=?1 AND t.state='queued'
+               AND (?2 IS NULL OR t.stage_id=?2) AND (?3 IS NULL OR t.asset_path=?3)
                AND NOT EXISTS (SELECT 1 FROM person_analysis_tasks earlier
                  WHERE earlier.run_id=t.run_id AND earlier.asset_path=t.asset_path
                    AND earlier.stage_order<t.stage_order AND earlier.state!='completed')
              ORDER BY t.asset_path,t.stage_order LIMIT 1",
-            [run_id],
+            params![run_id, stage_id, asset_path],
             row_task,
         )
         .optional()?)

@@ -22,15 +22,12 @@
 //!   other's API. Nothing here names `oxy_tags`.
 
 pub mod alignment;
-pub mod analysis;
-pub mod analysis_runs;
-pub mod artifact_store;
 pub mod detections;
-pub mod face_input;
+pub mod environment;
+pub mod execution;
 pub mod features;
 pub mod identity;
-#[cfg(any(windows, target_os = "macos"))]
-pub mod onnx_face;
+pub mod inference;
 
 #[cfg(test)]
 mod audit;
@@ -336,9 +333,22 @@ pub fn require_installable(manifest: &PipelineManifest) -> Result<(), PipelineEr
         PersonStageKind::Clusterer,
         PersonStageKind::Retriever,
     ];
-    if REQUIRED
-        .iter()
-        .any(|kind| !manifest.stages.iter().any(|stage| stage.kind == *kind))
+    let face_only = manifest.stages.len() == 2 && {
+        let detector = manifest
+            .stages
+            .iter()
+            .find(|stage| stage.kind == PersonStageKind::FaceDetector);
+        let encoder = manifest
+            .stages
+            .iter()
+            .find(|stage| stage.kind == PersonStageKind::FaceEncoder);
+        matches!((detector, encoder), (Some(detector), Some(encoder))
+            if detector.depends_on.is_empty() && encoder.depends_on == [detector.stage_id.clone()])
+    };
+    if !face_only
+        && REQUIRED
+            .iter()
+            .any(|kind| !manifest.stages.iter().any(|stage| stage.kind == *kind))
     {
         return Err(PipelineError::InvalidContract);
     }
@@ -367,7 +377,7 @@ pub fn require_installable(manifest: &PipelineManifest) -> Result<(), PipelineEr
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::artifact_store::{
+    use crate::environment::artifacts::{
         ArtifactInstallError, install_artifact_reader, install_local_artifact,
     };
     use oxy_domain::{

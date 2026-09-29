@@ -1,3 +1,5 @@
+mod pixels;
+pub(crate) use pixels::decode_pixels;
 pub(crate) mod planner;
 
 use planner::preview_request;
@@ -317,10 +319,7 @@ fn produce_embedded_with_request(
             "embedded RAW extraction previously failed for this source revision".into(),
         ));
     }
-    let extracted = libraw::embedded(path, max_size).map_err(|message| MediaError::LibRaw {
-        path: path.to_owned(),
-        message,
-    });
+    let extracted = extract_embedded(path, max_size);
     let (extracted, reference) = match extracted {
         Ok(extracted) => extracted,
         Err(error) => {
@@ -332,28 +331,16 @@ fn produce_embedded_with_request(
     };
     let (bytes, mut facts) = match extracted {
         libraw::Preview::EmbeddedJpeg(data) => {
-            use sha2::{Digest, Sha256};
-            let candidate_id = format!("libraw-jpeg:{:x}", Sha256::digest(&data));
             if level == RenderLevel::Thumbnail {
+                use sha2::{Digest, Sha256};
+                let candidate_id = format!("libraw-jpeg:{:x}", Sha256::digest(&data));
                 let super::jpeg_transform::EncodedJpegThumbnail {
                     bytes, mut facts, ..
                 } = super::jpeg_transform::encode_jpeg_thumbnail(data, priority, cancellation)?;
                 facts.source.candidate_id = candidate_id;
                 (bytes, facts)
             } else {
-                let mut decoder = ImageReader::new(Cursor::new(&data))
-                    .with_guessed_format()?
-                    .into_decoder()?;
-                let encoded = oxy_domain::EncodedDimensions(decoder.dimensions().into());
-                let orientation = decoder.orientation()?.to_exif();
-                let facts = crate::media_source::source_facts(
-                    ImageOrigin::EmbeddedPreview,
-                    candidate_id,
-                    encoded,
-                    orientation,
-                    reference,
-                );
-                drop(decoder);
+                let facts = camera_jpeg_facts(&data, reference)?;
                 // LibRaw may add orientation metadata. Do not claim original payload bytes.
                 (Arc::from(data), facts)
             }
@@ -427,6 +414,98 @@ fn record_embedded_extraction_failure(revision_id: &str) {
     }
 }
 
+fn camera_jpeg_facts(
+    bytes: &[u8],
+    reference: oxy_domain::DisplayDimensions,
+) -> Result<oxy_domain::ArtifactFacts, MediaError> {
+    use sha2::{Digest, Sha256};
+    let mut decoder = ImageReader::new(Cursor::new(bytes))
+        .with_guessed_format()?
+        .into_decoder()?;
+    let encoded = oxy_domain::EncodedDimensions(decoder.dimensions().into());
+    let orientation = decoder.orientation()?.to_exif();
+    Ok(crate::media_source::source_facts(
+        ImageOrigin::EmbeddedPreview,
+        format!("libraw-jpeg:{:x}", Sha256::digest(bytes)),
+        encoded,
+        orientation,
+        reference,
+    ))
+}
+
+fn extract_embedded(
+    path: &Path,
+    max_size: u32,
+) -> Result<(libraw::Preview, oxy_domain::DisplayDimensions), MediaError> {
+    libraw::embedded(path, max_size).map_err(|message| MediaError::LibRaw {
+        path: path.into(),
+        message,
+    })
+}
+
+fn decode_backend(
+    path: &Path,
+    backend: RawBackend,
+    max_size: Option<u32>,
+    cancellation: &CancellationToken,
+) -> Result<crate::media_source::DecodedImage, MediaError> {
+    match backend {
+        #[cfg(target_os = "windows")]
+        RawBackend::WindowsWic => crate::raw_support::decode(path, cancellation),
+        RawBackend::LibRawDevelopment => {
+            libraw::developed(path, max_size, cancellation).map_err(|message| MediaError::LibRaw {
+                path: path.into(),
+                message,
+            })
+        }
+        #[cfg(target_os = "macos")]
+        RawBackend::AppleImageIo => {
+            let image = apple_image_io::decode_rgba8(path, max_size.unwrap_or(0))?;
+            let reference = oxy_domain::DisplayDimensions(dimensions(path)?);
+            let facts = crate::media_source::decoded_facts(
+                ImageOrigin::RawSensor,
+                "raw-sensor".into(),
+                reference,
+                reference,
+                oxy_domain::DisplayDimensions((image.width(), image.height()).into()),
+                "Apple ImageIO",
+            );
+            Ok(crate::media_source::DecodedImage { image, facts })
+        }
+        #[cfg(target_os = "macos")]
+        RawBackend::AppleCoreImage => Err(MediaError::NativeDecoderUnavailable), // Native adapter currently exposes JPEG delivery only.
+    }
+}
+
+fn decode_developed_pixels(
+    path: &Path,
+    max_size: Option<u32>,
+    cancellation: &CancellationToken,
+) -> Result<crate::media_source::DecodedImage, MediaError> {
+    let level = if max_size.is_none() {
+        RenderLevel::Full
+    } else if max_size.is_some_and(|size| size <= 512) {
+        RenderLevel::Thumbnail
+    } else {
+        RenderLevel::Preview
+    };
+    let mut errors = Vec::new();
+    for backend in plan_backends(level) {
+        if cancellation.is_cancelled() {
+            return Err(MediaError::Cancelled);
+        }
+        match decode_backend(path, backend, max_size, cancellation) {
+            Ok(decoded) => return Ok(decoded),
+            Err(MediaError::Cancelled) => return Err(MediaError::Cancelled),
+            Err(error) => errors.push(format!("{backend:?}: {error}")),
+        }
+    }
+    Err(MediaError::BackendAttempts {
+        attempts: errors.join("; "),
+        source: Box::new(MediaError::NativeDecoderUnavailable),
+    })
+}
+
 #[allow(clippy::too_many_arguments)]
 fn render_developed(
     path: &Path,
@@ -457,14 +536,10 @@ fn render_developed(
                 apple_image_io::render_jpeg(path, &destination, max_size, quality)
             }
             #[cfg(target_os = "windows")]
-            RawBackend::WindowsWic => crate::raw_support::decode(path, cancellation)
+            RawBackend::WindowsWic => decode_backend(path, backend, max_size, cancellation)
                 .and_then(|decoded| encode_developed(decoded, &destination, quality, cancellation))
                 .map(|facts| completed_facts = Some(facts)),
-            RawBackend::LibRawDevelopment => libraw::developed(path, max_size, cancellation)
-                .map_err(|message| MediaError::LibRaw {
-                    path: path.to_owned(),
-                    message,
-                })
+            RawBackend::LibRawDevelopment => decode_backend(path, backend, max_size, cancellation)
                 .and_then(|decoded| encode_developed(decoded, &destination, quality, cancellation))
                 .map(|facts| completed_facts = Some(facts)),
         };

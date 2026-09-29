@@ -39,9 +39,32 @@ pub(super) fn can_deliver_original(primary: &Header, byte_size: u64) -> bool {
 
 pub(super) fn plan_embedded_candidates(
     primary: &Header,
-    mut candidates: Vec<(JpegRange, Header)>,
+    candidates: Vec<(JpegRange, Header)>,
 ) -> Vec<(JpegRange, Header)> {
-    candidates.retain(|(_, candidate)| embedded_is_eligible(primary, candidate));
+    plan_candidates(
+        primary,
+        candidates,
+        crate::MediaRequest {
+            presentation: crate::MediaRequest::unsharpened(),
+            max_size: THUMBNAIL_EDGE,
+            detail: DetailRequirement::Display {
+                min_long_edge: THUMBNAIL_EDGE.min(
+                    primary
+                        .encoded_dimensions
+                        .map_or(THUMBNAIL_EDGE, |size| size.0.width.max(size.0.height)),
+                ),
+            },
+            allow_interim: false,
+        },
+    )
+}
+
+pub(super) fn plan_candidates(
+    primary: &Header,
+    mut candidates: Vec<(JpegRange, Header)>,
+    request: crate::MediaRequest,
+) -> Vec<(JpegRange, Header)> {
+    candidates.retain(|(_, candidate)| embedded_is_eligible_for(primary, candidate, request));
     candidates.sort_by_key(|(range, candidate)| {
         let dimensions = candidate
             .encoded_dimensions
@@ -56,7 +79,30 @@ pub(super) fn plan_embedded_candidates(
     candidates
 }
 
+#[cfg(test)]
 fn embedded_is_eligible(primary: &Header, candidate: &Header) -> bool {
+    embedded_is_eligible_for(
+        primary,
+        candidate,
+        crate::MediaRequest {
+            presentation: crate::MediaRequest::unsharpened(),
+            max_size: THUMBNAIL_EDGE,
+            allow_interim: false,
+            detail: DetailRequirement::Display {
+                min_long_edge: THUMBNAIL_EDGE.min(
+                    primary
+                        .encoded_dimensions
+                        .map_or(THUMBNAIL_EDGE, |size| size.0.width.max(size.0.height)),
+                ),
+            },
+        },
+    )
+}
+fn embedded_is_eligible_for(
+    primary: &Header,
+    candidate: &Header,
+    request: crate::MediaRequest,
+) -> bool {
     let (Some(source), Some(candidate_dimensions)) =
         (primary.encoded_dimensions, candidate.encoded_dimensions)
     else {
@@ -64,7 +110,6 @@ fn embedded_is_eligible(primary: &Header, candidate: &Header) -> bool {
     };
     let source = source.0;
     let candidate_dimensions = candidate_dimensions.0;
-    let target = source.width.max(source.height).min(THUMBNAIL_EDGE);
     let software = primary
         .exif
         .software
@@ -105,7 +150,9 @@ fn embedded_is_eligible(primary: &Header, candidate: &Header) -> bool {
         && orientation_matches
         && color_known
         && primary.exif.orientation.is_some()
-        && candidate_dimensions.width.max(candidate_dimensions.height) >= target
+        && request
+            .detail
+            .accepts(oxy_domain::DisplayDimensions(candidate_dimensions), false)
         && ratio_reference > 0
         && ratio_difference * 1000 <= ratio_reference * 5
 }
@@ -161,6 +208,27 @@ mod tests {
         source.complete = false;
         assert!(!can_deliver_original(&source, 1024));
         assert!(!can_deliver_original(&header(513, 342), 1024));
+    }
+
+    #[test]
+    fn request_detail_changes_candidates_without_changing_color_or_edit_rules() {
+        let source = header(6000, 4000);
+        let small = header(1200, 800);
+        assert!(embedded_is_eligible(&source, &small));
+        let request = crate::MediaRequest::full_frame((6000, 4000).into(), 1600);
+        assert!(!embedded_is_eligible_for(&source, &small, request));
+        assert!(embedded_is_eligible_for(
+            &source,
+            &header(1800, 1200),
+            request
+        ));
+        let mut edited = source;
+        edited.has_edit_metadata = true;
+        assert!(!embedded_is_eligible_for(
+            &edited,
+            &header(1800, 1200),
+            request
+        ));
     }
 
     #[test]

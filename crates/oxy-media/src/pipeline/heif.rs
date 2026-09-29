@@ -214,41 +214,31 @@ fn production_probes(path: &Path, operation: HeifOperation) -> BackendProbes {
     let unused_platform =
         || BackendProbe::supported(HeifBackend::Platform(platform_backend_kind()));
     let unused_ffmpeg = || BackendProbe::supported(HeifBackend::Ffmpeg);
-    match (current_platform(), operation) {
-        (Platform::Macos, HeifOperation::Preview) => BackendProbes {
-            platform: actual_platform_probe(path),
-            ffmpeg: unused_ffmpeg(),
-        },
-        (Platform::Macos, HeifOperation::FullArtifact | HeifOperation::Session) => {
+    match current_platform() {
+        Platform::Macos => {
             let platform = actual_platform_probe(path);
             let ffmpeg = if matches!(platform.state, ProbeState::Supported) {
-                // Preserve the old fast path: do not inspect the fallback
-                // backend unless the preferred native backend fails later.
                 unused_ffmpeg()
             } else {
                 actual_ffmpeg_probe(path)
             };
             BackendProbes { platform, ffmpeg }
         }
-        (Platform::Linux, HeifOperation::Preview) => BackendProbes {
-            platform: unused_platform(),
-            ffmpeg: unused_ffmpeg(),
-        },
-        (Platform::Windows, HeifOperation::Preview)
-        | (Platform::Windows | Platform::Linux, HeifOperation::FullArtifact)
-        | (Platform::Linux, HeifOperation::Session) => BackendProbes {
-            platform: unused_platform(),
-            ffmpeg: actual_ffmpeg_probe(path),
-        },
-        (Platform::Windows, HeifOperation::Session) => {
+        Platform::Windows => {
             let ffmpeg = actual_ffmpeg_probe(path);
-            let platform = if !matches!(ffmpeg.state, ProbeState::Supported) {
+            let platform = if operation != HeifOperation::FullArtifact
+                && !matches!(ffmpeg.state, ProbeState::Supported)
+            {
                 actual_platform_probe(path)
             } else {
                 unused_platform()
             };
             BackendProbes { platform, ffmpeg }
         }
+        Platform::Linux => BackendProbes {
+            platform: unused_platform(),
+            ffmpeg: actual_ffmpeg_probe(path),
+        },
     }
 }
 
@@ -429,7 +419,10 @@ fn classify_error(error: &MediaError) -> AttemptOutcome {
         | MediaError::CacheManifest(_)
         | MediaError::CacheArtifact(_)
         | MediaError::ResourceBudgetExhausted { .. }
-        | MediaError::PreviewGenerationFailed { .. } => AttemptOutcome::DecodeFailed,
+        | MediaError::PreviewGenerationFailed { .. }
+        | MediaError::InvalidAnalysisRequirement
+        | MediaError::InvalidMediaRequest
+        | MediaError::UnqualifiedFrameRepresentation => AttemptOutcome::DecodeFailed,
     }
 }
 
@@ -478,6 +471,28 @@ mod tests {
     }
 
     #[test]
+    fn frame_and_loupe_share_platform_order_and_compatibility_fallbacks() {
+        for platform in [Platform::Windows, Platform::Macos, Platform::Linux] {
+            for ffmpeg_state in [
+                ProbeState::Supported,
+                ProbeState::Unsupported("not a grid".into()),
+            ] {
+                let candidates = |operation| {
+                    plan_backends(platform, operation, probes(ProbeState::Supported, ffmpeg_state.clone()))
+                        .candidates.into_iter()
+                        // This is a tile delivery retry, not another decoder preference.
+                        .filter(|backend| *backend != HeifBackend::FfmpegRgbaFallback)
+                        .collect::<Vec<_>>()
+                };
+                assert_eq!(
+                    candidates(HeifOperation::Preview),
+                    candidates(HeifOperation::Session)
+                );
+            }
+        }
+    }
+
+    #[test]
     fn selector_preserves_preview_and_session_backend_order() {
         let supported = || ProbeState::Supported;
         let mac_preview = plan_backends(
@@ -489,6 +504,7 @@ mod tests {
             mac_preview.candidates,
             [
                 HeifBackend::Platform(HeifBackendKind::AppleImageIo),
+                HeifBackend::Ffmpeg,
                 HeifBackend::Libheif,
             ]
         );

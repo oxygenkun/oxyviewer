@@ -524,14 +524,68 @@ fn oriented_tile(grid: &TileGrid, tile: &Tile) -> Result<(String, u32, u32, u32,
 /// Sony HIF files commonly carry a medium-sized camera-rendered HEVC image in
 /// addition to the primary tile grid. Decoding that single stream avoids
 /// paying for all six full-resolution tiles just to paint the first frame.
-#[cfg_attr(any(target_os = "macos", target_os = "linux"), allow(dead_code))]
+#[cfg(test)]
 pub fn decode_scaled_preview(
     path: &Path,
     max_size: u32,
 ) -> Result<crate::media_source::DecodedImage, MediaError> {
-    let grid = cached_grid(path)?;
-    let stream = grid
-        .previews
+    decode_frame(
+        path,
+        crate::request::MediaRequest {
+            presentation: crate::MediaRequest::unsharpened(),
+            max_size,
+            detail: crate::DetailRequirement::Display {
+                min_long_edge: max_size,
+            },
+            allow_interim: false,
+        },
+        &|| false,
+    )
+}
+
+/// Choose representations before decoding, using the same request as the
+/// platform selector. A rejected auxiliary never hides the primary grid.
+pub(crate) fn decode_frame(
+    path: &Path,
+    request: crate::request::MediaRequest,
+    cancelled: &impl Fn() -> bool,
+) -> Result<crate::media_source::DecodedImage, MediaError> {
+    let grid = cached_grid_cancellable(path, cancelled)?;
+    if let Some(stream) = select_preview(&grid, request) {
+        match decode_preview_stream(path, &grid, stream, request.max_size, cancelled) {
+            Ok(decoded) if request.accepts(&decoded.facts) => return Ok(decoded),
+            Err(MediaError::Cancelled) => return Err(MediaError::Cancelled),
+            _ => {} // A failed auxiliary does not imply a failed primary.
+        }
+    }
+    decode_scaled_primary(path, &grid, request.max_size, cancelled)
+}
+
+fn preview_facts(grid: &TileGrid, stream: &PreviewStream) -> oxy_domain::ArtifactFacts {
+    crate::media_source::source_facts(
+        oxy_domain::ImageOrigin::EmbeddedPreview,
+        format!("ffmpeg-stream:{}", stream.index),
+        stream.encoded_dimensions,
+        stream.exif_orientation,
+        grid_display_dimensions(grid),
+    )
+}
+
+fn grid_display_dimensions(grid: &TileGrid) -> oxy_domain::DisplayDimensions {
+    oxy_domain::EncodedDimensions((grid.width, grid.height).into()).to_display(
+        if grid.rotation.rem_euclid(180) == 90 {
+            6
+        } else {
+            1
+        },
+    )
+}
+
+fn select_preview(
+    grid: &TileGrid,
+    request: crate::request::MediaRequest,
+) -> Option<&PreviewStream> {
+    grid.previews
         .iter()
         .filter(|stream| {
             stream
@@ -539,7 +593,23 @@ pub fn decode_scaled_preview(
                 .0
                 .width
                 .max(stream.encoded_dimensions.0.height)
-                >= max_size
+                >= request.max_size
+        })
+        .filter(|stream| {
+            let mut facts = preview_facts(grid, stream);
+            let size = facts.display_dimensions.0;
+            let scale = f64::from(request.max_size) / f64::from(size.width.max(size.height));
+            // Conservative floor matches FFmpeg's aspect-preserving preview scale.
+            facts.resize(oxy_domain::DisplayDimensions(
+                (
+                    (f64::from(size.width) * scale).floor().max(1.0) as u32,
+                    (f64::from(size.height) * scale).floor().max(1.0) as u32,
+                )
+                    .into(),
+            ));
+            facts.encoded_dimensions = oxy_domain::EncodedDimensions(facts.display_dimensions.0);
+            facts.exif_orientation = 1;
+            request.accepts(&facts)
         })
         .min_by_key(|stream| {
             stream
@@ -548,30 +618,104 @@ pub fn decode_scaled_preview(
                 .width
                 .max(stream.encoded_dimensions.0.height)
         })
-        .ok_or_else(|| native_error("HEIF has no sufficiently large independent preview stream"))?;
+}
+
+fn decode_scaled_primary(
+    path: &Path,
+    grid: &TileGrid,
+    max_size: u32,
+    cancelled: &impl Fn() -> bool,
+) -> Result<crate::media_source::DecodedImage, MediaError> {
+    let reference = grid_display_dimensions(grid);
+    let (filter, _, _) = filter_for_grid(grid, reference.0)?;
+    let scale =
+        (f64::from(max_size) / f64::from(reference.0.width.max(reference.0.height))).min(1.0);
+    let width = (f64::from(reference.0.width) * scale).round().max(1.0) as u32;
+    let height = (f64::from(reference.0.height) * scale).round().max(1.0) as u32;
+    let filter = filter.replace(
+        ",format=rgba[out]",
+        &format!(",scale={width}:{height}:flags=area,format=bgra[out]"),
+    );
+    // Reuse the validated BMP reader used by full loupe tiles. File output
+    // avoids the diagnostic/stdout cap for larger display-frame requests.
+    let directory = tempfile::tempdir()?;
+    let bitmap = directory.path().join("frame.bmp");
+    let output = run_cancellable(
+        media_command(&COMMANDS.0)
+            .args(["-v", "error", "-threads", "2", "-i"])
+            .arg(path)
+            .args([
+                "-filter_complex_threads",
+                "2",
+                "-filter_complex",
+                &filter,
+                "-map",
+                "[out]",
+                "-frames:v",
+                "1",
+                "-c:v",
+                "bmp",
+                "-y",
+            ])
+            .arg(&bitmap),
+        cancelled,
+    )?;
+    if !output.status.success() {
+        return Err(native_error(format!(
+            "primary frame decode failed: {}",
+            String::from_utf8_lossy(&output.stderr)
+        )));
+    }
+    if cancelled() {
+        return Err(MediaError::Cancelled);
+    }
+    let mut pixels = RgbaImage::new(width, height);
+    copy_bmp_tile(&mut pixels, &bitmap, 0, 0, width, height)?;
+    let facts = crate::media_source::decoded_facts(
+        oxy_domain::ImageOrigin::PrimaryImage,
+        "primary".into(),
+        reference,
+        reference,
+        oxy_domain::DisplayDimensions((width, height).into()),
+        "FFmpeg",
+    );
+    Ok(crate::media_source::DecodedImage {
+        image: DynamicImage::ImageRgba8(pixels),
+        facts,
+    })
+}
+
+fn decode_preview_stream(
+    path: &Path,
+    grid: &TileGrid,
+    stream: &PreviewStream,
+    max_size: u32,
+    cancelled: &impl Fn() -> bool,
+) -> Result<crate::media_source::DecodedImage, MediaError> {
     let map = format!("0:{}", stream.index);
     let scale = format!("scale={max_size}:{max_size}:force_original_aspect_ratio=decrease");
-    let output = media_command(&COMMANDS.0)
-        .args(["-v", "error", "-i"])
-        .arg(path)
-        .args([
-            "-map",
-            &map,
-            "-frames:v",
-            "1",
-            "-vf",
-            &scale,
-            "-q:v",
-            "2",
-            "-c:v",
-            "mjpeg",
-            "-f",
-            "image2pipe",
-            "pipe:1",
-        ])
-        .stdin(Stdio::null())
-        .output()
-        .map_err(|error| native_error(format!("start ffmpeg preview: {error}")))?;
+    let output = run_cancellable(
+        media_command(&COMMANDS.0)
+            .args(["-v", "error", "-i"])
+            .arg(path)
+            .args([
+                "-map",
+                &map,
+                "-frames:v",
+                "1",
+                "-vf",
+                &scale,
+                "-q:v",
+                "2",
+                "-c:v",
+                "mjpeg",
+                "-f",
+                "image2pipe",
+                "pipe:1",
+            ])
+            .stdin(Stdio::null()),
+        cancelled,
+    )?;
     if !output.status.success() {
         return Err(native_error(format!(
             "preview decode failed with {}: {}",
@@ -581,19 +725,7 @@ pub fn decode_scaled_preview(
     }
     let image = image::load_from_memory(&output.stdout)
         .map_err(|error| native_error(format!("decode ffmpeg preview bitmap: {error}")))?;
-    let mut facts = crate::media_source::source_facts(
-        oxy_domain::ImageOrigin::EmbeddedPreview,
-        format!("ffmpeg-stream:{}", stream.index),
-        stream.encoded_dimensions,
-        stream.exif_orientation,
-        oxy_domain::EncodedDimensions((grid.width, grid.height).into()).to_display(
-            if grid.rotation.rem_euclid(180) == 90 {
-                6
-            } else {
-                1
-            },
-        ),
-    );
+    let mut facts = preview_facts(grid, stream);
     facts.processing.push(oxy_domain::ImageOperation::Decode {
         backend: "FFmpeg".into(),
     });
@@ -1172,6 +1304,30 @@ mod tests {
         "side_data_list": [{"rotation": 90}]
       }]
     }"#;
+
+    #[test]
+    fn preview_selection_checks_requested_sampling_before_decode() {
+        let grid = parse_grid(GRID_JSON).unwrap();
+        let request =
+            crate::request::MediaRequest::full_frame(grid_display_dimensions(&grid).0, 1600);
+        // Long edge alone passes, but the scaled short edge is only 1046.
+        assert!(select_preview(&grid, request).is_none());
+        let display = crate::request::MediaRequest {
+            detail: crate::DetailRequirement::Display {
+                min_long_edge: 1600,
+            },
+            ..request
+        };
+        assert_eq!(select_preview(&grid, display).unwrap().index, 6);
+        let mut grid = grid;
+        grid.previews[0].encoded_dimensions = oxy_domain::EncodedDimensions((1800, 1200).into());
+        assert_eq!(select_preview(&grid, request).unwrap().index, 6);
+        let native = crate::request::MediaRequest {
+            detail: crate::DetailRequirement::NativeDetail,
+            ..request
+        };
+        assert!(select_preview(&grid, native).is_none());
+    }
 
     #[test]
     fn parses_grid_and_builds_dynamic_rotated_filter() {

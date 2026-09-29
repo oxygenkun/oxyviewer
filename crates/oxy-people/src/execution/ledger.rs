@@ -98,7 +98,12 @@ impl People {
                 generation,
             },
         )?;
-        repo::person_cache::insert_analysis_request(&transaction, &input.request_id, "begin", &run_id)?;
+        repo::person_cache::insert_analysis_request(
+            &transaction,
+            &input.request_id,
+            "begin",
+            &run_id,
+        )?;
         let run = repo::person_cache::analysis_run(&transaction, &run_id)?
             .ok_or(PeopleError::MissingPersonAnalysis)?;
         transaction.commit().map_err(StoreError::from)?;
@@ -129,12 +134,15 @@ impl People {
             }
         } else {
             let changed = repo::person_cache::cancel_analysis_run(&transaction, run_id)?;
-            if changed == 0
-                && !repo::person_cache::analysis_run_exists(&transaction, run_id)?
-            {
+            if changed == 0 && !repo::person_cache::analysis_run_exists(&transaction, run_id)? {
                 return Err(PeopleError::MissingPersonAnalysis);
             }
-            repo::person_cache::insert_analysis_request(&transaction, request_id, "cancel", run_id)?;
+            repo::person_cache::insert_analysis_request(
+                &transaction,
+                request_id,
+                "cancel",
+                run_id,
+            )?;
         }
         let run = repo::person_cache::analysis_run(&transaction, run_id)?
             .ok_or(PeopleError::MissingPersonAnalysis)?;
@@ -228,10 +236,33 @@ impl People {
         &self,
         run_id: &str,
     ) -> Result<Option<PersonAnalysisTask>, PeopleError> {
+        self.claim_analysis_matching(run_id, None, None)
+    }
+
+    /// Pipeline preparation claims only detectors; publication claims the
+    /// matching encoder after its detector transaction commits successfully.
+    #[cfg(any(target_os = "windows", target_os = "macos", test))]
+    pub(crate) fn claim_person_analysis_stage(
+        &self,
+        run_id: &str,
+        stage_id: &str,
+        asset_path: Option<&std::path::Path>,
+    ) -> Result<Option<PersonAnalysisTask>, PeopleError> {
+        let asset = asset_path.map(|path| path.to_string_lossy());
+        self.claim_analysis_matching(run_id, Some(stage_id), asset.as_deref())
+    }
+
+    fn claim_analysis_matching(
+        &self,
+        run_id: &str,
+        stage_id: Option<&str>,
+        asset_path: Option<&str>,
+    ) -> Result<Option<PersonAnalysisTask>, PeopleError> {
         let mut connection = self.store.write();
         let transaction = connection.transaction().map_err(StoreError::from)?;
         current_run(&transaction, run_id)?;
-        let mut task = repo::person_cache::claimable_task(&transaction, run_id)?;
+        let mut task =
+            repo::person_cache::claimable_task(&transaction, run_id, stage_id, asset_path)?;
         if let Some(task) = &mut task {
             let claim_token = repo::person_cache::new_cache_id(&transaction)?;
             let changed = repo::person_cache::claim_analysis_task(
@@ -566,7 +597,9 @@ mod tests {
             people.get_person_analysis(&run.run_id).unwrap().state,
             PersonAnalysisState::Running
         );
-        people.cancel_person_analysis(&run.run_id, "cancel").unwrap();
+        people
+            .cancel_person_analysis(&run.run_id, "cancel")
+            .unwrap();
         assert!(matches!(
             people.claim_person_analysis_task(&run.run_id),
             Err(PeopleError::PersonAnalysisConflict)
@@ -576,9 +609,7 @@ mod tests {
     #[test]
     fn sealing_an_empty_run_completes_without_marking_any_failure() {
         let people = testing::in_memory();
-        let run = people
-            .begin_person_analysis(&input("start-empty"))
-            .unwrap();
+        let run = people.begin_person_analysis(&input("start-empty")).unwrap();
         let sealed = people.seal_person_analysis_tasks(&run.run_id).unwrap();
         assert_eq!(sealed.state, PersonAnalysisState::Completed);
         assert!(sealed.enumeration_complete);
@@ -605,10 +636,7 @@ mod tests {
             Err(PeopleError::PersonAnalysisConflict)
         ));
         assert_eq!(
-            people
-                .get_person_analysis(&run.run_id)
-                .unwrap()
-                .total_tasks,
+            people.get_person_analysis(&run.run_id).unwrap().total_tasks,
             0
         );
         assert_eq!(

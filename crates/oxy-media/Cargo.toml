@@ -38,8 +38,9 @@ path = "src/bin/raw_backend_bench.rs"
 required-features = ["bench-tools"]
 
 [dependencies]
+fast_image_resize = { version = "=5.2.2", default-features = false }
 fs2.workspace = true
-image.workspace = true
+image = { workspace = true, features = ["tiff"] }
 lcms2.workspace = true
 libc.workspace = true
 libheif-rs.workspace = true

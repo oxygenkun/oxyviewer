@@ -1,18 +1,20 @@
-//! Native PNG/WebP thumbnail conversion. Preserve alpha and ICC in a small PNG;
-//! the browser receives an already bounded image, never a full raster to resize.
+mod pixels;
+pub(crate) use pixels::decode_pixels;
+pub(super) use pixels::{decode_bytes, decode_with_limit};
+// Native raster delivery.
 use super::artifact::{ArtifactCache, ArtifactEncoding, register_original_resource};
 use crate::{
     MediaError,
     cache::{
         ArtifactPresentation, ArtifactRequirement, CacheColorState, ColorRequirement,
-        DetailRequirement, ImageOrigin, OrientationRequirement, OrientationState, PixelDimensions,
-        PresentationRequirement, SharpeningState,
+        DetailRequirement, OrientationRequirement, OrientationState, PresentationRequirement,
+        SharpeningState,
     },
     decode_control::{self, DecodePriority},
     delivery::{Delivery, THUMBNAIL_EDGE, THUMBNAIL_LIMITS},
     policy::RASTER_THUMBNAIL,
 };
-use image::{DynamicImage, ImageDecoder, ImageEncoder, ImageReader, codecs::png::PngEncoder};
+use image::{ImageEncoder, codecs::png::PngEncoder};
 use oxy_domain::{PreviewKind, PreviewResult, RenderLevel};
 use oxy_runtime::CancellationToken;
 use std::path::Path;
@@ -71,28 +73,17 @@ pub(crate) fn thumbnail(
             let _permit = decode_control::acquire_conversion(priority, cost, &|| {
                 cancellation.is_cancelled()
             })?;
-            let mut reader = ImageReader::open(path)?.with_guessed_format()?;
-            let mut limits = image::Limits::default();
-            limits.max_alloc = Some(cost as u64);
-            reader.limits(limits);
-            let mut decoder = reader.into_decoder()?;
-            let orientation = decoder.orientation()?;
-            let profile = decoder.icc_profile()?;
-            if cancellation.is_cancelled() {
-                return Err(MediaError::Cancelled);
-            }
-            let image = DynamicImage::from_decoder(decoder)?;
-            let target = THUMBNAIL_EDGE.min(image.width().max(image.height()));
-            let mut image = image.resize(target, target, image::imageops::FilterType::Triangle);
-            image.apply_orientation(orientation);
-            if cancellation.is_cancelled() {
-                return Err(MediaError::Cancelled);
-            }
-            let output = PixelDimensions {
-                width: image.width(),
-                height: image.height(),
-            };
-            let image = image.to_rgba8();
+            let frame = pixels::decode_with_limit(
+                path,
+                &crate::SourceRevision::observe(path)?,
+                THUMBNAIL_EDGE,
+                cost,
+                cancellation,
+            )?;
+            let output = frame.facts.display_dimensions.0;
+            let image = frame.image.to_rgba8();
+            let profile = frame.icc_profile;
+            let mut facts = frame.facts;
             let mut bytes = Vec::new();
             let mut encoder = PngEncoder::new(&mut bytes);
             if let Some(profile) = profile {
@@ -106,22 +97,6 @@ pub(crate) fn thumbnail(
                 output.height,
                 image::ExtendedColorType::Rgba8,
             )?;
-            let mut facts = crate::media_source::source_facts(
-                ImageOrigin::PrimaryImage,
-                "primary".into(),
-                oxy_domain::EncodedDimensions(dimensions),
-                orientation.to_exif(),
-                oxy_domain::EncodedDimensions(dimensions).to_display(orientation.to_exif()),
-            );
-            facts.processing.push(oxy_domain::ImageOperation::Decode {
-                backend: "image".into(),
-            });
-            facts.resize(oxy_domain::DisplayDimensions(output));
-            if orientation.to_exif() != 1 {
-                facts.processing.push(oxy_domain::ImageOperation::Orient {
-                    exif: orientation.to_exif(),
-                });
-            }
             facts.processing.push(oxy_domain::ImageOperation::Encode {
                 format: "png".into(),
             });

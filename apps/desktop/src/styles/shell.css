@@ -90,7 +90,7 @@
   font-size: 0.6875rem;
   font-variant-numeric: tabular-nums;
 }
-.person-sidebar-section { display: flex; flex: 0 1 auto; flex-direction: column; min-height: 80px; max-height: 32%; gap: var(--space-1); overflow-y: auto; margin-bottom: 10px; scrollbar-width: thin; }
+.person-sidebar-section { display: flex; flex: 1 1 0; flex-direction: column; min-height: 80px; max-height: 32%; gap: var(--space-1); overflow-y: auto; margin-bottom: 10px; scrollbar-width: thin; }
 .person-sidebar-section.is-filter-open { max-height: 48%; }
 .person-sidebar-section p { padding: 8px; color: var(--muted); font-size: .75rem; line-height: 1.5; }
 .person-sidebar-section .person-sidebar-empty { margin: 0 4px; padding: 17px 12px; border: 1px dashed #353b3f; border-radius: var(--radius-panel); color: #828b90; text-align: center; }
@@ -211,7 +211,11 @@
 .person-review-content p { margin: 0; color: var(--muted); line-height: 1.45; }
 .person-review-content button { cursor: pointer; }
 .person-review-content button:disabled { opacity: .42; cursor: default; }
-.sidebar--people .sidebar__folders { flex: 0 1 35%; min-height: 110px; border-top: 1px solid var(--line); padding-top: 8px; }
+.sidebar--people .sidebar__folders { flex: 0 1 var(--person-folder-share, 35%); min-height: 110px; border-top: 1px solid var(--line); padding-top: 8px; }
+.person-folder-resizer { position: relative; flex: 0 0 9px; margin-bottom: -4px; cursor: row-resize; touch-action: none; z-index: 1; }
+.person-folder-resizer::after { position: absolute; top: 3px; right: 0; left: 0; height: 2px; border-radius: 2px; background: var(--line); content: ""; }
+.person-folder-resizer:hover::after,
+.person-folder-resizer:focus-visible::after { background: var(--accent-dim); }
 .sidebar--people .sidebar__folders.person-folders-collapsed { flex: 0 0 auto; min-height: 32px; }
 .sidebar--people .person-folders-collapsed > :not(.sidebar__heading) { display: none; }
 .sidebar__folders {

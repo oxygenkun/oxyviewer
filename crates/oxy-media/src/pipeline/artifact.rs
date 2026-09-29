@@ -32,6 +32,7 @@ static RUNNING_WORK: OnceLock<Mutex<VecDeque<Arc<RunningWork>>>> = OnceLock::new
 
 struct RunningWork {
     key: String,
+    cache_root: std::path::PathBuf,
     promise: CacheRequest,
     cache_generation: u64,
     state: Mutex<RunningWorkState>,
@@ -262,7 +263,7 @@ impl ArtifactCache {
         };
         let lock_key = self.source_lock_key(lane);
         let work_key = format!("{}:{}", lock_key, self.cache.root().display());
-        match running_work_role(&work_key, request, cache_generation) {
+        match running_work_role(&work_key, self.cache.root(), request, cache_generation) {
             WorkRole::Waiter(work) => {
                 let mut state = work
                     .state
@@ -767,7 +768,12 @@ impl ArtifactCache {
     }
 }
 
-fn running_work_role(key: &str, request: &CacheRequest, cache_generation: u64) -> WorkRole {
+fn running_work_role(
+    key: &str,
+    cache_root: &Path,
+    request: &CacheRequest,
+    cache_generation: u64,
+) -> WorkRole {
     let records = RUNNING_WORK.get_or_init(|| Mutex::new(VecDeque::new()));
     let mut records = records
         .lock()
@@ -817,6 +823,7 @@ fn running_work_role(key: &str, request: &CacheRequest, cache_generation: u64) -
     }
     let record = Arc::new(RunningWork {
         key: key.to_owned(),
+        cache_root: cache_root.to_owned(),
         promise: request.clone(),
         cache_generation,
         state: Mutex::new(RunningWorkState::Pending),
@@ -981,6 +988,102 @@ pub(crate) fn duration_ms(started: Instant) -> u64 {
     started.elapsed().as_millis().try_into().unwrap_or(u64::MAX)
 }
 
+/// Opportunistic handoff from an existing producer, independent of persistence.
+/// Waiting is bounded and does not reserve a decoder slot or cancel the owner.
+pub(crate) struct PixelHandoff {
+    pub result: PreviewResult,
+    pub lease: crate::ResourceReadLease,
+    pub color: CacheColorState,
+}
+
+pub(crate) fn join_pixel_output(
+    cache_root: &Path,
+    request: &CacheRequest,
+    generation: u64,
+    cancellation: &oxy_runtime::CancellationToken,
+) -> Result<Option<PixelHandoff>, MediaError> {
+    let records = RUNNING_WORK
+        .get_or_init(|| Mutex::new(VecDeque::new()))
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .iter()
+        .filter(|record| {
+            record.cache_root == cache_root
+                && record.promise.policy_revision == request.policy_revision
+                && record.cache_generation == generation
+                && record.promise.source_revision == request.source_revision
+                && presentation_requirement_implies(
+                    record.promise.presentation,
+                    request.presentation,
+                )
+        })
+        .cloned()
+        .collect::<Vec<_>>();
+    let deadline = Instant::now() + Duration::from_millis(50);
+    for record in records {
+        let mut state = record
+            .state
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        loop {
+            if cancellation.is_cancelled() {
+                return Err(MediaError::Cancelled);
+            }
+            match &*state {
+                RunningWorkState::Ready(result) => {
+                    let Some(facts) = result.image_facts.as_ref() else {
+                        break;
+                    };
+                    let frame = crate::MediaRequest {
+                        max_size: 0,
+                        detail: request.detail,
+                        presentation: request.presentation,
+                        allow_interim: false,
+                    };
+                    if result.geometry.is_some() || !frame.accepts(facts) {
+                        break;
+                    }
+                    let Some(resource) = result.resource.as_ref().and_then(|resource| {
+                        crate::shared_resource_registry().resolve(&resource.resource_id)
+                    }) else {
+                        break;
+                    };
+                    if !matches!(resource.media_type.as_str(), "image/jpeg" | "image/png") {
+                        break;
+                    }
+                    let color =
+                        if record.promise.presentation.color == crate::ColorRequirement::Srgb {
+                            CacheColorState::Srgb
+                        } else {
+                            CacheColorState::EmbeddedOrUnknown
+                        };
+                    return Ok(Some(PixelHandoff {
+                        result: (**result).clone(),
+                        lease: resource,
+                        color,
+                    }));
+                }
+                RunningWorkState::Failed => break,
+                RunningWorkState::Pending => {
+                    // A promise which cannot prove the requested detail must not delay
+                    // a cheaper input; a ready result can still qualify by its facts.
+                    if !promised_request_satisfies(&record.promise, request)
+                        || Instant::now() >= deadline
+                    {
+                        break;
+                    }
+                    state = record
+                        .ready
+                        .wait_timeout(state, Duration::from_millis(5))
+                        .unwrap_or_else(std::sync::PoisonError::into_inner)
+                        .0;
+                }
+            }
+        }
+    }
+    Ok(None)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1001,6 +1104,92 @@ mod tests {
             .write_to(&mut bytes, ImageFormat::Jpeg)
             .unwrap();
         Arc::from(bytes.into_inner())
+    }
+
+    #[test]
+    fn pixel_handoff_preserves_owner_cancellation_namespace_and_generation() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("source.jpg");
+        std::fs::write(&path, jpeg()).unwrap();
+        let artifacts = ArtifactCache::new(&path, directory.path()).unwrap();
+        let request = artifacts.request(
+            DetailRequirement::MinimumDimensions {
+                min_long_edge: 16,
+                min_short_edge: 8,
+            },
+            ArtifactRequirement::AnyDisplay,
+            crate::MediaRequest::unsharpened(),
+            false,
+        );
+        let generation = artifacts.cache.generation().unwrap();
+        let WorkRole::Producer(work) = running_work_role(
+            &path.to_string_lossy(),
+            artifacts.cache.root(),
+            &request,
+            generation,
+        ) else {
+            panic!("fresh source must own its producer");
+        };
+        let mut owner = RunningWorkProducerGuard::new(Arc::clone(&work));
+        let cancelled = oxy_runtime::CancellationToken::default();
+        cancelled.cancel();
+        assert!(matches!(
+            join_pixel_output(artifacts.cache.root(), &request, generation, &cancelled),
+            Err(MediaError::Cancelled)
+        ));
+        assert!(matches!(
+            *work.state.lock().unwrap(),
+            RunningWorkState::Pending
+        ));
+        let token = oxy_runtime::CancellationToken::default();
+        let (result, _) = with_app_publication(|| {
+            register_original_resource(
+                &path,
+                crate::media_source::preview_result(
+                    path.clone(),
+                    PreviewKind::Original,
+                    RenderLevel::Full,
+                )
+                .unwrap(),
+            )
+        });
+        owner.finish(&result);
+        let handoff = join_pixel_output(artifacts.cache.root(), &request, generation, &token)
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            crate::shared_resource_registry()
+                .materialize(&handoff.lease)
+                .unwrap(),
+            std::fs::read(&path).unwrap()
+        );
+        assert!(
+            join_pixel_output(artifacts.cache.root(), &request, generation + 1, &token)
+                .unwrap()
+                .is_none()
+        );
+        assert!(
+            join_pixel_output(directory.path(), &request, generation, &token)
+                .unwrap()
+                .is_none()
+        );
+        let mut different = request.clone();
+        different.presentation.sharpening = SharpeningState::Display;
+        assert!(
+            join_pixel_output(artifacts.cache.root(), &different, generation, &token)
+                .unwrap()
+                .is_none()
+        );
+        different = request;
+        different.detail = DetailRequirement::MinimumDimensions {
+            min_long_edge: 1600,
+            min_short_edge: 1000,
+        };
+        assert!(
+            join_pixel_output(artifacts.cache.root(), &different, generation, &token)
+                .unwrap()
+                .is_none()
+        );
     }
 
     fn wait_for_thread<T>(handle: &thread::JoinHandle<T>) {

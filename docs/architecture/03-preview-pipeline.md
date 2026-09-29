@@ -27,14 +27,14 @@ HEVC 解码器或操作系统预览服务。即使原文件可解码，也不应
 | JPEG/PNG/WebP | 原文件 URL | 原文件 URL | 原文件 URL |
 | RAW | LibRaw 512 | LibRaw 4096 | 最大内嵌 JPEG；不足时 WIC full development → LibRaw |
 | HEIF/HIF | 内嵌 160×120 JPEG | 复用同一内嵌 JPEG | 源 HEIF 直接转换的完整 JPEG |
-| TIFF | macOS ImageIO JPEG 512；Windows/Linux 暂不支持 | macOS ImageIO JPEG 512；Windows/Linux 暂不支持 | macOS ImageIO JPEG 4096；Windows/Linux 暂不支持 |
+| TIFF | 共享像素解码后 PNG 512 | 共享像素解码后 PNG 512 | 共享像素解码后原尺寸 PNG（受预算限制） |
 
 交互图不随格式改变：网格只进入 `thumbnail`；放大镜请求 `full`，复用已有 thumbnail 底图。
 前端 `renderPlan(kind, surface, platform)` 把等级映射到 renderer 类；后端
 `pipeline::dispatcher` 直接按 `AssetKind + RenderLevel` 分派，再由格式 executor 选择后端与
 fallback。多个等级可以指向同一产物。
 
-后台人物分析使用独立的 `prepare_analysis_input`，不会把展示缩略图当检测输入。目前它仅对 JPEG 复用 libjpeg 缩放 IDCT、解码预算和源版本校验，返回已校正方向的短生命周期 RGB 帧；RAW／HEIF 的合格表示选择仍待接入。该入口只由显式后台分析调用，不改变交互预览等级或文件夹打开路径。
+后台分析通过 `oxy-domain::AnalysisRequirement` 声明模型需求，薄适配器 `AnalysisInputService` 将需求转换为 `MediaRequest` 并调用 `MediaService::prepare_pixels`。格式选择、缓存复用和解码由共用 media 管线负责；适配器仅校验模型最小源尺寸、转 RGB8 并将透明像素合成白底。UI 继续直接交付可显示的编码原图、生成 artifact 或渐进瓦片，不为统一接口强制经过 RGB。具体边界见本章末尾及 [人物输入契约](../PERSON_WORKFLOW.md)。
 Windows RAW 的 codec 资格检查、可选扩展安装和重新显影流程见
 [Windows RAW 完整解析](../windows-raw.md)。
 最大 JPEG 选择会先补齐 LibRaw 未解析的候选尺寸（CR3 JPEG track），并补充 RW2
@@ -460,3 +460,38 @@ attempt 边界、tile 发布以及缓存提交前都会检查 token。已经进�
 - 原子写入避免了哪一类缓存损坏？
 
 下一章：[04：HEIF 完整 JPEG 与旧瓦片协议](04-heif-tile-session.md)。
+
+
+### 共用媒体准备与不同交付方式
+
+`request::MediaRequest` 描述目标尺寸、细节、是否允许临时画面和呈现要求；
+`ArtifactFacts` 的完整覆盖、有效采样及呈现资格判断与缓存共用。
+`pipeline::dispatcher` 是格式路由边界，显示与像素交付进入同一个格式模块；
+`AnalysisInputService` 不持有格式分支、解码器或缓存逻辑。
+
+- JPEG：共用有界探测、内嵌候选安全筛选、排序、方向与 ICC 判断、缩放 IDCT。
+  模型需要 1600 时不会沿用只满足 512 的候选；直接原图显示仍不需要转码。
+- RAW：共用相机表示提取、来源事实和平台显影顺序；合格相机 JPEG 可直接显示，
+  像素消费者才解码。macOS Core Image 当前只提供编码 JPEG，像素交付继续尝试
+  ImageIO／LibRaw；这是后端输出能力差异，尚未在 macOS 实机验证。
+- HEIF：共用 planner 与 `decode_frame` 资格判断。FFmpeg 辅助流不合格时使用与
+  全图浏览相同的 grid 拼接、裁边和方向，在子进程中缩放并以无损 BMP 交付像素。
+  全图 session 保留逐块输出及发布后禁止换后端的约束。
+- PNG／WebP／TIFF：共用定向、缩放、ICC 与 alpha 保留。TIFF 在 macOS 优先
+  ImageIO，随后以及 Windows/Linux 使用 raster 解码，显示适配器编码 PNG。
+
+`MediaService` 统一源版本前后复核、缓存资格与 lease/generation 校验。
+RAW／HEIF／TIFF 优先复用合格 artifact，JPEG／普通 raster 优先原始样本，避免
+为了命中缓存引入有损重编码。只复用无显示锐化、无需额外 padding 变换、完整覆盖
+且采样满足请求的产物。像素不持久化，也没有第二套人物媒体缓存。
+
+缓存未命中时，像素消费者可接手同缓存目录、源版本、策略、generation 和呈现语义
+相容的展示生产结果。仅当生产请求能证明满足需求时等待，总等待最多 50 ms；
+取得已发布资源的 lease 后直接读取，不等异步落盘。等待方取消不取消生产方。
+超时或不相容便按共用格式流程自行准备；不合并 UI/分析队列、不拼接运行中的
+渐进瓦片，也不宣称所有消费者已经双向共享像素任务。
+
+临时像素准备使用独立单槽 512 MiB admission，UI 转换池仍为 256 MiB；
+RAW 全图工作集互斥、取消、源版本、代际和 stale-result 语义保留。
+模型专用 RGB 合成、BGR、tensor 和归一化都在交付边界之后。
+验证与平台限制见 [2026-09-28 实测](../research/2026-09-28-analysis-media-input.md)。

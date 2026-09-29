@@ -42,6 +42,7 @@ import { FolderNameButton } from "./FolderNameButton";
 import { UnavailableFolder } from "./UnavailableFolder";
 import type { RootRelocationPlan } from "@/types";
 import { FolderSettingsMenu } from "./FolderSettingsMenu";
+import { PersonAnalysisControls } from "../people/PersonAnalysisControls";
 
 interface SidebarProps {
   peopleMode?: boolean;
@@ -321,6 +322,12 @@ export function Sidebar({
   const queryClient = useQueryClient();
   const [searchOpen, setSearchOpen] = useState(false);
   const [peopleFoldersOpen, setPeopleFoldersOpen] = useState(false);
+  const [personFolderShare, setPersonFolderShare] = useState(() => {
+    const saved = Number(window.localStorage.getItem("oxyviewer.personFolderShare"));
+    return saved >= 15 && saved <= 75 ? saved : 35;
+  });
+  const sidebarRef = useRef<HTMLElement>(null);
+  const folderResizeRef = useRef<{ pointerId: number; startY: number; startShare: number } | null>(null);
   const [personFilterOpen, setPersonFilterOpen] = useState(false);
   const [renamingId, setRenamingId] = useState<string>();
   const [renameValue, setRenameValue] = useState("");
@@ -639,7 +646,7 @@ export function Sidebar({
 
 
   return (
-    <aside className={`sidebar ${peopleMode ? "sidebar--people" : ""}`}>
+    <aside ref={sidebarRef} className={`sidebar ${peopleMode ? "sidebar--people" : ""}`} style={{ "--person-folder-share": `${personFolderShare}%` } as React.CSSProperties}>
       <div className="sidebar__brand">
         <div><strong>OxyViewer</strong><small>PHOTO DESK</small></div>
       </div>
@@ -657,6 +664,7 @@ export function Sidebar({
         </button>
       </div>
       {peopleMode ? <section className={`person-sidebar-section ${personFilterOpen ? "is-filter-open" : ""}`}>
+        <PersonAnalysisControls sessionId={activeSession?.id} folderPath={currentPath} />
         <div className="person-sidebar-heading"><div><span>人物</span><strong>当前文件夹</strong></div><button onClick={onCreatePerson} disabled={!currentPath} aria-label="添加人物">＋ 添加</button></div>
         {!people.length ? <p className="person-sidebar-empty">还没有人物。添加一位人物，然后在照片上标记并审阅。</p> : people.map((person, index) => {
           const selected = selectedPersonId === person.id;
@@ -751,6 +759,46 @@ export function Sidebar({
       </section> : null}
 
       {personReview}
+
+      {peopleMode && peopleFoldersOpen ? <div
+        className="person-folder-resizer"
+        role="separator"
+        tabIndex={0}
+        aria-label="调整人物与文件夹区域高度"
+        aria-orientation="horizontal"
+        aria-valuemin={15}
+        aria-valuemax={75}
+        aria-valuenow={Math.round(personFolderShare)}
+        onPointerDown={(event) => {
+          if (event.button !== 0) return;
+          folderResizeRef.current = { pointerId: event.pointerId, startY: event.clientY, startShare: personFolderShare };
+          event.currentTarget.setPointerCapture(event.pointerId);
+          event.preventDefault();
+        }}
+        onPointerMove={(event) => {
+          const drag = folderResizeRef.current;
+          const height = sidebarRef.current?.clientHeight;
+          if (!drag || drag.pointerId !== event.pointerId || !height) return;
+          setPersonFolderShare(Math.round(Math.max(15, Math.min(75, drag.startShare + (drag.startY - event.clientY) * 100 / height))));
+        }}
+        onPointerUp={(event) => {
+          if (folderResizeRef.current?.pointerId !== event.pointerId) return;
+          folderResizeRef.current = null;
+          window.localStorage.setItem("oxyviewer.personFolderShare", String(personFolderShare));
+        }}
+        onPointerCancel={() => { folderResizeRef.current = null; }}
+        onLostPointerCapture={() => { folderResizeRef.current = null; }}
+        onKeyDown={(event) => {
+          const delta = event.key === "ArrowUp" ? 2 : event.key === "ArrowDown" ? -2 : 0;
+          if (!delta) return;
+          event.preventDefault();
+          setPersonFolderShare((share) => {
+            const next = Math.max(15, Math.min(75, share + delta));
+            window.localStorage.setItem("oxyviewer.personFolderShare", String(next));
+            return next;
+          });
+        }}
+      /> : null}
 
       <div className={`sidebar__section sidebar__folders ${showOnboarding ? "is-guided" : ""} ${peopleMode && !peopleFoldersOpen ? "person-folders-collapsed" : ""}`}>
         <div className="sidebar__heading">

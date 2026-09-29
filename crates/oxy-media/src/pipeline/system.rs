@@ -1,16 +1,21 @@
-#[cfg(target_os = "macos")]
-use crate::backends::apple_image_io;
+//! System image decoding with a portable raster fallback, shared by both deliveries.
 use crate::{
-    MediaError,
+    MediaError, MediaRequest, SourceRevision,
     cache::{
-        ArtifactPresentation, ArtifactRequirement, CacheColorState, DetailRequirement, ImageOrigin,
-        OrientationRequirement, OrientationState, PresentationRequirement, SharpeningState,
+        ArtifactPresentation, ArtifactRequirement, DetailRequirement, OrientationState,
+        SharpeningState,
     },
-    media_source::has_complete_jpeg_markers,
-    pipeline::artifact::ArtifactCache,
+    decode_control::{self, DecodePriority},
+    pipeline::{
+        artifact::{ArtifactCache, ArtifactEncoding},
+        input::MediaPixels,
+        pixels,
+    },
     policy::SYSTEM_PREVIEW,
 };
+use image::{ImageEncoder, codecs::png::PngEncoder};
 use oxy_domain::{PreviewResult, RenderLevel};
+use oxy_runtime::CancellationToken;
 use std::path::Path;
 
 pub(crate) fn preview(
@@ -18,11 +23,13 @@ pub(crate) fn preview(
     cache_dir: &Path,
     level: RenderLevel,
     allow_interim: bool,
-    cancellation: &oxy_runtime::CancellationToken,
+    cancellation: &CancellationToken,
 ) -> Result<PreviewResult, MediaError> {
-    let max_size = match level {
-        RenderLevel::Thumbnail | RenderLevel::Preview => 512,
-        RenderLevel::Full => 4_096,
+    let max_size = if level == RenderLevel::Full {
+        let size = source_dimensions(path)?;
+        size.width.max(size.height)
+    } else {
+        512
     };
     preview_with_size(
         path,
@@ -40,131 +47,126 @@ pub(crate) fn preview_with_size(
     max_size: u32,
     level: RenderLevel,
     allow_interim: bool,
-    cancellation: &oxy_runtime::CancellationToken,
+    cancellation: &CancellationToken,
 ) -> Result<PreviewResult, MediaError> {
-    if cancellation.is_cancelled() {
-        return Err(MediaError::Cancelled);
-    }
     let artifacts = ArtifactCache::new(path, cache_dir)?;
-    let presentation = ArtifactPresentation {
-        geometry: None,
-        orientation: OrientationState::Applied,
-        color: CacheColorState::EmbeddedOrUnknown,
-        sharpening: SharpeningState::None,
-    };
-    let detail = if level == RenderLevel::Full {
-        DetailRequirement::NativeDetail
-    } else {
-        DetailRequirement::Display {
-            min_long_edge: max_size,
-        }
-    };
     let request = artifacts.request(
-        detail,
-        ArtifactRequirement::Exact(ImageOrigin::PrimaryImage),
-        PresentationRequirement {
-            orientation: OrientationRequirement::Exact(presentation.orientation),
-            color: crate::cache::ColorRequirement::Any,
-            sharpening: presentation.sharpening,
+        if level == RenderLevel::Full {
+            DetailRequirement::NativeDetail
+        } else {
+            DetailRequirement::Display {
+                min_long_edge: max_size,
+            }
         },
+        ArtifactRequirement::AnyDisplay,
+        MediaRequest::unsharpened(),
         allow_interim,
     );
-    let production_request = artifacts.request(
-        request.detail,
-        request.artifact.clone(),
-        request.presentation,
-        allow_interim,
-    );
-    if let Some(result) = artifacts.lookup(&request, level)? {
-        return Ok(result);
-    }
     artifacts.coordinate_work(
         &request,
         level,
         "system-compatible-development",
         || cancellation.is_cancelled(),
         |generation| {
-            let temporary = artifacts.temporary_output(".jpg")?;
-            generate(path, &temporary, max_size)?;
-            if cancellation.is_cancelled() {
-                return Err(MediaError::Cancelled);
+            let source = SourceRevision::observe(path)?;
+            let cost = pixels::estimate(source_dimensions(path)?, 16, source.size_bytes)?;
+            let _permit =
+                decode_control::acquire_conversion(DecodePriority::Foreground, cost, &|| {
+                    cancellation.is_cancelled()
+                })?;
+            let frame = decode_with_limit(path, &source, max_size, cost, cancellation)?;
+            let rgba = frame.image.to_rgba8();
+            let mut bytes = Vec::new();
+            let mut encoder = PngEncoder::new(&mut bytes);
+            if let Some(profile) = frame.icc_profile {
+                encoder
+                    .set_icc_profile(profile)
+                    .map_err(|error| MediaError::Color(error.to_string()))?;
             }
-            if !has_complete_jpeg_markers(&temporary)? {
-                return Err(MediaError::PreviewGenerationFailed {
-                    path: path.to_owned(),
-                    message: "native preview produced a truncated JPEG".into(),
-                });
-            }
-            let (width, height) = image::image_dimensions(&temporary)?;
-            let source_dimensions = match image::image_dimensions(path) {
-                Ok(dimensions) => dimensions,
-                Err(_error) if is_heif_path(path) => {
-                    let dimensions = crate::backends::libheif::dimensions(path)?;
-                    (dimensions.width, dimensions.height)
-                }
-                Err(error) => return Err(error.into()),
-            };
-            use image::ImageDecoder;
-            let orientation = image::ImageReader::open(path)
-                .ok()
-                .and_then(|reader| reader.with_guessed_format().ok())
-                .and_then(|reader| reader.into_decoder().ok())
-                .and_then(|mut decoder| decoder.orientation().ok())
-                .map_or(1, image::metadata::Orientation::to_exif);
-            let encoded = oxy_domain::EncodedDimensions(source_dimensions.into());
-            let reference = encoded.to_display(orientation);
-            let mut facts = crate::media_source::source_facts(
-                ImageOrigin::PrimaryImage,
-                "primary".into(),
-                encoded,
-                orientation,
-                reference,
-            );
-            facts.processing.push(oxy_domain::ImageOperation::Decode {
-                backend: "system:ImageIO".into(),
-            });
-            facts.resize(oxy_domain::DisplayDimensions((width, height).into()));
-            if orientation != 1 {
-                facts
-                    .processing
-                    .push(oxy_domain::ImageOperation::Orient { exif: orientation });
-            }
+            encoder.write_image(
+                &rgba,
+                rgba.width(),
+                rgba.height(),
+                image::ExtendedColorType::Rgba8,
+            )?;
+            let mut facts = frame.facts;
             facts.processing.push(oxy_domain::ImageOperation::Encode {
-                format: "jpeg".into(),
+                format: "png".into(),
             });
-            facts.encoded_dimensions = oxy_domain::EncodedDimensions((width, height).into());
-            facts.exif_orientation = 1;
             facts.byte_integrity = oxy_domain::ByteIntegrity::Reencoded;
-            artifacts.publish_staged(
-                temporary,
-                facts.clone(),
-                presentation,
+            artifacts.publish_encoded(
+                bytes.into(),
+                facts,
+                ArtifactPresentation {
+                    geometry: None,
+                    orientation: OrientationState::Applied,
+                    color: frame.color,
+                    sharpening: SharpeningState::None,
+                },
                 format!("{SYSTEM_PREVIEW}:{max_size}"),
                 level,
                 generation,
-                &production_request,
+                &request,
+                ArtifactEncoding::Png,
             )
         },
     )
 }
 
-fn is_heif_path(path: &Path) -> bool {
-    matches!(
-        path.extension()
-            .and_then(std::ffi::OsStr::to_str)
-            .unwrap_or_default()
-            .to_ascii_lowercase()
-            .as_str(),
-        "heif" | "heic" | "hif"
-    )
+fn source_dimensions(path: &Path) -> Result<oxy_domain::PixelDimensions, MediaError> {
+    image::image_dimensions(path)
+        .map(Into::into)
+        .or_else(|_| crate::backends::libheif::dimensions(path))
 }
 
-#[cfg(target_os = "macos")]
-fn generate(source: &Path, destination: &Path, max_size: u32) -> Result<(), MediaError> {
-    apple_image_io::render_jpeg(source, destination, Some(max_size), 90)
+pub(crate) fn decode_pixels(
+    path: &Path,
+    source: &SourceRevision,
+    target: u32,
+    cancellation: &CancellationToken,
+) -> Result<MediaPixels, MediaError> {
+    let cost = pixels::estimate(source_dimensions(path)?, 16, source.size_bytes)?;
+    let _permit = decode_control::acquire_pixel_input(cost, &|| cancellation.is_cancelled())?;
+    decode_with_limit(path, source, target, cost, cancellation)
 }
 
-#[cfg(any(target_os = "windows", target_os = "linux"))]
-fn generate(_source: &Path, _destination: &Path, _max_size: u32) -> Result<(), MediaError> {
-    Err(MediaError::NativeDecoderUnavailable)
+fn decode_with_limit(
+    path: &Path,
+    source: &SourceRevision,
+    target: u32,
+    cost: usize,
+    cancellation: &CancellationToken,
+) -> Result<MediaPixels, MediaError> {
+    super::input::check_cancelled(cancellation)?;
+    #[cfg(target_os = "macos")]
+    if let Ok(image) = crate::backends::apple_image_io::decode_rgba8(path, target) {
+        let encoded = oxy_domain::EncodedDimensions(source_dimensions(path)?);
+        use image::ImageDecoder;
+        let orientation = image::ImageReader::open(path)
+            .ok()
+            .and_then(|reader| reader.with_guessed_format().ok())
+            .and_then(|reader| reader.into_decoder().ok())
+            .and_then(|mut decoder| decoder.orientation().ok())
+            .map_or(1, image::metadata::Orientation::to_exif);
+        let reference = encoded.to_display(orientation);
+        let facts = crate::media_source::decoded_facts(
+            oxy_domain::ImageOrigin::PrimaryImage,
+            "primary".into(),
+            reference,
+            reference,
+            oxy_domain::DisplayDimensions((image.width(), image.height()).into()),
+            "Apple ImageIO",
+        );
+        return pixels::finish(
+            image,
+            facts,
+            source,
+            crate::CacheColorState::Srgb,
+            None,
+            target,
+            cancellation,
+        );
+    }
+    super::input::check_cancelled(cancellation)?;
+    super::raster::decode_with_limit(path, source, target, cost, cancellation)
 }

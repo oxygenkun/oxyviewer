@@ -85,7 +85,8 @@ pub(crate) fn write_feature(
         feature.values.len(),
         &feature.producer_fingerprint,
     )?;
-    let contract = repo::person_cache::feature_space_contract(transaction, &feature.feature_space_id)?;
+    let contract =
+        repo::person_cache::feature_space_contract(transaction, &feature.feature_space_id)?;
     let Some((stored_modality, stored_dimension, stored_producer)) = contract else {
         return Err(PeopleError::InvalidPersonFeature);
     };

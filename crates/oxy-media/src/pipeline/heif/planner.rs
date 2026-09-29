@@ -158,36 +158,28 @@ pub(super) fn plan_backends(
         candidates: Vec::with_capacity(3),
         diagnostics: Vec::new(),
     };
-    match (platform, operation) {
-        (Platform::Macos, HeifOperation::Preview) => push_probe(&mut plan, probes.platform),
-        (Platform::Windows, HeifOperation::Preview) => push_probe(&mut plan, probes.ffmpeg),
-        (Platform::Linux, HeifOperation::Preview) => {}
-        (Platform::Macos, HeifOperation::FullArtifact) => {
+    // All consumers use one platform preference. The delivery operation only
+    // filters backend capabilities (direct JPEG / progressive tiles / pixels).
+    match platform {
+        Platform::Macos => {
             push_probe(&mut plan, probes.platform);
             push_probe(&mut plan, probes.ffmpeg);
-            return plan;
         }
-        (Platform::Windows | Platform::Linux, HeifOperation::FullArtifact) => {
-            push_probe(&mut plan, probes.ffmpeg);
-            return plan;
-        }
-        (Platform::Windows, HeifOperation::Session) => {
+        Platform::Windows => {
             let ffmpeg_supported = matches!(probes.ffmpeg.state, ProbeState::Supported);
             push_probe(&mut plan, probes.ffmpeg);
-            if ffmpeg_supported {
+            if operation == HeifOperation::Session && ffmpeg_supported {
                 plan.candidates.push(HeifBackend::FfmpegRgbaFallback);
             }
-            if !ffmpeg_supported {
+            if operation != HeifOperation::FullArtifact && !ffmpeg_supported {
                 push_probe(&mut plan, probes.platform);
             }
         }
-        (Platform::Macos, HeifOperation::Session) => {
-            push_probe(&mut plan, probes.platform);
-            push_probe(&mut plan, probes.ffmpeg);
-        }
-        (Platform::Linux, HeifOperation::Session) => push_probe(&mut plan, probes.ffmpeg),
+        Platform::Linux => push_probe(&mut plan, probes.ffmpeg),
     }
-    plan.candidates.push(HeifBackend::Libheif);
+    if operation != HeifOperation::FullArtifact {
+        plan.candidates.push(HeifBackend::Libheif);
+    }
     plan
 }
 

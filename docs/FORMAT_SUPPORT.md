@@ -6,13 +6,26 @@
 | HEIF/HEIC/HIF | Implemented | Embedded preview followed by a direct ImageIO full JPEG on macOS or progressive full-resolution tiles on Windows/Linux; tile sessions also write a source-derived JPEG for subsequent warm loupe loads | Unified native reader; `libheif-rs` item-table XMP extraction; Sony shooting focus location/frame | XMP sidecar by default; optional embedded sync through ExifTool |
 | ARW/CR2/CR3/NEF/DNG/RAF/RW2/ORF | Implemented | Bundled LibRaw 0.22.2 embedded preview; macOS then prefers ImageIO at 512 px and Core Image RAW at 4096/full before the alternate Apple backend and LibRaw development; Windows full development tries qualified WIC then LibRaw (optional system extension); Linux uses LibRaw | Unified native EXIF/XMP/IPTC/ICC/MakerNote reader; embedded XMP with adjacent sidecar override | Embedded XMP rating/color/flag read; adjacent XMP sidecar write and override |
 | PNG/WebP | Implemented as secondary formats | Original file in WebView | Unified native EXIF/XMP/IPTC/ICC reader | XMP sidecar rating/color/flag |
-| TIFF | Implemented as a secondary format | macOS ImageIO-generated JPEG at 512 px for thumbnail/preview and 4096 px for full; Windows/Linux native preview remains unavailable | Unified native EXIF/XMP/IPTC/ICC reader | XMP sidecar rating/color/flag |
+| TIFF | Implemented as a secondary format | Shared pixel preparation, then PNG at 512 px for thumbnail/preview or source dimensions for full within budget; macOS prefers ImageIO, with portable raster fallback on all platforms | Unified native EXIF/XMP/IPTC/ICC reader | XMP sidecar rating/color/flag |
 
 RAW support follows bundled LibRaw 0.22.2. The code builds LibRaw from the
 pinned source submodule and does not depend on a developer machine's system package.
 The full RAW fixture matrix and Windows/Linux packaging validation remain part
 of milestone RAW-1. “Implemented” here describes the code path; it does not mean
 that every camera/codec combination has passed the release matrix.
+
+Explicit background analysis obtains frames through `AnalysisInputService` for
+all discovered kinds: JPEG, RAW, HEIF/HIF, PNG, WebP and TIFF. This is a native
+pixel delivery over the same per-format preparation used by generated display
+artifacts. TIFF uses the shared system/raster decoder; alpha and ICC survive in
+media pixels, with white compositing only at the model adapter. RAW requires
+a qualified camera representation or bounded platform/LibRaw development; HEIF uses the existing
+frame selector and platform backend order shared with loupe. Qualified auxiliary
+images are preferred; otherwise FFmpeg scales the primary grid before pixel
+delivery, with compatibility fallback. Decoder support and memory
+admission can still fail explicitly. See the [input contract and measured camera
+coverage](research/2026-09-28-analysis-media-input.md); implementation is not a
+claim that every RAW camera or HEIF codec has been qualified on every platform.
 
 All formats write rating/color/flag to adjacent XMP sidecars by default. A sidecar
 overrides embedded XMP when both exist. Embedded reads use the in-process

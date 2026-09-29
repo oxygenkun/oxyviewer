@@ -182,12 +182,12 @@ pub fn enroll_folder_snapshot<S: AnalysisTaskSink>(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::testing;
+    use crate::{People, PeopleError};
     use oxy_domain::{
         BeginPersonAnalysis, PersonDistanceMetric, PersonModelArtifact, PersonModelArtifactFormat,
         PersonModelLicenseStatus, PersonStageManifest,
     };
-    use crate::testing;
-    use crate::{People, PeopleError};
     use std::{fs, path::PathBuf};
 
     struct PeopleSink<'a> {

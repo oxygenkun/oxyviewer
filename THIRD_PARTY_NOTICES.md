@@ -6,6 +6,11 @@ licenses of every bundled dependency here.
 
 Native runtime components:
 
+Pixel preparation also uses the pinned Rust crate `fast_image_resize` 5.2.2
+(MIT OR Apache-2.0), with default features disabled and no Rayon thread pool.
+Its source and checksum are resolved through Cargo.lock. Retain its chosen
+license and copyright notice in binary distributions.
+
 | Component | Purpose | Intended integration |
 | --- | --- | --- |
 | FFmpeg 9.0.1 | HEIF probing, HEVC decoding and JPEG/BMP tile output; on macOS/Linux also the HEVC decoder inside libheif | Unmodified pinned source, LGPL-2.1-or-later build with GPL/nonfree/version3 disabled; standalone `oxy-ffmpeg` / `oxy-ffprobe` programs plus a static library prefix that the application links into itself on macOS and Linux. License and build recipe bundled under `licenses/ffmpeg`, corresponding source attached to each GitHub Release |
@@ -14,6 +19,8 @@ Native runtime components:
 | libheif 1.23.4 | HEIF/HEIC decoding | Statically linked from the pinned source with the pinned FFmpeg decoder on macOS/Linux, and from the pinned vcpkg revision with the libde265 decoder on Windows; codec licenses reviewed per platform. libheif is LGPL-3.0-only; the MIT terms in its `COPYING` cover only the sample applications and language wrappers, which are not redistributed here |
 | libjpeg-turbo 3.1.3 | JPEG thumbnail decoding and tile coefficient stitching | Pinned upstream Git submodule, statically linked with SIMD; IJG/BSD-3-Clause/zlib notices retained in `3rdpart/libjpeg-turbo/LICENSE.md` and `README.ijg` |
 | sqlite-vec 0.1.9 | Local person feature distance functions | Pinned Cargo crate compiling its C source into the application; upstream MIT OR Apache-2.0 license. Include the chosen license text and copyright notice in distributed packages |
+| ONNX Runtime DirectML 1.24.4 | Optional Windows person inference | Official Microsoft.ML.OnnxRuntime.DirectML NuGet package; archive and DLL SHA-256 pinned in `crates/oxy-people/src/environment/ort.rs`; explicit install retains MIT license and upstream third-party notices beside DLLs |
+| DirectML 1.15.4 | GPU execution for standalone ORT | Official Microsoft.AI.DirectML NuGet dependency, pinned archive and DLL SHA-256; binary covered by Microsoft Software License Terms in upstream LICENSE.txt (not the MIT sample-code license); license and third-party notices retained beside DLLs |
 | ExifTool | Optional metadata compatibility/write worker | Separate process; Artistic/GPL terms reviewed before release |
 
 OxyViewer does not link Exiv2 because the product must retain the option of

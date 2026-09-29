@@ -3,6 +3,12 @@ use thiserror::Error;
 
 #[derive(Debug, Error)]
 pub enum MediaError {
+    #[error("media request dimensions are zero or its allocation estimate overflows")]
+    InvalidMediaRequest,
+    #[error("analysis requires a nonzero minimum and a target no smaller than that minimum")]
+    InvalidAnalysisRequirement,
+    #[error("frame representation lacks required sampling detail or complete frame coverage")]
+    UnqualifiedFrameRepresentation,
     #[error("analysis input for this media format is not implemented")]
     AnalysisFormatUnavailable,
     #[error("analysis source detail is insufficient: {available} < {required} pixels")]

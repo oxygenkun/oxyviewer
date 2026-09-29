@@ -21,7 +21,7 @@ The main release blockers are:
 - file writes lack a session-scoped authorization contract, undo journal, and recovery;
 - accessibility, crash recovery, signing, notarization, and installer validation remain.
 
-## People workflow (2026-09-23 working tree)
+## People workflow (2026-09-28 working tree)
 
 - [x] Model-independent manual instance review: folder-scoped subjects, face/body
   boxes in Loupe, independent decisions for multiple people in one photo,
@@ -35,23 +35,32 @@ The main release blockers are:
   paging. Pipeline manifest validation and dependency-scoped stage
   fingerprinting have started in
   `oxy-people`; HTTPS streaming and offline import share checksum, cancellation,
-  and atomic installation. A trusted product model catalog, user-triggered
-  installer command, inference, candidate IPC, and resource-qualified retrieval
-  still need integration.
-- [ ] Model installation, detection/embeddings, incremental jobs, and automatic
-  historical identity suggestions remain later stages.
+  and atomic installation. A pinned research catalog, explicit download/import
+  commands and Windows x64 detection/embedding worker now connect to the
+  People sidebar. Candidate IPC and resource-qualified retrieval remain open.
+- [~] SCRFD and source-verified third-party AdaFace WebFace12M downloads, plus
+  pinned standalone ORT DirectML runtime installation. WinML is an opt-in research
+  backup. Model provenance is visible in UI;
+  the WebFace12M feature space is separate from older WebFace4M experiments.
+  Qualified media input now covers JPEG/RAW/HEIF/PNG/WebP/TIFF with model-owned
+  requirements and shared per-format media preparation, qualification and leased
+  display-artifact reuse (input v4). Direct display and progressive tiles retain
+  their delivery paths. macOS delivery,
+  incremental jobs and automatic historical
+  identity suggestions remain later stages.
 - [~] Analysis run state persists generations, idempotent start/cancel,
   small task batches, stage order, and transactional feature/progress commits
   fenced by generation, task key, claim token, and a fresh `oxy-fs` source
   observation. Explicit restart requeue invalidates old claims. `oxy-people`
   now performs a fresh non-recursive `oxy-fs` scan and enrolls per-asset stages
-  in bounded batches; wiring startup, workers, cancellation during enumeration,
-  and progress IPC remains open.
+  in bounded batches. Explicit starts, a bounded prepare/infer/persist pipeline, cancellation and progress
+  IPC are wired; automatic restart recovery remains open.
 - [~] Automatic instance cache commits normalized detection evidence with task
   progress. New manual anchors retain the full source identity beside the
   existing lightweight UI revision; conservative geometry alignment refuses
-  changed, ambiguous, or unverified anchors. Model outputs and candidate UI
-  are not yet connected.
+  changed, ambiguous, or unverified anchors. Loupe displays automatic face boxes
+  and lets the user adopt them into manual review; candidate identity UI remains
+  open and model output never confirms identity by itself.
 - Validation details and outstanding environment limitations are in the
   [manual workflow report](research/2026-09-23-person-manual-workflow.md).
 
@@ -166,9 +175,10 @@ now fixture coverage, cancellation, platform packaging, and conflict safety.
 
 ### Secondary-format reliability
 
-- [ ] Implement and validate a TIFF preview backend on Windows and Linux. The
-  current macOS implementation generates cache-compatible JPEG through ImageIO;
-  the other platform stubs report that no native decoder is available.
+- [x] Share TIFF pixel preparation between display and analysis, with portable
+  raster decoding and alpha-preserving PNG publication; Windows regression tested.
+- [ ] Validate TIFF display on macOS/Linux and extend real high-bit-depth, ICC,
+  orientation and damaged-file coverage. macOS still prefers ImageIO.
 
 ### Metadata reliability
 

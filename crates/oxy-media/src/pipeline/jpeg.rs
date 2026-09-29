@@ -62,30 +62,7 @@ pub(crate) fn thumbnail(
                     )?,
                 );
             }
-            let mut ranges = primary.previews.clone();
-            ranges.sort_by_key(|range| range.length);
-            let mut probe_budget = (1024_u64 * 1024).saturating_sub(reader.get_ref().bytes);
-            let mut candidates = Vec::new();
-            for range in ranges {
-                check_source(path, &source, cancellation)?;
-                reader.seek(SeekFrom::Start(range.offset))?;
-                // Probe a prefix without materializing a potentially malicious MP entry.
-                let prefix_length = range.length.min(jpeg::HEADER_BUFFER as u64) as usize;
-                if prefix_length as u64 > probe_budget {
-                    break;
-                }
-                probe_budget = probe_budget.saturating_sub(jpeg::HEADER_BUFFER as u64);
-                let mut prefix = vec![0; prefix_length];
-                reader.read_exact(&mut prefix)?;
-                let candidate = match jpeg::probe(&mut Cursor::new(prefix), range.length, || {
-                    cancellation.is_cancelled()
-                }) {
-                    Ok(candidate) => candidate,
-                    Err(error) if candidate_failure(&error) => continue,
-                    Err(error) => return Err(error),
-                };
-                candidates.push((range, candidate));
-            }
+            let candidates = probe_candidates(&mut reader, &primary, path, &source, cancellation)?;
             for (range, candidate) in planner::plan_embedded_candidates(&primary, candidates) {
                 let conversion = plan_conversion(
                     candidate
@@ -228,6 +205,123 @@ fn thumbnail_presentation(
         });
     }
     result
+}
+
+fn probe_candidates(
+    reader: &mut BufReader<jpeg::TrackedReader<File>>,
+    primary: &Header,
+    path: &Path,
+    source: &SourceRevision,
+    cancellation: &CancellationToken,
+) -> Result<Vec<(oxy_metadata_parser::jpeg_preview::JpegRange, Header)>, MediaError> {
+    let mut ranges = primary.previews.clone();
+    ranges.sort_by_key(|range| range.length);
+    let mut probe_budget = (1024_u64 * 1024).saturating_sub(reader.get_ref().bytes);
+    let mut candidates = Vec::new();
+    for range in ranges {
+        check_source(path, source, cancellation)?;
+        reader.seek(SeekFrom::Start(range.offset))?;
+        // Probe a prefix without materializing a potentially malicious MP entry.
+        let prefix_length = range.length.min(jpeg::HEADER_BUFFER as u64) as usize;
+        if prefix_length as u64 > probe_budget {
+            break;
+        }
+        probe_budget = probe_budget.saturating_sub(jpeg::HEADER_BUFFER as u64);
+        let mut prefix = vec![0; prefix_length];
+        reader.read_exact(&mut prefix)?;
+        let candidate = match jpeg::probe(&mut Cursor::new(prefix), range.length, || {
+            cancellation.is_cancelled()
+        }) {
+            Ok(candidate) => candidate,
+            Err(error) if candidate_failure(&error) => continue,
+            Err(error) => return Err(error),
+        };
+        candidates.push((range, candidate));
+    }
+    Ok(candidates)
+}
+
+pub(crate) fn decode_pixels(
+    path: &Path,
+    source: &SourceRevision,
+    request: crate::MediaRequest,
+    cancellation: &CancellationToken,
+) -> Result<super::input::MediaPixels, MediaError> {
+    check_source(path, source, cancellation)?;
+    let mut reader = BufReader::with_capacity(
+        jpeg::HEADER_BUFFER,
+        jpeg::TrackedReader::new(File::open(path)?),
+    );
+    let length = reader.get_ref().inner.metadata()?.len();
+    let primary = jpeg::probe(&mut reader, length, || cancellation.is_cancelled())?;
+    let candidates = probe_candidates(&mut reader, &primary, path, source, cancellation)?;
+    let mut candidates = planner::plan_candidates(&primary, candidates, request)
+        .into_iter()
+        .map(|(range, header)| (range, Some(header)))
+        .collect::<Vec<_>>();
+    candidates.push((
+        oxy_metadata_parser::jpeg_preview::JpegRange { offset: 0, length },
+        None,
+    ));
+    for (range, embedded) in candidates {
+        let header = embedded.as_ref().unwrap_or(&primary);
+        let dimensions = header
+            .encoded_dimensions
+            .ok_or_else(|| MediaError::CacheArtifact("JPEG has no dimensions".into()))?;
+        let plan = crate::backends::libjpeg::plan_decode(dimensions, request.max_size);
+        let cost = super::pixels::estimate(
+            dimensions.0,
+            6,
+            range
+                .length
+                .checked_add(super::pixels::pixel_bytes(plan.output.0, 6)?)
+                .ok_or(MediaError::InvalidMediaRequest)?,
+        )?;
+        // Decode coefficients and fixed-point resampling have disjoint lifetimes.
+        // Three RGB16 buffers conservatively bound SIMD input/output/scratch;
+        // reserve the larger phase, not a second concurrent decode slot.
+        let resize_cost = super::pixels::estimate(plan.output.0, 18, range.length)?;
+        let _permit = decode_control::acquire_pixel_input(cost.max(resize_cost), &|| {
+            cancellation.is_cancelled()
+        })?;
+        reader.seek(SeekFrom::Start(range.offset))?;
+        let mut bytes =
+            vec![0; usize::try_from(range.length).map_err(|_| MediaError::InvalidMediaRequest)?];
+        reader.read_exact(&mut bytes)?;
+        check_source(path, source, cancellation)?;
+        let decoded = super::jpeg_transform::decode_frame(
+            &bytes,
+            &primary,
+            embedded.as_ref(),
+            plan,
+            request.max_size,
+            cancellation,
+        );
+        match decoded {
+            Ok(mut decoded) => {
+                decoded.facts.source.candidate_id = if embedded.is_some() {
+                    format!("mpf:{}:{}", range.offset, range.length)
+                } else {
+                    "primary".into()
+                };
+                if !request.accepts(&decoded.facts) {
+                    continue;
+                }
+                return super::pixels::finish(
+                    decoded.image,
+                    decoded.facts,
+                    source,
+                    decoded.presentation.color,
+                    decoded.profile,
+                    request.max_size,
+                    cancellation,
+                );
+            }
+            Err(error) if embedded.is_some() && candidate_failure(&error) => continue,
+            Err(error) => return Err(error),
+        }
+    }
+    Err(MediaError::UnqualifiedFrameRepresentation)
 }
 
 #[cfg(test)]

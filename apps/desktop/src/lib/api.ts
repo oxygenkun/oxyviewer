@@ -1,4 +1,47 @@
 import type { RootRelocationPlan, RootRelocationResult } from "@/types";
+import type { PersonModelStatus, PersonOperationStatus, PersonDetectionSnapshot } from "@/types";
+
+export async function getPersonDetections(folderPath: string, assetPath: string): Promise<PersonDetectionSnapshot> {
+  if (!isTauri()) return { sourceRevision: "demo", instances: [] };
+  return invoke("get_person_detections", { folderPath, assetPath });
+}
+
+export async function adoptPersonDetection(folderPath: string, assetPath: string, sourceRevision: string, instanceId: string): Promise<PersonInstance> {
+  if (!isTauri()) throw new Error("请在桌面应用中采用检测结果");
+  return invoke("adopt_person_detection", { folderPath, assetPath, sourceRevision, instanceId });
+}
+
+export async function getPersonModels(): Promise<PersonModelStatus[]> {
+  if (!isTauri()) return [{ id: "demo", name: "人物识别模型", sizeBytes: 0, installed: false, downloadAvailable: false, sourceUrl: "", usage: "请在桌面应用中下载模型并识别本地照片。", error: null }];
+  return invoke("get_person_models");
+}
+
+export async function getPersonOperation(): Promise<PersonOperationStatus | null> {
+  if (!isTauri()) return null;
+  return invoke("get_person_operation");
+}
+
+export async function downloadPersonModel(modelId: string): Promise<void> {
+  if (!isTauri()) throw new Error("请在桌面应用中下载模型");
+  await invoke("start_person_model_download", { modelId, requestId: crypto.randomUUID() });
+}
+
+export async function importPersonModel(modelId: string): Promise<boolean> {
+  if (!isTauri()) throw new Error("请在桌面应用中导入模型");
+  const path = await open({ multiple: false, directory: false, filters: [{ name: "ONNX", extensions: ["onnx"] }] });
+  if (!path) return false;
+  await invoke("import_person_model", { modelId, path, requestId: crypto.randomUUID() });
+  return true;
+}
+
+export async function startFolderPersonAnalysis(sessionId: string, folderPath: string): Promise<void> {
+  if (!isTauri()) throw new Error("请在桌面应用中识别文件夹");
+  await invoke("start_folder_person_analysis", { sessionId, folderPath, requestId: crypto.randomUUID() });
+}
+
+export async function cancelPersonOperation(operationId: string): Promise<void> {
+  if (isTauri()) await invoke("cancel_person_operation", { operationId });
+}
 import { normalizeCustomTag } from "@/lib/assets/tagTree";
 import { retainMediaResource, releaseUnretainedMediaResource } from "@/lib/cache/mediaResourceLease";
 import { invoke } from "@tauri-apps/api/core";

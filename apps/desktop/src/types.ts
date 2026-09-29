@@ -624,3 +624,36 @@ export interface RootRelocationResult {
   reusedArtifacts: number;
   cacheFailures: number;
 }
+export interface PersonModelStatus {
+  id: string;
+  name: string;
+  sizeBytes: number;
+  installed: boolean;
+  downloadAvailable: boolean;
+  sourceUrl: string;
+  usage: string;
+  error: string | null;
+}
+
+export interface PersonDetectionSnapshot {
+  sourceRevision: string;
+  instances: Array<{ instanceId: string; faceBox: [number, number, number, number] | null; bodyBox: [number, number, number, number] | null; faceScore: number | null }>;
+}
+
+export interface PersonOperationStatus {
+  operationId: string;
+  folderPath: string | null;
+  state: "downloading" | "preparing" | "analysing" | "completed" | "cancelled" | "failed";
+  completed: number;
+  total: number;
+  detail: string;
+  error: string | null;
+  run: {
+    runId: string;
+    folderPath: string;
+    state: "queued" | "running" | "completed" | "failed" | "cancelled";
+    totalTasks: number;
+    completedTasks: number;
+    failedTasks: number;
+  } | null;
+}

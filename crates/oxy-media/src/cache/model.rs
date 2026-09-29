@@ -186,30 +186,19 @@ pub fn satisfies(artifact: &MediaArtifact, request: &CacheRequest) -> Option<Sat
         || artifact.facts.source.revision_id != artifact.source_revision.revision_id
         || artifact.source_revision != request.source_revision
         || artifact.variant.policy_revision != request.policy_revision
-        || (matches!(
-            request.presentation.orientation,
-            OrientationRequirement::Exact(expected)
-                if artifact.variant.presentation.orientation != expected
-        ))
-        || artifact.variant.presentation.sharpening != request.presentation.sharpening
-        || (request.presentation.color == ColorRequirement::Srgb
-            && artifact.variant.presentation.color != ColorState::Srgb)
+        || !request.presentation.accepts(artifact.variant.presentation)
         || !artifact_matches(artifact, &request.artifact)
     {
         return None;
     }
 
-    let detail_satisfied = request.detail.accepts(
-        artifact.facts.detail.sampled_dimensions,
-        artifact.facts.native_detail(),
-    );
-    if detail_satisfied {
-        Some(Satisfaction::Satisfied)
-    } else if request.allow_interim {
-        Some(Satisfaction::Interim)
-    } else {
-        None
+    crate::MediaRequest {
+        presentation: request.presentation,
+        max_size: 0, // Matching does not request a conversion.
+        detail: request.detail,
+        allow_interim: request.allow_interim,
     }
+    .satisfaction(&artifact.facts)
 }
 
 fn artifact_matches(artifact: &MediaArtifact, requirement: &ArtifactRequirement) -> bool {

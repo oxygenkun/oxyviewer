@@ -89,13 +89,23 @@ pub(super) fn presentation(srgb: bool) -> ArtifactPresentation {
     }
 }
 
-pub(super) fn normalize(
-    bytes: Vec<u8>,
+pub(super) struct DecodedJpeg {
+    pub image: image::DynamicImage,
+    pub facts: oxy_domain::ArtifactFacts,
+    pub profile: Option<Vec<u8>>,
+    pub presentation: ArtifactPresentation,
+}
+
+pub(super) fn decode_frame(
+    bytes: &[u8],
     primary: &Header,
     embedded: Option<&Header>,
     plan: DecodePlan,
+    target: u32,
     cancellation: &CancellationToken,
-) -> Result<EncodedJpegThumbnail, MediaError> {
+) -> Result<DecodedJpeg, MediaError> {
+    let timing = std::env::var_os("OXY_ANALYSIS_TIMING").is_some();
+    let started = std::time::Instant::now();
     let mut decoder = JpegDecoder::new(Cursor::new(&bytes))?;
     let mut profile = decoder.icc_profile()?;
     if embedded.unwrap_or(primary).has_icc && profile.is_none() {
@@ -143,11 +153,32 @@ pub(super) fn normalize(
         reference,
     );
     drop(decoder);
-    let image = crate::backends::libjpeg::decode_scaled(&bytes, plan, cancellation)?;
+    let metadata_elapsed = started.elapsed();
+    let started = std::time::Instant::now();
+    let image = crate::backends::libjpeg::decode_scaled(bytes, plan, cancellation)?;
+    let decode_elapsed = started.elapsed();
+    let started = std::time::Instant::now();
     // Resize before orientation avoids a second full-size rotation allocation.
-    let target = THUMBNAIL_EDGE.min(image.width().max(image.height()));
-    let mut image = image.resize(target, target, image::imageops::FilterType::Triangle);
+    let target = target.min(image.width().max(image.height()));
+    // Keep thumbnail rendering byte-compatible; accelerate full-frame pixel
+    // preparation above the thumbnail tier without adding worker threads.
+    let mut image = if target > THUMBNAIL_EDGE {
+        super::resize::rgb_frame(image, target)?
+    } else {
+        image.resize(target, target, image::imageops::FilterType::Triangle)
+    };
+    let resize_elapsed = started.elapsed();
+    let started = std::time::Instant::now();
     image.apply_orientation(orientation);
+    if timing {
+        eprintln!(
+            "jpeg_timing metadata_ms={:.3} decode_ms={:.3} resize_ms={:.3} orient_ms={:.3}",
+            metadata_elapsed.as_secs_f64() * 1000.,
+            decode_elapsed.as_secs_f64() * 1000.,
+            resize_elapsed.as_secs_f64() * 1000.,
+            started.elapsed().as_secs_f64() * 1000.
+        );
+    }
     if cancellation.is_cancelled() {
         return Err(MediaError::Cancelled);
     }
@@ -155,6 +186,48 @@ pub(super) fn normalize(
         width: image.width(),
         height: image.height(),
     };
+    facts.processing.push(oxy_domain::ImageOperation::Decode {
+        backend: "libjpeg".into(),
+    });
+    facts.resize(oxy_domain::DisplayDimensions(dimensions));
+    if orientation.to_exif() != 1 {
+        facts.processing.push(oxy_domain::ImageOperation::Orient {
+            exif: orientation.to_exif(),
+        });
+    }
+    facts.encoded_dimensions = oxy_domain::EncodedDimensions(dimensions);
+    facts.exif_orientation = 1;
+    Ok(DecodedJpeg {
+        image,
+        facts,
+        profile,
+        presentation: presentation(
+            primary.exif.srgb && !primary.has_icc && !embedded.is_some_and(|header| header.has_icc),
+        ),
+    })
+}
+
+pub(super) fn normalize(
+    bytes: Vec<u8>,
+    primary: &Header,
+    embedded: Option<&Header>,
+    plan: DecodePlan,
+    cancellation: &CancellationToken,
+) -> Result<EncodedJpegThumbnail, MediaError> {
+    let DecodedJpeg {
+        image,
+        mut facts,
+        profile,
+        presentation,
+    } = decode_frame(
+        &bytes,
+        primary,
+        embedded,
+        plan,
+        THUMBNAIL_EDGE,
+        cancellation,
+    )?;
+    let dimensions = facts.display_dimensions.0;
     let mut bytes = Vec::new();
     let mut encoder = JpegEncoder::new_with_quality(&mut bytes, 90);
     if let Some(profile) = profile {
@@ -168,28 +241,15 @@ pub(super) fn normalize(
             "normalized JPEG exceeds thumbnail delivery budget".into(),
         ));
     }
-    facts.processing.push(oxy_domain::ImageOperation::Decode {
-        backend: "libjpeg".into(),
-    });
-    facts.resize(oxy_domain::DisplayDimensions(dimensions));
-    if orientation.to_exif() != 1 {
-        facts.processing.push(oxy_domain::ImageOperation::Orient {
-            exif: orientation.to_exif(),
-        });
-    }
     facts.processing.push(oxy_domain::ImageOperation::Encode {
         format: "jpeg".into(),
     });
-    facts.encoded_dimensions = oxy_domain::EncodedDimensions(dimensions);
-    facts.exif_orientation = 1;
     facts.byte_integrity = oxy_domain::ByteIntegrity::Reencoded;
     Ok(EncodedJpegThumbnail {
         facts,
         bytes: bytes.into(),
         dimensions,
-        presentation: presentation(
-            primary.exif.srgb && !primary.has_icc && !embedded.is_some_and(|header| header.has_icc),
-        ),
+        presentation,
     })
 }
 

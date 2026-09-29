@@ -112,7 +112,13 @@ impl People {
                 id.clone()
             } else {
                 let id = repo::people::new_id(&transaction)?;
-                repo::people::insert_historical_person(&transaction, &id, &name, &asset, &revision)?;
+                repo::people::insert_historical_person(
+                    &transaction,
+                    &id,
+                    &name,
+                    &asset,
+                    &revision,
+                )?;
                 id
             };
             if previous.as_deref() == Some(id.as_str()) {
@@ -214,10 +220,15 @@ impl People {
         }
         let mut connection = self.store.write();
         let transaction = connection.transaction().map_err(StoreError::from)?;
-        let historical_id =
-            repo::people::historical_person_of_subject(&transaction, &input.folder_path, &input.subject_id)?
-                .ok_or(PeopleError::MissingPersonRecord)?;
-        if let Some((operation, id)) = repo::people::request_result(&transaction, &input.request_id)? {
+        let historical_id = repo::people::historical_person_of_subject(
+            &transaction,
+            &input.folder_path,
+            &input.subject_id,
+        )?
+        .ok_or(PeopleError::MissingPersonRecord)?;
+        if let Some((operation, id)) =
+            repo::people::request_result(&transaction, &input.request_id)?
+        {
             if operation != "setPersonTagLink" || id != historical_id {
                 return Err(PeopleError::PersonConflict);
             }
@@ -231,8 +242,15 @@ impl People {
             {
                 return Err(PeopleError::MissingTagParent);
             }
-            repo::people::upsert_person_tag_link(&transaction, &historical_id, input.tag_id, input.enabled)?;
-            for subject in repo::people::subjects_of_historical_person(&transaction, &historical_id)? {
+            repo::people::upsert_person_tag_link(
+                &transaction,
+                &historical_id,
+                input.tag_id,
+                input.enabled,
+            )?;
+            for subject in
+                repo::people::subjects_of_historical_person(&transaction, &historical_id)?
+            {
                 repo::cross::reconcile_person_sources_for_subject(&transaction, &subject)?;
             }
             repo::people::record_request_result(
@@ -278,18 +296,26 @@ impl People {
         }
         let mut connection = self.store.write();
         let transaction = connection.transaction().map_err(StoreError::from)?;
-        let historical_id =
-            repo::people::historical_person_of_subject(&transaction, &input.folder_path, &input.subject_id)?
-                .ok_or(PeopleError::MissingPersonRecord)?;
+        let historical_id = repo::people::historical_person_of_subject(
+            &transaction,
+            &input.folder_path,
+            &input.subject_id,
+        )?
+        .ok_or(PeopleError::MissingPersonRecord)?;
         let request_entity = format!("{}:{}", historical_id, input.asset_path.display());
         let asset_path = input.asset_path.to_string_lossy();
-        if let Some((operation, entity)) = repo::people::request_result(&transaction, &input.request_id)? {
+        if let Some((operation, entity)) =
+            repo::people::request_result(&transaction, &input.request_id)?
+        {
             if operation != "setPersonTagOverride" || entity != request_entity {
                 return Err(PeopleError::PersonConflict);
             }
         } else {
-            let revision =
-                repo::people::person_tag_override_revision(&transaction, &historical_id, &asset_path)?;
+            let revision = repo::people::person_tag_override_revision(
+                &transaction,
+                &historical_id,
+                &asset_path,
+            )?;
             if revision.unwrap_or(0) != input.expected_revision {
                 return Err(PeopleError::PersonConflict);
             }
@@ -299,8 +325,14 @@ impl People {
                 &asset_path,
                 input.suppressed,
             )?;
-            for subject in repo::people::subjects_of_historical_person(&transaction, &historical_id)? {
-                repo::cross::reconcile_person_source_for_asset(&transaction, &subject, &asset_path)?;
+            for subject in
+                repo::people::subjects_of_historical_person(&transaction, &historical_id)?
+            {
+                repo::cross::reconcile_person_source_for_asset(
+                    &transaction,
+                    &subject,
+                    &asset_path,
+                )?;
             }
             repo::people::record_request_result(
                 &transaction,
@@ -309,8 +341,9 @@ impl People {
                 &request_entity,
             )?;
         }
-        let result = repo::people::person_tag_override_of(&transaction, &historical_id, &asset_path)?
-            .ok_or(PeopleError::MissingPersonRecord)?;
+        let result =
+            repo::people::person_tag_override_of(&transaction, &historical_id, &asset_path)?
+                .ok_or(PeopleError::MissingPersonRecord)?;
         transaction.commit().map_err(StoreError::from)?;
         Ok(result)
     }
@@ -398,9 +431,7 @@ impl People {
         }
         let mut connection = self.store.write();
         let tx = connection.transaction().map_err(StoreError::from)?;
-        if let Some((operation, entity)) =
-            repo::people::request_result(&tx, &input.request_id)?
-        {
+        if let Some((operation, entity)) = repo::people::request_result(&tx, &input.request_id)? {
             if operation != "updateInstance" || entity != input.instance_id {
                 return Err(PeopleError::PersonConflict);
             }
@@ -409,12 +440,9 @@ impl People {
                 return Err(PeopleError::PersonConflict);
             }
         } else {
-            let previous = repo::people::instance(
-                &tx,
-                &input.instance_id,
-                &path_text(&input.folder_path),
-            )?
-            .ok_or(PeopleError::MissingPersonRecord)?;
+            let previous =
+                repo::people::instance(&tx, &input.instance_id, &path_text(&input.folder_path))?
+                    .ok_or(PeopleError::MissingPersonRecord)?;
             if previous.revision != input.expected_revision {
                 return Err(PeopleError::PersonConflict);
             }
@@ -591,10 +619,7 @@ impl People {
         Ok(result)
     }
 
-    pub fn list_folder_people(
-        &self,
-        folder_path: &Path,
-    ) -> Result<Vec<FolderPerson>, PeopleError> {
+    pub fn list_folder_people(&self, folder_path: &Path) -> Result<Vec<FolderPerson>, PeopleError> {
         Ok(repo::people::list_folder_people(
             &self.store.read(),
             &path_text(folder_path),
@@ -747,11 +772,8 @@ impl People {
             if !present {
                 return Err(PeopleError::MissingPersonRecord);
             }
-            let current = repo::people::review_revision(
-                &transaction,
-                &input.instance_id,
-                &input.subject_id,
-            )?;
+            let current =
+                repo::people::review_revision(&transaction, &input.instance_id, &input.subject_id)?;
             if current.unwrap_or(0) != input.expected_revision {
                 return Err(PeopleError::PersonConflict);
             }
@@ -780,9 +802,13 @@ impl People {
                 input.expected_revision + 1,
                 &input.request_id,
             )?;
-            repo::people::record_request_result(&transaction, &input.request_id, "setReview", &key)?;
-            let asset_path =
-                repo::people::instance_asset_path(&transaction, &input.instance_id)?;
+            repo::people::record_request_result(
+                &transaction,
+                &input.request_id,
+                "setReview",
+                &key,
+            )?;
+            let asset_path = repo::people::instance_asset_path(&transaction, &input.instance_id)?;
             repo::cross::reconcile_person_source_for_asset(
                 &transaction,
                 &input.subject_id,

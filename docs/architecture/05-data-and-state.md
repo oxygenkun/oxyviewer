@@ -297,7 +297,7 @@ SQLite connection 放在 `Mutex` 内，因为 `rusqlite::Connection` 的访问�
 及其上游依赖指纹校验兼容性，每条向量保留完整管线指纹供追溯；查询先限定文件夹和特征空间，
 对范围内所有向量计算 cosine 距离，再按完整的
 当前文件夹源版本快照剔除过期结果并分页。缓存格式不兼容时只重建向量表，保留人工资料；
-自动推理生产者尚未接入。
+Windows x64 的显式 JPEG 后台任务已生产检测及特征；候选查询尚未接入 UI。
 
 `person_analysis_heads` 为每个文件夹保存当前运行 generation；`person_analysis_runs` 和
 `person_analysis_tasks` 保存显式、可取消的运行及分批任务状态。新运行在一个事务中推进
@@ -310,6 +310,21 @@ generation 并取消旧运行；领取任务须等同一资产的前置阶段完
 观察完整源版本，以最多 256 条任务为一批登记。文件夹级聚类和检索阶段另行调度；
 逐图登记不封存整次作业，避免在文件夹级阶段开始前误报完成。目录打开路径不执行扫描或
 分析。枚举遇到错误或取消时不封存作业，由调用方决定取消或用新 generation 重试。
+
+当前安装目录是 app data 下的 `person-models`。`oxy-people/src/environment/catalog.rs` 固定模型来源、
+长度、摘要及独立的 WebFace12M 特征空间；`environment/ort.rs` 固定独立 ORT DirectML 包和 DLL 摘要。
+环境准备、模型适配和作业分别归 `environment/`、`inference/`、`execution/`。
+`execution/pipeline.rs` 用两个容量为 1 的通道并行推进准备、推理和保存；
+`execution/persistence.rs` 先保存检测，再领取并保存同图编码任务，账本依赖和提交围栏保持不变。
+WinML 仅在 `winml-backup` feature 中保留，主应用使用独立 DirectML。
+Tauri 仅组合目录、人物域、模型适配器与 `oxy-media::AnalysisInputService`，
+通过 `spawn_blocking` 启动下载／导入／分析。`PersonOperations` 在整个应用中保留一项
+运行及轻量状态快照；前端每秒读取进度，取消以 operation ID 定位，worker 退出后才允许
+下一项启动。该入口使用仅含人脸检测与编码的两阶段 manifest，显式封存逐图任务即可完成；
+不宣称执行了完整管线中的聚类或检索。进程重启后保留已提交缓存，自动恢复尚未接入。
+
+Loupe 获取带源版本的检测快照，用户点击采用时再次核对源版本和检测指纹，然后调用人物域
+创建人工实例；检测缓存本身从不写人工身份或审阅决定。
 
 `person_instances_cache` 只存模型派生的规范化框和检测证据；同阶段结果在受 generation、
 领取令牌和源版本保护的事务中整体替换，人工 `person_manual_instances` 与审阅决定不受其写入。
