@@ -1,5 +1,9 @@
+import { GlobalPeoplePanel } from "@/components/people/GlobalPeoplePanel";
+import { PeopleLibrary } from "@/components/people/PeopleLibrary";
+import { resolvePersonFolder } from "@/lib/browse/openPersonFolder";
+import { GlobalPeopleContext, useGlobalPeople } from "@/components/people/GlobalPeopleContext";
+import type { PersonTupleFilter } from "@/types";
 import type { RootRelocationPlan } from "@/types";
-import { PeopleContext, PersonDetectionContext } from "@/components/people/PeopleContext";
 import { useInfiniteQuery, useQuery, useQueryClient, type InfiniteData } from "@tanstack/react-query";
 import { Aperture, CircleAlert, FolderPlus, Layers2, RectangleHorizontal, RectangleVertical } from "lucide-react";
 import { useCallback, useDeferredValue, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties } from "react";
@@ -7,7 +11,6 @@ import { AssetBrowser } from "@/components/browsing/AssetBrowser";
 import { BackgroundPreviewPreloader } from "@/components/loupe/BackgroundPreviewPreloader";
 import { ImportOverlay } from "@/components/overlay/ImportOverlay";
 import { Inspector } from "@/components/inspector/Inspector";
-import { PersonReviewPanel } from "@/components/inspector/PersonReviewPanel";
 import { PerfHarness } from "@/components/common/PerfHarness";
 import { SettingsPanel } from "@/components/settings/SettingsPanel";
 import { Sidebar } from "@/components/browsing/Sidebar";
@@ -18,13 +21,6 @@ import {
   checkLibraryRoot,
   relocateLibraryRoot,
   chooseFolder,
-  confirmFolderPerson,
-  createFolderPerson,
-  adoptPersonDetection,
-  setPersonReview,
-  listFolderPeople,
-  resetFolderPerson,
-  listPersonReviews,
   copyText,
   isTauri,
   listAssets,
@@ -98,7 +94,7 @@ import {
   saveWorkspace,
 } from "@/lib/browse/workspacePersistence";
 import { useWorkspaceStore } from "./store";
-import type { PersonFilterState, PersonInstance, AssetQuery, AssetSummary, DirectoryBrowseProgress, DirectoryTreeSnapshot, FolderSession, MetadataProjection, Page, PerfScenario } from "./types";
+import type { AssetQuery, AssetSummary, DirectoryBrowseProgress, DirectoryTreeSnapshot, FolderSession, MetadataProjection, Page, PerfScenario } from "./types";
 
 const NO_METADATA_RECORDS: Record<string, MetadataProjection> = {};
 
@@ -124,11 +120,8 @@ export function App({ perfScenario }: { perfScenario?: PerfScenario }) {
   const [showOnboarding, setShowOnboarding] = useState(() => !hasSeenFolderOnboarding());
   const [error, setError] = useState<string>();
   const [peopleMode, setPeopleMode] = useState(false);
-  const [personSelections, setPersonSelections] = useState<Record<string, { id?: string; filter: PersonFilterState | "off" }>>({});
-  const [selectedInstanceId, selectInstance] = useState<string>();
-  const [draw, setDraw] = useState<"face" | "body">();
-  const [editInstance, setEditInstance] = useState<PersonInstance>();
-  const [showBoxes, setShowBoxes] = useState(true);
+  const [folderReveal, setFolderReveal] = useState<{ sessionId: string; path: string }>();
+  const [tupleSelections, setTupleSelections] = useState<Record<string, PersonTupleFilter | undefined>>({});
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [noticeExpanded, setNoticeExpanded] = useState(false);
   const queryClient = useQueryClient();
@@ -210,44 +203,9 @@ export function App({ perfScenario }: { perfScenario?: PerfScenario }) {
   const currentPath = activeSession
     ? workspace.currentDirectories[activeSession.rootPath] ?? activeSession.rootPath
     : undefined;
-  const selectedPersonId = currentPath ? personSelections[currentPath]?.id : undefined;
-  const personFilterState = (currentPath ? personSelections[currentPath]?.filter : undefined) ?? "off";
-  const setSelectedPersonId = (id: string) => { if (currentPath) setPersonSelections(old => ({ ...old, [currentPath]: { id, filter: "pending" } })); };
-  const setPersonFilter = (filter: PersonFilterState | "off") => { if (currentPath) setPersonSelections(old => ({ ...old, [currentPath]: { id: selectedPersonId, filter } })); };
-  useEffect(() => { selectInstance(undefined); setDraw(undefined); setEditInstance(undefined); }, [currentPath, selectedPersonId, activeId, peopleMode]);
-  const peopleQuery = useQuery({
-    queryKey: ["folder-people", currentPath],
-    queryFn: () => listFolderPeople(currentPath!),
-    enabled: Boolean(currentPath),
-  });
-  const selectedPerson = peopleQuery.data?.find((person) => person.id === selectedPersonId);
-  const peopleScopeRef = useRef("");
-  peopleScopeRef.current = `${currentPath}:${selectedPersonId}:${peopleMode}:${personFilterState}`;
-  const handleRenamePerson = async (id: string, displayName: string) => {
-    const person = peopleQuery.data?.find((item) => item.id === id);
-    if (!person || !currentPath) return;
-    try {
-      if (person.identityConfirmed && person.referenceInstanceId) {
-        await confirmFolderPerson(person, displayName, person.referenceInstanceId);
-      } else {
-        await resetFolderPerson(person, displayName);
-      }
-      await queryClient.invalidateQueries({ queryKey: ["folder-people", currentPath] });
-    } catch (cause) {
-      setError(String(cause));
-    }
-  };
-  const handleCreatePerson = async () => {
-    if (!currentPath) return;
-    try {
-      const created = await createFolderPerson(currentPath);
-      await queryClient.invalidateQueries({ queryKey: ["folder-people", currentPath] });
-      setPersonSelections(old => ({ ...old, [currentPath]: { id: created.id, filter: "off" } }));
-      setPeopleMode(true);
-    } catch (cause) {
-      setError(String(cause));
-    }
-  };
+  const tupleFilter = peopleMode && currentPath ? tupleSelections[currentPath] : undefined;
+  const setTupleFilter = (filter?:PersonTupleFilter) => { if(currentPath)setTupleSelections(old=>({...old,[currentPath]:filter})); };
+  const globalPeople = useGlobalPeople(currentPath,peopleMode,tupleFilter,setTupleFilter);
   const browseTarget = useRef({ sessionId: activeSession?.id, directory: currentPath });
   browseTarget.current = { sessionId: activeSession?.id, directory: currentPath };
   useEffect(() => {
@@ -371,9 +329,8 @@ export function App({ perfScenario }: { perfScenario?: PerfScenario }) {
     };
   }, []);
 
-  const personFilter = useMemo(() => peopleMode && selectedPerson && personFilterState !== "off" ? { subjectId: selectedPerson.id, state: personFilterState } : undefined, [peopleMode, selectedPerson, personFilterState]);
   const query = useMemo<AssetQuery>(() => ({
-    personFilter,
+    personTupleFilter: tupleFilter,
     search: search || undefined,
     tagIds: tagIds.length ? tagIds : undefined,
     tagMatch,
@@ -384,11 +341,11 @@ export function App({ perfScenario }: { perfScenario?: PerfScenario }) {
     sort,
     direction,
     pageSize: 250,
-  }), [personFilter, colorLabels, direction, kind, minimumRating, pickLabels, search, sort, tagIds, tagMatch]);
+  }), [tupleFilter, colorLabels, direction, kind, minimumRating, pickLabels, search, sort, tagIds, tagMatch]);
   const metadataFiltersActive = Boolean(minimumRating || colorLabels.length || pickLabels.length);
   if (metadataFiltersActive && activeId) filteredFocusRef.current = activeId;
   const filteredFocusRestoreId = metadataFiltersActive ? undefined : filteredFocusRef.current;
-  const progressivelyFilterMetadata = Boolean(!personFilter && !search && !tagIds.length && (minimumRating || colorLabels.length || pickLabels.length));
+  const progressivelyFilterMetadata = Boolean(!tupleFilter && !search && !tagIds.length && (minimumRating || colorLabels.length || pickLabels.length));
   const metadataRecords = useMetadataProjectionStore((state) => progressivelyFilterMetadata ? state.records : NO_METADATA_RECORDS);
   const shouldPreloadFilteredAssets = Boolean(tagIds.length || search || kind || minimumRating || colorLabels.length || pickLabels.length);
   const preloadQuery = useMemo<AssetQuery>(() => ({
@@ -476,7 +433,7 @@ export function App({ perfScenario }: { perfScenario?: PerfScenario }) {
   // Page and metadata commits are non-urgent; keep active scrolling ahead of
   // rebuilding the browser projection for a newly returned page.
   const deferredAssets = useDeferredValue(assets);
-  const displayedAssets = personFilter ? assets : deferredAssets;
+  const displayedAssets = tupleFilter ? assets : deferredAssets;
   const preloadCandidates = useMemo(() => {
     const listed = progressivelyFilterMetadata ? assets : cheapAssets;
     const visibleIds = new Set(listed.map((asset) => asset.id));
@@ -488,7 +445,9 @@ export function App({ perfScenario }: { perfScenario?: PerfScenario }) {
   const total = progressivelyFilterMetadata
     ? assets.length
     : resultData?.pages[0]?.total ?? 0;
-  const activeAsset = assets.find((asset) => asset.id === activeId);
+  const heldReviewAsset = globalPeople.enabled && globalPeople.heldAsset?.id === activeId ? globalPeople.heldAsset : undefined;
+  const retainingReview = view === "loupe" && !!heldReviewAsset;
+  const activeAsset = assets.find((asset) => asset.id === activeId) ?? heldReviewAsset;
   // The status bar reports the selected photo's position in the visible order,
   // not how many thumbs happen to be paged in so far.
   const activeOrdinal = useMemo(
@@ -724,6 +683,19 @@ export function App({ perfScenario }: { perfScenario?: PerfScenario }) {
       currentDirectories: { ...current.currentDirectories, [session.rootPath]: path },
     }));
   }, [clearSelection, notifyActiveDirectory]);
+
+  const openPersonFolder = useCallback(async (path: string) => {
+    const destination = await resolvePersonFolder(path, sessions, checkLibraryRoot,
+      folder => registerRoot(folder, false));
+    handleNavigate(destination.session, destination.path);
+    clearSearch();
+    useWorkspaceStore.setState({ view: "grid", leftPanelOpen: true });
+    setPeopleMode(true);
+    globalPeople.setSurface("folder");
+    setError(undefined);
+    setFolderReveal({ sessionId: destination.session.id, path: destination.path });
+    dismissOnboarding();
+  }, [sessions, registerRoot, handleNavigate, clearSearch, dismissOnboarding, globalPeople.setSurface]);
 
   const setRootFailure = useCallback((path: string, cause: unknown) => {
     setFolderRestoreStates(current => [...current.filter(item => item.rootPath !== path), { rootPath: path, status: "failed", error: String(cause) }]);
@@ -1004,58 +976,22 @@ export function App({ perfScenario }: { perfScenario?: PerfScenario }) {
     }
   }, []);
 
-  const refreshPeople = async (asset?: AssetSummary, navigate = false) => {
-    const scope = currentPath;
-    const subject = selectedPersonId;
-    const peopleScope = `${scope}:${subject}:${peopleMode}:${personFilterState}`;
-    const oldIndex = assets.findIndex(item => item.path === asset?.path);
-    const reviews = scope && subject ? await listPersonReviews(scope, subject) : [];
-    if (navigate && personFilterState === "pending" && asset && !reviews.some(item => item.instance.assetPath === asset.path && item.decision === "pending")) {
-      const candidates = new Set(reviews.filter(item => item.decision === "pending").map(item => item.instance.assetPath));
-      const next = assets.slice(oldIndex + 1).find(item => candidates.has(item.path)) ?? assets.slice(0, oldIndex).find(item => candidates.has(item.path));
-      if (next && peopleScopeRef.current === peopleScope && browseTarget.current.directory === scope && useWorkspaceStore.getState().activeId === asset.id) select(next.id);
-    }
-    await Promise.all(["person-instances", "person-reviews", "folder-people", "assets"].map(key => queryClient.invalidateQueries({ queryKey: [key] })));
-  };
   return (
-    <PersonDetectionContext.Provider value={peopleMode && currentPath ? { folderPath: currentPath, showBoxes, adopt: async (asset, sourceRevision, instanceId) => {
-      const folder = currentPath;
-      const instance = await adoptPersonDetection(folder, asset.path, sourceRevision, instanceId);
-      const subject = selectedPerson ?? await createFolderPerson(folder);
-      const reviews = await listPersonReviews(folder, subject.id);
-      if (!reviews.some(review => review.instance.id === instance.id)) {
-        await setPersonReview(folder, instance.id, subject.id, "pending", 0);
-      }
-      if (browseTarget.current.directory === folder) {
-        setPersonSelections(old => ({ ...old, [folder]: { id: subject.id, filter: "off" } }));
-        selectInstance(instance.id);
-      }
-      await refreshPeople(asset);
-    } } : undefined}>
-    <PeopleContext.Provider value={peopleMode && currentPath && selectedPerson ? { folderPath: currentPath, person: selectedPerson, selectedInstanceId, selectInstance, draw, setDraw: mode => { setDraw(mode); if(mode) setShowBoxes(true); }, editInstance, setEditInstance, showBoxes, changed: refreshPeople } : undefined}>
+    <GlobalPeopleContext.Provider value={globalPeople}>
     <div
       ref={appShellRef}
-      className={`app-shell ${leftPanelOpen ? "" : "sidebar-collapsed"} ${inspectorOpen ? "" : "inspector-collapsed"}`}
+      className={`app-shell ${peopleMode ? "app-shell--people" : ""} ${leftPanelOpen ? "" : "sidebar-collapsed"} ${inspectorOpen && !(peopleMode && globalPeople.surface === "library") ? "" : "inspector-collapsed"}`}
       style={{
-        "--left-panel-width": `${leftPanelWidth}px`,
+        "--left-panel-width": `${peopleMode ? Math.max(280, leftPanelWidth) : leftPanelWidth}px`,
         "--inspector-width": `${displayedInspectorWidth}px`,
       } as CSSProperties}
     >
       <Sidebar
+        revealRequest={folderReveal}
         peopleMode={peopleMode}
-        onPeopleModeChange={setPeopleMode}
-        people={peopleQuery.data ?? []}
-        selectedPersonId={selectedPersonId}
-        onSelectPerson={setSelectedPersonId}
-        onCreatePerson={() => void handleCreatePerson()}
-        onRenamePerson={(id, name) => void handleRenamePerson(id, name)}
-        personFilterState={personFilterState}
-        onPersonFilterChange={setPersonFilter}
-        showBoxes={showBoxes}
-        onShowBoxesChange={setShowBoxes}
-        personReview={peopleMode && currentPath && selectedPerson ? (
-          <PersonReviewPanel key={selectedPerson.id} folderPath={currentPath} asset={activeAsset} person={selectedPerson} />
-        ) : undefined}
+        onPeopleModeChange={enabled => { setPeopleMode(enabled); if (enabled) globalPeople.openLibrary(); }}
+        globalPeoplePanel={<GlobalPeoplePanel key={currentPath} sessionId={activeSession?.id} activeAsset={activeAsset} selectedAssetPaths={view === "grid" ? assets.filter(asset => selectedIds.includes(asset.id)).map(asset => asset.path) : undefined} />}
+        globalPeopleCount={globalPeople.people.length}
         sessions={sortedSessions}
         total={total}
         folderRestoreStates={folderRestoreStates}
@@ -1066,7 +1002,7 @@ export function App({ perfScenario }: { perfScenario?: PerfScenario }) {
         currentPath={currentPath}
         showOnboarding={showOnboarding && sessions.length === 0 && !restoringFolders}
         onOpen={handleOpen}
-        onNavigate={handleNavigate}
+        onNavigate={(session, path) => { handleNavigate(session, path); if (peopleMode) globalPeople.setSurface("folder"); }}
         onRemove={handleRemove}
         onTrashFolder={(session, path) => void handleTrashFolder(session, path)}
         onCopyFolderPath={(session, path, relative) => void handleCopyPath(session.rootPath, path, relative)}
@@ -1095,17 +1031,17 @@ export function App({ perfScenario }: { perfScenario?: PerfScenario }) {
         targetRef={appShellRef}
         value={leftPanelWidth}
       />
-      <section className="workspace">
+      <section className={`workspace ${peopleMode && globalPeople.surface === "library" ? "workspace--people-library" : ""}`}>
         {assetsError && resultData ? <div className="search-query-error" role="status">{String(assetsError)}
           <button onClick={() => void assetsQuery.refetch()}>{t("retry")}</button></div> : null}
-        <Toolbar total={total} loading={assetsLoading || assetsQuery.isFetching || !activeSession && restoringFolders} t={t} />
+        {peopleMode && globalPeople.surface === "library" ? <PeopleLibrary key={globalPeople.libraryVisit} onOpenFolder={openPersonFolder} /> : <><Toolbar total={total} loading={assetsLoading || assetsQuery.isFetching || !activeSession && restoringFolders} t={t} />
         {!activeSession ? (
           <div className="workspace-empty">
             <FolderPlus size={29} strokeWidth={1.4} />
             <strong>{restoringFolders ? t("restoringFolders") : t("noFolderTitle")}</strong>
             <span>{restoringFolders ? t("restoringFoldersBody") : t("noFolderBody")}</span>
           </div>
-        ) : assetsLoading && !resultData ? (
+        ) : assetsLoading && !resultData && !retainingReview ? (
           <div className="workspace-loading"><Aperture size={24} /> {t("scanningFolder")} {currentPath?.split(/[\\/]/).pop() || activeSession.displayName}…
             {currentBrowseProgress && <span>{t("browseDiscovered")} {currentBrowseProgress.discoveredCount.toLocaleString()} {t("photos")}</span>}
           </div>
@@ -1115,12 +1051,13 @@ export function App({ perfScenario }: { perfScenario?: PerfScenario }) {
             <strong>{String(assetsError)}</strong>
             <button onClick={handleOpen}><FolderPlus size={15} />{t("openFolder")}</button>
           </div>
-        ) : !displayedAssets.length && !assetsQuery.isFetching && !assetsError && (personFilter || search || tagIds.length) ? (
+        ) : !retainingReview && !displayedAssets.length && !assetsQuery.isFetching && !assetsError && (tupleFilter || search || tagIds.length) ? (
           <div className="workspace-empty"><strong>{t("noSearchResults")}</strong>
-            <button onClick={() => { clearSearch(); setPersonFilter("off"); }}>{t("clearSearchTags")} / 清除人物过滤</button></div>
+            <button onClick={() => { clearSearch(); setTupleFilter(undefined); }}>{t("clearSearchTags")} / 清除人物过滤</button></div>
         ) : (
           <AssetBrowser
             assets={displayedAssets}
+            heldAsset={heldReviewAsset}
             deletionMode={activeSession.deletionMode}
             restoringActiveId={filteredFocusAction === "none" ? undefined : filteredFocusRestoreId}
             total={total}
@@ -1137,7 +1074,8 @@ export function App({ perfScenario }: { perfScenario?: PerfScenario }) {
             t={t}
           />
         )}
-        <footer className="statusbar">
+        </>}
+        {peopleMode && globalPeople.surface === "library" ? <footer className="statusbar"><span>全局人物库 · 跨文件夹的人工确认记录</span><span>{globalPeople.people.length} 位人物</span></footer> : <footer className="statusbar">
           <span title={currentPath}><i className="status-dot" /> {
             currentPath?.split(/[\\/]/).filter(Boolean).at(-1) ?? t("noFolderOpen")
           }</span>
@@ -1209,7 +1147,7 @@ export function App({ perfScenario }: { perfScenario?: PerfScenario }) {
             </span>
           </span>
           <span>{selectedIds.length} {t("selected")}</span>
-        </footer>
+        </footer>}
       </section>
       <ResizeHandle
         axis="x"
@@ -1255,7 +1193,6 @@ export function App({ perfScenario }: { perfScenario?: PerfScenario }) {
         />
       ) : null}
     </div>
-    </PeopleContext.Provider>
-    </PersonDetectionContext.Provider>
+    </GlobalPeopleContext.Provider>
   );
 }

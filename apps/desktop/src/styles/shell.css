@@ -90,8 +90,8 @@
   font-size: 0.6875rem;
   font-variant-numeric: tabular-nums;
 }
-.person-sidebar-section { display: flex; flex: 1 1 0; flex-direction: column; min-height: 80px; max-height: 32%; gap: var(--space-1); overflow-y: auto; margin-bottom: 10px; scrollbar-width: thin; }
-.person-sidebar-section.is-filter-open { max-height: 48%; }
+.person-sidebar-section { display: flex; flex: 1 1 0; flex-direction: column; min-height: 80px; max-height: none; gap: var(--space-1); overflow-y: auto; margin-bottom: 10px; scrollbar-width: thin; }
+.person-sidebar-section.is-filter-open { max-height: none; }
 .person-sidebar-section p { padding: 8px; color: var(--muted); font-size: .75rem; line-height: 1.5; }
 .person-sidebar-section .person-sidebar-empty { margin: 0 4px; padding: 17px 12px; border: 1px dashed #353b3f; border-radius: var(--radius-panel); color: #828b90; text-align: center; }
 .person-sidebar-item { border: 1px solid transparent; border-radius: 7px; }
@@ -614,3 +614,14 @@
   background: transparent;
 }
 .sidebar__bottom-btn:hover { color: var(--text); background: #1a1e22; }
+
+.workspace.workspace--people-library { grid-template-rows: minmax(0, 1fr) auto; }
+.app-shell--people { --accent: #a6ceef; --accent-dim: #7fabc9; --text-on-accent: #142331; }
+@media (max-width: 1180px) {
+  .app-shell--people:not(.sidebar-collapsed) { grid-template-columns: var(--left-panel-width) minmax(0, 1fr) 0; }
+  .app-shell--people .inspector { visibility: hidden; }
+}
+.app-shell--people .person-image-box { border-color: #8fb6d3; }
+.app-shell--people .person-image-box.is-confirmed { border-color: #9bceb0; }
+.app-shell--people .person-image-box.is-selected { border-color: #d3eaff; box-shadow: 0 0 0 1px #7fabce; }
+.app-shell--people .person-image-box.is-stale { border-color: #dfbf84; }

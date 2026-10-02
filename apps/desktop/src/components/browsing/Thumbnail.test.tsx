@@ -471,3 +471,15 @@ describe("filmstrip thumbnail display retention", () => {
     expect(container.querySelector(".thumbnail__fallback")).not.toBeNull();
   });
 });
+
+it("requests a cancellable cross-folder HEIF preview for history instead of opening a Loupe tile session", async () => {
+  apiMocks.tauri = true;
+  await act(async () => root.render(<QueryClientProvider client={client}><Thumbnail asset={asset} large crossFolder /></QueryClientProvider>));
+  const request = apiMocks.generatedPreview.mock.calls[0];
+  expect(request[1]).toBe('preview');
+  expect(request[3]).toBe('loupe');
+  expect(request[5]).toBe(true);
+  expect(request[2].aborted).toBe(false);
+  await act(async () => root.render(null));
+  expect(request[2].aborted).toBe(true);
+});

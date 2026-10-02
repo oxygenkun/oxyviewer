@@ -94,7 +94,7 @@ pub(crate) async fn adopt_person_detection(
     .map_err(|error| error.to_string())?
 }
 
-fn reserve(
+pub(super) fn reserve(
     state: &AppState,
     request_id: String,
     folder: Option<PathBuf>,
@@ -115,7 +115,72 @@ fn reserve(
     })
 }
 
-fn launch(
+#[tauri::command]
+pub(crate) async fn get_person_clusters(
+    folder_path: PathBuf,
+    state: State<'_, AppState>,
+) -> Result<Option<oxy_domain::PersonClusterSnapshot>, String> {
+    let people = Arc::clone(&state.people);
+    tauri::async_runtime::spawn_blocking(move || {
+        let folder = folder_path.canonicalize().map_err(|e| e.to_string())?;
+        people.person_clusters(&folder).map_err(|e| e.to_string())
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+#[tauri::command]
+pub(crate) fn start_person_clustering(
+    session_id: String,
+    folder_path: PathBuf,
+    request_id: String,
+    state: State<'_, AppState>,
+) -> Result<(), String> {
+    let operation = reserve(
+        &state,
+        request_id,
+        Some(folder_path.clone()),
+        PersonOperationState::Clustering,
+    )?;
+    let people = Arc::clone(&state.people);
+    let files = Arc::clone(&state.files);
+    let work = Arc::clone(&operation);
+    launch(operation, move || {
+        let folder = files
+            .session_directory(&session_id, Some(&folder_path))
+            .map_err(|e| e.to_string())?;
+        work.update(|s| s.detail = "正在使用已有特征聚类…".into());
+        let snapshot = people
+            .cluster_folder(&folder, work.cancellation())
+            .map_err(|e| e.to_string())?;
+        work.update(|s| {
+            s.detail = format!(
+                "聚类完成：{} 个分组，{} 个未分组人脸。",
+                snapshot.clusters.len(),
+                snapshot.ungrouped.len()
+            );
+        });
+        Ok(())
+    });
+    Ok(())
+}
+
+#[tauri::command]
+pub(crate) async fn adopt_person_cluster(
+    input: oxy_domain::AdoptPersonCluster,
+    state: State<'_, AppState>,
+) -> Result<oxy_domain::AdoptPersonClusterResult, String> {
+    let people = Arc::clone(&state.people);
+    tauri::async_runtime::spawn_blocking(move || {
+        people
+            .adopt_person_cluster(&input)
+            .map_err(|e| e.to_string())
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+pub(super) fn launch(
     operation: Arc<PersonOperation>,
     action: impl FnOnce() -> Result<(), String> + Send + 'static,
 ) {
@@ -262,76 +327,15 @@ pub(crate) fn start_folder_person_analysis(
     request_id: String,
     state: State<'_, AppState>,
 ) -> Result<(), String> {
-    let operation = reserve(
-        &state,
-        request_id.clone(),
-        Some(folder_path.clone()),
-        PersonOperationState::Preparing,
-    )?;
-    let root = state.person_model_dir.clone();
-    let people = Arc::clone(&state.people);
-    let files = Arc::clone(&state.files);
-    let cache = Arc::clone(&state.cache);
-    let work = Arc::clone(&operation);
-    launch(operation, move || {
-        #[cfg(all(windows, target_arch = "x86_64"))]
-        {
-            let folder = files
-                .session_directory(&session_id, Some(&folder_path))
-                .map_err(|error| error.to_string())?;
-            let manifest = model_catalog::manifest();
-            let media = oxy_media::AnalysisInputService::new(&cache.preview_dir())
-                .map_err(|error| error.to_string())?;
-            let mut models = oxy_people::environment::directml::load_models(&root, &work)?;
-            oxy_people::execution::folder::analyse_folder(
-                &people,
-                &files,
-                &session_id,
-                &oxy_domain::BeginPersonAnalysis {
-                    folder_path: folder,
-                    pipeline_id: manifest.pipeline_id.clone(),
-                    pipeline_fingerprint: oxy_people::pipeline_fingerprint(&manifest)
-                        .map_err(|error| error.to_string())?,
-                    request_id,
-                },
-                &mut models,
-                &work,
-                |task, requirement| {
-                    let asset = files
-                        .get_asset(&task.asset_path)
-                        .map_err(|error| error.to_string())?;
-                    let source = oxy_media::SourceRevision::observe(&task.asset_path)
-                        .map_err(|error| error.to_string())?;
-                    if source.revision_id != task.source_revision {
-                        return Err("源图已变化，请重新识别".into());
-                    }
-                    media
-                        .prepare(
-                            &task.asset_path,
-                            asset.kind,
-                            &source,
-                            requirement,
-                            work.cancellation(),
-                        )
-                        .map(|input| input.pixels)
-                        .map_err(|error| error.to_string())
-                },
-            )
-        }
-        #[cfg(not(all(windows, target_arch = "x86_64")))]
-        {
-            let _ = (
-                root,
-                people,
-                files,
-                cache,
-                work,
-                session_id,
-                folder_path,
-                request_id,
-            );
-            Err("此平台的推理运行时尚未配置".into())
-        }
-    });
-    Ok(())
+    super::global_people::start_people_grouping(
+        session_id,
+        oxy_domain::RunPeopleGrouping {
+            folder_path,
+            person_ids: None,
+            similarity: 0.4,
+            request_id,
+        },
+        true,
+        state,
+    )
 }

@@ -493,3 +493,42 @@ Workspace 的 `tagIds` 和 `tagMatch` 是同步 UI 查询意图，不持久化�
 
 React Query 的完整 query key 包含标签 ID 与模式，旧请求不能覆盖新查询；同目录请求等待
 或失败时保留最近成功结果并显示更新状态/错误。最近成功结果不跨目录展示。
+
+### Folder person groups (2026-09-29)
+
+`oxy-people::clusters` computes conservative complete-link suggestions from a completed,
+current analysis run. The per-image ledger remains independent; the operation stays in
+`clustering` until the folder snapshot is published. `person_cluster_snapshots` is declared
+`cache` and stores the versioned folder result atomically. Publication checks the current
+head and evidence again; all scanning, filesystem validation and vector scoring occur
+outside database locks. Folder listing only reads an existing snapshot; sorting/paging
+intersects cluster member paths and source summaries before building pages.
+
+Explicit adoption belongs to `clusters/adoption`: a transaction performs conservative
+manual-anchor alignment and inserts only missing pending reviews. It never overwrites
+an existing review or silently confirms an identity. `person_cluster_adoptions` is a
+`user` declaration linking an explicitly adopted member-set ID to a folder person;
+current names are read from that person's user record. These links and all manual
+instances/reviews survive clearing the derived snapshots. A changed member set does
+not automatically inherit a name.
+
+
+### App-wide identities and tuple review (2026-09-29)
+
+The primary UI now uses `global_people` with folder projections, replacing the
+session-identity/history confirmation ladder. `PersonTuple` has a stable instance
+ID and optional face/body geometry; a photo may carry several independent tuples.
+`global_person_reviews`, targets, explicit references, tag mappings, migration
+mappings and idempotent events are user-owned. `global_person_suggestions` is
+rebuildable and fenced by the current completed analysis head and pipeline.
+Legacy tables and events remain intact; explicit history links determine identity
+migration, never equal names. The old commands remain compatibility entry points.
+
+`oxy-people/global_people` owns global migration, source/geometry correspondence,
+revision checks, reference policy and atomic batch decisions. Anonymous complete-link
+cores and selected-person retrieval share one operation and review projection.
+Search skips the dense anonymous matrix and uses only explicitly confirmed
+references. Source checks and computation run off the UI thread and outside write
+transactions; publication rechecks references, catalog, head and evidence. The
+cross-domain tag reconciler preserves manual/sidecar sources and existing suppressions.
+See [People workflow](../PERSON_WORKFLOW.md) for the current UI and limitations.

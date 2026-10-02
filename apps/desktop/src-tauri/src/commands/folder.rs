@@ -83,25 +83,25 @@ pub(crate) async fn list_assets(
         // Preserve existing library-wide search semantics. Ordinary browsing
         // uses independent snapshots even during an incomplete root index.
         if query.person_filter.is_none()
+            && query.person_cluster_filter.is_none()
+            && query.person_tuple_filter.is_none()
             && query
                 .search
                 .as_ref()
                 .is_some_and(|search| !search.is_empty())
-        {
-            if let Some(page) = library
+            && let Some(page) = library
                 .list_assets(&root, &directory, &query, cursor.unwrap_or(0))
                 .map_err(|error| error.to_string())?
-            {
-                progress.source = "index".into();
-                progress.stage = "ready".into();
-                progress.cache_ms = started.elapsed().as_millis() as u64;
-                progress.elapsed_ms = progress.cache_ms;
-                return Ok(BrowsePage {
-                    page,
-                    progress,
-                    snapshot_revision: None,
-                });
-            }
+        {
+            progress.source = "index".into();
+            progress.stage = "ready".into();
+            progress.cache_ms = started.elapsed().as_millis() as u64;
+            progress.elapsed_ms = progress.cache_ms;
+            return Ok(BrowsePage {
+                page,
+                progress,
+                snapshot_revision: None,
+            });
         }
         let mut last_report = Instant::now();
         let mut scanning = false;
@@ -157,6 +157,20 @@ pub(crate) async fn list_assets(
             .transpose()
             .map_err(|error| error.to_string())?;
         let candidates = person_assets.as_deref().unwrap_or(candidates);
+        let cluster_assets = query
+            .person_cluster_filter
+            .as_ref()
+            .map(|filter| people.filter_assets_by_cluster(&directory, candidates, filter))
+            .transpose()
+            .map_err(|error| error.to_string())?;
+        let candidates = cluster_assets.as_deref().unwrap_or(candidates);
+        let tuple_assets = query
+            .person_tuple_filter
+            .as_ref()
+            .map(|filter| people.filter_assets_by_tuple(&directory, candidates, filter))
+            .transpose()
+            .map_err(|error| error.to_string())?;
+        let candidates = tuple_assets.as_deref().unwrap_or(candidates);
         let page = if query.needs_metadata_enrichment() {
             let mut assets = candidates.to_vec();
             metadata

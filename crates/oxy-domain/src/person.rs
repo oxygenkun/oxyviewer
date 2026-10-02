@@ -201,6 +201,7 @@ pub enum PersonOperationState {
     Downloading,
     Preparing,
     Analysing,
+    Clustering,
     Completed,
     Cancelled,
     Failed,

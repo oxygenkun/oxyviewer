@@ -16,6 +16,16 @@ end-to-end regression harness that enforces these budgets is described in
 
 Refactoring guardrails and regression checks: [Performance invariants](PERFORMANCE_INVARIANTS.md).
 
+人物全局历史是显式跨目录的预览使用方：`get_preview` 的可选
+`crossFolder` 仅由人物历史／参考视图开启，普通目录浏览维持原有目录准入。
+历史视图按页返回实例，仅可见卡片请求预览，不扫描源目录。它复用有界队列、
+源版本校验、取消、generation、资源 lease 和失效流程；不会另起解码 worker。
+React Query 请求身份区分历史与普通目录，避免复用另一作用域取消后的请求。
+人物封面复用有界缩略图，避免为每张卡片解码完整原图。HEIF 历史大图请求适合窗口的
+preview，完整 tile session 仍由 Loupe 持有；其他格式沿用现有大图显示路径。
+2026-10-02 实机验收发现 60MP JPEG 的现有缩略图转换会触及 256 MiB
+转换预算；人物历史明确显示失败，不把它表述为已解决的媒体性能问题。
+
 RAW preview selects the largest embedded camera JPEG, regardless of whether it
 reaches 4096 pixels. Full publishes that JPEG before required WIC/LibRaw
 development and keeps its decoded pixels visible until the final image decodes.
@@ -1109,3 +1119,31 @@ Existing rating/color/flag filters still use their metadata path. Query identity
 selected IDs and match mode; the UI retains the last successful same-directory result
 while updating or reporting an error. Full large-directory tag-toggle and queue-count
 qualification remains pending; this is not a new performance-budget claim.
+
+### Explicit person clustering (2026-09-29)
+
+Folder grouping runs only after explicit recognition or “聚类已有结果”, off the UI
+thread. It reuses persisted embeddings and performs no image decode. The current
+limit is 5000 faces: the dense f32 matrix and compact pair indices require at most
+about 200 MB together, excluding vectors and the rest of the process. Cancellation
+is checked during source observations, pair scoring, merging and before publication.
+Normal folder opening never computes groups or validates every source. Group filters
+intersect the current directory snapshot before sorting/paging. Sidebar covers request
+ordinary thumbnail resources only while visible; they do not hold full-image pixels.
+
+
+### Global people projection (2026-09-29)
+
+Reading the people sidebar projects persisted tuples and suggestions; it does not
+scan the filesystem or run inference. Group covers load on intersection and review
+previews are bounded to 30 instances per page. Explicit auto-grouping retains the
+5000-face / approximately 200 MB dense-core bound; selected-person retrieval skips
+pairwise clustering. All source validation, model work and scoring stay on workers.
+The reference gallery never expands from unconfirmed candidates. Actual UI evidence
+and verification limits are recorded in the dated clustering workflow report.
+
+During an explicit person review, Loupe may retain one active AssetSummary while
+filtered pages refresh or the reviewed photo leaves the current pending filter.
+This does not insert the photo into Grid/filmstrip results, enqueue background
+work, or preserve more than one display selection. It prevents transient page
+replacement from selecting the first different photo; folder/group changes clear it.

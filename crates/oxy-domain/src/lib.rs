@@ -11,6 +11,10 @@ mod about;
 pub use about::*;
 mod person;
 pub use person::*;
+mod person_clusters;
+pub use person_clusters::*;
+mod global_people;
+pub use global_people::*;
 mod relocation;
 pub use relocation::*;
 mod analysis_image;
@@ -917,6 +921,8 @@ pub enum TagMatchMode {
 #[serde(rename_all = "camelCase")]
 pub struct AssetQuery {
     pub person_filter: Option<PersonFilter>,
+    pub person_cluster_filter: Option<PersonClusterFilter>,
+    pub person_tuple_filter: Option<PersonTupleFilter>,
     #[serde(default)]
     pub tag_ids: Vec<CustomTagId>,
     #[serde(default)]

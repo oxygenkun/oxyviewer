@@ -25,6 +25,8 @@ const DETECTION_CACHE_SCHEMA_VERSION: i64 = 2;
 const FEATURE_CACHE_SCHEMA_VERSION: i64 = 3;
 
 crate::table::tables! {
+    cache create global_person_suggestions =
+        "folder_path TEXT PRIMARY KEY, run_id TEXT NOT NULL, payload TEXT NOT NULL";
     cache create indexed_roots =
         "root_path TEXT PRIMARY KEY NOT NULL,
         indexed_at INTEGER NOT NULL DEFAULT (unixepoch()),
@@ -146,6 +148,10 @@ crate::table::tables! {
         error TEXT,
         PRIMARY KEY(run_id,asset_path,stage_id),
         UNIQUE(run_id,asset_path,stage_order)";
+    cache create person_cluster_snapshots =
+        "folder_path TEXT PRIMARY KEY,
+        run_id TEXT NOT NULL,
+        snapshot_json TEXT NOT NULL";
 }
 
 /// Creates or migrates every rebuildable table.

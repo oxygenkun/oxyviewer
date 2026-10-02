@@ -1,5 +1,6 @@
 import { PersonBoxOverlay } from "@/components/people/PersonBoxOverlay";
 import { AutomaticPersonBoxes } from "@/components/people/AutomaticPersonBoxes";
+import { GlobalPersonBoxes } from "@/components/people/GlobalPersonBoxes";
 import type { DisplayedPreviewSize } from "@/lib/preview/previewGeometry";
 import { RawDecoderPanel } from "@/components/settings/RawDecoderPanel";
 import {
@@ -54,6 +55,7 @@ import { ResizeHandle } from "@/components/browsing/ResizeHandle";
 
 interface LoupeProps {
   assets: AssetSummary[];
+  heldAsset?: AssetSummary;
   restoringActiveId?: string;
   total: number;
   fetchNextPage: () => void;
@@ -85,6 +87,7 @@ function elementContentSize(element: HTMLElement): Size {
 
 export function Loupe({
   assets,
+  heldAsset,
   restoringActiveId,
   total,
   fetchNextPage,
@@ -109,7 +112,8 @@ export function Loupe({
   const setLoupeControlsAutoHide = useWorkspaceStore((state) => state.setLoupeControlsAutoHide);
   const setFilmstripHeight = useWorkspaceStore((state) => state.setFilmstripHeight);
   const shortcuts = useWorkspaceStore((state) => state.shortcuts);
-  const active = assets.find((asset) => asset.id === activeId) ?? assets[0];
+  const listedActive = assets.find((asset) => asset.id === activeId);
+  const active = listedActive ?? (heldAsset?.id === activeId ? heldAsset : undefined) ?? assets[0];
   const stageRef = useRef<HTMLDivElement>(null);
   const imageRef = useRef<HTMLDivElement>(null);
   const navigatorRef = useRef<HTMLDivElement>(null);
@@ -454,6 +458,7 @@ export function Loupe({
       >
         <div className="loupe__caption">
           <span>{active.name}</span>
+          {!listedActive && heldAsset?.id === active.id ? <small>保留当前审阅照片 · 不在当前筛选列表中</small> : null}
           <small>{active.extension} · {formatBytes(active.sizeBytes)}</small>
           {loupeMetadataVisible ? <AssetMetadataBadges asset={active} /> : null}
         </div>
@@ -521,6 +526,7 @@ export function Loupe({
             ) : null}
             <PersonBoxOverlay key={active.id} asset={active} />
             <AutomaticPersonBoxes key={`automatic:${active.id}`} asset={active} />
+            <GlobalPersonBoxes key={`global:${active.id}`} asset={active} />
             {showFocusAreas && Boolean(currentNaturalSize || currentHeifSize) && mappedFocusRegions.length > 0 ? (
               <div className="loupe__focus-overlay" aria-hidden="true">
                 {mappedFocusRegions.map((region, index) => (

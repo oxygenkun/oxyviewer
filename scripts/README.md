@@ -38,6 +38,7 @@ they only run inside a page served by `pnpm dev`. Pass one to
 | `filmstrip-pagination.browser.js` | Virtualized Loupe filmstrip paging |
 | `loupe-switch.browser.js` | Photo switching and stale image layers |
 | `preview-geometry.browser.js` | Preview geometry with late metadata |
+| `people-grid-review.browser.js` | Grid multi-selection counts and scoped batch person review through the real App and IPC wrapper |
 
 The `.browser.js` suffix is deliberate: it keeps these probes distinguishable
 from Node entry points and from the `.mjs` scripts in `release/`.

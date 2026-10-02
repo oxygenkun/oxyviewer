@@ -4,6 +4,9 @@ This directory contains dated experiments, measurements, diagnoses, and local
 qualification evidence. Reports state their fixture, platform, cache, and
 measurement limits; they do not define current product behavior by themselves.
 
+- [2026-10-02: global people browsing and in-photo review](2026-10-02-people-experience.md)
+  — visual iterations, cross-folder history, independent multi-person review and Windows Release limits.
+
 - [2026-09-29: analysis input bottleneck and precision-preserving SIMD resampling](2026-09-29-analysis-input-optimization.md)
   — stage attribution, rejected integer-rounding trial, pixel/embedding parity and Release comparison.
 - [2026-09-29: standalone ORT DirectML and bounded analysis pipeline](2026-09-29-ort-directml-pipeline.md)
@@ -57,3 +60,5 @@ measurement limits; they do not define current product behavior by themselves.
 For current requirements, return to the [documentation index](../README.md),
 [performance budgets](../PERFORMANCE.md), or
 [performance invariants](../PERFORMANCE_INVARIANTS.md).
+
+- [Folder person clustering and review integration (2026-09-29)](2026-09-29-person-clustering-workflow.md): global identities, tuple review, anonymous grouping, explicit-reference retrieval, migration and Release NAS/WebView evidence.

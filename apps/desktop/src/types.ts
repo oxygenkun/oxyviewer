@@ -433,6 +433,8 @@ export interface RawDecoderStatus {
 
 export interface AssetQuery {
   personFilter?: PersonFilter;
+  personClusterFilter?: PersonClusterFilter;
+  personTupleFilter?: PersonTupleFilter;
   tagIds?: number[];
   tagMatch?: "all" | "any";
   search?: string;
@@ -643,7 +645,7 @@ export interface PersonDetectionSnapshot {
 export interface PersonOperationStatus {
   operationId: string;
   folderPath: string | null;
-  state: "downloading" | "preparing" | "analysing" | "completed" | "cancelled" | "failed";
+  state: "downloading" | "preparing" | "analysing" | "clustering" | "completed" | "cancelled" | "failed";
   completed: number;
   total: number;
   detail: string;
@@ -657,3 +659,31 @@ export interface PersonOperationStatus {
     failedTasks: number;
   } | null;
 }
+export interface PersonClusterMember {
+  assetPath: string;
+  instanceId: string;
+  sourceRevision: string;
+  summaryRevision: string;
+  faceBox: [number, number, number, number];
+}
+export interface PersonCluster {
+  id: string;
+  members: PersonClusterMember[];
+  cover: AssetSummary | null;
+  people: FolderPerson[];
+}
+export interface PersonClusterSnapshot {
+  snapshotId: string;
+  folderPath: string;
+  runId: string;
+  pipelineFingerprint: string;
+  algorithm: string;
+  clusters: PersonCluster[];
+  ungrouped: PersonClusterMember[];
+  noFaceCount: number;
+  unavailableCount: number;
+}
+export interface PersonClusterFilter { snapshotId: string; clusterId: string }
+export interface AdoptPersonClusterResult { person: FolderPerson; added: number; preserved: number; conflicted: number }
+import type { PersonTupleFilter } from "@/lib/peopleContracts";
+export type { GlobalPerson, PersonTuple, PersonTupleGroup, FolderPeopleWorkspace, PersonTupleFilter, PersonBox } from "@/lib/peopleContracts";

@@ -1,6 +1,7 @@
 //! Conservative correspondence between model detections and manual anchors.
 //! This produces evidence only; it never changes reviews or identities.
 
+use crate::geometry::valid_box;
 use sha2::{Digest, Sha256};
 use std::collections::{HashMap, HashSet};
 use thiserror::Error;
@@ -76,18 +77,6 @@ pub enum AlignmentError {
     InvalidAnchor,
     #[error("invalid alignment policy")]
     InvalidPolicy,
-}
-
-fn valid_box(value: Option<[f64; 4]>) -> bool {
-    value.is_none_or(|[x, y, width, height]| {
-        [x, y, width, height].iter().all(|part| part.is_finite())
-            && x >= 0.0
-            && y >= 0.0
-            && width > 0.0
-            && height > 0.0
-            && x + width <= 1.0
-            && y + height <= 1.0
-    })
 }
 
 /// Derives a cache identity from source, producer, and normalized geometry.

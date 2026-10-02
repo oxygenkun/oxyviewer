@@ -21,13 +21,13 @@ The main release blockers are:
 - file writes lack a session-scoped authorization contract, undo journal, and recovery;
 - accessibility, crash recovery, signing, notarization, and installer validation remain.
 
-## People workflow (2026-09-28 working tree)
+## People workflow (2026-09-29 working tree)
 
-- [x] Model-independent manual instance review: folder-scoped subjects, face/body
+- [x] Model-independent manual instance review: app-wide identities, face/body
   boxes in Loupe, independent decisions for multiple people in one photo,
   audit records, optimistic revision checks and SQLite reopen persistence.
-- [x] Shared Grid/Loupe person-state filtering before backend paging, plus manual
-  session identity and single-reference management. See [People workflow](PERSON_WORKFLOW.md).
+- [x] Shared Grid/Loupe person-state filtering before backend paging, plus global
+  identity and explicit reference-gallery management. See [People workflow](PERSON_WORKFLOW.md).
 - [x] Manual historical identity linking and basic tag source accounting with
   explicit Person tag synchronization.
 - [~] Rebuildable, versioned feature-space cache and exhaustive sqlite-vec
@@ -37,7 +37,7 @@ The main release blockers are:
   `oxy-people`; HTTPS streaming and offline import share checksum, cancellation,
   and atomic installation. A pinned research catalog, explicit download/import
   commands and Windows x64 detection/embedding worker now connect to the
-  People sidebar. Candidate IPC and resource-qualified retrieval remain open.
+  People sidebar. Global candidate retrieval is wired; wider resource qualification remains open.
 - [~] SCRFD and source-verified third-party AdaFace WebFace12M downloads, plus
   pinned standalone ORT DirectML runtime installation. WinML is an opt-in research
   backup. Model provenance is visible in UI;
@@ -46,8 +46,7 @@ The main release blockers are:
   requirements and shared per-format media preparation, qualification and leased
   display-artifact reuse (input v4). Direct display and progressive tiles retain
   their delivery paths. macOS delivery,
-  incremental jobs and automatic historical
-  identity suggestions remain later stages.
+  incremental jobs and calibrated cross-session matching remain later stages.
 - [~] Analysis run state persists generations, idempotent start/cancel,
   small task batches, stage order, and transactional feature/progress commits
   fenced by generation, task key, claim token, and a fresh `oxy-fs` source
@@ -59,8 +58,18 @@ The main release blockers are:
   progress. New manual anchors retain the full source identity beside the
   existing lightweight UI revision; conservative geometry alignment refuses
   changed, ambiguous, or unverified anchors. Loupe displays automatic face boxes
-  and lets the user adopt them into manual review; candidate identity UI remains
-  open and model output never confirms identity by itself.
+  and lets the user review anonymous or known-person candidates; model output
+  never confirms identity by itself.
+- [x] Persist conservative anonymous folder groups after explicit face analysis,
+  reuse compatible saved features on demand, filter before paging, and explicitly
+  adopt groups into pending review for a new or existing named person. Re-clustering
+  preserves user decisions; cache clearing preserves names and adoption links.
+- [x] App-wide person identities and explicit reference galleries, folder auto-grouping
+  and selected-person retrieval, with one tuple-based review flow for face/body
+  instances and multi-person photos. Legacy user records survive migration and clears.
+- [ ] Calibrate clustering and cross-session retrieval on unseen sessions; the
+  current cosine thresholds only produce reviewable candidates. Automatic body
+  matching and macOS inference validation remain outstanding.
 - Validation details and outstanding environment limitations are in the
   [manual workflow report](research/2026-09-23-person-manual-workflow.md).
 

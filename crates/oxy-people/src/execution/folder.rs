@@ -1,8 +1,7 @@
 //! Folder enrollment and lifetime of the three-stage analysis pipeline.
 use crate::People;
 use oxy_domain::PersonAnalysisTask;
-/// Register this face-only pipeline and run it. Folder clustering is not part
-/// of this pipeline, so sealing after the two per-image stages is complete.
+/// Run detection and encoding. The operation owner follows with its chosen grouping or retrieval mode.
 #[cfg(any(windows, target_os = "macos"))]
 pub fn analyse_folder(
     people: &People,

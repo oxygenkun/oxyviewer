@@ -6,8 +6,8 @@ import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { PersonAnalysisControls } from "./PersonAnalysisControls";
 import type { PersonModelStatus, PersonOperationStatus } from "@/types";
 
-const api = vi.hoisted(() => ({ start: vi.fn(), cancel: vi.fn(), models: vi.fn(), operation: vi.fn() }));
-vi.mock("@/lib/api", () => ({ startFolderPersonAnalysis: api.start, cancelPersonOperation: api.cancel,
+const api = vi.hoisted(() => ({ cluster: vi.fn(), start: vi.fn(), cancel: vi.fn(), models: vi.fn(), operation: vi.fn() }));
+vi.mock("@/lib/api", () => ({ startPersonClustering: api.cluster, startFolderPersonAnalysis: api.start, cancelPersonOperation: api.cancel,
   getPersonModels: api.models, getPersonOperation: api.operation, downloadPersonModel: vi.fn(), importPersonModel: vi.fn() }));
 let host: HTMLDivElement;
 let root: Root;
@@ -38,8 +38,23 @@ it("keeps a running task scoped to its original folder and cancels by operation 
   api.operation.mockResolvedValue(pending); client.setQueryData(["person-operation"], pending);
   await render("C:/second");
   expect(button("识别选中文件夹").disabled).toBe(true);
-  expect(host.textContent).toContain("任务文件夹：C:/first");
+  expect(host.textContent).toContain("任务文件夹：first");
   await act(async () => button("取消任务").click());
   expect(api.cancel).toHaveBeenCalledExactlyOnceWith("old-folder-job");
   expect(button("正在取消…").disabled).toBe(true);
+});
+
+it("allows clustering saved features without installed models and blocks a second job", async () => {
+  client.setQueryData(["person-models"], [{ ...ready[0], installed: false }]);
+  api.models.mockResolvedValue([{ ...ready[0], installed: false }]);
+  await render("C:/saved");
+  expect(button("识别选中文件夹").disabled).toBe(true);
+  expect(button("聚类已有结果").disabled).toBe(false);
+  await act(async () => button("聚类已有结果").click());
+  expect(api.cluster).toHaveBeenCalledExactlyOnceWith("session", "C:/saved");
+  const pending = { operationId: "cluster", folderPath: "C:/saved", state: "clustering", completed: 0, total: 0, detail: "聚类中", error: null, run: null };
+  api.operation.mockResolvedValue(pending);
+  await act(async () => { client.setQueryData(["person-operation"], pending); });
+  await render("C:/another");
+  expect(button("聚类已有结果").disabled).toBe(true);
 });

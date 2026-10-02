@@ -45,6 +45,9 @@ import { FolderSettingsMenu } from "./FolderSettingsMenu";
 import { PersonAnalysisControls } from "../people/PersonAnalysisControls";
 
 interface SidebarProps {
+  revealRequest?: { sessionId: string; path: string };
+  globalPeoplePanel?: ReactNode;
+  globalPeopleCount?: number;
   peopleMode?: boolean;
   onPeopleModeChange?: (value: boolean) => void;
   people?: FolderPerson[];
@@ -56,6 +59,7 @@ interface SidebarProps {
   showBoxes?: boolean;
   onShowBoxesChange?: (value: boolean) => void;
   personReview?: ReactNode;
+  personClusters?: ReactNode;
   onRenamePerson?: (id: string, displayName: string) => void;
   sessions: FolderSession[];
   total?: number;
@@ -283,6 +287,8 @@ function HighlightedDirectoryName({ name, search }: { name: string; search: stri
 }
 
 export function Sidebar({
+  globalPeoplePanel,
+  globalPeopleCount,
   peopleMode = false,
   onPeopleModeChange,
   people = [],
@@ -294,6 +300,7 @@ export function Sidebar({
   showBoxes = true,
   onShowBoxesChange,
   personReview,
+  personClusters,
   onRenamePerson,
   sessions,
   total = 0,
@@ -301,6 +308,7 @@ export function Sidebar({
   onRetryRoot, onRemoveRoot, onRelocateRoot,
   activeSession,
   currentPath,
+  revealRequest,
   showOnboarding,
   onOpen,
   onNavigate,
@@ -431,6 +439,19 @@ export function Sidebar({
     requested: Set<string>;
   } | undefined>(undefined);
   const [revealNonce, setRevealNonce] = useState(0);
+  const handledReveal = useRef<SidebarProps["revealRequest"]>(undefined);
+  useEffect(() => {
+    if (!revealRequest || handledReveal.current === revealRequest
+      || revealRequest.sessionId !== activeSession?.id || revealRequest.path !== currentPath) return;
+    setPeopleFoldersOpen(true);
+    setSearchOpen(false);
+    setSearch("");
+    setDebouncedSearch("");
+    if (searchActive) return;
+    handledReveal.current = revealRequest;
+    revealSelectionRef.current = { ...revealRequest, requested: new Set() };
+    setRevealNonce(nonce => nonce + 1);
+  }, [revealRequest, activeSession?.id, currentPath, searchActive]);
   useEffect(() => {
     if (wasSearchActiveRef.current && !searchActive && activeSession && currentPath) {
       revealSelectionRef.current = {
@@ -446,7 +467,7 @@ export function Sidebar({
       revealSelectionRef.current = undefined;
       return;
     }
-    if (!activeTreeQuery?.isFetched || !activeTreeQuery.data) return;
+    if ((peopleMode && !peopleFoldersOpen) || !activeTreeQuery?.isFetched || !activeTreeQuery.data) return;
     const step = directoryRevealStep(activeTreeQuery.data.root, reveal.path);
     if (step === "done") {
       revealSelectionRef.current = undefined;
@@ -468,7 +489,7 @@ export function Sidebar({
       changeDirectoryExpansion(activeSession, step.expand, true);
     }
   }, [searchActive, activeSession, currentPath, activeTreeQuery?.isFetched,
-    activeTreeQuery?.data, changeDirectoryExpansion, revealNonce]);
+    activeTreeQuery?.data, changeDirectoryExpansion, revealNonce, peopleMode, peopleFoldersOpen]);
 
   useEffect(() => {
     if (!activeSession || !activeTreeQuery?.isFetched) return;
@@ -660,11 +681,12 @@ export function Sidebar({
         <button role="tab" aria-selected={peopleMode} onClick={() => onPeopleModeChange?.(true)}>
           <Users size={15} />
           <span>人物</span>
-          <span className="person-sidebar-tabs__count">{people.length.toLocaleString()}</span>
+          <span className="person-sidebar-tabs__count">{(globalPeopleCount ?? people.length).toLocaleString()}</span>
         </button>
       </div>
-      {peopleMode ? <section className={`person-sidebar-section ${personFilterOpen ? "is-filter-open" : ""}`}>
+      {peopleMode && globalPeoplePanel ? globalPeoplePanel : peopleMode ? <section className={`person-sidebar-section ${personFilterOpen ? "is-filter-open" : ""}`}>
         <PersonAnalysisControls sessionId={activeSession?.id} folderPath={currentPath} />
+        {personClusters}
         <div className="person-sidebar-heading"><div><span>人物</span><strong>当前文件夹</strong></div><button onClick={onCreatePerson} disabled={!currentPath} aria-label="添加人物">＋ 添加</button></div>
         {!people.length ? <p className="person-sidebar-empty">还没有人物。添加一位人物，然后在照片上标记并审阅。</p> : people.map((person, index) => {
           const selected = selectedPersonId === person.id;

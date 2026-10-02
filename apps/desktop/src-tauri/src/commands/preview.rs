@@ -12,12 +12,17 @@ use std::path::PathBuf;
 use tauri::{Emitter, State};
 
 #[tauri::command]
+#[expect(
+    clippy::too_many_arguments,
+    reason = "Tauri injects app/state; the optional history scope preserves the existing preview IPC"
+)]
 pub(crate) async fn get_preview(
     request_id: String,
     path: PathBuf,
     level: RenderLevel,
     priority: PreviewPriority,
     rank: Option<u32>,
+    cross_folder: Option<bool>,
     app: tauri::AppHandle,
     state: State<'_, AppState>,
 ) -> Result<oxy_domain::ImageProjection, String> {
@@ -25,18 +30,20 @@ pub(crate) async fn get_preview(
     let selection = (level == RenderLevel::Full).then(|| preview_queue.select_full(&path));
     let preview_dir = state.cache.preview_dir();
     let projection = tauri::async_runtime::spawn_blocking(move || {
-        let (projection, receiver) = preview_queue.request(
-            &app,
-            PreviewRequest {
-                selection,
-                request_id,
-                path,
-                preview_dir,
-                level,
-                priority,
-                rank: rank.unwrap_or_default(),
-            },
-        )?;
+        let request = PreviewRequest {
+            selection,
+            request_id,
+            path,
+            preview_dir,
+            level,
+            priority,
+            rank: rank.unwrap_or_default(),
+        };
+        let (projection, receiver) = if cross_folder.unwrap_or(false) {
+            preview_queue.request_history(&app, request)
+        } else {
+            preview_queue.request(&app, request)
+        }?;
         let _ = app.emit(
             crate::jobs::preview::IMAGE_PROJECTION_UPDATED_EVENT,
             projection,

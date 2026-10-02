@@ -88,11 +88,12 @@ let root: Root;
 let host: HTMLDivElement;
 let client: QueryClient;
 
-const render = async (view: ViewMode, renderedAssets = assets) => {
+const render = async (view: ViewMode, renderedAssets = assets, heldAsset?:AssetSummary) => {
   await act(async () => root.render(
     <QueryClientProvider client={client}>
       <AssetBrowser
         assets={renderedAssets}
+        heldAsset={heldAsset}
         total={renderedAssets.length}
         hasNextPage={false}
         isFetchingNextPage={false}
@@ -314,4 +315,19 @@ it("publishes the first burst groups before the remaining paths finish scanning"
   expect(host.querySelector('button[title="/demo/a1.jpg"]')).toBeNull();
 
   await act(async () => finishSecondBatch?.([]));
+});
+
+it("retains the reviewed loupe photo through empty and changed filtered pages", async () => {
+  useWorkspaceStore.setState({activeId:"a20",selectedIds:["a20"]});
+  await render("loupe",assets,assets[20]);
+  await render("loupe",[],assets[20]);
+  expect(host.querySelector(".loupe__caption")?.textContent).toContain("a20.jpg");
+  expect(useWorkspaceStore.getState().activeId).toBe("a20");
+  await render("loupe",[assets[0]],assets[20]);
+  expect(host.querySelector(".loupe__caption")?.textContent).toContain("a20.jpg");
+  expect(useWorkspaceStore.getState().activeId).toBe("a20");
+  await render("loupe",[assets[0],assets[20]],assets[20]);
+  expect(host.querySelector(".loupe__caption")?.textContent).not.toContain("不在当前筛选列表中");
+  await select("a0");
+  expect(host.querySelector(".loupe__caption")?.textContent).toContain("a0.jpg");
 });

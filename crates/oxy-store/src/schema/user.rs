@@ -54,6 +54,11 @@ crate::table::tables! {
         revision INTEGER NOT NULL DEFAULT 1,
         created_at INTEGER NOT NULL DEFAULT (unixepoch()),
         updated_at INTEGER NOT NULL DEFAULT (unixepoch())";
+    user create person_cluster_adoptions =
+        "folder_path TEXT NOT NULL,
+        cluster_id TEXT NOT NULL,
+        subject_id TEXT NOT NULL REFERENCES folder_people(id),
+        PRIMARY KEY(folder_path,cluster_id,subject_id)";
     user create person_manual_instances =
         "id TEXT PRIMARY KEY,
         folder_path TEXT NOT NULL,
@@ -132,6 +137,24 @@ crate::table::tables! {
         suppressed INTEGER NOT NULL DEFAULT 1,
         revision INTEGER NOT NULL DEFAULT 1,
         PRIMARY KEY(historical_person_id,asset_path)";
+    user create global_people =
+        "id TEXT PRIMARY KEY, display_name TEXT NOT NULL, revision INTEGER NOT NULL DEFAULT 1";
+    user create global_person_migrations =
+        "subject_id TEXT PRIMARY KEY, person_id TEXT NOT NULL REFERENCES global_people(id)";
+    user create global_person_reviews =
+        "instance_id TEXT NOT NULL REFERENCES person_manual_instances(id), person_id TEXT NOT NULL REFERENCES global_people(id),
+         decision TEXT NOT NULL CHECK(decision IN ('pending','belongs','doesNotBelong','deferred')),
+         revision INTEGER NOT NULL DEFAULT 1, PRIMARY KEY(instance_id,person_id)";
+    user create global_person_targets =
+        "instance_id TEXT PRIMARY KEY REFERENCES person_manual_instances(id), person_id TEXT NOT NULL REFERENCES global_people(id)";
+    user create global_person_references =
+        "person_id TEXT NOT NULL REFERENCES global_people(id), instance_id TEXT NOT NULL REFERENCES person_manual_instances(id),
+         PRIMARY KEY(person_id,instance_id)";
+    user create global_person_events =
+        "request_id TEXT PRIMARY KEY, payload TEXT NOT NULL, result TEXT NOT NULL";
+    user create global_person_tags =
+        "person_id TEXT PRIMARY KEY REFERENCES global_people(id), tag_id INTEGER REFERENCES custom_tags(id) ON DELETE SET NULL";
+
 }
 
 /// Creates or migrates every user-owned table.
@@ -156,7 +179,11 @@ pub(super) fn ensure_schema(connection: &mut Connection) -> Result<(), rusqlite:
             [],
         )?;
     }
-    if !has_column(connection, "person_manual_instances", "source_identity_revision")? {
+    if !has_column(
+        connection,
+        "person_manual_instances",
+        "source_identity_revision",
+    )? {
         connection.execute(
             "ALTER TABLE person_manual_instances ADD COLUMN source_identity_revision TEXT",
             [],

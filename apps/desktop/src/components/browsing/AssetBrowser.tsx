@@ -30,6 +30,7 @@ import { Thumbnail } from "./Thumbnail";
 
 interface AssetBrowserProps {
   assets: AssetSummary[];
+  heldAsset?: AssetSummary;
   restoringActiveId?: string;
   total: number;
   hasNextPage: boolean;
@@ -169,7 +170,7 @@ export function AssetBrowser(props: AssetBrowserProps) {
   }, [props.assets]);
 
   let content;
-  if (props.assets.length === 0) {
+  if (props.assets.length === 0 && !(props.view === "loupe" && props.heldAsset)) {
     content = (
       <div className="no-results">
         <FileImage size={31} strokeWidth={1.25} />
@@ -181,6 +182,7 @@ export function AssetBrowser(props: AssetBrowserProps) {
     content = (
       <Loupe
         assets={props.assets}
+        heldAsset={props.heldAsset}
         restoringActiveId={props.restoringActiveId}
         total={props.total}
         fetchNextPage={props.fetchNextPage}

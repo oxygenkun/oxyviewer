@@ -270,9 +270,11 @@ pub fn link_source(
 
 /// A fresh 128-bit identifier, hex encoded.
 pub fn new_id(connection: &Connection) -> Result<String, StoreError> {
-    Ok(connection.query_row("SELECT lower(hex(randomblob(16))) AS id", [], |row| {
-        row.get("id")
-    })?)
+    Ok(
+        connection.query_row("SELECT lower(hex(randomblob(16))) AS id", [], |row| {
+            row.get("id")
+        })?,
+    )
 }
 
 /// One folder person by id, with its reference and pending count.
@@ -281,7 +283,8 @@ pub fn folder_person(
     id: &str,
     folder_path: &str,
 ) -> Result<Option<FolderPerson>, StoreError> {
-    let sql = format!("SELECT {FOLDER_PERSON_COLUMNS} FROM folder_people WHERE id=?1 AND folder_path=?2");
+    let sql =
+        format!("SELECT {FOLDER_PERSON_COLUMNS} FROM folder_people WHERE id=?1 AND folder_path=?2");
     Ok(connection
         .query_row(&sql, params![id, folder_path], row_person)
         .optional()?)
@@ -347,10 +350,7 @@ pub fn reset_identity(
 }
 
 /// Bumps a folder person's revision, marking its identity as changed.
-pub fn bump_subject_revision(
-    connection: &Connection,
-    subject_id: &str,
-) -> Result<(), StoreError> {
+pub fn bump_subject_revision(connection: &Connection, subject_id: &str) -> Result<(), StoreError> {
     connection.execute(
         "UPDATE folder_people SET revision=revision+1,updated_at=unixepoch() WHERE id=?1",
         [subject_id],
@@ -649,8 +649,8 @@ pub fn subjects_of_instance(
     connection: &Connection,
     instance_id: &str,
 ) -> Result<Vec<String>, StoreError> {
-    let mut statement =
-        connection.prepare("SELECT subject_id FROM person_review_decisions WHERE instance_id=?1")?;
+    let mut statement = connection
+        .prepare("SELECT subject_id FROM person_review_decisions WHERE instance_id=?1")?;
     Ok(statement
         .query_map([instance_id], |row| row.get::<_, String>("subject_id"))?
         .collect::<Result<Vec<_>, _>>()?)
@@ -879,9 +879,8 @@ pub fn subjects_of_historical_person(
     connection: &Connection,
     historical_person_id: &str,
 ) -> Result<Vec<String>, StoreError> {
-    let mut statement = connection.prepare(
-        "SELECT subject_id FROM folder_historical_links WHERE historical_person_id=?1",
-    )?;
+    let mut statement = connection
+        .prepare("SELECT subject_id FROM folder_historical_links WHERE historical_person_id=?1")?;
     Ok(statement
         .query_map([historical_person_id], |row| {
             row.get::<_, String>("subject_id")
@@ -1109,8 +1108,7 @@ fn row_person_tag_link(row: &rusqlite::Row<'_>) -> rusqlite::Result<PersonTagLin
     Ok(PersonTagLink {
         historical_person_id: row.get("historical_person_id")?,
         tag_id: row.get("tag_id")?,
-        enabled: row.get::<_, bool>("enabled")?
-            && row.get::<_, Option<i64>>("tag_id")?.is_some(),
+        enabled: row.get::<_, bool>("enabled")? && row.get::<_, Option<i64>>("tag_id")?.is_some(),
         revision: row.get("revision")?,
     })
 }
@@ -1124,3 +1122,25 @@ fn row_person_tag_override(row: &rusqlite::Row<'_>) -> rusqlite::Result<PersonTa
     })
 }
 
+/// Explicitly adopted group membership, preserved with the user's reviews.
+pub fn link_cluster(
+    connection: &Connection,
+    folder: &str,
+    cluster: &str,
+    subject: &str,
+) -> Result<(), StoreError> {
+    connection.execute("INSERT OR IGNORE INTO person_cluster_adoptions(folder_path,cluster_id,subject_id) VALUES (?1,?2,?3)", params![folder,cluster,subject])?;
+    Ok(())
+}
+
+pub fn cluster_links(
+    connection: &Connection,
+    folder: &str,
+) -> Result<Vec<(String, String)>, StoreError> {
+    let mut statement=connection.prepare("SELECT a.cluster_id,a.subject_id FROM person_cluster_adoptions a JOIN folder_people p ON p.id=a.subject_id AND p.folder_path=a.folder_path WHERE a.folder_path=?1 ORDER BY a.cluster_id,a.subject_id")?;
+    Ok(statement
+        .query_map([folder], |row| {
+            Ok((row.get("cluster_id")?, row.get("subject_id")?))
+        })?
+        .collect::<Result<_, _>>()?)
+}

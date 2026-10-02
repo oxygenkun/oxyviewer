@@ -6,22 +6,11 @@
 //! its own set and nothing else's, and that a detection never answers a review
 //! decision.
 
+use crate::geometry::valid_box;
 use crate::{People, PeopleError};
 use oxy_domain::DetectedPersonInstance;
 use oxy_store::{Transaction, repo};
 use std::path::Path;
-
-fn valid_box(value: Option<[f64; 4]>) -> bool {
-    value.is_none_or(|[x, y, width, height]| {
-        [x, y, width, height].iter().all(|part| part.is_finite())
-            && x >= 0.0
-            && y >= 0.0
-            && width > 0.0
-            && height > 0.0
-            && x + width <= 1.0
-            && y + height <= 1.0
-    })
-}
 
 fn valid_score(value: Option<f32>) -> bool {
     value.is_none_or(|value| value.is_finite() && (0.0..=1.0).contains(&value))

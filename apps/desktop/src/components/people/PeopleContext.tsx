@@ -16,4 +16,4 @@ export interface PeopleWorkspace {
 export const PeopleContext = createContext<PeopleWorkspace | undefined>(undefined);
 export const usePeopleWorkspace = () => useContext(PeopleContext);
 
-export const PersonDetectionContext = createContext<{ folderPath: string; showBoxes: boolean; adopt: (asset: AssetSummary, sourceRevision: string, instanceId: string) => Promise<void> } | undefined>(undefined);
+export const PersonDetectionContext = createContext<{ folderPath: string; showBoxes: boolean; instanceIds?: string[]; adopt: (asset: AssetSummary, sourceRevision: string, instanceId: string) => Promise<void> } | undefined>(undefined);

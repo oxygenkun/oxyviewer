@@ -1,4 +1,56 @@
 import type { RootRelocationPlan, RootRelocationResult } from "@/types";
+import type { GlobalPerson,PersonTuple,FolderPeopleWorkspace,PersonBox } from "@/types";
+
+const demoGlobalPeople:GlobalPerson[]=[];
+const demoGlobalWorkspaces=new Map<string,FolderPeopleWorkspace>();
+export async function getGlobalPersonFolders(personId: string, offset = 0, limit = 24): Promise<import("./peopleContracts").GlobalPersonFolders> {
+  if (isTauri()) return invoke("get_global_person_folders", { personId, offset, limit });
+  const folders = [...demoGlobalWorkspaces.values()].map(w => {
+    const tuples = [...new Map(w.groups.flatMap(g => g.members).filter(t => t.personId === personId && t.decision === "belongs").map(t => [t.id, t])).values()];
+    return { folderPath: w.folderPath, coverAssetPath: tuples.map(t => t.assetPath).sort()[0] ?? "", photoCount: new Set(tuples.map(t => t.assetPath)).size, instanceCount: tuples.length };
+  }).filter(f => f.instanceCount > 0).sort((a, b) => a.folderPath < b.folderPath ? -1 : a.folderPath > b.folderPath ? 1 : 0);
+  return { folders: folders.slice(offset, offset + Math.max(1, Math.min(60, limit))), total: folders.length };
+}
+export async function getGlobalPersonGallery(personId: string, offset = 0, limit = 24): Promise<import("./peopleContracts").GlobalPersonGallery> {
+  if (isTauri()) return invoke("get_global_person_gallery", { personId, offset, limit });
+  const tuples = [...new Map([...demoGlobalWorkspaces.values()].flatMap(w => w.groups.flatMap(g => g.members)).filter(t => t.personId === personId && t.decision === "belongs").map(t => [t.id, t])).values()];
+  return { tuples: structuredClone(tuples.slice(offset, offset + Math.max(1, Math.min(60, limit)))), total: tuples.length, folderCount: new Set(tuples.map(t => t.assetPath.replace(/[\\/][^\\/]+$/, ""))).size };
+}
+export async function listGlobalPeople():Promise<GlobalPerson[]>{return isTauri()?invoke("list_global_people"):structuredClone(demoGlobalPeople);}
+export async function getFolderPeopleWorkspace(folderPath:string):Promise<FolderPeopleWorkspace>{
+  if(isTauri())return invoke("get_folder_people_workspace",{folderPath});
+  return structuredClone(demoGlobalWorkspaces.get(folderPath)??{folderPath,revision:"demo",groups:[],unknownCount:0,knownCount:0,noFaceCount:0,unavailableCount:0,hasAnalysis:false,notice:"在桌面应用中运行本地识别；人物资料全 App 共用。"});
+}
+export async function saveGlobalPerson(displayName:string,person?:GlobalPerson):Promise<GlobalPerson>{
+  if(isTauri())return invoke("save_global_person",{input:{id:person?.id??null,displayName,expectedRevision:person?.revision??0,requestId:crypto.randomUUID()}});
+  const result={id:person?.id??crypto.randomUUID(),displayName,revision:(person?.revision??0)+1,referenceInstanceIds:person?.referenceInstanceIds??[],tagId:person?.tagId??null};
+  const at=demoGlobalPeople.findIndex(p=>p.id===result.id);if(at<0)demoGlobalPeople.push(result);else demoGlobalPeople[at]=result;return structuredClone(result);
+}
+export async function reviewPersonTuples(workspace:FolderPeopleWorkspace,tuples:PersonTuple[],personId:string,decision:PersonReviewDecision,replaceConfirmed=false):Promise<number>{
+  if(!isTauri())throw new Error("请在桌面应用中审阅本地人物实例");
+  return invoke("review_person_tuples",{input:{folderPath:workspace.folderPath,workspaceRevision:workspace.revision,tuples,personId,decision,replaceConfirmed,requestId:crypto.randomUUID()}});
+}
+export async function setGlobalPersonReference(person:GlobalPerson,instanceId:string,enabled:boolean):Promise<void>{
+  if(!isTauri())throw new Error("请在桌面应用中设置人物参考");
+  return invoke("set_global_person_reference",{input:{personId:person.id,instanceId,enabled,expectedRevision:person.revision,requestId:crypto.randomUUID()}});
+}
+export async function setGlobalPersonTag(person:GlobalPerson,tagId:number|null):Promise<void>{
+  if(!isTauri())throw new Error("请在桌面应用中同步人物标签");
+  return invoke("set_global_person_tag",{input:{personId:person.id,tagId,expectedRevision:person.revision,requestId:crypto.randomUUID()}});
+}
+export async function getGlobalPersonReferences(personId:string):Promise<PersonTuple[]>{return isTauri()?invoke("get_global_person_references",{personId}):[];}
+export async function startPeopleGrouping(sessionId:string,folderPath:string,personIds:string[]|null,similarity:number,refreshFeatures=false):Promise<void>{
+  if(!isTauri())throw new Error("请在桌面应用中运行人物分组");
+  return invoke("start_people_grouping",{sessionId,refreshFeatures,input:{folderPath,personIds,similarity,requestId:crypto.randomUUID()}});
+}
+export async function getPersonTupleAsset(path:string):Promise<AssetSummary>{
+  if(!isTauri()){const asset=demoAssets.find(a=>a.path===path);if(asset)return asset;throw new Error("照片不可用");}
+  return invoke("get_person_tuple_asset",{path});
+}
+export async function savePersonTupleGeometry(folderPath:string,asset:AssetSummary,faceBox:PersonBox|null,bodyBox:PersonBox|null,tuple?:PersonTuple):Promise<PersonTuple>{
+  if(!isTauri())throw new Error("请在桌面应用中标记本地人物实例");
+  return invoke("save_person_tuple_geometry",{input:{folderPath,assetPath:asset.path,instanceId:tuple?.id??null,expectedRevision:tuple?.revision??0,sourceRevision:`${asset.sizeBytes}:${asset.modifiedAtMs}`,faceBox,bodyBox,requestId:crypto.randomUUID()}});
+}
 import type { PersonModelStatus, PersonOperationStatus, PersonDetectionSnapshot } from "@/types";
 
 export async function getPersonDetections(folderPath: string, assetPath: string): Promise<PersonDetectionSnapshot> {
@@ -454,6 +506,8 @@ export async function listAssets(
       const root = demoTags.find((tag) => tag.id === id);
       return new Set(root ? demoTags.filter((tag) => tag.id === id || tag.path.startsWith(`${root.path}|`)).map((tag) => tag.id) : []);
     });
+    const clusterSnapshot = query.personClusterFilter ? await getPersonClusters(directory) : null;
+    const clusterMembers = clusterSnapshot?.snapshotId === query.personClusterFilter?.snapshotId ? (query.personClusterFilter?.clusterId === "ungrouped" ? clusterSnapshot?.ungrouped : clusterSnapshot?.clusters.find(c => c.id === query.personClusterFilter?.clusterId)?.members) : undefined;
     const personReviews = query.personFilter ? await listPersonReviews(directory, query.personFilter.subjectId ?? "") : [];
     const filtered = [...demoAssets]
       .filter(asset => {
@@ -469,7 +523,9 @@ export async function listAssets(
       .filter((asset) => !tagGroups.length || (query.tagMatch === "any"
         ? tagGroups.some((group) => [...demoEffectiveTagIds(asset.path)].some((id) => group.has(id)))
         : tagGroups.every((group) => [...demoEffectiveTagIds(asset.path)].some((id) => group.has(id)))))
-      .filter((asset) => (!query.personFilter && !query.tagIds?.length && needle) || asset.path.slice(0, asset.path.lastIndexOf("/")) === directory)
+      .filter((asset) => !query.personTupleFilter || Boolean(demoGlobalWorkspaces.get(directory)?.groups.find(g=>g.id===query.personTupleFilter?.groupId)?.members.some(t=>t.assetPath===asset.path&&(!query.personTupleFilter?.decision||t.decision===query.personTupleFilter.decision))))
+      .filter((asset) => !query.personClusterFilter || Boolean(clusterMembers?.some(m => m.assetPath === asset.path && m.summaryRevision === `${asset.sizeBytes}:${asset.modifiedAtMs}`)))
+      .filter((asset) => (!query.personClusterFilter && !query.personFilter && !query.tagIds?.length && needle) || asset.path.slice(0, asset.path.lastIndexOf("/")) === directory)
       .filter((asset) => !query.kind || asset.kind === query.kind)
       .filter((asset) => !query.minimumRating || (asset.rating ?? 0) >= query.minimumRating)
       .filter((asset) => !query.colorLabels?.length ||
@@ -1155,8 +1211,10 @@ export async function generatedPreview(
   signal?: AbortSignal,
   priority: PreviewPriority = "visible",
   rank = 0,
+  crossFolder = false,
 ): Promise<PreviewResult | undefined> {
   if (!isTauri()) return undefined;
+  if (crossFolder) return requestGeneratedPreview(asset, level, signal, priority, rank, true);
   if (level === "thumbnail") {
     return sharedThumbnailRequests.request(asset, signal, priority, rank, (sharedSignal, sharedPriority, sharedRank) =>
       requestGeneratedPreview(asset, level, sharedSignal, sharedPriority, sharedRank));
@@ -1170,6 +1228,7 @@ async function requestGeneratedPreview(
   signal: AbortSignal | undefined,
   priority: PreviewPriority,
   rank: number,
+  crossFolder = false,
 ): Promise<PreviewResult | undefined> {
   // Do not register a debug WAIT entry for work React Query has already
   // cancelled. There is no lifecycle handle to clean up if we throw first.
@@ -1192,6 +1251,7 @@ async function requestGeneratedPreview(
     level,
     priority,
     rank,
+    crossFolder,
   }).then((projection) => {
     if (signal?.aborted && projection.result?.resource) {
       releaseUnretainedMediaResource(projection.result.resource.resourceId);
@@ -1505,4 +1565,17 @@ export async function relocateLibraryRoot(plan: RootRelocationPlan): Promise<Roo
   if (index < 0 || demoRoots.includes(plan.newRoot)) throw new Error("Folder list changed");
   demoRoots[index] = plan.newRoot;
   return { rootPath: plan.newRoot, linkedFiles: 2, needsReview: 2, missingFiles: 1, reusedArtifacts: 1, cacheFailures: 0 };
+}
+
+export async function getPersonClusters(folderPath: string): Promise<import("@/types").PersonClusterSnapshot | null> {
+  if (!isTauri()) return null;
+  return invoke("get_person_clusters", { folderPath });
+}
+export async function startPersonClustering(sessionId: string, folderPath: string): Promise<void> {
+  if (!isTauri()) throw new Error("请在桌面应用中聚类本地照片");
+  await invoke("start_person_clustering", { sessionId, folderPath, requestId: crypto.randomUUID() });
+}
+export async function adoptPersonCluster(folderPath: string, snapshotId: string, clusterId: string, subjectId?: string, displayName?: string): Promise<import("@/types").AdoptPersonClusterResult> {
+  if (!isTauri()) throw new Error("请在桌面应用中采用分组");
+  return invoke("adopt_person_cluster", { input: { folderPath, snapshotId, clusterId, subjectId, displayName, requestId: crypto.randomUUID() } });
 }

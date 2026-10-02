@@ -22,10 +22,13 @@
 //!   other's API. Nothing here names `oxy_tags`.
 
 pub mod alignment;
+pub mod clusters;
 pub mod detections;
 pub mod environment;
 pub mod execution;
 pub mod features;
+mod geometry;
+pub mod global_people;
 pub mod identity;
 pub mod inference;
 
@@ -74,6 +77,8 @@ impl People {
 /// may not publish.
 #[derive(Debug, Error)]
 pub enum PeopleError {
+    #[error("{0}")]
+    Cluster(String),
     #[error(transparent)]
     Store(#[from] oxy_store::StoreError),
     #[error(transparent)]

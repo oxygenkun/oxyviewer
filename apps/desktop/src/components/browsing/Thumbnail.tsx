@@ -37,6 +37,7 @@ import type {
 } from "@/types";
 
 interface ThumbnailProps {
+  crossFolder?: boolean;
   asset: AssetSummary;
   enabled?: boolean;
   large?: boolean;
@@ -45,6 +46,7 @@ interface ThumbnailProps {
   onContextMenu?: React.MouseEventHandler<HTMLDivElement>;
   onImageLoad?: (size: DisplayedPreviewSize) => void;
   onRawPreviewStatus?: (status: RawPreviewStatus) => void;
+  onPreviewError?: (error: string | undefined) => void;
 }
 
 interface DisplayedImage {
@@ -68,6 +70,7 @@ function generatedLevel(method: RenderMethod | undefined): RenderLevel | undefin
 }
 
 export function Thumbnail({
+  crossFolder = false,
   asset,
   enabled = true,
   large = false,
@@ -76,6 +79,7 @@ export function Thumbnail({
   onContextMenu,
   onImageLoad,
   onRawPreviewStatus,
+  onPreviewError,
 }: ThumbnailProps) {
   const [failed, setFailed] = useState(false);
   const [fullImageFailed, setFullImageFailed] = useState(false);
@@ -91,7 +95,9 @@ export function Thumbnail({
   const previewStep = plan[0];
   const fullStep = plan.find((step) => step.level === "full");
   const previewMethod = previewStep.method;
-  const fullMethod = fullStep?.method;
+  // History uses a fit-to-view HEIF preview; tile sessions belong to the Loupe.
+  const fullMethod: RenderMethod | undefined = crossFolder && fullStep?.method.type === "heifFull"
+    ? { type: "generatedImage", requestLevel: "preview" } : fullStep?.method;
   const previewLevel = generatedLevel(previewMethod);
   const fullLevel = generatedLevel(fullMethod);
   const previewMethodIdentity = renderMethodKey(previewMethod);
@@ -110,8 +116,10 @@ export function Thumbnail({
     [asset, previewMethod.type],
   );
   const requestPriority = large ? "loupe" : priority;
-  const previewLifetimeKey = JSON.stringify(assetRenderQueryKey(asset, previewMethod));
-  const fullLifetimeKey = fullMethod ? JSON.stringify(assetRenderQueryKey(asset, fullMethod)) : undefined;
+  const previewKey = [...assetRenderQueryKey(asset, previewMethod), ...(crossFolder ? ["people-history"] : [])];
+  const fullKey = fullMethod ? [...assetRenderQueryKey(asset, fullMethod), ...(crossFolder ? ["people-history"] : [])] : undefined;
+  const previewLifetimeKey = JSON.stringify(previewKey);
+  const fullLifetimeKey = fullKey ? JSON.stringify(fullKey) : undefined;
   useLayoutEffect(() => {
     if (!enabled || large || !previewLevel || folderThumbnail) return;
     return retainPreviewRequest(previewLifetimeKey);
@@ -121,7 +129,7 @@ export function Thumbnail({
     return retainPreviewRequest(fullLifetimeKey);
   }, [enabled, large, distinctFullLevel, fullLifetimeKey]);
   const previewQuery = useQuery({
-    queryKey: assetRenderQueryKey(asset, previewMethod),
+    queryKey: previewKey,
     queryFn: async ({ signal }) => {
       await generatedPreview(
         asset,
@@ -129,6 +137,7 @@ export function Thumbnail({
         previewRequestSignal(previewLifetimeKey, signal),
         requestPriority,
         rank,
+        crossFolder,
       );
       // The projection store owns image data; null records successful query
       // completion without React Query treating undefined as a failed request.
@@ -140,7 +149,7 @@ export function Thumbnail({
   });
   const fullQuery = useQuery({
     queryKey: fullMethod
-      ? assetRenderQueryKey(asset, fullMethod)
+      ? fullKey!
       : ["asset-render", asset.id, asset.modifiedAtMs, "no-full-image"],
     queryFn: async ({ signal }) => {
       await generatedPreview(
@@ -149,6 +158,7 @@ export function Thumbnail({
         previewRequestSignal(fullLifetimeKey!, signal),
         "loupe",
         rank,
+        crossFolder,
       );
       // The projection store owns image data; null records successful query
       // completion without React Query treating undefined as a failed request.
@@ -163,6 +173,10 @@ export function Thumbnail({
   });
   const refetchPreview = previewQuery.refetch;
   const refetchFull = fullQuery.refetch;
+  useEffect(() => {
+    const error = large ? fullQuery.error : previewQuery.error;
+    onPreviewError?.(error ? String(error) : failed || fullImageFailed ? "照片预览解码失败" : undefined);
+  }, [large, fullQuery.error, previewQuery.error, failed, fullImageFailed, onPreviewError]);
   const previewSource = previewProjection?.result;
   const fullSource = fullProjection?.result;
   const preparedSource = firstReadyBrowserImage([

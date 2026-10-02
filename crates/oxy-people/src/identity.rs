@@ -18,6 +18,7 @@
 //! tag side does. It reaches the tags through repository statements, so
 //! `oxy-people` and `oxy-tags` stay independent.
 
+use crate::geometry::valid_box;
 use crate::{People, PeopleError};
 use oxy_domain::{
     AssetSummary, ConfirmFolderPerson, CreatePersonInstance, FolderPerson, HistoricalPerson,
@@ -30,18 +31,6 @@ use std::{collections::HashMap, path::Path};
 
 fn path_text(path: &Path) -> String {
     path.to_string_lossy().into_owned()
-}
-
-fn valid_box(value: Option<[f64; 4]>) -> bool {
-    value.is_none_or(|[x, y, width, height]| {
-        [x, y, width, height].iter().all(|part| part.is_finite())
-            && x >= 0.0
-            && y >= 0.0
-            && width > 0.0
-            && height > 0.0
-            && x + width <= 1.0
-            && y + height <= 1.0
-    })
 }
 
 fn valid_source_identity(value: Option<&str>) -> bool {

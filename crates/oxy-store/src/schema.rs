@@ -197,8 +197,16 @@ mod tests {
                  INSERT INTO tag_xmp_sync_queue(asset_path) VALUES ('/photo.jpg');
                  INSERT INTO folder_people(id, folder_path, display_name, identity_confirmed)
                    VALUES ('person-1', '/folder', 'Ada', 1);
+                 INSERT INTO person_cluster_adoptions(folder_path,cluster_id,subject_id) VALUES ('/folder','cluster-1','person-1');
                  INSERT INTO person_manual_instances(id, folder_path, asset_path, source_revision)
                    VALUES ('instance-1', '/folder', '/photo.jpg', '1:1');
+                 INSERT INTO global_people(id,display_name) VALUES ('global-1','Ada');
+                 INSERT INTO global_person_migrations VALUES ('person-1','global-1');
+                 INSERT INTO global_person_reviews VALUES ('instance-1','global-1','belongs',1);
+                 INSERT INTO global_person_targets VALUES ('instance-1','global-1');
+                 INSERT INTO global_person_references VALUES ('global-1','instance-1');
+                 INSERT INTO global_person_events VALUES ('global-request','{}','{}');
+                 INSERT INTO global_person_tags VALUES ('global-1',1);
                  INSERT INTO person_review_decisions(instance_id, subject_id, decision)
                    VALUES ('instance-1', 'person-1', 'belongs');
                  INSERT INTO person_review_events(instance_id, subject_id, decision, revision, request_id)

@@ -192,6 +192,13 @@ struct WorkState {
 }
 
 impl WorkState {
+    fn accepts_directory(&self, path: &std::path::Path, cross_folder: bool) -> bool {
+        cross_folder
+            || self
+                .active_directory
+                .as_deref()
+                .is_none_or(|directory| path.parent() == Some(directory))
+    }
     fn select_full(&mut self, path: &std::path::Path) -> u64 {
         if let Some((current, epoch)) = &self.selection
             && current == path
@@ -430,6 +437,16 @@ impl PreviewQueue {
         request: PreviewRequest,
     ) -> Result<(ImageProjection, Receiver<Result<ImageProjection, String>>), String> {
         self.queue(request.level).request(app, request)
+    }
+
+    /// Explicit history browsing may span folders. It shares bounded workers,
+    /// source validation, generations, leases and per-consumer cancellation.
+    pub fn request_history(
+        &self,
+        app: &AppHandle,
+        request: PreviewRequest,
+    ) -> Result<(ImageProjection, Receiver<Result<ImageProjection, String>>), String> {
+        self.queue(request.level).request_scoped(app, request, true)
     }
 
     pub fn cached_heif_full_projection(
@@ -673,6 +690,15 @@ impl RenderQueue {
         app: &AppHandle,
         request: PreviewRequest,
     ) -> Result<(ImageProjection, Receiver<Result<ImageProjection, String>>), String> {
+        self.request_scoped(app, request, false)
+    }
+
+    fn request_scoped(
+        &self,
+        app: &AppHandle,
+        request: PreviewRequest,
+        cross_folder: bool,
+    ) -> Result<(ImageProjection, Receiver<Result<ImageProjection, String>>), String> {
         let request_id = request.request_id.clone();
         let selection = request.selection;
         let generation = self.request_generation.load(Ordering::Relaxed);
@@ -693,7 +719,7 @@ impl RenderQueue {
         // Serialize admission for one image only. Filesystem and SQLite work
         // must never hold the global queue lock used by workers and snapshots.
         let admission = gate.lock().expect("preview admission lock poisoned");
-        let result = self.request_inner(app, request, generation, source_revision);
+        let result = self.request_inner(app, request, generation, source_revision, cross_folder);
         drop(admission);
         let mut work = self.work.0.lock().expect("preview queue lock poisoned");
         work.admitting.remove(&request_id);
@@ -708,11 +734,7 @@ impl RenderQueue {
             if work.take_early_cancellation(&request_id) {
                 return Err("preview request was cancelled before reply".into());
             }
-            if work
-                .active_directory
-                .as_deref()
-                .is_some_and(|directory| identity.0.parent() != Some(directory))
-            {
+            if !work.accepts_directory(&identity.0, cross_folder) {
                 return Err("preview request left the active directory".into());
             }
         }
@@ -725,6 +747,7 @@ impl RenderQueue {
         request: PreviewRequest,
         generation: u64,
         source_revision: ProjectionSourceRevision,
+        cross_folder: bool,
     ) -> Result<(ImageProjection, Receiver<Result<ImageProjection, String>>), String> {
         let PreviewRequest {
             selection,
@@ -799,11 +822,7 @@ impl RenderQueue {
         if work.take_early_cancellation(&request_id) {
             return Err("preview request was cancelled before admission".into());
         }
-        if work
-            .active_directory
-            .as_deref()
-            .is_some_and(|directory| source_revision.path.parent() != Some(directory))
-        {
+        if !work.accepts_directory(&source_revision.path, cross_folder) {
             return Err("preview request left the active directory".into());
         }
         let requested_position = schedule_position(priority, rank);
@@ -916,11 +935,7 @@ impl RenderQueue {
                 Some("preview request was invalidated before admission".to_owned())
             } else if work.take_early_cancellation(&request_id) {
                 Some("preview request was cancelled before admission".to_owned())
-            } else if work
-                .active_directory
-                .as_deref()
-                .is_some_and(|directory| source_revision.path.parent() != Some(directory))
-            {
+            } else if !work.accepts_directory(&source_revision.path, cross_folder) {
                 Some("preview request left the active directory".to_owned())
             } else {
                 None
@@ -1933,6 +1948,31 @@ mod tests {
             ),
             request_generation: Arc::new(AtomicU64::new(0)),
         }
+    }
+
+    #[test]
+    fn explicit_history_scope_spans_directories_but_remains_cancellable() {
+        let directory = tempfile::tempdir().unwrap();
+        let queue = thumbnail_queue(directory.path());
+        let (key, request) =
+            thumbnail_work(directory.path(), "history.jpg", PreviewPriority::Visible);
+        let token = request.cancellation.clone();
+        {
+            let mut work = queue.work.0.lock().unwrap();
+            work.active_directory = Some(directory.path().join("current"));
+            assert!(!work.accepts_directory(&key.source_revision.path, false));
+            assert!(work.accepts_directory(&key.source_revision.path, true));
+            work.active
+                .insert(key.clone(), Arc::new(Mutex::new(request)));
+        }
+        assert!(queue.cancel_request(
+            PreviewIdentity {
+                path: key.source_revision.path,
+                level: RenderLevel::Thumbnail
+            },
+            "history.jpg"
+        ));
+        assert!(token.is_cancelled());
     }
 
     #[test]

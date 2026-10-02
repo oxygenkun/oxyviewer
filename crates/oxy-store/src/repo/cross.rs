@@ -26,6 +26,69 @@ pub mod relocation;
 /// The source kind a person identity writes when it tags an asset.
 const PERSON_SOURCE: &str = "person";
 
+/// Reconcile one global identity, retiring only its migrated legacy sources.
+/// Manual and sidecar tag sources remain independently owned.
+pub fn reconcile_global_person_sources(
+    connection: &Connection,
+    person: &str,
+) -> Result<(), StoreError> {
+    use rusqlite::{OptionalExtension, params};
+    let source = format!("global:{person}");
+    let legacy = {
+        let mut s = connection
+            .prepare("SELECT subject_id FROM global_person_migrations WHERE person_id=?1")?;
+        s.query_map([person], |r| r.get::<_, String>("subject_id"))?
+            .collect::<Result<Vec<_>, _>>()?
+    };
+    let paths = {
+        let mut s=connection.prepare("SELECT DISTINCT i.asset_path FROM global_person_reviews r JOIN person_manual_instances i ON i.id=r.instance_id WHERE r.person_id=?1 UNION SELECT asset_path FROM asset_tag_sources WHERE source_kind='person' AND (source_id=?2 OR source_id IN(SELECT subject_id FROM global_person_migrations WHERE person_id=?1))")?;
+        s.query_map(params![person, source], |r| {
+            r.get::<_, String>("asset_path")
+        })?
+        .collect::<Result<Vec<_>, _>>()?
+    };
+    for path in paths {
+        let desired:Option<i64>=connection.query_row("SELECT tag_id FROM global_person_tags t WHERE person_id=?1 AND tag_id IS NOT NULL AND EXISTS(SELECT 1 FROM global_person_reviews r JOIN person_manual_instances i ON i.id=r.instance_id WHERE r.person_id=?1 AND r.decision='belongs' AND i.asset_path=?2 AND i.needs_review=0) AND NOT EXISTS(SELECT 1 FROM person_tag_overrides o WHERE o.historical_person_id=?1 AND o.asset_path=?2 AND o.suppressed=1)",params![person,path],|r|r.get("tag_id")).optional()?;
+        let mut affected =
+            repo::tags::source_tag_ids_of(connection, &path, PERSON_SOURCE, &source)?;
+        for old in &legacy {
+            affected.extend(repo::tags::source_tag_ids_of(
+                connection,
+                &path,
+                PERSON_SOURCE,
+                old,
+            )?);
+        }
+        if let Some(tag) = desired {
+            affected.insert(tag);
+        }
+        let before = affected
+            .iter()
+            .map(|tag| {
+                repo::tags::effective_assignment_present(connection, &path, *tag)
+                    .map(|value| (*tag, value))
+            })
+            .collect::<Result<HashMap<_, _>, _>>()?;
+        repo::tags::delete_sources_of(connection, &path, PERSON_SOURCE, &source)?;
+        for old in &legacy {
+            repo::tags::delete_sources_of(connection, &path, PERSON_SOURCE, old)?;
+        }
+        if let Some(tag) = desired {
+            repo::tags::insert_source(connection, &path, tag, PERSON_SOURCE, &source)?;
+        }
+        let mut changed = false;
+        for tag in affected {
+            repo::tags::reconcile_effective(connection, &path, tag)?;
+            changed |= before.get(&tag).copied().unwrap_or(false)
+                != repo::tags::effective_assignment_present(connection, &path, tag)?;
+        }
+        if changed {
+            repo::tags::enqueue_sync(connection, &[path])?;
+        }
+    }
+    Ok(())
+}
+
 /// Carries every row that names an asset to a new path, after the file moved.
 ///
 /// A move inside one folder is still the same photo: the person facts and the

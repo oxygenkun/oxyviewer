@@ -29,7 +29,9 @@
 //!   hold.
 
 pub mod cross;
+pub mod global_people;
 pub mod library;
 pub mod people;
 pub mod person_cache;
+pub mod person_clusters;
 pub mod tags;
