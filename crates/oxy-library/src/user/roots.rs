@@ -59,7 +59,11 @@ impl Library {
 
         let transaction = connection.transaction()?;
         for (sort_order, path) in paths.iter().enumerate() {
-            repo::library::set_sort_order(&transaction, &path.to_string_lossy(), sort_order as i64)?;
+            repo::library::set_sort_order(
+                &transaction,
+                &path.to_string_lossy(),
+                sort_order as i64,
+            )?;
         }
         transaction.commit()?;
         Ok(())

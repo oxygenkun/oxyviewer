@@ -97,9 +97,11 @@ pub fn effective_source_present(
 /// Whether the vocabulary still contains this tag.
 pub fn tag_exists(connection: &Connection, tag_id: CustomTagId) -> Result<bool, StoreError> {
     Ok(connection
-        .query_row("SELECT 1 FROM custom_tags WHERE id = ?1", params![tag_id], |_| {
-            Ok(true)
-        })
+        .query_row(
+            "SELECT 1 FROM custom_tags WHERE id = ?1",
+            params![tag_id],
+            |_| Ok(true),
+        )
         .optional()?
         .unwrap_or(false))
 }
@@ -424,15 +426,12 @@ pub fn assigned_tag_ids(
         let mut statement = connection.prepare(&format!(
             "SELECT asset_path, tag_id FROM asset_tags WHERE asset_path IN ({placeholders})"
         ))?;
-        let found = statement.query_map(
-            rusqlite::params_from_iter(chunk.iter()),
-            |row| {
-                Ok((
-                    row.get::<_, String>("asset_path")?,
-                    row.get::<_, CustomTagId>("tag_id")?,
-                ))
-            },
-        )?;
+        let found = statement.query_map(rusqlite::params_from_iter(chunk.iter()), |row| {
+            Ok((
+                row.get::<_, String>("asset_path")?,
+                row.get::<_, CustomTagId>("tag_id")?,
+            ))
+        })?;
         for row in found {
             rows.push(row?);
         }
@@ -474,9 +473,8 @@ pub fn assets_matching_tags(
 
 /// Assets the XMP mirror still owes a write to, oldest request first.
 pub fn pending_sync_paths(connection: &Connection) -> Result<Vec<String>, StoreError> {
-    let mut statement = connection.prepare(
-        "SELECT asset_path FROM tag_xmp_sync_queue ORDER BY requested_at, asset_path",
-    )?;
+    let mut statement = connection
+        .prepare("SELECT asset_path FROM tag_xmp_sync_queue ORDER BY requested_at, asset_path")?;
     Ok(statement
         .query_map([], |row| row.get::<_, String>("asset_path"))?
         .collect::<Result<Vec<_>, _>>()?)
@@ -598,9 +596,7 @@ pub fn record_sync_failure(
 }
 
 /// How many mirror writes are pending, how many failed, and the newest failure.
-pub fn sync_status(
-    connection: &Connection,
-) -> Result<(usize, usize, Option<String>), StoreError> {
+pub fn sync_status(connection: &Connection) -> Result<(usize, usize, Option<String>), StoreError> {
     let (pending_count, failed_count) = connection.query_row(
         "SELECT COUNT(*) AS pending_count, COUNT(last_error) AS failed_count FROM tag_xmp_sync_queue",
         [],
@@ -705,7 +701,10 @@ pub fn forget_asset_rows(connection: &Connection, asset_path: &str) -> Result<()
         "DELETE FROM asset_tag_sources WHERE asset_path=?1",
         params![asset_path],
     )?;
-    connection.execute("DELETE FROM asset_tags WHERE asset_path=?1", params![asset_path])?;
+    connection.execute(
+        "DELETE FROM asset_tags WHERE asset_path=?1",
+        params![asset_path],
+    )?;
     connection.execute(
         "DELETE FROM asset_tag_xmp_state WHERE asset_path=?1",
         params![asset_path],

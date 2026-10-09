@@ -225,7 +225,10 @@ pub(crate) fn set_asset_custom_tag(
 
 #[tauri::command]
 pub(crate) fn get_tag_sync_status(state: State<'_, AppState>) -> Result<TagSyncStatus, String> {
-    state.tags.tag_sync_status().map_err(|error| error.to_string())
+    state
+        .tags
+        .tag_sync_status()
+        .map_err(|error| error.to_string())
 }
 
 #[tauri::command]

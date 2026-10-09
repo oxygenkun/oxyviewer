@@ -216,15 +216,25 @@ mod tests {
         let names = names(DEFS).collect::<Vec<_>>();
         assert_eq!(
             names,
-            ["parent_table", "child_table", "made_elsewhere", "user_table"]
+            [
+                "parent_table",
+                "child_table",
+                "made_elsewhere",
+                "user_table"
+            ]
         );
-        assert_eq!(preserved(DEFS).collect::<Vec<_>>(), ["parent_table", "user_table"]);
+        assert_eq!(
+            preserved(DEFS).collect::<Vec<_>>(),
+            ["parent_table", "user_table"]
+        );
         assert_eq!(class_of("made_elsewhere"), Some(DataClass::Rebuildable));
         assert_eq!(class_of("user_table"), Some(DataClass::UserOwned));
     }
 
     fn class_of(name: &str) -> Option<DataClass> {
-        DEFS.iter().find(|def| def.name == name).map(|def| def.class)
+        DEFS.iter()
+            .find(|def| def.name == name)
+            .map(|def| def.class)
     }
 
     #[test]

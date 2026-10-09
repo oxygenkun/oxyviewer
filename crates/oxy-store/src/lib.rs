@@ -112,9 +112,8 @@ impl Store {
         };
         let reader = open_reader()?;
         let projection_reader = open_reader()?;
-        let vector_status = vector_registration.and_then(|()| {
-            vector::probe(&connection, Some(&reader), Some(&projection_reader))
-        });
+        let vector_status = vector_registration
+            .and_then(|()| vector::probe(&connection, Some(&reader), Some(&projection_reader)));
         Ok(Self {
             connection: Arc::new(Mutex::new(connection)),
             reader: Some(reader),

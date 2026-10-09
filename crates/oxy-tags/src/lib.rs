@@ -26,8 +26,8 @@
 mod audit;
 
 use oxy_domain::{
-    AssetQuery, AssetSummary, AssetTagAssignment, AssetTagAssignmentsByPath, CustomTag, CustomTagId,
-    TagDeleteImpact, TagMatchMode, TagSyncStatus,
+    AssetQuery, AssetSummary, AssetTagAssignment, AssetTagAssignmentsByPath, CustomTag,
+    CustomTagId, TagDeleteImpact, TagMatchMode, TagSyncStatus,
 };
 use oxy_store::{Store, StoreError, repo};
 use std::{
@@ -143,8 +143,8 @@ impl Tags {
         let (name, name_key) = normalize_name(name)?;
         let mut connection = self.store.write();
         let transaction = connection.transaction().map_err(StoreError::from)?;
-        let (current_parent_id, current_sort_order) = repo::tags::tag_position(&transaction, id)?
-            .ok_or(TagError::MissingTagParent)?;
+        let (current_parent_id, current_sort_order) =
+            repo::tags::tag_position(&transaction, id)?.ok_or(TagError::MissingTagParent)?;
         if let Some(parent_id) = parent_id {
             if !repo::tags::tag_exists(&transaction, parent_id)? {
                 return Err(TagError::MissingTagParent);
@@ -217,7 +217,9 @@ impl Tags {
     ) -> Result<Vec<AssetTagAssignmentsByPath>, TagError> {
         let tags = self.custom_tags()?;
         let mut assigned = HashMap::<String, std::collections::HashSet<CustomTagId>>::new();
-        for (path, tag_id) in repo::tags::assigned_tag_ids(&self.store.read(), &selection_paths(paths))? {
+        for (path, tag_id) in
+            repo::tags::assigned_tag_ids(&self.store.read(), &selection_paths(paths))?
+        {
             assigned.entry(path).or_default().insert(tag_id);
         }
         Ok(paths
@@ -329,7 +331,8 @@ impl Tags {
     }
 
     pub fn tag_sync_status(&self) -> Result<TagSyncStatus, TagError> {
-        let (pending_count, failed_count, last_error) = repo::tags::sync_status(&self.store.read())?;
+        let (pending_count, failed_count, last_error) =
+            repo::tags::sync_status(&self.store.read())?;
         Ok(TagSyncStatus {
             pending_count,
             failed_count,
@@ -520,7 +523,8 @@ mod tests {
         ];
         tags.set_asset_tag(&paths[..1], child.id, true).unwrap();
         tags.set_asset_tag(&paths, other.id, true).unwrap();
-        tags.set_asset_tag(&paths[1..2], same_name.id, true).unwrap();
+        tags.set_asset_tag(&paths[1..2], same_name.id, true)
+            .unwrap();
         let assets = paths[..2]
             .iter()
             .enumerate()
@@ -543,9 +547,15 @@ mod tests {
             ..Default::default()
         };
         assert!(!query.needs_metadata_enrichment());
-        assert_eq!(tags.filter_assets_by_tags(&assets, &query).unwrap().len(), 1);
+        assert_eq!(
+            tags.filter_assets_by_tags(&assets, &query).unwrap().len(),
+            1
+        );
         query.tag_ids.push(other.id);
-        assert_eq!(tags.filter_assets_by_tags(&assets, &query).unwrap().len(), 1);
+        assert_eq!(
+            tags.filter_assets_by_tags(&assets, &query).unwrap().len(),
+            1
+        );
         query.tag_match = TagMatchMode::Any;
         query.minimum_rating = Some(4);
         query.color_labels = vec!["Red".into()];
@@ -559,12 +569,23 @@ mod tests {
         query.tag_ids = vec![child.id];
         tags.update_custom_tag(child.id, Some(other.id), "Renamed")
             .unwrap();
-        assert_eq!(tags.filter_assets_by_tags(&assets, &query).unwrap().len(), 1);
+        assert_eq!(
+            tags.filter_assets_by_tags(&assets, &query).unwrap().len(),
+            1
+        );
         query.tag_ids = vec![parent.id];
-        assert!(tags.filter_assets_by_tags(&assets, &query).unwrap().is_empty());
+        assert!(
+            tags.filter_assets_by_tags(&assets, &query)
+                .unwrap()
+                .is_empty()
+        );
         query.tag_ids = vec![child.id];
         tags.delete_custom_tag(child.id).unwrap();
-        assert!(tags.filter_assets_by_tags(&assets, &query).unwrap().is_empty());
+        assert!(
+            tags.filter_assets_by_tags(&assets, &query)
+                .unwrap()
+                .is_empty()
+        );
     }
 
     #[test]
@@ -586,7 +607,9 @@ mod tests {
         let asset = PathBuf::from("/photos/a.jpg");
         tags.set_asset_tag(std::slice::from_ref(&asset), family.id, true)
             .unwrap();
-        let assignment = tags.asset_tag_assignments(std::slice::from_ref(&asset)).unwrap();
+        let assignment = tags
+            .asset_tag_assignments(std::slice::from_ref(&asset))
+            .unwrap();
         assert_eq!(
             assignment
                 .iter()
@@ -750,7 +773,9 @@ mod tests {
         assert!(tags.pending_tag_sync_paths().unwrap().is_empty());
 
         tags.import_sidecar_tags(&asset, &[], &[]).unwrap();
-        let assignments = tags.asset_tag_assignments(std::slice::from_ref(&asset)).unwrap();
+        let assignments = tags
+            .asset_tag_assignments(std::slice::from_ref(&asset))
+            .unwrap();
         assert_eq!(
             assignments
                 .iter()
@@ -760,8 +785,8 @@ mod tests {
             1
         );
         assert_eq!(tags.pending_tag_sync_paths().unwrap(), vec![asset.clone()]);
-        let sources = repo::tags::source_kinds(&store.read(), &asset.to_string_lossy(), tag.id)
-            .unwrap();
+        let sources =
+            repo::tags::source_kinds(&store.read(), &asset.to_string_lossy(), tag.id).unwrap();
         assert_eq!(sources, ["manual"]);
     }
 
@@ -863,7 +888,9 @@ mod tests {
             ["person"]
         );
         assert_eq!(
-            tags.asset_tag_assignments(std::slice::from_ref(&image)).unwrap()[0].assigned_count,
+            tags.asset_tag_assignments(std::slice::from_ref(&image))
+                .unwrap()[0]
+                .assigned_count,
             1
         );
         people
@@ -877,7 +904,9 @@ mod tests {
             })
             .unwrap();
         assert_eq!(
-            tags.asset_tag_assignments(std::slice::from_ref(&image)).unwrap()[0].assigned_count,
+            tags.asset_tag_assignments(std::slice::from_ref(&image))
+                .unwrap()[0]
+                .assigned_count,
             1
         );
         let override_input = oxy_domain::SetPersonTagOverride {
@@ -894,7 +923,9 @@ mod tests {
             people.set_person_tag_override(&override_input).unwrap()
         );
         assert_eq!(
-            tags.asset_tag_assignments(std::slice::from_ref(&image)).unwrap()[0].assigned_count,
+            tags.asset_tag_assignments(std::slice::from_ref(&image))
+                .unwrap()[0]
+                .assigned_count,
             0
         );
         people
@@ -906,7 +937,9 @@ mod tests {
             })
             .unwrap();
         assert_eq!(
-            tags.asset_tag_assignments(std::slice::from_ref(&image)).unwrap()[0].assigned_count,
+            tags.asset_tag_assignments(std::slice::from_ref(&image))
+                .unwrap()[0]
+                .assigned_count,
             1
         );
         tags.set_asset_tag(std::slice::from_ref(&image), tag.id, true)
@@ -926,13 +959,17 @@ mod tests {
             })
             .unwrap();
         assert_eq!(
-            tags.asset_tag_assignments(std::slice::from_ref(&image)).unwrap()[0].assigned_count,
+            tags.asset_tag_assignments(std::slice::from_ref(&image))
+                .unwrap()[0]
+                .assigned_count,
             1
         );
         tags.set_asset_tag(std::slice::from_ref(&image), tag.id, false)
             .unwrap();
         assert_eq!(
-            tags.asset_tag_assignments(std::slice::from_ref(&image)).unwrap()[0].assigned_count,
+            tags.asset_tag_assignments(std::slice::from_ref(&image))
+                .unwrap()[0]
+                .assigned_count,
             0
         );
         tags.delete_custom_tag(tag.id).unwrap();
@@ -949,7 +986,9 @@ mod tests {
     /// asset: the person claim is dropped and the instance has to be reviewed.
     #[test]
     fn same_folder_rename_moves_person_facts_with_tag_sources() {
-        use oxy_domain::{CreatePersonInstance, PersonReviewDecision, SetPersonReview, SetPersonTagLink};
+        use oxy_domain::{
+            CreatePersonInstance, PersonReviewDecision, SetPersonReview, SetPersonTagLink,
+        };
         use oxy_people::People;
 
         let (tags, store) = in_memory_with_store();
@@ -1009,10 +1048,7 @@ mod tests {
                 .is_empty()
         );
         assert_eq!(
-            people
-                .list_person_instances(&folder, &destination)
-                .unwrap()[0]
-                .id,
+            people.list_person_instances(&folder, &destination).unwrap()[0].id,
             instance.id
         );
         assert_eq!(
@@ -1035,12 +1071,6 @@ mod tests {
                 .unwrap()
                 .is_empty()
         );
-        assert!(
-            people
-                .list_person_instances(&folder, &destination)
-                .unwrap()[0]
-                .needs_review
-        );
+        assert!(people.list_person_instances(&folder, &destination).unwrap()[0].needs_review);
     }
 }
-

@@ -48,7 +48,9 @@ fn no_module_writes_tables_owned_by_the_other_namespace() {
 /// check stops at the test module.
 #[test]
 fn the_user_namespace_carries_no_sql_of_its_own() {
-    let directory = Path::new(env!("CARGO_MANIFEST_DIR")).join("src").join("user");
+    let directory = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("src")
+        .join("user");
     let mut offenders = Vec::new();
     for entry in std::fs::read_dir(&directory).expect("namespace directory must be readable") {
         let path = entry.expect("directory entry").path();
@@ -73,10 +75,7 @@ fn the_user_namespace_carries_no_sql_of_its_own() {
 
 /// Collects `file:line: table` for every SQL literal in `directory` that
 /// writes to a table it does not own.
-fn namespace_offenders(
-    directory: &Path,
-    owned: impl Iterator<Item = &'static str>,
-) -> Vec<String> {
+fn namespace_offenders(directory: &Path, owned: impl Iterator<Item = &'static str>) -> Vec<String> {
     let owned: Vec<&str> = owned.collect();
     let foreign: Vec<&str> = tables()
         .filter(|(name, _)| !owned.contains(name))
