@@ -303,7 +303,6 @@ pub(crate) fn decode_frame(
     request: crate::request::MediaRequest,
     cancellation: &CancellationToken,
 ) -> Result<PreviewDecode, MediaError> {
-    let max_size = request.max_size;
     let plan = probe_backend_plan(path, HeifOperation::Preview);
     let result = execute_backend_plan(
         &plan,
@@ -312,11 +311,13 @@ pub(crate) fn decode_frame(
             (match backend {
                 PlannedHeifBackend::CachedArtifact => Err(MediaError::NativeDecoderUnavailable),
                 #[cfg(target_os = "macos")]
-                PlannedHeifBackend::Platform(_) => apple_image_io::decode_rgba8(path, max_size)
-                    .and_then(|image| platform_preview(path, image)),
+                PlannedHeifBackend::Platform(_) => {
+                    apple_image_io::decode_rgba8(path, request.max_size)
+                        .and_then(|image| platform_preview(path, image))
+                }
                 #[cfg(target_os = "windows")]
                 PlannedHeifBackend::Platform(_) => windows_wic::decode_full_rgba8(path)
-                    .map(|image| image.thumbnail(max_size, max_size))
+                    .map(|image| image.thumbnail(request.max_size, request.max_size))
                     .and_then(|image| {
                         let source = oxy_domain::DisplayDimensions(libheif::dimensions(path)?);
                         let facts = crate::media_source::decoded_facts(
