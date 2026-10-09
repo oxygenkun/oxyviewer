@@ -25,7 +25,7 @@ pub(crate) fn display_sharpening(path: &Path, requested: bool) -> bool {
         let mut header = [0; 8];
         file.read_exact(&mut header)?;
         let size = u32::from_be_bytes(header[..4].try_into().unwrap()) as usize;
-        if &header[4..] != b"ftyp" || !(16..=4096).contains(&size) || size % 4 != 0 {
+        if &header[4..] != b"ftyp" || !(16..=4096).contains(&size) || !size.is_multiple_of(4) {
             return Ok(false);
         }
         let mut brands = vec![0; size - 8];

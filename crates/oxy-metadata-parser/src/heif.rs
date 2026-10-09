@@ -369,10 +369,10 @@ pub fn parse_heif<'a>(data: &'a [u8]) -> Result<HeifInfo<'a>> {
                                 // auxC: auxiliary type information
                                 b"auxC" if prop.data.len() > 4 => {
                                     // version(1) + flags(3) + null-terminated URN string
-                                    if let Some(end) = prop.data[4..].iter().position(|&b| b == 0) {
-                                        if let Ok(s) = std::str::from_utf8(&prop.data[4..4 + end]) {
-                                            aux_type = Some(s.to_string());
-                                        }
+                                    if let Some(end) = prop.data[4..].iter().position(|&b| b == 0)
+                                        && let Ok(s) = std::str::from_utf8(&prop.data[4..4 + end])
+                                    {
+                                        aux_type = Some(s.to_string());
                                     }
                                 }
                                 _ => {}

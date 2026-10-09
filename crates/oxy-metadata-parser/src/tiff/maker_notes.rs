@@ -859,23 +859,25 @@ fn decode_maker_tags_impl<'a>(
     }
 
     // JVC text-format maker notes: "VER:0100QTY:FINE"
-    if mn.vendor == Vendor::Jvc && mn.ifd.is_none() && !mn_data.is_empty() {
-        if let Ok(text) = std::str::from_utf8(mn_data) {
-            if text.starts_with("VER:") {
-                decode_jvc_text(text, &mut tags);
-                return tags;
-            }
-        }
+    if mn.vendor == Vendor::Jvc
+        && mn.ifd.is_none()
+        && !mn_data.is_empty()
+        && let Ok(text) = std::str::from_utf8(mn_data)
+        && text.starts_with("VER:")
+    {
+        decode_jvc_text(text, &mut tags);
+        return tags;
     }
 
     // Ricoh text-format maker notes (e.g. RDC5300): "Rv0207;Rg76;Bg60;Gg42;..."
-    if mn.vendor == Vendor::Ricoh && mn.ifd.is_none() && !mn_data.is_empty() {
-        if let Ok(text) = std::str::from_utf8(mn_data) {
-            if text.starts_with("Rv") || text.starts_with("Rev") {
-                decode_ricoh_text(text, &mut tags);
-                return tags;
-            }
-        }
+    if mn.vendor == Vendor::Ricoh
+        && mn.ifd.is_none()
+        && !mn_data.is_empty()
+        && let Ok(text) = std::str::from_utf8(mn_data)
+        && (text.starts_with("Rv") || text.starts_with("Rev"))
+    {
+        decode_ricoh_text(text, &mut tags);
+        return tags;
     }
 
     let Some(ifd) = mn.ifd.as_ref() else {
@@ -1426,10 +1428,10 @@ fn decode_maker_tags_impl<'a>(
             match entry.tag {
                 0x001D => {
                     // SerialNumber - extract numeric value
-                    if let Some(s) = entry_string(entry) {
-                        if let Ok(v) = s.parse::<u32>() {
-                            serial = v;
-                        }
+                    if let Some(s) = entry_string(entry)
+                        && let Ok(v) = s.parse::<u32>()
+                    {
+                        serial = v;
                     }
                 }
                 0x00A7 => {
@@ -1546,17 +1548,17 @@ fn decode_maker_tags_impl<'a>(
 
             if name == "ShutterCount" {
                 // Decrypt: val ^ date_u32 ^ (0xFFFFFFFF - time_u32)
-                if let (Some(date), Some(time)) = (pentax_date, pentax_time) {
-                    if let Some(raw) = entry_u32(entry, be) {
-                        let date_u32 = u32::from_be_bytes(date);
-                        let time_u32 = u32::from_be_bytes([time[0], time[1], time[2], 0]);
-                        let decrypted = raw ^ date_u32 ^ (0xFFFFFFFF - time_u32);
-                        tags.push(DecodedTag {
-                            name: "ShutterCount".to_string(),
-                            value: format!("{decrypted}"),
-                        });
-                        continue;
-                    }
+                if let (Some(date), Some(time)) = (pentax_date, pentax_time)
+                    && let Some(raw) = entry_u32(entry, be)
+                {
+                    let date_u32 = u32::from_be_bytes(date);
+                    let time_u32 = u32::from_be_bytes([time[0], time[1], time[2], 0]);
+                    let decrypted = raw ^ date_u32 ^ (0xFFFFFFFF - time_u32);
+                    tags.push(DecodedTag {
+                        name: "ShutterCount".to_string(),
+                        value: format!("{decrypted}"),
+                    });
+                    continue;
                 }
             }
 
@@ -1616,10 +1618,10 @@ fn decode_maker_tags_impl<'a>(
                 if tag.value.starts_with('!') {
                     // Already file-relative - remove the marker
                     tag.value = tag.value[1..].to_string();
-                } else if let Ok(v) = tag.value.parse::<u64>() {
-                    if v > 0 {
-                        tag.value = format!("{}", v.wrapping_add(tiff_base as u64));
-                    }
+                } else if let Ok(v) = tag.value.parse::<u64>()
+                    && v > 0
+                {
+                    tag.value = format!("{}", v.wrapping_add(tiff_base as u64));
                 }
             }
         }
@@ -2007,14 +2009,14 @@ fn format_nikon_value(entry: &IfdEntry<'_>, name: &str, be: bool) -> String {
             if entry.data.len() >= 4 {
                 let bytes = &entry.data[..4];
                 // ASCII format: "0210" -> "2.10"
-                if bytes.iter().all(u8::is_ascii_digit) {
-                    if let Ok(s) = std::str::from_utf8(bytes) {
-                        let s = s.trim_start_matches('0');
-                        if s.len() >= 2 {
-                            return format!("{}.{}", &s[..s.len() - 2], &s[s.len() - 2..]);
-                        } else if !s.is_empty() {
-                            return format!("{s}.00");
-                        }
+                if bytes.iter().all(u8::is_ascii_digit)
+                    && let Ok(s) = std::str::from_utf8(bytes)
+                {
+                    let s = s.trim_start_matches('0');
+                    if s.len() >= 2 {
+                        return format!("{}.{}", &s[..s.len() - 2], &s[s.len() - 2..]);
+                    } else if !s.is_empty() {
+                        return format!("{s}.00");
                     }
                 }
                 // Binary format: [0, 2, 0, 0] -> "2.00"
@@ -3289,7 +3291,7 @@ fn format_panasonic_value(entry: &IfdEntry<'_>, name: &str, be: bool) -> String 
 
 /// Format a sequence of SRATIONAL values as space-separated decimals.
 fn format_rational_decimals(data: &[u8], be: bool) -> Option<String> {
-    if data.len() < 8 || data.len() % 8 != 0 {
+    if data.len() < 8 || !data.len().is_multiple_of(8) {
         return None;
     }
     let count = data.len() / 8;
@@ -4455,14 +4457,14 @@ fn extract_olympus_model(
             tiff::parse_ifd_tolerant(equip_entry.data, 0, sub_be, false)
         }
     };
-    if let Some(sub) = sub_ifd {
-        if let Some(ct2) = sub.entries.iter().find(|e| e.tag == 0x0100) {
-            let code = std::str::from_utf8(ct2.data)
-                .unwrap_or("")
-                .trim_end_matches('\0')
-                .trim();
-            return olympus_camera_type(code).unwrap_or_else(|| code.to_string());
-        }
+    if let Some(sub) = sub_ifd
+        && let Some(ct2) = sub.entries.iter().find(|e| e.tag == 0x0100)
+    {
+        let code = std::str::from_utf8(ct2.data)
+            .unwrap_or("")
+            .trim_end_matches('\0')
+            .trim();
+        return olympus_camera_type(code).unwrap_or_else(|| code.to_string());
     }
     String::new()
 }
@@ -6121,7 +6123,7 @@ fn gcd_i32(mut a: u32, mut b: u32) -> u32 {
 
 /// Format unsigned RATIONAL values as space-separated decimals.
 fn format_urational_decimals(data: &[u8], be: bool) -> Option<String> {
-    if data.len() < 8 || data.len() % 8 != 0 {
+    if data.len() < 8 || !data.len().is_multiple_of(8) {
         return None;
     }
     let count = data.len() / 8;
@@ -6579,98 +6581,98 @@ fn decode_canon_camera_info(
     }
 
     // Extract CameraTemperature (int8u - 128)
-    if let Some(off) = temp_offset {
-        if let Some(&raw) = data.get(off) {
-            let temp = raw as i32 - 128;
-            tags.push(DecodedTag {
-                name: "CameraTemperature".to_string(),
-                value: format!("{temp} C"),
-            });
-        }
+    if let Some(off) = temp_offset
+        && let Some(&raw) = data.get(off)
+    {
+        let temp = raw as i32 - 128;
+        tags.push(DecodedTag {
+            name: "CameraTemperature".to_string(),
+            value: format!("{temp} C"),
+        });
     }
 
     // Extract FirmwareVersion (string[6])
-    if let Some(off) = fw_offset {
-        if data.len() > off + 6 {
-            let fw_bytes = &data[off..off + 6];
-            let fw = std::str::from_utf8(fw_bytes)
-                .unwrap_or("")
-                .trim_end_matches('\0');
-            if !fw.is_empty() && fw.chars().next().is_some_and(|c| c.is_ascii_digit()) {
-                tags.push(DecodedTag {
-                    name: "FirmwareVersion".to_string(),
-                    value: fw.to_string(),
-                });
-            }
+    if let Some(off) = fw_offset
+        && data.len() > off + 6
+    {
+        let fw_bytes = &data[off..off + 6];
+        let fw = std::str::from_utf8(fw_bytes)
+            .unwrap_or("")
+            .trim_end_matches('\0');
+        if !fw.is_empty() && fw.chars().next().is_some_and(|c| c.is_ascii_digit()) {
+            tags.push(DecodedTag {
+                name: "FirmwareVersion".to_string(),
+                value: fw.to_string(),
+            });
         }
     }
 
     // Extract LensType (int16u big-endian at offset)
-    if let Some(off) = lens_type_offset {
-        if data.len() > off + 1 {
-            // int16uRev = big-endian regardless of file byte order
-            let lens_id = u16::from_be_bytes([data[off], data[off + 1]]);
-            if lens_id > 0 {
-                if let Some(name) = canon_lens_name(lens_id) {
-                    tags.push(DecodedTag {
-                        name: "LensType".to_string(),
-                        value: name.to_string(),
-                    });
-                }
-            }
+    if let Some(off) = lens_type_offset
+        && data.len() > off + 1
+    {
+        // int16uRev = big-endian regardless of file byte order
+        let lens_id = u16::from_be_bytes([data[off], data[off + 1]]);
+        if lens_id > 0
+            && let Some(name) = canon_lens_name(lens_id)
+        {
+            tags.push(DecodedTag {
+                name: "LensType".to_string(),
+                value: name.to_string(),
+            });
         }
     }
 
     // Extract FileIndex (int32u, displayed as raw + 1)
-    if let Some(off) = file_index_offset {
-        if off + 4 <= data.len() {
-            let raw = if be {
-                u32::from_be_bytes([data[off], data[off + 1], data[off + 2], data[off + 3]])
-            } else {
-                u32::from_le_bytes([data[off], data[off + 1], data[off + 2], data[off + 3]])
-            };
-            tags.push(DecodedTag {
-                name: "FileIndex".into(),
-                value: format!("{}", raw + 1),
-            });
-        }
+    if let Some(off) = file_index_offset
+        && off + 4 <= data.len()
+    {
+        let raw = if be {
+            u32::from_be_bytes([data[off], data[off + 1], data[off + 2], data[off + 3]])
+        } else {
+            u32::from_le_bytes([data[off], data[off + 1], data[off + 2], data[off + 3]])
+        };
+        tags.push(DecodedTag {
+            name: "FileIndex".into(),
+            value: format!("{}", raw + 1),
+        });
     }
 
     // Extract DirectoryIndex (int32u, displayed as raw - 1)
-    if let Some(off) = dir_index_offset {
-        if off + 4 <= data.len() {
-            let raw = if be {
-                u32::from_be_bytes([data[off], data[off + 1], data[off + 2], data[off + 3]])
-            } else {
-                u32::from_le_bytes([data[off], data[off + 1], data[off + 2], data[off + 3]])
-            };
-            if raw > 0 {
-                tags.push(DecodedTag {
-                    name: "DirectoryIndex".into(),
-                    value: format!("{}", raw - 1),
-                });
-            } else {
-                tags.push(DecodedTag {
-                    name: "DirectoryIndex".into(),
-                    value: "0".into(),
-                });
-            }
+    if let Some(off) = dir_index_offset
+        && off + 4 <= data.len()
+    {
+        let raw = if be {
+            u32::from_be_bytes([data[off], data[off + 1], data[off + 2], data[off + 3]])
+        } else {
+            u32::from_le_bytes([data[off], data[off + 1], data[off + 2], data[off + 3]])
+        };
+        if raw > 0 {
+            tags.push(DecodedTag {
+                name: "DirectoryIndex".into(),
+                value: format!("{}", raw - 1),
+            });
+        } else {
+            tags.push(DecodedTag {
+                name: "DirectoryIndex".into(),
+                value: "0".into(),
+            });
         }
     }
 
     // Extract CameraOrientation
-    if let Some(off) = orientation_offset {
-        if let Some(&raw) = data.get(off) {
-            tags.push(DecodedTag {
-                name: "CameraOrientation".into(),
-                value: match raw {
-                    0 => "Horizontal (normal)".into(),
-                    1 => "Rotate 90 CW".into(),
-                    2 => "Rotate 270 CW".into(),
-                    _ => format!("{raw}"),
-                },
-            });
-        }
+    if let Some(off) = orientation_offset
+        && let Some(&raw) = data.get(off)
+    {
+        tags.push(DecodedTag {
+            name: "CameraOrientation".into(),
+            value: match raw {
+                0 => "Horizontal (normal)".into(),
+                1 => "Rotate 90 CW".into(),
+                2 => "Rotate 270 CW".into(),
+                _ => format!("{raw}"),
+            },
+        });
     }
 
     // Extract TimeStamp1 / TimeStamp for 1DmkIII / 1DSmkIII
@@ -6697,24 +6699,24 @@ fn decode_canon_camera_info(
             });
         }
         // TimeStamp1 at offset 0x45a
-        if let Some(ts) = get32u_at(0x45a) {
-            if ts > 0 {
-                let dt = unix_timestamp_to_string(ts as i64);
-                tags.push(DecodedTag {
-                    name: "TimeStamp1".into(),
-                    value: dt,
-                });
-            }
+        if let Some(ts) = get32u_at(0x45a)
+            && ts > 0
+        {
+            let dt = unix_timestamp_to_string(ts as i64);
+            tags.push(DecodedTag {
+                name: "TimeStamp1".into(),
+                value: dt,
+            });
         }
         // TimeStamp at offset 0x45e
-        if let Some(ts) = get32u_at(0x45e) {
-            if ts > 0 {
-                let dt = unix_timestamp_to_string(ts as i64);
-                tags.push(DecodedTag {
-                    name: "TimeStamp".into(),
-                    value: dt,
-                });
-            }
+        if let Some(ts) = get32u_at(0x45e)
+            && ts > 0
+        {
+            let dt = unix_timestamp_to_string(ts as i64);
+            tags.push(DecodedTag {
+                name: "TimeStamp".into(),
+                value: dt,
+            });
         }
     }
 
@@ -7256,42 +7258,42 @@ fn decode_canon_color_data(data: &[u8], be: bool, tags: &mut Vec<DecodedTag>) {
     } else {
         None
     };
-    if let Some(fo) = flash_offset {
-        if let Some(raw) = get16s(fo) {
-            let raw = raw as i32;
-            if raw >= 255 {
-                push(tags, "FlashOutput", "Strobe or Misfire".into());
-            } else {
-                let pct = ((raw as f64 - 200.0) / 16.0 * std::f64::consts::LN_2).exp() * 100.0;
-                push(tags, "FlashOutput", format!("{pct:.0}%"));
-            }
+    if let Some(fo) = flash_offset
+        && let Some(raw) = get16s(fo)
+    {
+        let raw = raw as i32;
+        if raw >= 255 {
+            push(tags, "FlashOutput", "Strobe or Misfire".into());
+        } else {
+            let pct = ((raw as f64 - 200.0) / 16.0 * std::f64::consts::LN_2).exp() * 100.0;
+            push(tags, "FlashOutput", format!("{pct:.0}%"));
         }
     }
     // ColorDataVersion (index 0x00) - present in ColorData3+
-    if is_data4 || is_data6 || is_data7 || is_data8 {
-        if let Some(v) = get16s(0) {
-            let desc = if is_data4 {
-                match v {
-                    2 => "2 (1DmkIII)".into(),
-                    3 => "3 (40D)".into(),
-                    4 => "4 (1DSmkIII)".into(),
-                    5 => "5 (450D/1000D)".into(),
-                    6 => "6 (50D/5DmkII)".into(),
-                    7 => "7 (500D/550D/7D/1DmkIV)".into(),
-                    9 => "9 (60D/1100D)".into(),
-                    _ => format!("{v}"),
-                }
-            } else if is_data7 {
-                match v {
-                    10 => "10 (1DX/5DmkIII/6D/70D/100D/650D/700D/M/M2)".into(),
-                    11 => "11 (7DmkII/750D/760D/8000D)".into(),
-                    _ => format!("{v}"),
-                }
-            } else {
-                format!("{v}")
-            };
-            push(tags, "ColorDataVersion", desc);
-        }
+    if (is_data4 || is_data6 || is_data7 || is_data8)
+        && let Some(v) = get16s(0)
+    {
+        let desc = if is_data4 {
+            match v {
+                2 => "2 (1DmkIII)".into(),
+                3 => "3 (40D)".into(),
+                4 => "4 (1DSmkIII)".into(),
+                5 => "5 (450D/1000D)".into(),
+                6 => "6 (50D/5DmkII)".into(),
+                7 => "7 (500D/550D/7D/1DmkIV)".into(),
+                9 => "9 (60D/1100D)".into(),
+                _ => format!("{v}"),
+            }
+        } else if is_data7 {
+            match v {
+                10 => "10 (1DX/5DmkIII/6D/70D/100D/650D/700D/M/M2)".into(),
+                11 => "11 (7DmkII/750D/760D/8000D)".into(),
+                _ => format!("{v}"),
+            }
+        } else {
+            format!("{v}")
+        };
+        push(tags, "ColorDataVersion", desc);
     }
 
     // AverageBlackLevel (int16u[4]) at index 0x0e7 in ColorData4
@@ -7348,15 +7350,15 @@ fn decode_canon_color_data(data: &[u8], be: bool, tags: &mut Vec<DecodedTag>) {
             )
         };
         // AverageBlackLevel (int16u[4])
-        if avg_bl + 3 < count {
-            if let (Some(a), Some(b), Some(c), Some(d)) = (
+        if avg_bl + 3 < count
+            && let (Some(a), Some(b), Some(c), Some(d)) = (
                 get_u16(avg_bl),
                 get_u16(avg_bl + 1),
                 get_u16(avg_bl + 2),
                 get_u16(avg_bl + 3),
-            ) {
-                push(tags, "AverageBlackLevel", format!("{a} {b} {c} {d}"));
-            }
+            )
+        {
+            push(tags, "AverageBlackLevel", format!("{a} {b} {c} {d}"));
         }
         // FlashBatteryLevel
         if let Some(v) = get16s(fbl) {
@@ -7393,21 +7395,21 @@ fn decode_canon_color_data(data: &[u8], be: bool, tags: &mut Vec<DecodedTag>) {
             }
         }
         // PerChannelBlackLevel (int16u[4])
-        if pcbl + 3 < count {
-            if let (Some(a), Some(b), Some(c), Some(d)) = (
+        if pcbl + 3 < count
+            && let (Some(a), Some(b), Some(c), Some(d)) = (
                 get_u16(pcbl),
                 get_u16(pcbl + 1),
                 get_u16(pcbl + 2),
                 get_u16(pcbl + 3),
-            ) {
-                push(tags, "PerChannelBlackLevel", format!("{a} {b} {c} {d}"));
-            }
+            )
+        {
+            push(tags, "PerChannelBlackLevel", format!("{a} {b} {c} {d}"));
         }
         // NormalWhiteLevel
-        if let Some(v) = get_u16(nwl) {
-            if v > 0 {
-                push(tags, "NormalWhiteLevel", format!("{v}"));
-            }
+        if let Some(v) = get_u16(nwl)
+            && v > 0
+        {
+            push(tags, "NormalWhiteLevel", format!("{v}"));
         }
         // SpecularWhiteLevel
         if let Some(v) = get_u16(swl) {
@@ -7873,19 +7875,19 @@ fn decode_canon_camera_settings(data: &[u8], be: bool, tags: &mut Vec<DecodedTag
     if let Some(v) = get(29) {
         push(tags, "FlashBits", format_canon_flash_bits(v));
     }
-    if let Some(v) = get(32) {
-        if v != -1 {
-            push(
-                tags,
-                "FocusContinuous",
-                match v {
-                    0 => "Single".into(),
-                    1 => "Continuous".into(),
-                    8 => "Manual".into(),
-                    _ => format!("Unknown ({v})"),
-                },
-            );
-        }
+    if let Some(v) = get(32)
+        && v != -1
+    {
+        push(
+            tags,
+            "FocusContinuous",
+            match v {
+                0 => "Single".into(),
+                1 => "Continuous".into(),
+                8 => "Manual".into(),
+                _ => format!("Unknown ({v})"),
+            },
+        );
     }
     if let Some(v) = get(33) {
         push(
@@ -7901,28 +7903,28 @@ fn decode_canon_camera_settings(data: &[u8], be: bool, tags: &mut Vec<DecodedTag
             },
         );
     }
-    if let Some(v) = get(34) {
-        if v != -1 {
-            push(
-                tags,
-                "ImageStabilization",
-                match v {
-                    0 => "Off".into(),
-                    1 => "On".into(),
-                    2 => "On (2)".into(),
-                    3 => "On (3)".into(),
-                    4 => "On (4)".into(),
-                    256 => "Off (2)".into(),
-                    257 => "On (2)".into(),
-                    _ => format!("Unknown ({v})"),
-                },
-            );
-        }
+    if let Some(v) = get(34)
+        && v != -1
+    {
+        push(
+            tags,
+            "ImageStabilization",
+            match v {
+                0 => "Off".into(),
+                1 => "On".into(),
+                2 => "On (2)".into(),
+                3 => "On (3)".into(),
+                4 => "On (4)".into(),
+                256 => "Off (2)".into(),
+                257 => "On (2)".into(),
+                _ => format!("Unknown ({v})"),
+            },
+        );
     }
-    if let Some(v) = get(35) {
-        if v != 0 {
-            push(tags, "DisplayAperture", format!("{}", v as f64 / 10.0));
-        }
+    if let Some(v) = get(35)
+        && v != 0
+    {
+        push(tags, "DisplayAperture", format!("{}", v as f64 / 10.0));
     }
     if let Some(v) = get(36) {
         push(tags, "ZoomSourceWidth", format!("{v}"));
@@ -7984,19 +7986,19 @@ fn decode_canon_camera_settings(data: &[u8], be: bool, tags: &mut Vec<DecodedTag
             },
         );
     }
-    if let Some(v) = get(46) {
-        if v != -1 {
-            push(
-                tags,
-                "SRAWQuality",
-                match v {
-                    0 => "n/a".into(),
-                    1 => "sRAW1 (mRAW)".into(),
-                    2 => "sRAW2 (sRAW)".into(),
-                    _ => format!("Unknown ({v})"),
-                },
-            );
-        }
+    if let Some(v) = get(46)
+        && v != -1
+    {
+        push(
+            tags,
+            "SRAWQuality",
+            match v {
+                0 => "n/a".into(),
+                1 => "sRAW1 (mRAW)".into(),
+                2 => "sRAW2 (sRAW)".into(),
+                _ => format!("Unknown ({v})"),
+            },
+        );
     }
 }
 
@@ -8065,17 +8067,17 @@ fn decode_canon_focal_length(data: &[u8], be: bool, tags: &mut Vec<DecodedTag>) 
         // FocalLength in raw units; divide by FocalUnits if known (default 1)
         push(tags, "FocalLength", format!("{v} mm"));
     }
-    if let Some(v) = get(2) {
-        if v > 0 {
-            let mm = v as f64 * 25.4 / 1000.0;
-            push(tags, "FocalPlaneXSize", format!("{mm:.2} mm"));
-        }
+    if let Some(v) = get(2)
+        && v > 0
+    {
+        let mm = v as f64 * 25.4 / 1000.0;
+        push(tags, "FocalPlaneXSize", format!("{mm:.2} mm"));
     }
-    if let Some(v) = get(3) {
-        if v > 0 {
-            let mm = v as f64 * 25.4 / 1000.0;
-            push(tags, "FocalPlaneYSize", format!("{mm:.2} mm"));
-        }
+    if let Some(v) = get(3)
+        && v > 0
+    {
+        let mm = v as f64 * 25.4 / 1000.0;
+        push(tags, "FocalPlaneYSize", format!("{mm:.2} mm"));
     }
 }
 
@@ -8093,20 +8095,20 @@ fn decode_canon_shot_info(data: &[u8], be: bool, tags: &mut Vec<DecodedTag>) {
         let iso = ((v as f64 / 32.0) * 2.0_f64.ln()).exp() * 100.0;
         push(tags, "AutoISO", format!("{}", iso.round() as u32));
     }
-    if let Some(v) = get(2) {
-        if v != 0 {
-            let iso = ((v as f64 / 32.0) * 2.0_f64.ln()).exp() * 100.0 / 32.0;
-            push(tags, "BaseISO", format!("{}", iso.round() as u32));
-        }
+    if let Some(v) = get(2)
+        && v != 0
+    {
+        let iso = ((v as f64 / 32.0) * 2.0_f64.ln()).exp() * 100.0 / 32.0;
+        push(tags, "BaseISO", format!("{}", iso.round() as u32));
     }
     if let Some(v) = get(3) {
         let ev = v as f64 / 32.0 + 5.0;
         push(tags, "MeasuredEV", format!("{ev:.2}"));
     }
-    if let Some(v) = get(4) {
-        if v > 0 {
-            push(tags, "TargetAperture", canon_ev_aperture(v));
-        }
+    if let Some(v) = get(4)
+        && v > 0
+    {
+        push(tags, "TargetAperture", canon_ev_aperture(v));
     }
     if let Some(v) = get(5) {
         // Values <= -1000 are the "not available" fill (-32768 in practice),
@@ -8176,10 +8178,10 @@ fn decode_canon_shot_info(data: &[u8], be: bool, tags: &mut Vec<DecodedTag>) {
             },
         );
     }
-    if let Some(v) = get(12) {
-        if v != 0 {
-            push(tags, "CameraTemperature", format!("{} C", v - 128));
-        }
+    if let Some(v) = get(12)
+        && v != 0
+    {
+        push(tags, "CameraTemperature", format!("{} C", v - 128));
     }
     if let Some(v) = get(13) {
         push(
@@ -8259,27 +8261,26 @@ fn decode_canon_shot_info(data: &[u8], be: bool, tags: &mut Vec<DecodedTag>) {
             );
         }
     }
-    if let Some(upper) = get(19) {
-        if upper != 0 {
-            if let Some(v) = get(20) {
-                let v = v as u16;
-                push(
-                    tags,
-                    "FocusDistanceLower",
-                    format_distance_m(v as f64 / 100.0),
-                );
-            }
-        }
+    if let Some(upper) = get(19)
+        && upper != 0
+        && let Some(v) = get(20)
+    {
+        let v = v as u16;
+        push(
+            tags,
+            "FocusDistanceLower",
+            format_distance_m(v as f64 / 100.0),
+        );
     }
-    if let Some(v) = get(23) {
-        if v != 0 {
-            let ev = v as f64 / 8.0 - 6.0;
-            // Use enough precision (v/8 gives at most 3 decimal places)
-            let s = format!("{ev:.3}");
-            let s = s.trim_end_matches('0');
-            let s = s.strip_suffix('.').unwrap_or(s);
-            push(tags, "MeasuredEV2", s.to_string());
-        }
+    if let Some(v) = get(23)
+        && v != 0
+    {
+        let ev = v as f64 / 8.0 - 6.0;
+        // Use enough precision (v/8 gives at most 3 decimal places)
+        let s = format!("{ev:.3}");
+        let s = s.trim_end_matches('0');
+        let s = s.strip_suffix('.').unwrap_or(s);
+        push(tags, "MeasuredEV2", s.to_string());
     }
     if let Some(v) = get(24) {
         push(tags, "BulbDuration", format!("{}", v as f64 / 10.0));
@@ -8783,73 +8784,73 @@ fn decode_canon_file_info(data: &[u8], be: bool, tags: &mut Vec<DecodedTag>) {
         push(tags, "BracketShotNumber", format!("{v}"));
     }
     // Index 6: RawJpgQuality (suppress if <=0)
-    if let Some(v) = get(6) {
-        if v > 0 {
-            push(
-                tags,
-                "RawJpgQuality",
-                match v {
-                    1 => "Economy".into(),
-                    2 => "Normal".into(),
-                    3 => "Fine".into(),
-                    4 => "RAW".into(),
-                    5 => "Superfine".into(),
-                    7 => "CRAW".into(),
-                    _ => format!("Unknown ({v})"),
-                },
-            );
-        }
+    if let Some(v) = get(6)
+        && v > 0
+    {
+        push(
+            tags,
+            "RawJpgQuality",
+            match v {
+                1 => "Economy".into(),
+                2 => "Normal".into(),
+                3 => "Fine".into(),
+                4 => "RAW".into(),
+                5 => "Superfine".into(),
+                7 => "CRAW".into(),
+                _ => format!("Unknown ({v})"),
+            },
+        );
     }
     // Index 7: RawJpgSize (suppress if <0)
-    if let Some(v) = get(7) {
-        if v >= 0 {
-            push(
-                tags,
-                "RawJpgSize",
-                match v {
-                    0 => "Large".into(),
-                    1 => "Medium".into(),
-                    2 => "Small".into(),
-                    5 => "Medium 1".into(),
-                    6 => "Medium 2".into(),
-                    7 => "Medium 3".into(),
-                    8 => "Postcard".into(),
-                    9 => "Widescreen".into(),
-                    _ => format!("Unknown ({v})"),
-                },
-            );
-        }
+    if let Some(v) = get(7)
+        && v >= 0
+    {
+        push(
+            tags,
+            "RawJpgSize",
+            match v {
+                0 => "Large".into(),
+                1 => "Medium".into(),
+                2 => "Small".into(),
+                5 => "Medium 1".into(),
+                6 => "Medium 2".into(),
+                7 => "Medium 3".into(),
+                8 => "Postcard".into(),
+                9 => "Widescreen".into(),
+                _ => format!("Unknown ({v})"),
+            },
+        );
     }
     // Index 8: LongExposureNoiseReduction2 (suppress if <0)
-    if let Some(v) = get(8) {
-        if v >= 0 {
-            push(
-                tags,
-                "LongExposureNoiseReduction2",
-                match v {
-                    0 => "Off".into(),
-                    1 => "On (1)".into(),
-                    3 => "On".into(),
-                    4 => "Auto".into(),
-                    _ => format!("Unknown ({v})"),
-                },
-            );
-        }
+    if let Some(v) = get(8)
+        && v >= 0
+    {
+        push(
+            tags,
+            "LongExposureNoiseReduction2",
+            match v {
+                0 => "Off".into(),
+                1 => "On (1)".into(),
+                3 => "On".into(),
+                4 => "Auto".into(),
+                _ => format!("Unknown ({v})"),
+            },
+        );
     }
     // Index 9: WBBracketMode (suppress if <0)
-    if let Some(v) = get(9) {
-        if v >= 0 {
-            push(
-                tags,
-                "WBBracketMode",
-                match v {
-                    0 => "Off".into(),
-                    1 => "On (shift AB)".into(),
-                    2 => "On (shift GM)".into(),
-                    _ => format!("Unknown ({v})"),
-                },
-            );
-        }
+    if let Some(v) = get(9)
+        && v >= 0
+    {
+        push(
+            tags,
+            "WBBracketMode",
+            match v {
+                0 => "Off".into(),
+                1 => "On (shift AB)".into(),
+                2 => "On (shift GM)".into(),
+                _ => format!("Unknown ({v})"),
+            },
+        );
     }
     // Index 12: WBBracketValueAB
     if let Some(v) = get(12) {
@@ -8860,44 +8861,44 @@ fn decode_canon_file_info(data: &[u8], be: bool, tags: &mut Vec<DecodedTag>) {
         push(tags, "WBBracketValueGM", format!("{v}"));
     }
     // Index 14: FilterEffect (suppress if <0)
-    if let Some(v) = get(14) {
-        if v >= 0 {
-            push(
-                tags,
-                "FilterEffect",
-                match v {
-                    0 => "None".into(),
-                    1 => "Yellow".into(),
-                    2 => "Orange".into(),
-                    3 => "Red".into(),
-                    4 => "Green".into(),
-                    _ => format!("Unknown ({v})"),
-                },
-            );
-        }
+    if let Some(v) = get(14)
+        && v >= 0
+    {
+        push(
+            tags,
+            "FilterEffect",
+            match v {
+                0 => "None".into(),
+                1 => "Yellow".into(),
+                2 => "Orange".into(),
+                3 => "Red".into(),
+                4 => "Green".into(),
+                _ => format!("Unknown ({v})"),
+            },
+        );
     }
     // Index 15: ToningEffect (suppress if <0)
-    if let Some(v) = get(15) {
-        if v >= 0 {
-            push(
-                tags,
-                "ToningEffect",
-                match v {
-                    0 => "None".into(),
-                    1 => "Sepia".into(),
-                    2 => "Blue".into(),
-                    3 => "Purple".into(),
-                    4 => "Green".into(),
-                    _ => format!("Unknown ({v})"),
-                },
-            );
-        }
+    if let Some(v) = get(15)
+        && v >= 0
+    {
+        push(
+            tags,
+            "ToningEffect",
+            match v {
+                0 => "None".into(),
+                1 => "Sepia".into(),
+                2 => "Blue".into(),
+                3 => "Purple".into(),
+                4 => "Green".into(),
+                _ => format!("Unknown ({v})"),
+            },
+        );
     }
     // Index 16: MacroMagnification
-    if let Some(v) = get(16) {
-        if v > 0 {
-            push(tags, "MacroMagnification", format!("{v}"));
-        }
+    if let Some(v) = get(16)
+        && v > 0
+    {
+        push(tags, "MacroMagnification", format!("{v}"));
     }
     // Index 19: LiveViewShooting
     if let Some(v) = getu(19) {
@@ -8912,31 +8913,30 @@ fn decode_canon_file_info(data: &[u8], be: bool, tags: &mut Vec<DecodedTag>) {
         );
     }
     // Index 20: FocusDistanceUpper (suppress if 0)
-    if let Some(v) = getu(20) {
-        if v != 0 {
-            let dist = v as f64 / 100.0;
-            push(
-                tags,
-                "FocusDistanceUpper",
-                if dist > 655.345 {
-                    "inf".into()
-                } else {
-                    format_distance_m(dist)
-                },
-            );
-        }
+    if let Some(v) = getu(20)
+        && v != 0
+    {
+        let dist = v as f64 / 100.0;
+        push(
+            tags,
+            "FocusDistanceUpper",
+            if dist > 655.345 {
+                "inf".into()
+            } else {
+                format_distance_m(dist)
+            },
+        );
     }
     // Index 21: FocusDistanceLower (suppress if upper was 0)
-    if let Some(upper) = getu(20) {
-        if upper != 0 {
-            if let Some(v) = getu(21) {
-                push(
-                    tags,
-                    "FocusDistanceLower",
-                    format_distance_m(v as f64 / 100.0),
-                );
-            }
-        }
+    if let Some(upper) = getu(20)
+        && upper != 0
+        && let Some(v) = getu(21)
+    {
+        push(
+            tags,
+            "FocusDistanceLower",
+            format_distance_m(v as f64 / 100.0),
+        );
     }
     // Index 23: ShutterMode
     if let Some(v) = get(23) {
@@ -8988,54 +8988,54 @@ fn decode_canon_file_info(data: &[u8], be: bool, tags: &mut Vec<DecodedTag>) {
         );
     }
     // Index 27: FirmwareRevision (4-byte string of version)
-    if let Some(v) = getu(27) {
-        if v != 0 {
-            let major = (v >> 8) as u8;
-            let minor = (v & 0xFF) as u8;
-            push(tags, "FirmwareRevision", format!("{major}.{minor:02}"));
-        }
+    if let Some(v) = getu(27)
+        && v != 0
+    {
+        let major = (v >> 8) as u8;
+        let minor = (v & 0xFF) as u8;
+        push(tags, "FirmwareRevision", format!("{major}.{minor:02}"));
     }
     // Index 33: Categories bitmap
-    if let Some(v) = getu(33) {
-        if v != 0 {
-            let mut cats = Vec::new();
-            if v & 0x0001 != 0 {
-                cats.push("People");
-            }
-            if v & 0x0002 != 0 {
-                cats.push("Scenery");
-            }
-            if v & 0x0004 != 0 {
-                cats.push("Events");
-            }
-            if v & 0x0008 != 0 {
-                cats.push("User 1");
-            }
-            if v & 0x0010 != 0 {
-                cats.push("User 2");
-            }
-            if v & 0x0020 != 0 {
-                cats.push("User 3");
-            }
-            if v & 0x0040 != 0 {
-                cats.push("To Do");
-            }
-            push(
-                tags,
-                "Categories",
-                if cats.is_empty() {
-                    "(none)".into()
-                } else {
-                    cats.join(", ")
-                },
-            );
+    if let Some(v) = getu(33)
+        && v != 0
+    {
+        let mut cats = Vec::new();
+        if v & 0x0001 != 0 {
+            cats.push("People");
         }
+        if v & 0x0002 != 0 {
+            cats.push("Scenery");
+        }
+        if v & 0x0004 != 0 {
+            cats.push("Events");
+        }
+        if v & 0x0008 != 0 {
+            cats.push("User 1");
+        }
+        if v & 0x0010 != 0 {
+            cats.push("User 2");
+        }
+        if v & 0x0020 != 0 {
+            cats.push("User 3");
+        }
+        if v & 0x0040 != 0 {
+            cats.push("To Do");
+        }
+        push(
+            tags,
+            "Categories",
+            if cats.is_empty() {
+                "(none)".into()
+            } else {
+                cats.join(", ")
+            },
+        );
     }
     // Index 35: ImageUniqueID
-    if let Some(v) = getu(35) {
-        if v != 0 {
-            push(tags, "ImageUniqueID", format!("{v:#06X}"));
-        }
+    if let Some(v) = getu(35)
+        && v != 0
+    {
+        push(tags, "ImageUniqueID", format!("{v:#06X}"));
     }
 }
 
@@ -9139,35 +9139,35 @@ fn decode_canon_processing_info(data: &[u8], be: bool, tags: &mut Vec<DecodedTag
     if let Some(v) = get(7) {
         push(tags, "WhiteBalanceBlue", format!("{v}"));
     }
-    if let Some(v) = get(8) {
-        if v >= 0 {
-            push(
-                tags,
-                "WhiteBalance",
-                match v {
-                    0 => "Auto".into(),
-                    1 => "Daylight".into(),
-                    2 => "Cloudy".into(),
-                    3 => "Tungsten".into(),
-                    4 => "Fluorescent".into(),
-                    5 => "Flash".into(),
-                    6 => "Custom".into(),
-                    7 => "Black & White".into(),
-                    8 => "Shade".into(),
-                    9 => "Manual Temperature (Kelvin)".into(),
-                    10 => "PC Set1".into(),
-                    11 => "PC Set2".into(),
-                    12 => "PC Set3".into(),
-                    14 => "Daylight Fluorescent".into(),
-                    _ => format!("Unknown ({v})"),
-                },
-            );
-        }
+    if let Some(v) = get(8)
+        && v >= 0
+    {
+        push(
+            tags,
+            "WhiteBalance",
+            match v {
+                0 => "Auto".into(),
+                1 => "Daylight".into(),
+                2 => "Cloudy".into(),
+                3 => "Tungsten".into(),
+                4 => "Fluorescent".into(),
+                5 => "Flash".into(),
+                6 => "Custom".into(),
+                7 => "Black & White".into(),
+                8 => "Shade".into(),
+                9 => "Manual Temperature (Kelvin)".into(),
+                10 => "PC Set1".into(),
+                11 => "PC Set2".into(),
+                12 => "PC Set3".into(),
+                14 => "Daylight Fluorescent".into(),
+                _ => format!("Unknown ({v})"),
+            },
+        );
     }
-    if let Some(v) = get(9) {
-        if v > 0 {
-            push(tags, "ColorTemperature", format!("{v}"));
-        }
+    if let Some(v) = get(9)
+        && v > 0
+    {
+        push(tags, "ColorTemperature", format!("{v}"));
     }
     if let Some(v) = get(10) {
         push(
@@ -9314,21 +9314,21 @@ fn decode_canon_vignetting_corr(data: &[u8], be: bool, tags: &mut Vec<DecodedTag
             value: format!("{v}"),
         });
     }
-    if let Some(v) = get16s(11) {
-        if v > 0 {
-            tags.push(DecodedTag {
-                name: "OriginalImageWidth".into(),
-                value: format!("{v}"),
-            });
-        }
+    if let Some(v) = get16s(11)
+        && v > 0
+    {
+        tags.push(DecodedTag {
+            name: "OriginalImageWidth".into(),
+            value: format!("{v}"),
+        });
     }
-    if let Some(v) = get16s(12) {
-        if v > 0 {
-            tags.push(DecodedTag {
-                name: "OriginalImageHeight".into(),
-                value: format!("{v}"),
-            });
-        }
+    if let Some(v) = get16s(12)
+        && v > 0
+    {
+        tags.push(DecodedTag {
+            name: "OriginalImageHeight".into(),
+            value: format!("{v}"),
+        });
     }
 }
 
@@ -11489,13 +11489,13 @@ fn decode_nikon_preview_ifd(
                 }
             }
             0x0202 => {
-                if let Some(v) = entry_u32(sub_entry, be) {
-                    if v > 0 {
-                        tags.push(DecodedTag {
-                            name: "PreviewImageLength".into(),
-                            value: format!("{v}"),
-                        });
-                    }
+                if let Some(v) = entry_u32(sub_entry, be)
+                    && v > 0
+                {
+                    tags.push(DecodedTag {
+                        name: "PreviewImageLength".into(),
+                        value: format!("{v}"),
+                    });
                 }
             }
             _ => {}
@@ -11678,17 +11678,13 @@ fn decode_nikon_shot_info(data: &[u8], tags: &mut Vec<DecodedTag>) {
                 "0218" => Some(0x2d5),          // D3S
                 _ => None,
             };
-            if let Some(off) = sc_offset {
-                if data.len() > off + 3 {
-                    let sc = u32::from_be_bytes([
-                        data[off],
-                        data[off + 1],
-                        data[off + 2],
-                        data[off + 3],
-                    ]);
-                    if sc > 0 && sc < 10_000_000 {
-                        push(tags, "ShutterCount", format!("{sc}"));
-                    }
+            if let Some(off) = sc_offset
+                && data.len() > off + 3
+            {
+                let sc =
+                    u32::from_be_bytes([data[off], data[off + 1], data[off + 2], data[off + 3]]);
+                if sc > 0 && sc < 10_000_000 {
+                    push(tags, "ShutterCount", format!("{sc}"));
                 }
             }
 
@@ -13269,46 +13265,46 @@ fn decode_apple_runtime(data: &[u8], tags: &mut Vec<DecodedTag>) {
         let key = parse_object(key_idx);
         let val = parse_object(val_idx);
 
-        if let BplistValue::Str(ref k) = key {
-            if let BplistValue::Int(v) = val {
-                let tag_name = match k.as_str() {
-                    "timescale" => "RunTimeScale",
-                    "value" => "RunTimeValue",
-                    "epoch" => "RunTimeEpoch",
-                    "flags" => "RunTimeFlags",
-                    _ => continue,
-                };
-                let formatted = if k == "flags" {
-                    // Bitmask: bit 0 = Valid, bit 1 = Has been rounded, etc.
-                    let mut parts = Vec::new();
-                    if v & 1 != 0 {
-                        parts.push("Valid");
-                    }
-                    if v & 2 != 0 {
-                        parts.push("Has been rounded");
-                    }
-                    if v & 4 != 0 {
-                        parts.push("Positive infinity");
-                    }
-                    if v & 8 != 0 {
-                        parts.push("Negative infinity");
-                    }
-                    if v & 16 != 0 {
-                        parts.push("Indefinite");
-                    }
-                    if parts.is_empty() {
-                        format!("{v}")
-                    } else {
-                        parts.join(", ")
-                    }
-                } else {
+        if let BplistValue::Str(ref k) = key
+            && let BplistValue::Int(v) = val
+        {
+            let tag_name = match k.as_str() {
+                "timescale" => "RunTimeScale",
+                "value" => "RunTimeValue",
+                "epoch" => "RunTimeEpoch",
+                "flags" => "RunTimeFlags",
+                _ => continue,
+            };
+            let formatted = if k == "flags" {
+                // Bitmask: bit 0 = Valid, bit 1 = Has been rounded, etc.
+                let mut parts = Vec::new();
+                if v & 1 != 0 {
+                    parts.push("Valid");
+                }
+                if v & 2 != 0 {
+                    parts.push("Has been rounded");
+                }
+                if v & 4 != 0 {
+                    parts.push("Positive infinity");
+                }
+                if v & 8 != 0 {
+                    parts.push("Negative infinity");
+                }
+                if v & 16 != 0 {
+                    parts.push("Indefinite");
+                }
+                if parts.is_empty() {
                     format!("{v}")
-                };
-                tags.push(DecodedTag {
-                    name: tag_name.to_string(),
-                    value: formatted,
-                });
-            }
+                } else {
+                    parts.join(", ")
+                }
+            } else {
+                format!("{v}")
+            };
+            tags.push(DecodedTag {
+                name: tag_name.to_string(),
+                value: formatted,
+            });
         }
     }
 }
@@ -15643,10 +15639,10 @@ fn format_ricoh_value(entry: &IfdEntry<'_>, name: &str, be: bool) -> String {
             // "Rev0104" -> "1.04"
             let s = std::str::from_utf8(entry.data).unwrap_or("");
             let s = s.trim_end_matches('\0').trim();
-            if let Some(digits) = s.strip_prefix("Rev") {
-                if let Ok(num) = digits.parse::<u32>() {
-                    return format!("{:.2}", num as f64 / 100.0);
-                }
+            if let Some(digits) = s.strip_prefix("Rev")
+                && let Ok(num) = digits.parse::<u32>()
+            {
+                return format!("{:.2}", num as f64 / 100.0);
             }
             s.to_string()
         }
@@ -19174,13 +19170,14 @@ fn hdrp_parse_protobuf(data: &[u8]) -> Vec<DecodedTag> {
             1 if wtype == 2 => {
                 // submessage: field 1 = ImageName
                 for &(sf, sw, sd) in &hdrp_parse_fields(fdata) {
-                    if sf == 1 && sw == 2 {
-                        if let Ok(s) = std::str::from_utf8(sd) {
-                            tags.push(DecodedTag {
-                                name: "ImageName".into(),
-                                value: s.into(),
-                            });
-                        }
+                    if sf == 1
+                        && sw == 2
+                        && let Ok(s) = std::str::from_utf8(sd)
+                    {
+                        tags.push(DecodedTag {
+                            name: "ImageName".into(),
+                            value: s.into(),
+                        });
                     }
                 }
             }

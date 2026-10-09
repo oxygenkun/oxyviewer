@@ -98,10 +98,10 @@ pub(crate) fn decode_frame(
     // discarded by the subsequent resize.
     let bit_depth = handle.luma_bits_per_pixel();
     let mut options = decoding_options(Some(preview_thread_limit(max_size)));
-    if let Some(ref mut opts) = options {
-        if bit_depth > 8 {
-            opts.set_convert_hdr_to_8bit(true);
-        }
+    if let Some(ref mut opts) = options
+        && bit_depth > 8
+    {
+        opts.set_convert_hdr_to_8bit(true);
     }
     let image = LibHeif::new()
         .decode(&handle, ColorSpace::Rgb(RgbChroma::Rgb), options)
@@ -153,10 +153,10 @@ fn decode_preview_handle(
 ) -> Result<DynamicImage, MediaError> {
     let bit_depth = handle.luma_bits_per_pixel();
     let mut options = decoding_options(thread_limit);
-    if let Some(ref mut opts) = options {
-        if bit_depth > 8 {
-            opts.set_convert_hdr_to_8bit(true);
-        }
+    if let Some(ref mut opts) = options
+        && bit_depth > 8
+    {
+        opts.set_convert_hdr_to_8bit(true);
     }
     let image = LibHeif::new()
         .decode(handle, ColorSpace::Rgb(RgbChroma::Rgb), options)

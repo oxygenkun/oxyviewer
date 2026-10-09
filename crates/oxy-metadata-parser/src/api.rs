@@ -707,12 +707,11 @@ impl<'a> SiftDocument<'a> {
             #[cfg(feature = "tiff")]
             DocumentInner::Tiff { ifds, .. } => {
                 // Tag 0x02BC (700) = XMP data in IFD0
-                if let Some(ifd0) = ifds.first() {
-                    if let Some(entry) = ifd0.entry(0x02BC) {
-                        if !entry.data.is_empty() {
-                            return Some(entry.data);
-                        }
-                    }
+                if let Some(ifd0) = ifds.first()
+                    && let Some(entry) = ifd0.entry(0x02BC)
+                    && !entry.data.is_empty()
+                {
+                    return Some(entry.data);
                 }
                 None
             }
@@ -765,10 +764,10 @@ impl<'a> SiftDocument<'a> {
 
             // Fallback: PNG "Raw profile type exif" in text chunks
             #[cfg(feature = "png")]
-            if let DocumentInner::Png { chunks } = &self.inner {
-                if let Some(raw_exif) = crate::png::find_raw_profile_exif(chunks) {
-                    emit_exif_from_tiff(&raw_exif, 0, tags);
-                }
+            if let DocumentInner::Png { chunks } = &self.inner
+                && let Some(raw_exif) = crate::png::find_raw_profile_exif(chunks)
+            {
+                emit_exif_from_tiff(&raw_exif, 0, tags);
             }
         }
     }
@@ -842,12 +841,11 @@ impl<'a> SiftDocument<'a> {
 
             // Merge extended XMP properties (JPEG only)
             #[cfg(feature = "jpeg")]
-            if let DocumentInner::Jpeg { segments } = &self.inner {
-                if let Some(ext_xml) = crate::jpeg::reassemble_extended_xmp(segments) {
-                    if let Ok(ext_xmp) = crate::xmp::parse_xmp(&ext_xml) {
-                        emit_xmp_tags(&ext_xmp, tags);
-                    }
-                }
+            if let DocumentInner::Jpeg { segments } = &self.inner
+                && let Some(ext_xml) = crate::jpeg::reassemble_extended_xmp(segments)
+                && let Ok(ext_xmp) = crate::xmp::parse_xmp(&ext_xml)
+            {
+                emit_xmp_tags(&ext_xmp, tags);
             }
         }
     }
@@ -879,10 +877,10 @@ impl<'a> SiftDocument<'a> {
                 _ => None,
             };
 
-            if let Some(data) = iptc_data {
-                if let Ok(iptc) = crate::iptc::parse_iptc(&data) {
-                    emit_iptc_tags(&iptc, tags);
-                }
+            if let Some(data) = iptc_data
+                && let Ok(iptc) = crate::iptc::parse_iptc(&data)
+            {
+                emit_iptc_tags(&iptc, tags);
             }
         }
     }
@@ -996,25 +994,25 @@ impl<'a> SiftDocument<'a> {
                     ));
                 }
                 // Chromatic Adaptation (chad tag)
-                if let Some(vals) = profile.chromatic_adaptation() {
-                    if vals.len() >= 9 {
-                        tags.push(Tag::new(
-                            "ICC",
-                            "ChromaticAdaptation",
-                            format!(
-                                "{:.5} {:.5} {:.5} {:.5} {:.5} {:.5} {:.5} {:.5} {:.5}",
-                                vals[0],
-                                vals[1],
-                                vals[2],
-                                vals[3],
-                                vals[4],
-                                vals[5],
-                                vals[6],
-                                vals[7],
-                                vals[8]
-                            ),
-                        ));
-                    }
+                if let Some(vals) = profile.chromatic_adaptation()
+                    && vals.len() >= 9
+                {
+                    tags.push(Tag::new(
+                        "ICC",
+                        "ChromaticAdaptation",
+                        format!(
+                            "{:.5} {:.5} {:.5} {:.5} {:.5} {:.5} {:.5} {:.5} {:.5}",
+                            vals[0],
+                            vals[1],
+                            vals[2],
+                            vals[3],
+                            vals[4],
+                            vals[5],
+                            vals[6],
+                            vals[7],
+                            vals[8]
+                        ),
+                    ));
                 }
                 // Matrix columns (rXYZ, gXYZ, bXYZ)
                 if let Some(xyz) = profile.xyz_tag(b"rXYZ") {
@@ -1168,11 +1166,11 @@ impl<'a> SiftDocument<'a> {
                 if let Some(ts) = info.time_scale {
                     tags.push(Tag::new("QuickTime", "TimeScale", ts.to_string()));
                 }
-                if let (Some(dur), Some(ts)) = (info.duration, info.time_scale) {
-                    if ts > 0 {
-                        let secs = dur as f64 / ts as f64;
-                        tags.push(Tag::new("QuickTime", "Duration", format_duration(secs)));
-                    }
+                if let (Some(dur), Some(ts)) = (info.duration, info.time_scale)
+                    && ts > 0
+                {
+                    let secs = dur as f64 / ts as f64;
+                    tags.push(Tag::new("QuickTime", "Duration", format_duration(secs)));
                 }
 
                 // Per-track metadata
@@ -1495,15 +1493,15 @@ impl<'a> SiftDocument<'a> {
         }
 
         // Aperture (from FNumber or ApertureValue)
-        if let Some(fnum) = find("FNumber") {
-            if let Ok(f) = fnum.parse::<f64>() {
-                let s = if f < 1.0 {
-                    format!("{f:.2}")
-                } else {
-                    format!("{f:.1}")
-                };
-                tags.push(Tag::new("Composite", "Aperture", s));
-            }
+        if let Some(fnum) = find("FNumber")
+            && let Ok(f) = fnum.parse::<f64>()
+        {
+            let s = if f < 1.0 {
+                format!("{f:.2}")
+            } else {
+                format!("{f:.1}")
+            };
+            tags.push(Tag::new("Composite", "Aperture", s));
         }
 
         // ShutterSpeed (from ExposureTime)
@@ -1542,17 +1540,17 @@ impl<'a> SiftDocument<'a> {
                     tags.push(Tag::new("Composite", "FOV", format!("{fov:.1} deg")));
 
                     // HyperfocalDistance
-                    if let Some(ap_str) = find("FNumber") {
-                        if let Ok(ap) = ap_str.parse::<f64>() {
-                            if ap > 0.0 && coc > 0.0 {
-                                let hyper = (fl * fl) / (ap * coc * 1000.0);
-                                tags.push(Tag::new(
-                                    "Composite",
-                                    "HyperfocalDistance",
-                                    format!("{hyper:.2} m"),
-                                ));
-                            }
-                        }
+                    if let Some(ap_str) = find("FNumber")
+                        && let Ok(ap) = ap_str.parse::<f64>()
+                        && ap > 0.0
+                        && coc > 0.0
+                    {
+                        let hyper = (fl * fl) / (ap * coc * 1000.0);
+                        tags.push(Tag::new(
+                            "Composite",
+                            "HyperfocalDistance",
+                            format!("{hyper:.2} m"),
+                        ));
                     }
                 } else {
                     tags.push(Tag::new(
@@ -1569,22 +1567,23 @@ impl<'a> SiftDocument<'a> {
             find("FNumber").or_else(|| find("Aperture")),
             find("ExposureTime"),
             find("ISO").or_else(|| find("ISOSpeedRatings")),
-        ) {
-            if let (Ok(ap), Ok(iso)) = (ap_str.parse::<f64>(), iso_str.parse::<f64>()) {
-                // Parse exposure time - could be "1/250" or "4.0"
-                let et: Option<f64> = if let Some((n, d)) = et_str.split_once('/') {
-                    n.parse::<f64>()
-                        .ok()
-                        .and_then(|num| d.parse::<f64>().ok().map(|den| num / den))
-                } else {
-                    et_str.parse().ok()
-                };
-                if let Some(et) = et {
-                    if ap > 0.0 && et > 0.0 && iso > 0.0 {
-                        let lv = 2.0 * ap.log2() - et.log2() - (iso / 100.0).log2();
-                        tags.push(Tag::new("Composite", "LightValue", format!("{lv:.1}")));
-                    }
-                }
+        ) && let (Ok(ap), Ok(iso)) = (ap_str.parse::<f64>(), iso_str.parse::<f64>())
+        {
+            // Parse exposure time - could be "1/250" or "4.0"
+            let et: Option<f64> = if let Some((n, d)) = et_str.split_once('/') {
+                n.parse::<f64>()
+                    .ok()
+                    .and_then(|num| d.parse::<f64>().ok().map(|den| num / den))
+            } else {
+                et_str.parse().ok()
+            };
+            if let Some(et) = et
+                && ap > 0.0
+                && et > 0.0
+                && iso > 0.0
+            {
+                let lv = 2.0 * ap.log2() - et.log2() - (iso / 100.0).log2();
+                tags.push(Tag::new("Composite", "LightValue", format!("{lv:.1}")));
             }
         }
 
@@ -1598,61 +1597,59 @@ impl<'a> SiftDocument<'a> {
         }
 
         // SubSecDateTimeOriginal (with timezone if available)
-        if let Some(dt) = find("DateTimeOriginal") {
-            if let Some(ss) = find("SubSecTimeOriginal") {
-                let tz = find("OffsetTimeOriginal").unwrap_or_default();
-                let combined = if tz.is_empty() {
-                    format!("{dt}.{ss}")
-                } else {
-                    format!("{dt}.{ss}{tz}")
-                };
-                tags.push(Tag::new("Composite", "SubSecDateTimeOriginal", combined));
-            }
+        if let Some(dt) = find("DateTimeOriginal")
+            && let Some(ss) = find("SubSecTimeOriginal")
+        {
+            let tz = find("OffsetTimeOriginal").unwrap_or_default();
+            let combined = if tz.is_empty() {
+                format!("{dt}.{ss}")
+            } else {
+                format!("{dt}.{ss}{tz}")
+            };
+            tags.push(Tag::new("Composite", "SubSecDateTimeOriginal", combined));
         }
 
         // SubSecCreateDate (with timezone if available)
-        if let Some(dt) = find("DateTimeDigitized").or_else(|| find("CreateDate")) {
-            if let Some(ss) = find("SubSecTimeDigitized") {
-                let tz = find("OffsetTimeDigitized").unwrap_or_default();
-                let combined = if tz.is_empty() {
-                    format!("{dt}.{ss}")
-                } else {
-                    format!("{dt}.{ss}{tz}")
-                };
-                tags.push(Tag::new("Composite", "SubSecCreateDate", combined));
-            }
+        if let Some(dt) = find("DateTimeDigitized").or_else(|| find("CreateDate"))
+            && let Some(ss) = find("SubSecTimeDigitized")
+        {
+            let tz = find("OffsetTimeDigitized").unwrap_or_default();
+            let combined = if tz.is_empty() {
+                format!("{dt}.{ss}")
+            } else {
+                format!("{dt}.{ss}{tz}")
+            };
+            tags.push(Tag::new("Composite", "SubSecCreateDate", combined));
         }
 
         // SubSecModifyDate (with timezone if available)
-        if let Some(dt) = find("DateTime").or_else(|| find("ModifyDate")) {
-            if let Some(ss) = find("SubSecTime") {
-                let tz = find("OffsetTime").unwrap_or_default();
-                let combined = if tz.is_empty() {
-                    format!("{dt}.{ss}")
-                } else {
-                    format!("{dt}.{ss}{tz}")
-                };
-                tags.push(Tag::new("Composite", "SubSecModifyDate", combined));
-            }
+        if let Some(dt) = find("DateTime").or_else(|| find("ModifyDate"))
+            && let Some(ss) = find("SubSecTime")
+        {
+            let tz = find("OffsetTime").unwrap_or_default();
+            let combined = if tz.is_empty() {
+                format!("{dt}.{ss}")
+            } else {
+                format!("{dt}.{ss}{tz}")
+            };
+            tags.push(Tag::new("Composite", "SubSecModifyDate", combined));
         }
 
         // RunTimeSincePowerUp (from Apple RunTime fields)
-        if let Some(val) = find("RunTimeValue") {
-            if let Some(scale) = find("RunTimeScale") {
-                if let (Ok(v), Ok(s)) = (val.parse::<u64>(), scale.parse::<u64>()) {
-                    if s > 0 {
-                        let secs = (v as f64 / s as f64).round() as u64;
-                        let h = secs / 3600;
-                        let m = (secs % 3600) / 60;
-                        let s_rem = secs % 60;
-                        tags.push(Tag::new(
-                            "Composite",
-                            "RunTimeSincePowerUp",
-                            format!("{h}:{m:02}:{s_rem:02}"),
-                        ));
-                    }
-                }
-            }
+        if let Some(val) = find("RunTimeValue")
+            && let Some(scale) = find("RunTimeScale")
+            && let (Ok(v), Ok(s)) = (val.parse::<u64>(), scale.parse::<u64>())
+            && s > 0
+        {
+            let secs = (v as f64 / s as f64).round() as u64;
+            let h = secs / 3600;
+            let m = (secs % 3600) / 60;
+            let s_rem = secs % 60;
+            tags.push(Tag::new(
+                "Composite",
+                "RunTimeSincePowerUp",
+                format!("{h}:{m:02}:{s_rem:02}"),
+            ));
         }
 
         // ExifTool-compatible aliases
@@ -1691,22 +1688,22 @@ impl<'a> SiftDocument<'a> {
             tags.push(Tag::new("Composite", "FieldOfView", val));
         }
         // ExifByteOrder - detect from TIFF header in EXIF data
-        if let Some(exif) = self.find_exif_data() {
-            if exif.len() >= 2 {
-                let order = if exif[0] == b'I' && exif[1] == b'I' {
-                    "Little-endian (Intel, II)"
-                } else if exif[0] == b'M' && exif[1] == b'M' {
-                    "Big-endian (Motorola, MM)"
-                } else {
-                    ""
-                };
-                if !order.is_empty() {
-                    // Group "File", not "ExifTool": this is a fact about the
-                    // container, and the group name is shown to people. Naming
-                    // a group after the tool we replace reads as a leak rather
-                    // than a source.
-                    tags.push(Tag::new("File", "ExifByteOrder", order));
-                }
+        if let Some(exif) = self.find_exif_data()
+            && exif.len() >= 2
+        {
+            let order = if exif[0] == b'I' && exif[1] == b'I' {
+                "Little-endian (Intel, II)"
+            } else if exif[0] == b'M' && exif[1] == b'M' {
+                "Big-endian (Motorola, MM)"
+            } else {
+                ""
+            };
+            if !order.is_empty() {
+                // Group "File", not "ExifTool": this is a fact about the
+                // container, and the group name is shown to people. Naming
+                // a group after the tool we replace reads as a leak rather
+                // than a source.
+                tags.push(Tag::new("File", "ExifByteOrder", order));
             }
         }
     }
@@ -1718,10 +1715,10 @@ impl<'a> SiftDocument<'a> {
     ) -> (Option<u32>, Option<u32>) {
         // Try HEIF dimensions first
         #[cfg(feature = "heif")]
-        if let DocumentInner::Heif { info } = &self.inner {
-            if let (Some(w), Some(h)) = (info.width, info.height) {
-                return (Some(w), Some(h));
-            }
+        if let DocumentInner::Heif { info } = &self.inner
+            && let (Some(w), Some(h)) = (info.width, info.height)
+        {
+            return (Some(w), Some(h));
         }
 
         // Try QuickTime track dimensions

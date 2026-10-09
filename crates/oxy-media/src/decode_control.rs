@@ -267,7 +267,10 @@ pub(crate) fn file_lock(cache_key: &str) -> Arc<Mutex<()>> {
     let mut locks = DECODE_LOCKS
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner);
-    if DECODE_LOCK_ACQUISITIONS.fetch_add(1, Ordering::Relaxed) % 64 == 0 {
+    if DECODE_LOCK_ACQUISITIONS
+        .fetch_add(1, Ordering::Relaxed)
+        .is_multiple_of(64)
+    {
         reclaim_file_locks(&mut locks);
     }
     if let Some(lock) = locks.get(cache_key).and_then(Weak::upgrade) {

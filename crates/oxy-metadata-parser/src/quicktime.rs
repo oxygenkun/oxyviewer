@@ -170,10 +170,10 @@ pub fn parse_quicktime<'a>(data: &'a [u8]) -> Result<QuickTimeInfo<'a>> {
     }
 
     // XMP in uuid box (fallback)
-    if info.xmp_data.is_none() {
-        if let Some(xmp) = find_xmp_uuid(data) {
-            info.xmp_data = Some(xmp);
-        }
+    if info.xmp_data.is_none()
+        && let Some(xmp) = find_xmp_uuid(data)
+    {
+        info.xmp_data = Some(xmp);
     }
 
     Ok(info)
@@ -252,10 +252,10 @@ fn parse_tkhd(data: &[u8], track: &mut Track, info: &QuickTimeInfo) {
         track.track_id = r.read_u32_be().unwrap_or(0);
         let _ = r.read_u32_be(); // reserved
         let duration = r.read_u64_be().unwrap_or(0);
-        if let Some(ts) = info.time_scale {
-            if ts > 0 {
-                track.duration_secs = duration as f64 / ts as f64;
-            }
+        if let Some(ts) = info.time_scale
+            && ts > 0
+        {
+            track.duration_secs = duration as f64 / ts as f64;
         }
     } else {
         track.creation_time = r.read_u32_be().ok().map(|v| v as u64);
@@ -263,10 +263,10 @@ fn parse_tkhd(data: &[u8], track: &mut Track, info: &QuickTimeInfo) {
         track.track_id = r.read_u32_be().unwrap_or(0);
         let _ = r.read_u32_be(); // reserved
         let duration = r.read_u32_be().unwrap_or(0);
-        if let Some(ts) = info.time_scale {
-            if ts > 0 {
-                track.duration_secs = duration as f64 / ts as f64;
-            }
+        if let Some(ts) = info.time_scale
+            && ts > 0
+        {
+            track.duration_secs = duration as f64 / ts as f64;
         }
     }
 
@@ -299,19 +299,17 @@ fn parse_mdia(data: &[u8], track: &mut Track) {
     }
 
     // minf -> stbl -> stsd (sample description)
-    if let Some(minf) = children.iter().find(|b| &b.box_type == b"minf") {
-        if let Ok(minf_children) = crate::heif::parse_boxes(minf.data) {
-            if let Some(stbl) = minf_children.iter().find(|b| &b.box_type == b"stbl") {
-                if let Ok(stbl_children) = crate::heif::parse_boxes(stbl.data) {
-                    if let Some(stsd) = stbl_children.iter().find(|b| &b.box_type == b"stsd") {
-                        parse_stsd(stsd.data, track);
-                    }
-                    // stts for frame rate estimation
-                    if let Some(stts) = stbl_children.iter().find(|b| &b.box_type == b"stts") {
-                        estimate_frame_rate(stts.data, track);
-                    }
-                }
-            }
+    if let Some(minf) = children.iter().find(|b| &b.box_type == b"minf")
+        && let Ok(minf_children) = crate::heif::parse_boxes(minf.data)
+        && let Some(stbl) = minf_children.iter().find(|b| &b.box_type == b"stbl")
+        && let Ok(stbl_children) = crate::heif::parse_boxes(stbl.data)
+    {
+        if let Some(stsd) = stbl_children.iter().find(|b| &b.box_type == b"stsd") {
+            parse_stsd(stsd.data, track);
+        }
+        // stts for frame rate estimation
+        if let Some(stts) = stbl_children.iter().find(|b| &b.box_type == b"stts") {
+            estimate_frame_rate(stts.data, track);
         }
     }
 }
@@ -342,14 +340,15 @@ fn parse_mdhd(data: &[u8], track: &mut Track) {
     }
 
     // Language code (packed ISO-639-2/T)
-    if let Ok(lang_raw) = r.read_u16_be() {
-        if lang_raw != 0 && lang_raw != 0x7FFF {
-            let c1 = ((lang_raw >> 10) & 0x1F) as u8 + 0x60;
-            let c2 = ((lang_raw >> 5) & 0x1F) as u8 + 0x60;
-            let c3 = (lang_raw & 0x1F) as u8 + 0x60;
-            if c1.is_ascii_lowercase() && c2.is_ascii_lowercase() && c3.is_ascii_lowercase() {
-                track.language = format!("{}{}{}", c1 as char, c2 as char, c3 as char);
-            }
+    if let Ok(lang_raw) = r.read_u16_be()
+        && lang_raw != 0
+        && lang_raw != 0x7FFF
+    {
+        let c1 = ((lang_raw >> 10) & 0x1F) as u8 + 0x60;
+        let c2 = ((lang_raw >> 5) & 0x1F) as u8 + 0x60;
+        let c3 = (lang_raw & 0x1F) as u8 + 0x60;
+        if c1.is_ascii_lowercase() && c2.is_ascii_lowercase() && c3.is_ascii_lowercase() {
+            track.language = format!("{}{}{}", c1 as char, c2 as char, c3 as char);
         }
     }
 }

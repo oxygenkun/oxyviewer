@@ -117,15 +117,14 @@ fn windows_dialog(path: &Path) -> io::Result<ExternalOpenResult> {
 /// Blindly stripping the prefix can open a different file (e.g. trailing dots).
 fn application_path(path: &Path) -> Cow<'_, Path> {
     #[cfg(windows)]
-    if let Some(candidate) = legacy_path_candidate(path) {
-        if let (Ok(original), Ok(legacy)) = (
+    if let Some(candidate) = legacy_path_candidate(path)
+        && let (Ok(original), Ok(legacy)) = (
             std::fs::canonicalize(path),
             std::fs::canonicalize(&candidate),
-        ) {
-            if original == legacy {
-                return Cow::Owned(candidate);
-            }
-        }
+        )
+        && original == legacy
+    {
+        return Cow::Owned(candidate);
     }
     Cow::Borrowed(path)
 }

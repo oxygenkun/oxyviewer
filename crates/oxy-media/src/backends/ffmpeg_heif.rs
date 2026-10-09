@@ -61,12 +61,12 @@ fn run_cancellable_with_progress(
         };
         // Drain the last completed files even when the process exited between
         // polls. A failing child must not publish any further output.
-        if status.is_none_or(|status| status.success()) {
-            if let Err(error) = progress() {
-                let _ = child.kill();
-                let _ = child.wait();
-                return Err(error);
-            }
+        if status.is_none_or(|status| status.success())
+            && let Err(error) = progress()
+        {
+            let _ = child.kill();
+            let _ = child.wait();
+            return Err(error);
         }
         if let Some(status) = status {
             break status;

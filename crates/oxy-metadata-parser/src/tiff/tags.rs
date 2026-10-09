@@ -36,10 +36,10 @@ pub struct TagDef {
 
 /// V8: Apply PrintConv - convert a tag value to its display string.
 pub fn print_value(tag_def: &TagDef, value: &TagValue) -> String {
-    if let Some(conv) = tag_def.print_conv {
-        if let Some(s) = conv(value) {
-            return s;
-        }
+    if let Some(conv) = tag_def.print_conv
+        && let Some(s) = conv(value)
+    {
+        return s;
     }
     value.display()
 }
@@ -145,51 +145,52 @@ fn print_sample_format(v: &TagValue) -> Option<String> {
 fn print_lens_info(v: &TagValue) -> Option<String> {
     // LensInfo is 4 rationals: min_fl, max_fl, min_fnum, max_fnum
     // Format: "min_fl[-max_fl]mm f/min_fnum[-max_fnum]"
-    if let TagValue::RationalArray(arr) = v {
-        if arr.len() >= 4 {
-            let fmt_val = |n: u32, d: u32| -> Option<String> {
-                // 0/0 is how "unknown" is written in a LensInfo rational, and
-                // renders as "?" below. Only the denominator is tested: the
-                // second half of the original condition (n == 0 && d == 0) was
-                // already covered by the first and never changed the outcome.
-                // A zero numerator over a non-zero denominator is left alone
-                // rather than folded in here, because that would change what
-                // is printed and no file in the corpora exercises it.
-                if d == 0 {
-                    return None;
-                }
-                let f = n as f64 / d as f64;
-                Some(format_sig_digits(f, 10))
-            };
-            let min_fl = fmt_val(arr[0].0, arr[0].1);
-            let max_fl = fmt_val(arr[1].0, arr[1].1);
-            let min_fn = fmt_val(arr[2].0, arr[2].1);
-            let max_fn = fmt_val(arr[3].0, arr[3].1);
+    if let TagValue::RationalArray(arr) = v
+        && arr.len() >= 4
+    {
+        let fmt_val = |n: u32, d: u32| -> Option<String> {
+            // 0/0 is how "unknown" is written in a LensInfo rational, and
+            // renders as "?" below. Only the denominator is tested: the
+            // second half of the original condition (n == 0 && d == 0) was
+            // already covered by the first and never changed the outcome.
+            // A zero numerator over a non-zero denominator is left alone
+            // rather than folded in here, because that would change what
+            // is printed and no file in the corpora exercises it.
+            if d == 0 {
+                return None;
+            }
+            let f = n as f64 / d as f64;
+            Some(format_sig_digits(f, 10))
+        };
+        let min_fl = fmt_val(arr[0].0, arr[0].1);
+        let max_fl = fmt_val(arr[1].0, arr[1].1);
+        let min_fn = fmt_val(arr[2].0, arr[2].1);
+        let max_fn = fmt_val(arr[3].0, arr[3].1);
 
-            let mut result = match &min_fl {
-                Some(s) => s.clone(),
-                None => "?".into(),
-            };
-            // Add max focal if different and non-zero
-            if let (Some(mn), Some(mx)) = (&min_fl, &max_fl) {
-                if mn != mx && arr[1].0 != 0 {
-                    result.push('-');
-                    result.push_str(mx);
-                }
-            }
-            result.push_str("mm f/");
-            match &min_fn {
-                Some(s) => result.push_str(s),
-                None => result.push('?'),
-            }
-            if let (Some(mn), Some(mx)) = (&min_fn, &max_fn) {
-                if mn != mx {
-                    result.push('-');
-                    result.push_str(mx);
-                }
-            }
-            return Some(result);
+        let mut result = match &min_fl {
+            Some(s) => s.clone(),
+            None => "?".into(),
+        };
+        // Add max focal if different and non-zero
+        if let (Some(mn), Some(mx)) = (&min_fl, &max_fl)
+            && mn != mx
+            && arr[1].0 != 0
+        {
+            result.push('-');
+            result.push_str(mx);
         }
+        result.push_str("mm f/");
+        match &min_fn {
+            Some(s) => result.push_str(s),
+            None => result.push('?'),
+        }
+        if let (Some(mn), Some(mx)) = (&min_fn, &max_fn)
+            && mn != mx
+        {
+            result.push('-');
+            result.push_str(mx);
+        }
+        return Some(result);
     }
     None
 }
@@ -418,10 +419,10 @@ fn print_sensing_method(v: &TagValue) -> Option<String> {
 
 fn print_file_source(v: &TagValue) -> Option<String> {
     // Sigma incorrectly writes 4 bytes: [3, 0, 0, 0]
-    if let TagValue::Bytes(b) = v {
-        if b.as_slice() == [3, 0, 0, 0] {
-            return Some("Sigma Digital Camera".into());
-        }
+    if let TagValue::Bytes(b) = v
+        && b.as_slice() == [3, 0, 0, 0]
+    {
+        return Some("Sigma Digital Camera".into());
     }
     let val = match v {
         TagValue::U8(n) => *n as u32,

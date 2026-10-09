@@ -192,14 +192,14 @@ pub fn parse_xmp(xml: &str) -> Result<XmpData> {
                 .find('>')
                 .map_or(xml.len(), |e| meta_start + e);
             let meta_tag = &xml[meta_start..meta_end + 1];
-            if let Some(tk_pos) = meta_tag.find(tk_needle) {
-                if let Some(value) = extract_quoted_value(&meta_tag[tk_pos + tk_needle.len()..]) {
-                    properties.push(XmpProperty {
-                        namespace: "adobe:ns:meta/".to_string(),
-                        name: "XMPToolkit".to_string(),
-                        value: XmpValue::Simple(decode_xml_entities(&value)),
-                    });
-                }
+            if let Some(tk_pos) = meta_tag.find(tk_needle)
+                && let Some(value) = extract_quoted_value(&meta_tag[tk_pos + tk_needle.len()..])
+            {
+                properties.push(XmpProperty {
+                    namespace: "adobe:ns:meta/".to_string(),
+                    name: "XMPToolkit".to_string(),
+                    value: XmpValue::Simple(decode_xml_entities(&value)),
+                });
             }
             break;
         }
@@ -655,62 +655,60 @@ fn parse_element_value(inner: &str, _ns_map: &[(String, String)]) -> XmpValue {
     if trimmed.contains("<rdf:Description") {
         let mut struct_fields = Vec::new();
         // Extract attributes and simple child elements
-        if let Some(desc_start) = trimmed.find("<rdf:Description") {
-            if let Some((desc_inner, _)) =
+        if let Some(desc_start) = trimmed.find("<rdf:Description")
+            && let Some((desc_inner, _)) =
                 find_element_content(trimmed, desc_start, "rdf:Description")
-            {
-                // Extract attributes
-                let tag_end = trimmed[desc_start..]
-                    .find('>')
-                    .map_or(trimmed.len(), |e| desc_start + e);
-                let opening = &trimmed[desc_start..tag_end + 1];
-                let mut pos = 0;
-                while pos < opening.len() {
-                    if let Some(eq_pos) = opening[pos..].find('=') {
-                        let abs_eq = pos + eq_pos;
-                        let name_start = opening[..abs_eq]
-                            .rfind(|c: char| c.is_whitespace())
-                            .map_or(0, |p| p + 1);
-                        let attr_name = opening[name_start..abs_eq].trim();
-                        if let Some(value) = extract_quoted_value(&opening[abs_eq + 1..]) {
-                            if let Some(colon) = attr_name.find(':') {
-                                let prefix = &attr_name[..colon];
-                                if prefix != "rdf" && prefix != "xml" && prefix != "xmlns" {
-                                    struct_fields
-                                        .push((attr_name.to_string(), decode_xml_entities(&value)));
-                                }
-                            }
+        {
+            // Extract attributes
+            let tag_end = trimmed[desc_start..]
+                .find('>')
+                .map_or(trimmed.len(), |e| desc_start + e);
+            let opening = &trimmed[desc_start..tag_end + 1];
+            let mut pos = 0;
+            while pos < opening.len() {
+                if let Some(eq_pos) = opening[pos..].find('=') {
+                    let abs_eq = pos + eq_pos;
+                    let name_start = opening[..abs_eq]
+                        .rfind(|c: char| c.is_whitespace())
+                        .map_or(0, |p| p + 1);
+                    let attr_name = opening[name_start..abs_eq].trim();
+                    if let Some(value) = extract_quoted_value(&opening[abs_eq + 1..])
+                        && let Some(colon) = attr_name.find(':')
+                    {
+                        let prefix = &attr_name[..colon];
+                        if prefix != "rdf" && prefix != "xml" && prefix != "xmlns" {
+                            struct_fields
+                                .push((attr_name.to_string(), decode_xml_entities(&value)));
                         }
-                        pos = abs_eq + 2;
-                    } else {
-                        break;
                     }
+                    pos = abs_eq + 2;
+                } else {
+                    break;
                 }
-                // Extract child elements
-                let mut child_pos = 0;
-                while child_pos < desc_inner.len() {
-                    if let Some(lt) = desc_inner[child_pos..].find('<') {
-                        let abs = child_pos + lt;
-                        if desc_inner[abs..].starts_with("</") {
-                            child_pos = abs + 1;
-                            continue;
-                        }
-                        let name_end = desc_inner[abs + 1..]
-                            .find(|c: char| c.is_whitespace() || c == '>' || c == '/')
-                            .map_or(desc_inner.len(), |p| abs + 1 + p);
-                        let tn = &desc_inner[abs + 1..name_end];
-                        if !tn.is_empty() {
-                            if let Some((text, end)) = find_element_content(desc_inner, abs, tn) {
-                                struct_fields
-                                    .push((tn.to_string(), decode_xml_entities(text.trim())));
-                                child_pos = end;
-                                continue;
-                            }
-                        }
+            }
+            // Extract child elements
+            let mut child_pos = 0;
+            while child_pos < desc_inner.len() {
+                if let Some(lt) = desc_inner[child_pos..].find('<') {
+                    let abs = child_pos + lt;
+                    if desc_inner[abs..].starts_with("</") {
                         child_pos = abs + 1;
-                    } else {
-                        break;
+                        continue;
                     }
+                    let name_end = desc_inner[abs + 1..]
+                        .find(|c: char| c.is_whitespace() || c == '>' || c == '/')
+                        .map_or(desc_inner.len(), |p| abs + 1 + p);
+                    let tn = &desc_inner[abs + 1..name_end];
+                    if !tn.is_empty()
+                        && let Some((text, end)) = find_element_content(desc_inner, abs, tn)
+                    {
+                        struct_fields.push((tn.to_string(), decode_xml_entities(text.trim())));
+                        child_pos = end;
+                        continue;
+                    }
+                    child_pos = abs + 1;
+                } else {
+                    break;
                 }
             }
         }
@@ -754,12 +752,14 @@ fn extract_struct_attributes(
             if let Some(colon) = attr_name.find(':') {
                 let prefix = &attr_name[..colon];
                 let local = &attr_name[colon + 1..];
-                if prefix != "xmlns" && prefix != "rdf" && prefix != "xml" && !local.is_empty() {
-                    if let Some(value) = extract_quoted_value(&tag[abs_eq + 1..]) {
-                        if let Some((ns, _)) = resolve_prefixed_name(attr_name, ns_map) {
-                            result.push((ns, local.to_string(), value));
-                        }
-                    }
+                if prefix != "xmlns"
+                    && prefix != "rdf"
+                    && prefix != "xml"
+                    && !local.is_empty()
+                    && let Some(value) = extract_quoted_value(&tag[abs_eq + 1..])
+                    && let Some((ns, _)) = resolve_prefixed_name(attr_name, ns_map)
+                {
+                    result.push((ns, local.to_string(), value));
                 }
             }
             pos = abs_eq + 1;
@@ -935,40 +935,40 @@ fn flatten_struct_children(
                 .find(|c: char| c.is_whitespace() || c == '>' || c == '/')
                 .map_or(inner.len(), |p| abs + 1 + p);
             let tn = &inner[abs + 1..name_end];
-            if !tn.is_empty() {
-                if let Some((_ns, local)) = resolve_prefixed_name(tn, ns_map) {
-                    // Check for rdf:resource on this child
-                    let tag_close = inner[abs..].find('>').map_or(inner.len(), |e| abs + e);
-                    let child_tag = &inner[abs..tag_close + 1];
-                    let flat_name = format!("{parent_name}{}", capitalize_first_char(&local));
+            if !tn.is_empty()
+                && let Some((_ns, local)) = resolve_prefixed_name(tn, ns_map)
+            {
+                // Check for rdf:resource on this child
+                let tag_close = inner[abs..].find('>').map_or(inner.len(), |e| abs + e);
+                let child_tag = &inner[abs..tag_close + 1];
+                let flat_name = format!("{parent_name}{}", capitalize_first_char(&local));
 
-                    if let Some(res_val) = extract_rdf_resource(child_tag) {
-                        if let Some((ns, _)) = resolve_prefixed_name(tn, ns_map) {
-                            props.push(XmpProperty {
-                                namespace: ns,
-                                name: flat_name,
-                                value: XmpValue::Simple(decode_xml_entities(&res_val)),
-                            });
-                        }
-                        if let Some((_, end)) = find_element_content(inner, abs, tn) {
-                            child_pos = end;
-                        } else {
-                            child_pos = tag_close + 1;
-                        }
-                        continue;
+                if let Some(res_val) = extract_rdf_resource(child_tag) {
+                    if let Some((ns, _)) = resolve_prefixed_name(tn, ns_map) {
+                        props.push(XmpProperty {
+                            namespace: ns,
+                            name: flat_name,
+                            value: XmpValue::Simple(decode_xml_entities(&res_val)),
+                        });
                     }
-
-                    if let Some((text, end)) = find_element_content(inner, abs, tn) {
-                        if let Some((ns, _)) = resolve_prefixed_name(tn, ns_map) {
-                            props.push(XmpProperty {
-                                namespace: ns,
-                                name: flat_name,
-                                value: XmpValue::Simple(decode_xml_entities(text.trim())),
-                            });
-                        }
+                    if let Some((_, end)) = find_element_content(inner, abs, tn) {
                         child_pos = end;
-                        continue;
+                    } else {
+                        child_pos = tag_close + 1;
                     }
+                    continue;
+                }
+
+                if let Some((text, end)) = find_element_content(inner, abs, tn) {
+                    if let Some((ns, _)) = resolve_prefixed_name(tn, ns_map) {
+                        props.push(XmpProperty {
+                            namespace: ns,
+                            name: flat_name,
+                            value: XmpValue::Simple(decode_xml_entities(text.trim())),
+                        });
+                    }
+                    child_pos = end;
+                    continue;
                 }
             }
             child_pos = abs + 1;
@@ -1111,10 +1111,10 @@ fn find_element_content<'a>(
                 let next_char = xml.as_bytes()[after];
                 if next_char == b' ' || next_char == b'>' || next_char == b'/' {
                     // Check for self-closing
-                    if let Some(gt) = xml[after..].find('>') {
-                        if xml.as_bytes()[after + gt - 1] != b'/' {
-                            depth += 1;
-                        }
+                    if let Some(gt) = xml[after..].find('>')
+                        && xml.as_bytes()[after + gt - 1] != b'/'
+                    {
+                        depth += 1;
                     }
                 }
             }

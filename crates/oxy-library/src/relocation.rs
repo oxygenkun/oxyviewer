@@ -262,7 +262,7 @@ mod tests {
         library.relocate_root(&plan, &proofs).unwrap();
         drop(library);
         let library = Library::open(&dir.path().join("library.db")).unwrap();
-        assert_eq!(library.roots().unwrap(), [new.clone()]);
+        assert_eq!(library.roots().unwrap(), std::slice::from_ref(&new));
         {
             let db = library.read_connection();
             for (name, review) in [("same", false), ("changed", true), ("missing", true)] {
@@ -308,7 +308,7 @@ mod tests {
         let plan = library.plan_root_relocation(&old, &new, &proofs).unwrap();
         library.write().execute_batch("CREATE TRIGGER test_abort_relocation BEFORE UPDATE OF asset_path ON person_manual_instances WHEN OLD.id='same' BEGIN SELECT RAISE(ABORT,'test failure'); END;").unwrap();
         assert!(library.relocate_root(&plan, &proofs).is_err());
-        assert_eq!(library.roots().unwrap(), [old.clone()]);
+        assert_eq!(library.roots().unwrap(), std::slice::from_ref(&old));
         let paths = rows::asset_paths(&library.read_connection()).unwrap();
         assert!(paths.iter().all(|path| Path::new(path).starts_with(&old)));
     }
@@ -362,7 +362,7 @@ mod tests {
         let plan = library.plan_root_relocation(&old, &new, &proofs).unwrap();
         fs::write(new.join("same.jpg"), "modified after preview").unwrap();
         assert!(library.relocate_root(&plan, &proofs).is_err());
-        assert_eq!(library.roots().unwrap(), [old.clone()]);
+        assert_eq!(library.roots().unwrap(), std::slice::from_ref(&old));
         let current = library.plan_root_relocation(&old, &new, &proofs).unwrap();
         library.add_root(&new).unwrap();
         assert!(library.relocate_root(&current, &proofs).is_err());

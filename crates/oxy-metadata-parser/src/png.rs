@@ -447,7 +447,7 @@ fn extract_iptc_from_irb(data: &[u8]) -> Option<Vec<u8>> {
         }
         let name_len = data[pos] as usize;
         pos += 1;
-        let padded_name_len = if (name_len + 1) % 2 == 0 {
+        let padded_name_len = if (name_len + 1).is_multiple_of(2) {
             name_len
         } else {
             name_len + 1
