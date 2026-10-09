@@ -69,7 +69,7 @@ int32_t oxy_apple_image_io_decode_rgba8(const uint8_t *path, size_t path_len,
   }
   size_t row_bytes = image_width * 4;
   size_t length = row_bytes * image_height;
-  uint8_t *data = malloc(length);
+  uint8_t *data = calloc(length, 1);
   if (data == NULL) {
     CGImageRelease(image);
     return 4;
@@ -88,10 +88,31 @@ int32_t oxy_apple_image_io_decode_rgba8(const uint8_t *path, size_t path_len,
     return 5;
   }
 
+  // Replace every destination pixel instead of blending translucent input
+  // with the previous contents of the bitmap allocation.
+  CGContextSetBlendMode(context, kCGBlendModeCopy);
   CGContextDrawImage(context, CGRectMake(0, 0, image_width, image_height),
                      image);
   CGContextRelease(context);
+  CGImageAlphaInfo alpha_info = CGImageGetAlphaInfo(image);
   CGImageRelease(image);
+  if (alpha_info != kCGImageAlphaNone &&
+      alpha_info != kCGImageAlphaNoneSkipFirst &&
+      alpha_info != kCGImageAlphaNoneSkipLast) {
+    // Core Graphics draws premultiplied RGBA; image::Rgba and PNG require
+    // straight alpha. Convert in place without allocating another image.
+    vImage_Buffer buffer = {
+        .data = data,
+        .height = image_height,
+        .width = image_width,
+        .rowBytes = row_bytes,
+    };
+    if (vImageUnpremultiplyData_RGBA8888(&buffer, &buffer, kvImageNoFlags) !=
+        kvImageNoError) {
+      free(data);
+      return 6;
+    }
+  }
   *pixels = data;
   *pixels_len = length;
   *width = (uint32_t)image_width;

@@ -18,7 +18,11 @@ Explicit background analysis obtains frames through `AnalysisInputService` for
 all discovered kinds: JPEG, RAW, HEIF/HIF, PNG, WebP and TIFF. This is a native
 pixel delivery over the same per-format preparation used by generated display
 artifacts. TIFF uses the shared system/raster decoder; alpha and ICC survive in
-media pixels, with white compositing only at the model adapter. RAW requires
+media pixels, with white compositing only at the model adapter.
+The macOS ImageIO bridge draws into initialized storage with copy blending and
+converts premultiplied channels back to straight RGBA before pixel delivery or
+PNG encoding, so repeated transparent-image decodes retain the same alpha.
+RAW requires
 a qualified camera representation or bounded platform/LibRaw development; HEIF uses the existing
 frame selector and platform backend order shared with loupe. Qualified auxiliary
 images are preferred; otherwise FFmpeg scales the primary grid before pixel

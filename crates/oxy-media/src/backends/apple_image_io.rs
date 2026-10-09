@@ -249,6 +249,29 @@ fn native_error(message: impl Into<String>) -> MediaError {
 mod tests {
     use super::*;
     #[test]
+    fn transparent_decode_is_repeatable_and_returns_straight_alpha() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("alpha.png");
+        let source = RgbaImage::from_fn(16, 12, |x, _| {
+            Rgba([128, 64, 32, [0, 64, 128, 255][(x / 4) as usize]])
+        });
+        source.save(&path).unwrap();
+        let first = decode_rgba8(&path, 16).unwrap().to_rgba8();
+        assert_eq!(first.dimensions(), source.dimensions());
+        for (expected, actual) in source.pixels().zip(first.pixels()) {
+            assert_eq!(actual[3], expected[3]);
+            if expected[3] != 0 {
+                for channel in 0..3 {
+                    assert!(actual[channel].abs_diff(expected[channel]) <= 2);
+                }
+            }
+        }
+        for _ in 0..4 {
+            assert_eq!(decode_rgba8(&path, 16).unwrap().to_rgba8(), first);
+        }
+    }
+
+    #[test]
     fn decodes_repository_heif_fixture() {
         let Some(fixture) = crate::sony_hif_fixture() else {
             eprintln!("skipping: Sony HIF fixture unavailable (set OXY_HIF_FIXTURE)");

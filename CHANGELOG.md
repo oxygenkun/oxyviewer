@@ -30,6 +30,7 @@ Each release lists the English notes first, followed by the Simplified Chinese n
 
 - Corrected focus-area placement when the displayed preview dimensions differ from the source image.
 - Preferred XMP values when displaying capture metadata.
+- Corrected macOS ImageIO decoding of transparent images to preserve stable alpha and avoid darkened translucent colors.
 - Preserved unavailable-folder state across restarts and rechecked folders on refresh, with separate retry and relocation actions.
 
 ### 新增
@@ -48,6 +49,7 @@ Each release lists the English notes first, followed by the Simplified Chinese n
 
 - 修复显示预览尺寸与原图不同时，对焦区域位置不准确的问题。
 - 显示拍摄元数据时优先采用 XMP 中的值。
+- 修复 macOS ImageIO 读取透明图片时 alpha 不稳定及半透明颜色变暗的问题。
 - 重启后保留失效文件夹状态，刷新时重新检查，并区分重试与重新关联操作。
 
 ## [0.1.4] - 2026-09-21
