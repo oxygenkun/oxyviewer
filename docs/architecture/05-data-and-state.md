@@ -361,7 +361,13 @@ preview cache 默认位于 Tauri `app_cache_dir()/previews`。用户可以在设
 JPEG、HEIF、RAW、TIFF 等容器或编码字段，`capture/vendor/` 下的厂商模块处理各自
 MakerNotes。厂商路由同时接收图片类型，因此同一厂商在 JPEG、HEIF 和 RAW 中采用不同私有
 标签时可以局部处理。不得把 Sony、Canon、Nikon、Fujifilm 等厂商的同名私有标签和值表互相
-复用；未知厂商只返回通用 EXIF。
+复用；未知厂商只使用通用 EXIF 与 XMP，不套用其他厂商的私有映射。
+
+检查器中存在对应字段时，按相邻 XMP、内嵌 XMP、EXIF/MakerNotes 的顺序显示：包括光圈、
+快门、焦距、ISO、曝光补偿、拍摄时间、相机/镜头名称，以及 Camera Raw 的
+`crs:Temperature` / `crs:Tint`。只包含评分/颜色/旗标的 sidecar 不清空其他拍摄参数；
+缺少对应字段时保留文件内的值。Camera Raw 的 Tint 使用其带符号数值，不套用相机私有
+色调的 G/M 标记或尺度。容器色度采样、对焦坐标和连拍编号仍来自实际文件。
 
 ### XMP sidecar：用户数据，不是缓存
 

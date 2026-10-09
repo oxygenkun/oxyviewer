@@ -251,9 +251,9 @@ pub struct FocusInfo {
     pub regions: Vec<FocusRegion>,
 }
 
-/// Immutable camera and capture values read from the image's EXIF payload.
-/// Values are kept display-ready because EXIF permits multiple underlying
-/// representations for the same field (for example ISO and exposure time).
+/// Display-ready camera and capture values. Corresponding XMP fields override
+/// embedded EXIF/MakerNotes, with adjacent sidecar XMP taking precedence over
+/// embedded XMP. Fields absent from XMP retain their camera value.
 #[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq, Eq)]
 #[serde(default, rename_all = "camelCase")]
 pub struct CaptureMetadata {

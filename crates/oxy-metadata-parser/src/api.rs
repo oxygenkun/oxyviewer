@@ -56,6 +56,16 @@ pub fn tags(path: impl AsRef<std::path::Path>) -> Result<Vec<Tag>> {
     Ok(doc.tags())
 }
 
+/// Parse an XMP XML packet into the same owned tags used for embedded XMP.
+/// This resolves property namespace prefixes and both attribute/element forms.
+#[cfg(feature = "xmp")]
+pub fn xmp_tags(xml: &str) -> Result<Vec<Tag>> {
+    let xmp = crate::xmp::parse_xmp(xml)?;
+    let mut tags = Vec::new();
+    emit_xmp_tags(&xmp, &mut tags);
+    Ok(tags)
+}
+
 // ---------------------------------------------------------------------------
 // SiftFile - owns the memory mapping
 // ---------------------------------------------------------------------------

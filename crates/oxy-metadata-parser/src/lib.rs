@@ -39,6 +39,8 @@ pub mod core;
 pub mod jpeg_preview;
 
 // Re-export high-level API at crate root
+#[cfg(feature = "xmp")]
+pub use api::xmp_tags;
 pub use api::{GpsCoordinates, Image, ImageData, SiftDocument, SiftFile, Tag, open, read, tags};
 
 #[cfg(all(feature = "jpeg", feature = "internals"))]

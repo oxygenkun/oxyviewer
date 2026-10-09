@@ -62,15 +62,13 @@ impl MetadataReader for NativeMetadataReader {
                         document.capture.chroma_subsampling = Some(chroma_subsampling);
                     }
                     if let Some(xmp) = xmp {
-                        overlay_xmp(&mut document.editable, &xmp);
-                        append_xmp_raw_tags(&mut document.raw, &xmp);
+                        overlay_document_xmp(&mut document, &xmp);
                     }
                 }
                 Err(error) => {
                     document.diagnostics.push(error.to_string());
                     if let Some(xmp) = read_bounded_xmp_fallback(path)? {
-                        overlay_xmp(&mut document.editable, &xmp);
-                        append_xmp_raw_tags(&mut document.raw, &xmp);
+                        overlay_document_xmp(&mut document, &xmp);
                     }
                 }
             }
@@ -294,6 +292,15 @@ fn read_bounded_xmp_fallback(path: &Path) -> Result<Option<String>, MetadataErro
         .map_err(|error| MetadataError::Read(format!("invalid embedded XMP: {error}")))
 }
 
+fn overlay_document_xmp(document: &mut MetadataDocument, xml: &str) {
+    overlay_xmp(&mut document.editable, xml);
+    append_xmp_raw_tags(&mut document.raw, xml);
+    match oxy_metadata_parser::xmp_tags(xml) {
+        Ok(tags) => crate::capture::overlay_xmp(&mut document.capture, &tags),
+        Err(error) => document.diagnostics.push(error.to_string()),
+    }
+}
+
 fn overlay_xmp(metadata: &mut EditableMetadata, xml: &str) {
     let rating_value = xmp_value(xml, "Rating");
     if let Some(value) = rating_value.as_deref() {
@@ -369,6 +376,26 @@ fn split_list(value: &str) -> Vec<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn heif_container_xmp_capture_values_are_overlaid_before_sidecar_values() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("photo.HIF");
+        fs::write(&path, br#"....ftypSHIF....application/rdf+xml....<x:xmpmeta xmlns:x="adobe:ns:meta/"><rdf:RDF xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#"><rdf:Description xmlns:crs="http://ns.adobe.com/camera-raw-settings/1.0/" crs:Temperature="5600" crs:Tint="8" /></rdf:RDF></x:xmpmeta>"#).unwrap();
+        let embedded = NativeMetadataReader.read(&path, None).unwrap();
+        assert_eq!(
+            embedded.capture.color_temperature.as_deref(),
+            Some("5600 K")
+        );
+        assert_eq!(embedded.capture.tint.as_deref(), Some("8"));
+
+        fs::write(crate::sidecar_path(&path), r#"<x:xmpmeta xmlns:x="adobe:ns:meta/"><rdf:RDF xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#"><rdf:Description xmlns:crs="http://ns.adobe.com/camera-raw-settings/1.0/" crs:Temperature="7000" /></rdf:RDF></x:xmpmeta>"#).unwrap();
+        let merged = crate::MetadataFacade::default()
+            .read_document(&path, oxy_domain::AssetKind::Heif, None)
+            .unwrap();
+        assert_eq!(merged.capture.color_temperature.as_deref(), Some("7000 K"));
+        assert_eq!(merged.capture.tint.as_deref(), Some("8"));
+    }
 
     #[test]
     fn heif_counter_clockwise_rotation_orients_focus_coordinates() {

@@ -35,6 +35,13 @@ only when the user explicitly synchronizes into JPEG/HEIF/HIF. The desktop then
 offers a pinned, checksum-verified managed download or an existing executable
 path. `OXY_EXIFTOOL_PATH` and `PATH` remain deployment/development fallbacks.
 
+Inspector capture fields prefer corresponding adjacent XMP values, then
+embedded XMP, then EXIF/MakerNotes. This includes aperture, exposure time, focal
+length, ISO, exposure compensation, capture time, camera/lens names, and Camera
+Raw temperature/tint. A sidecar containing only rating/color/flag does not clear
+the other capture fields. Camera Raw tint is displayed as its signed numeric
+value, independently of camera MakerNote tint scales.
+
 The parser is an image-only fork of SiftX pinned at the provenance recorded in
 `crates/oxy-metadata-parser/UPSTREAM.md`. Its stable OxyViewer facade retains
 normalized fields, raw namespace/name/value tags, and diagnostics so new file

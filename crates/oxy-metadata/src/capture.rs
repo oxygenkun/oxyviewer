@@ -6,6 +6,9 @@ use std::path::Path;
 
 mod format;
 mod vendor;
+mod xmp;
+
+pub(super) use xmp::overlay as overlay_xmp;
 
 pub(super) struct TagLookup<'a> {
     tags: &'a [Tag],
@@ -58,6 +61,7 @@ pub(super) fn from_tags(tags: &[Tag], path: &Path) -> CaptureMetadata {
         &values,
         &mut capture,
     );
+    overlay_xmp(&mut capture, tags);
     capture
 }
 

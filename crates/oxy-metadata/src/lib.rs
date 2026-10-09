@@ -117,7 +117,8 @@ impl MetadataFacade {
     }
 
     /// Reads all normalized and raw metadata through one format-neutral parse.
-    /// An adjacent sidecar overrides only the editable XMP projection.
+    /// An adjacent sidecar overrides editable markings and corresponding
+    /// capture fields; fields absent from its XMP retain their embedded value.
     pub fn read_document(
         &self,
         path: &Path,
@@ -126,7 +127,11 @@ impl MetadataFacade {
     ) -> Result<MetadataDocument, MetadataError> {
         let mut document = NativeMetadataReader.read(path, display_dimensions)?;
         if sidecar_path(path).is_file() {
-            document.editable = read_sidecar(path)?;
+            let xml = fs::read_to_string(sidecar_path(path))?;
+            document.editable = editable_from_sidecar_xml(&xml);
+            let tags = oxy_metadata_parser::xmp_tags(&xml)
+                .map_err(|error| MetadataError::Read(error.to_string()))?;
+            capture::overlay_xmp(&mut document.capture, &tags);
         }
         Ok(document)
     }
@@ -611,8 +616,12 @@ fn read_sidecar(asset_path: &Path) -> Result<EditableMetadata, MetadataError> {
         return Ok(EditableMetadata::default());
     }
     let xml = fs::read_to_string(path)?;
-    let rating_value = xmp_value(&xml, "Rating");
-    let pick_label = xmp_prefixed_value(&xml, "digiKam", "PickLabel")
+    Ok(editable_from_sidecar_xml(&xml))
+}
+
+fn editable_from_sidecar_xml(xml: &str) -> EditableMetadata {
+    let rating_value = xmp_value(xml, "Rating");
+    let pick_label = xmp_prefixed_value(xml, "digiKam", "PickLabel")
         .as_deref()
         .and_then(parse_pick_label)
         .or_else(|| {
@@ -621,14 +630,14 @@ fn read_sidecar(asset_path: &Path) -> Result<EditableMetadata, MetadataError> {
                 .filter(|value| is_rejected_xmp_rating(value))
                 .map(|_| PickLabel::Rejected)
         });
-    Ok(EditableMetadata {
+    EditableMetadata {
         rating: rating_value.as_deref().and_then(parse_xmp_rating),
-        color_label: xmp_value(&xml, "Label").and_then(normalize_color_label),
+        color_label: xmp_value(xml, "Label").and_then(normalize_color_label),
         pick_label,
-        keywords: xmp_array_values(&xml, "dc", "subject"),
-        hierarchical_keywords: xmp_array_values(&xml, "lr", "hierarchicalSubject"),
+        keywords: xmp_array_values(xml, "dc", "subject"),
+        hierarchical_keywords: xmp_array_values(xml, "lr", "hierarchicalSubject"),
         ..EditableMetadata::default()
-    })
+    }
 }
 
 pub(crate) fn xmp_value(xml: &str, name: &str) -> Option<String> {
@@ -1705,6 +1714,54 @@ mod tests {
         .unwrap();
 
         assert_eq!(metadata.color_label, None);
+    }
+
+    #[test]
+    fn adjacent_xmp_overrides_real_hif_capture_fields_and_retains_missing_fields() {
+        let Some(fixture) = sony_hif_fixture() else {
+            eprintln!("skipping: Sony HIF fixture unavailable (set OXY_HIF_FIXTURE)");
+            return;
+        };
+        let directory = tempdir().unwrap();
+        let hif = directory.path().join("photo.HIF");
+        fs::copy(&fixture, &hif).unwrap();
+        let facade = MetadataFacade::default();
+        let original = facade.read_document(&hif, AssetKind::Heif, None).unwrap();
+
+        write_sidecar(
+            &hif,
+            &EditableMetadata {
+                rating: Some(4),
+                ..EditableMetadata::default()
+            },
+        )
+        .unwrap();
+        let marking_only = facade.read_document(&hif, AssetKind::Heif, None).unwrap();
+        assert_eq!(marking_only.capture, original.capture);
+        assert_eq!(marking_only.editable.rating, Some(4));
+
+        let xml = r#"<x:xmpmeta xmlns:x="adobe:ns:meta/">
+          <rdf:RDF xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#">
+            <rdf:Description xmlns:xmp="http://ns.adobe.com/xap/1.0/"
+              xmlns:raw="http://ns.adobe.com/camera-raw-settings/1.0/"
+              xmlns:tiff="http://ns.adobe.com/tiff/1.0/"
+              xmp:Rating="5" raw:Temperature="6500" tiff:Model="Edited camera">
+              <raw:Tint>-12</raw:Tint>
+            </rdf:Description>
+          </rdf:RDF>
+        </x:xmpmeta>"#;
+        fs::write(sidecar_path(&hif), xml).unwrap();
+        let merged = facade.read_document(&hif, AssetKind::Heif, None).unwrap();
+        let mut expected_capture = original.capture;
+        expected_capture.color_temperature = Some("6500 K".into());
+        expected_capture.tint = Some("-12".into());
+        expected_capture.camera_model = Some("Edited camera".into());
+        assert_eq!(merged.capture, expected_capture);
+        assert_eq!(merged.editable.rating, Some(5));
+        assert_eq!(merged.embedded_editable, original.embedded_editable);
+        assert_eq!(merged.focus, original.focus);
+        assert_eq!(fs::read(&hif).unwrap(), fs::read(&fixture).unwrap());
+        assert_eq!(fs::read_to_string(sidecar_path(&hif)).unwrap(), xml);
     }
 
     #[test]
