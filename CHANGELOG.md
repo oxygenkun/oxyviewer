@@ -12,6 +12,44 @@ Each release lists the English notes first, followed by the Simplified Chinese n
 
 ## [Unreleased]
 
+## [0.1.5] - 2026-10-09
+
+### Added
+
+- Added an experimental People module, disabled by default and available from Settings → General → Feature modules.
+- Added app-wide person identities, reference galleries, face/body annotations, batch candidate review, and shared Grid/Loupe person filtering.
+- Added explicit folder face analysis, anonymous face grouping, and selected-person candidate retrieval on Windows x64, with model installation, progress, and cancellation controls. Automatic results remain candidates for manual confirmation; macOS inference is not yet supported.
+- Added recovery for unavailable library folders, including retry and relinking to a new location while preserving annotations.
+
+### Changed
+
+- Unified shared buttons, fields, dialogs, and folder menus for more consistent interaction.
+- Separated persistent user records from rebuildable caches through dedicated storage, tag, and person domains.
+
+### Fixed
+
+- Corrected focus-area placement when the displayed preview dimensions differ from the source image.
+- Preferred XMP values when displaying capture metadata.
+- Preserved unavailable-folder state across restarts and rechecked folders on refresh, with separate retry and relocation actions.
+
+### 新增
+
+- 新增实验性人物模块，默认关闭，可在“设置 → 常规 → 功能模块”中开启。
+- 新增全 App 人物身份、参考图库、人脸／人体标注、批量候选审阅，以及网格与放大镜共用的人物筛选。
+- Windows x64 支持显式启动文件夹人脸分析、匿名人脸分组和指定人物候选检索，提供模型安装、进度与取消操作。自动结果仍需人工确认；macOS 推理尚未支持。
+- 新增失效图库文件夹恢复，支持重试和重新关联位置，并保留标注。
+
+### 调整
+
+- 统一按钮、表单、对话框和文件夹菜单，改善交互一致性。
+- 将持久化用户记录与可重建缓存分离，并拆分存储、标签和人物领域。
+
+### 修复
+
+- 修复显示预览尺寸与原图不同时，对焦区域位置不准确的问题。
+- 显示拍摄元数据时优先采用 XMP 中的值。
+- 重启后保留失效文件夹状态，刷新时重新检查，并区分重试与重新关联操作。
+
 ## [0.1.4] - 2026-09-21
 
 ### Added
@@ -119,7 +157,8 @@ Each release lists the English notes first, followed by the Simplified Chinese n
 - 可重建的媒体与图库缓存，支持可配置的存储管理和队列诊断。
 - macOS 与 Linux 安装包，以及双语 Windows NSIS EXE 和便携 ZIP 包，内置固定版本的 FFmpeg 工具；对应的 FFmpeg 源码作为独立发布资源提供。
 
-[Unreleased]: https://github.com/oxygenkun/oxyviewer/compare/v0.1.4...HEAD
+[Unreleased]: https://github.com/oxygenkun/oxyviewer/compare/v0.1.5...HEAD
+[0.1.5]: https://github.com/oxygenkun/oxyviewer/compare/v0.1.4...v0.1.5
 [0.1.4]: https://github.com/oxygenkun/oxyviewer/compare/v0.1.3...v0.1.4
 [0.1.3]: https://github.com/oxygenkun/oxyviewer/compare/v0.1.2...v0.1.3
 [0.1.2]: https://github.com/oxygenkun/oxyviewer/compare/v0.1.1...v0.1.2

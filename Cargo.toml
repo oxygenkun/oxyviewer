@@ -18,7 +18,7 @@ members = [
 edition = "2024"
 license = "AGPL-3.0-only OR LicenseRef-OxyViewer-Commercial"
 rust-version = "1.88"
-version = "0.1.4"
+version = "0.1.5"
 
 [workspace.lints.rust]
 unsafe_op_in_unsafe_fn = "deny"

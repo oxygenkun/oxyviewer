@@ -2548,7 +2548,7 @@ checksum = "cf211e3776eea6aec988552fa118dd746d70e1b1e5e244058d1c98015f3e5872"
 
 [[package]]
 name = "oxy-domain"
-version = "0.1.4"
+version = "0.1.5"
 dependencies = [
  "serde",
  "serde_json",
@@ -2556,7 +2556,7 @@ dependencies = [
 
 [[package]]
 name = "oxy-fs"
-version = "0.1.4"
+version = "0.1.5"
 dependencies = [
  "libc",
  "oxy-domain",
@@ -2570,7 +2570,7 @@ dependencies = [
 
 [[package]]
 name = "oxy-library"
-version = "0.1.4"
+version = "0.1.5"
 dependencies = [
  "oxy-domain",
  "oxy-fs",
@@ -2585,7 +2585,7 @@ dependencies = [
 
 [[package]]
 name = "oxy-media"
-version = "0.1.4"
+version = "0.1.5"
 dependencies = [
  "cc",
  "cmake",
@@ -2609,7 +2609,7 @@ dependencies = [
 
 [[package]]
 name = "oxy-metadata"
-version = "0.1.4"
+version = "0.1.5"
 dependencies = [
  "libheif-rs",
  "oxy-domain",
@@ -2623,7 +2623,7 @@ dependencies = [
 
 [[package]]
 name = "oxy-metadata-parser"
-version = "0.1.4"
+version = "0.1.5"
 dependencies = [
  "memmap2",
  "miniz_oxide 0.9.1",
@@ -2632,7 +2632,7 @@ dependencies = [
 
 [[package]]
 name = "oxy-people"
-version = "0.1.4"
+version = "0.1.5"
 dependencies = [
  "image",
  "libloading 0.8.9",
@@ -2652,7 +2652,7 @@ dependencies = [
 
 [[package]]
 name = "oxy-runtime"
-version = "0.1.4"
+version = "0.1.5"
 dependencies = [
  "oxy-domain",
  "parking_lot",
@@ -2660,7 +2660,7 @@ dependencies = [
 
 [[package]]
 name = "oxy-store"
-version = "0.1.4"
+version = "0.1.5"
 dependencies = [
  "oxy-domain",
  "parking_lot",
@@ -2674,7 +2674,7 @@ dependencies = [
 
 [[package]]
 name = "oxy-tags"
-version = "0.1.4"
+version = "0.1.5"
 dependencies = [
  "oxy-domain",
  "oxy-fs",
@@ -2687,7 +2687,7 @@ dependencies = [
 
 [[package]]
 name = "oxyviewer"
-version = "0.1.4"
+version = "0.1.5"
 dependencies = [
  "flate2",
  "oxy-domain",
