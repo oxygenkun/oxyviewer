@@ -69,8 +69,10 @@ pub(crate) fn vector(bytes: Option<&[u8]>) -> Option<Vec<f32>> {
         return None;
     }
     let values: Vec<_> = bytes
-        .chunks_exact(4)
-        .map(|b| f32::from_le_bytes(b.try_into().unwrap()))
+        .as_chunks::<4>()
+        .0
+        .iter()
+        .map(|b| f32::from_le_bytes(*b))
         .collect();
     let norm: f32 = values.iter().map(|x| x * x).sum();
     (values.iter().all(|x| x.is_finite()) && (norm - 1.0).abs() < 0.002).then_some(values)

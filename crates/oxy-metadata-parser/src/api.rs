@@ -1935,7 +1935,9 @@ fn try_parse_xmp(data: &[u8]) -> Option<crate::xmp::XmpData> {
     // Try UTF-16BE
     if data.len() >= 4 && data[0] == 0x00 && data[1] == b'<' {
         let u16s: Vec<u16> = data
-            .chunks_exact(2)
+            .as_chunks::<2>()
+            .0
+            .iter()
             .map(|c| u16::from_be_bytes([c[0], c[1]]))
             .collect();
         let xml = String::from_utf16_lossy(&u16s);
@@ -1944,7 +1946,9 @@ fn try_parse_xmp(data: &[u8]) -> Option<crate::xmp::XmpData> {
     // Try UTF-16LE
     if data.len() >= 4 && data[0] == b'<' && data[1] == 0x00 {
         let u16s: Vec<u16> = data
-            .chunks_exact(2)
+            .as_chunks::<2>()
+            .0
+            .iter()
             .map(|c| u16::from_le_bytes([c[0], c[1]]))
             .collect();
         let xml = String::from_utf16_lossy(&u16s);

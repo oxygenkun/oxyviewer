@@ -1721,7 +1721,9 @@ fn entry_u16(entry: &IfdEntry<'_>, be: bool) -> Option<u16> {
 
 /// Read all u16 values from a byte slice.
 fn read_u16_array(data: &[u8], be: bool) -> Vec<u16> {
-    data.chunks_exact(2)
+    data.as_chunks::<2>()
+        .0
+        .iter()
         .map(|c| {
             if be {
                 u16::from_be_bytes([c[0], c[1]])
@@ -1733,7 +1735,9 @@ fn read_u16_array(data: &[u8], be: bool) -> Vec<u16> {
 }
 
 fn read_i16_array(data: &[u8], be: bool) -> Vec<i16> {
-    data.chunks_exact(2)
+    data.as_chunks::<2>()
+        .0
+        .iter()
         .map(|c| {
             if be {
                 i16::from_be_bytes([c[0], c[1]])
@@ -2920,7 +2924,7 @@ fn format_panasonic_value(entry: &IfdEntry<'_>, name: &str, be: bool) -> String 
                 }
             };
             let mut values = Vec::new();
-            for pair in entry.data.chunks_exact(8) {
+            for pair in entry.data.as_chunks::<8>().0 {
                 let numerator = read(&pair[..4]);
                 let denominator = read(&pair[4..]);
                 if denominator == 0 || numerator > denominator {

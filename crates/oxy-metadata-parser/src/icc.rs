@@ -687,7 +687,9 @@ fn parse_mluc(data: &[u8]) -> Option<String> {
     // UTF-16BE string
     let utf16_data = &data[str_off..str_off + str_len];
     let words: Vec<u16> = utf16_data
-        .chunks_exact(2)
+        .as_chunks::<2>()
+        .0
+        .iter()
         .map(|c| u16::from_be_bytes([c[0], c[1]]))
         .take_while(|&w| w != 0)
         .collect();

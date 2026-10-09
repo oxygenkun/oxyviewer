@@ -670,7 +670,9 @@ impl<'a> UserComment<'a> {
                 }
                 let words: Vec<u16> = self
                     .data
-                    .chunks_exact(2)
+                    .as_chunks::<2>()
+                    .0
+                    .iter()
                     .map(|c| u16::from_le_bytes([c[0], c[1]]))
                     .take_while(|&w| w != 0)
                     .collect();

@@ -152,7 +152,7 @@ pub fn mpf_thumbnails(data: &[u8], tiff_offset: u64, source_length: u64) -> Resu
         }
     };
     let mut entries = Vec::with_capacity(count);
-    for bytes in table.data.chunks_exact(16) {
+    for bytes in table.data.as_chunks::<16>().0 {
         let relative = u64::from(u32_at(&bytes[8..12]));
         let offset = if relative == 0 {
             0

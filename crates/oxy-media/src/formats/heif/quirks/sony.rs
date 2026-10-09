@@ -30,7 +30,12 @@ pub(crate) fn display_sharpening(path: &Path, requested: bool) -> bool {
         }
         let mut brands = vec![0; size - 8];
         file.read_exact(&mut brands)?;
-        Ok(&brands[..4] == b"SHIF" || brands[8..].chunks_exact(4).any(|brand| brand == b"SHIF"))
+        Ok(&brands[..4] == b"SHIF"
+            || brands[8..]
+                .as_chunks::<4>()
+                .0
+                .iter()
+                .any(|brand| brand == b"SHIF"))
     };
     read_brand().unwrap_or(false)
 }

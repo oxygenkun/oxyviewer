@@ -179,7 +179,9 @@ impl TagValue {
 /// Decode UCS-2LE (UTF-16LE) bytes to a UTF-8 string, trimming null terminators.
 fn decode_ucs2le(data: &[u8]) -> String {
     let u16s: Vec<u16> = data
-        .chunks_exact(2)
+        .as_chunks::<2>()
+        .0
+        .iter()
         .map(|c| u16::from_le_bytes([c[0], c[1]]))
         .collect();
     // Trim trailing nulls

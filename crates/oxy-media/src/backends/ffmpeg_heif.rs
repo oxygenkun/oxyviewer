@@ -443,7 +443,12 @@ fn copy_bmp_tile(
         let source = &bmp[source_start..source_start + source_stride];
         let target =
             &mut destination.as_mut()[destination_start..destination_start + source_stride];
-        for (bgra, rgba) in source.chunks_exact(4).zip(target.chunks_exact_mut(4)) {
+        for (bgra, rgba) in source
+            .as_chunks::<4>()
+            .0
+            .iter()
+            .zip(target.as_chunks_mut::<4>().0)
+        {
             rgba.copy_from_slice(&[bgra[2], bgra[1], bgra[0], bgra[3]]);
         }
     }

@@ -69,7 +69,7 @@ pub(crate) fn jpeg_ranges(reader: &mut (impl Read + Seek)) -> io::Result<Vec<Jpe
     let mut entries = vec![0; count * 12];
     reader.read_exact(&mut entries)?;
     let mut ranges = Vec::new();
-    for entry in entries.chunks_exact(12) {
+    for entry in entries.as_chunks::<12>().0 {
         let tag = word(entry[..2].try_into().unwrap());
         let format = word(entry[2..4].try_into().unwrap());
         let length = dword(entry[4..8].try_into().unwrap());
