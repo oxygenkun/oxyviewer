@@ -12,7 +12,7 @@ Each release lists the English notes first, followed by the Simplified Chinese n
 
 ## [Unreleased]
 
-## [0.1.5] - 2026-10-09
+## [0.1.5] - 2026-10-10
 
 ### Added
 
