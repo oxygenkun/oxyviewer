@@ -9,6 +9,7 @@ const ONBOARDING_KEY = "oxyviewer.folder-onboarding.v1";
 const FOCUS_AREAS_KEY = "oxyviewer.focus-areas-visible.v1";
 const LOUPE_CONTROLS_AUTO_HIDE_KEY = "oxyviewer.loupe-controls-auto-hide.v1";
 const UI_FONT_SCALE_KEY = "oxyviewer.ui-font-scale.v1";
+const PEOPLE_MODULE_VISIBLE_KEY = "oxyviewer.people-module-visible.v1";
 const THUMBNAIL_ORIENTATIONS_KEY = "oxyviewer.thumbnail-orientations.v1";
 export const UI_FONT_SCALES = [0.8, 1, 1.25, 1.5, 1.75] as const;
 export type UiFontScale = (typeof UI_FONT_SCALES)[number];
@@ -191,6 +192,24 @@ export function saveLoupeControlsAutoHide(enabled: boolean, storage?: StorageLik
   if (!resolved) return;
   try {
     resolved.setItem(LOUPE_CONTROLS_AUTO_HIDE_KEY, String(enabled));
+  } catch {
+    // Display preferences must never prevent the viewer from opening.
+  }
+}
+
+export function loadPeopleModuleVisible(storage?: StorageLike): boolean {
+  try {
+    const resolved = storage ?? (typeof window === "undefined" ? undefined : window.localStorage);
+    return resolved?.getItem(PEOPLE_MODULE_VISIBLE_KEY) === "true";
+  } catch {
+    return false;
+  }
+}
+
+export function savePeopleModuleVisible(visible: boolean, storage?: StorageLike): void {
+  try {
+    const resolved = storage ?? (typeof window === "undefined" ? undefined : window.localStorage);
+    resolved?.setItem(PEOPLE_MODULE_VISIBLE_KEY, String(visible));
   } catch {
     // Display preferences must never prevent the viewer from opening.
   }

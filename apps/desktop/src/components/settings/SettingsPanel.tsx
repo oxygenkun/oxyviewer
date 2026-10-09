@@ -60,6 +60,8 @@ export function SettingsPanel({ t, activeAsset }: SettingsPanelProps) {
     gridMetadataVisible,
     locale,
     loupeMetadataVisible,
+    peopleModuleVisible,
+    setPeopleModuleVisible,
     uiFontScale,
     setDisplaySharpening,
     setGridMetadataVisible,
@@ -186,6 +188,15 @@ export function SettingsPanel({ t, activeAsset }: SettingsPanelProps) {
             </div>
 
             {settingsSection === "general" ? <>
+              <section className="settings-panel__section">
+                <span className="settings-panel__label">{t("modules")}</span>
+                <div className="settings-panel__options">
+                  <button aria-pressed={peopleModuleVisible} className={`settings-panel__option ${peopleModuleVisible ? "is-active" : ""}`} onClick={() => setPeopleModuleVisible(!peopleModuleVisible)}>
+                    <span>{t("showPeopleModule")}</span>{peopleModuleVisible ? <Check size={14} /> : null}
+                  </button>
+                </div>
+                <p className="settings-panel__hint">{t("showPeopleModuleHint")}</p>
+              </section>
               <section className="settings-panel__section">
                 <span className="settings-panel__label">{t("language")}</span>
                 <div className="settings-panel__options">

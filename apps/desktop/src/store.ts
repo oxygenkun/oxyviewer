@@ -17,12 +17,14 @@ import {
   loadLayoutSize,
   loadLoupeControlsAutoHide,
   loadMetadataVisibility,
+  loadPeopleModuleVisible,
   loadThumbnailOrientations,
   loadUiFontScale,
   saveFocusAreasVisible,
   saveLayoutSize,
   saveLoupeControlsAutoHide,
   saveMetadataVisibility,
+  savePeopleModuleVisible,
   saveThumbnailOrientations,
   saveUiFontScale,
   type UiFontScale,
@@ -46,6 +48,10 @@ interface WorkspaceState {
   inspectorOpen: boolean;
   leftPanelOpen: boolean;
   settingsOpen: boolean;
+  peopleModuleVisible: boolean;
+  peopleMode: boolean;
+  setPeopleModuleVisible: (visible: boolean) => void;
+  setPeopleMode: (enabled: boolean) => void;
   settingsSection: SettingsSection;
   openSettings: (section?: SettingsSection) => void;
   locale: Locale;
@@ -121,6 +127,13 @@ export const useWorkspaceStore = create<WorkspaceState>((set) => ({
   inspectorOpen: true,
   leftPanelOpen: true,
   settingsOpen: false,
+  peopleModuleVisible: loadPeopleModuleVisible(),
+  peopleMode: false,
+  setPeopleModuleVisible: (peopleModuleVisible) => {
+    savePeopleModuleVisible(peopleModuleVisible);
+    set((state) => ({ peopleModuleVisible, peopleMode: peopleModuleVisible && state.peopleMode }));
+  },
+  setPeopleMode: (enabled) => set((state) => ({ peopleMode: state.peopleModuleVisible && enabled })),
   settingsSection: "general",
   openSettings: (settingsSection = "general") => set({ settingsOpen: true, settingsSection }),
   locale: "zh-CN",

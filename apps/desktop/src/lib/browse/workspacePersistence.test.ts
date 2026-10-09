@@ -6,6 +6,8 @@ import {
   loadLoupeControlsAutoHide,
   loadLayoutSize,
   loadMetadataVisibility,
+  loadPeopleModuleVisible,
+  savePeopleModuleVisible,
   loadThumbnailOrientations,
   loadUiFontScale,
   parseThumbnailOrientations,
@@ -20,6 +22,29 @@ import {
 } from "./workspacePersistence";
 
 describe("workspace persistence", () => {
+  it("hides People by default and preserves both visibility choices", () => {
+    const values = new Map<string, string>();
+    const storage = {
+      getItem: (key: string) => values.get(key) ?? null,
+      setItem: (key: string, value: string) => { values.set(key, value); },
+    };
+    expect(loadPeopleModuleVisible(storage)).toBe(false);
+    savePeopleModuleVisible(false, storage);
+    expect(loadPeopleModuleVisible(storage)).toBe(false);
+    savePeopleModuleVisible(true, storage);
+    expect(loadPeopleModuleVisible(storage)).toBe(true);
+    expect(loadPeopleModuleVisible({ ...storage, getItem: () => "invalid" })).toBe(false);
+  });
+
+  it("keeps People preferences usable when storage is unavailable", () => {
+    const storage = {
+      getItem: () => { throw new Error("unavailable"); },
+      setItem: () => { throw new Error("unavailable"); },
+    };
+    expect(loadPeopleModuleVisible(storage)).toBe(false);
+    expect(() => savePeopleModuleVisible(false, storage)).not.toThrow();
+  });
+
   it("restores the active root and each root's last directory", () => {
     expect(parseWorkspaceSnapshot(JSON.stringify({
       activeRoot: "/photos",

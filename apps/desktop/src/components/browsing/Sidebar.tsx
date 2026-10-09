@@ -49,6 +49,7 @@ interface SidebarProps {
   globalPeoplePanel?: ReactNode;
   globalPeopleCount?: number;
   peopleMode?: boolean;
+  peopleModuleVisible?: boolean;
   onPeopleModeChange?: (value: boolean) => void;
   people?: FolderPerson[];
   selectedPersonId?: string;
@@ -290,6 +291,7 @@ export function Sidebar({
   globalPeoplePanel,
   globalPeopleCount,
   peopleMode = false,
+  peopleModuleVisible = true,
   onPeopleModeChange,
   people = [],
   selectedPersonId,
@@ -678,11 +680,11 @@ export function Sidebar({
           <span>浏览</span>
           <span className="person-sidebar-tabs__count">{total.toLocaleString()}</span>
         </button>
-        <button role="tab" aria-selected={peopleMode} onClick={() => onPeopleModeChange?.(true)}>
+        {peopleModuleVisible ? <button role="tab" aria-selected={peopleMode} onClick={() => onPeopleModeChange?.(true)}>
           <Users size={15} />
           <span>人物</span>
           <span className="person-sidebar-tabs__count">{(globalPeopleCount ?? people.length).toLocaleString()}</span>
-        </button>
+        </button> : null}
       </div>
       {peopleMode && globalPeoplePanel ? globalPeoplePanel : peopleMode ? <section className={`person-sidebar-section ${personFilterOpen ? "is-filter-open" : ""}`}>
         <PersonAnalysisControls sessionId={activeSession?.id} folderPath={currentPath} />

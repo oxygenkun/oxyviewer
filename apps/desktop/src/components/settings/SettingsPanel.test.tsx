@@ -4,6 +4,7 @@ import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { translate } from "@/lib/i18n";
+import { loadPeopleModuleVisible } from "@/lib/browse/workspacePersistence";
 import { useWorkspaceStore } from "@/store";
 import { SettingsPanel } from "./SettingsPanel";
 
@@ -51,7 +52,8 @@ const clickTab = async (label: string) => {
 
 beforeEach(async () => {
   vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
-  useWorkspaceStore.setState({ settingsOpen: true, settingsSection: "general", locale: "zh-CN" });
+  window.localStorage.clear();
+  useWorkspaceStore.setState({ settingsOpen: true, settingsSection: "general", locale: "zh-CN", peopleModuleVisible: loadPeopleModuleVisible(), peopleMode: false });
   client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   host = document.createElement("div");
   root = createRoot(host);
@@ -103,4 +105,35 @@ it("opens directly on the external applications tab", async () => {
   await act(async () => useWorkspaceStore.getState().openSettings("externalApps"));
   expect(host.querySelector('[role=tab][aria-selected="true"]')?.textContent).toContain("外部应用");
   expect(host.querySelector('[data-testid="external-apps"]')).not.toBeNull();
+});
+
+it("shows the experimental people option disabled by default", () => {
+  const toggle = [...host.querySelectorAll<HTMLButtonElement>("button")]
+    .find((button) => button.textContent === "显示人物模块（实验性）")!;
+  expect(toggle.getAttribute("aria-pressed")).toBe("false");
+  expect(useWorkspaceStore.getState().peopleMode).toBe(false);
+});
+
+it("hides the active people module, persists the choice, and requires explicit re-entry", async () => {
+  await act(async () => {
+    useWorkspaceStore.getState().setPeopleModuleVisible(true);
+    useWorkspaceStore.getState().setPeopleMode(true);
+  });
+  const toggle = [...host.querySelectorAll<HTMLButtonElement>("button")]
+    .find((button) => button.textContent === "显示人物模块（实验性）")!;
+  expect(toggle.getAttribute("aria-pressed")).toBe("true");
+
+  await act(async () => toggle.click());
+  expect(toggle.getAttribute("aria-pressed")).toBe("false");
+  expect(useWorkspaceStore.getState()).toMatchObject({ peopleModuleVisible: false, peopleMode: false });
+  expect(loadPeopleModuleVisible()).toBe(false);
+  // A delayed navigation must not reopen a module that was hidden meanwhile.
+  await act(async () => useWorkspaceStore.getState().setPeopleMode(true));
+  expect(useWorkspaceStore.getState().peopleMode).toBe(false);
+
+  await act(async () => toggle.click());
+  expect(loadPeopleModuleVisible()).toBe(true);
+  expect(useWorkspaceStore.getState()).toMatchObject({ peopleModuleVisible: true, peopleMode: false });
+  await act(async () => useWorkspaceStore.getState().setPeopleMode(true));
+  expect(useWorkspaceStore.getState().peopleMode).toBe(true);
 });

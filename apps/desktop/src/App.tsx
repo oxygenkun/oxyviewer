@@ -119,13 +119,13 @@ export function App({ perfScenario }: { perfScenario?: PerfScenario }) {
   const [folderImport, setFolderImport] = useState<FolderImportState>(IDLE_FOLDER_IMPORT);
   const [showOnboarding, setShowOnboarding] = useState(() => !hasSeenFolderOnboarding());
   const [error, setError] = useState<string>();
-  const [peopleMode, setPeopleMode] = useState(false);
   const [folderReveal, setFolderReveal] = useState<{ sessionId: string; path: string }>();
   const [tupleSelections, setTupleSelections] = useState<Record<string, PersonTupleFilter | undefined>>({});
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [noticeExpanded, setNoticeExpanded] = useState(false);
   const queryClient = useQueryClient();
   const {
+    peopleModuleVisible, peopleMode, setPeopleMode,
     view, thumbnailOrientation, burstGroupingEnabled, activeId, selectedIds, inspectorOpen, leftPanelOpen, settingsOpen, locale,
     search, tagIds, tagMatch, clearSearch, kind, minimumRating, colorLabels, pickLabels, sort, direction, clearSelection, select, setThumbnailOrientation, restoreThumbnailOrientation, forgetThumbnailOrientation, toggleBurstGrouping, toggleSettings,
     leftPanelWidth, inspectorWidth, setLeftPanelWidth, setInspectorWidth, uiFontScale,
@@ -987,6 +987,7 @@ export function App({ perfScenario }: { perfScenario?: PerfScenario }) {
       } as CSSProperties}
     >
       <Sidebar
+        peopleModuleVisible={peopleModuleVisible}
         revealRequest={folderReveal}
         peopleMode={peopleMode}
         onPeopleModeChange={enabled => { setPeopleMode(enabled); if (enabled) globalPeople.openLibrary(); }}

@@ -16,6 +16,10 @@ it("keeps burst grouping disabled by default", () => {
   expect(useWorkspaceStore.getInitialState().burstGroupingEnabled).toBe(false);
 });
 
+it("keeps the experimental people module disabled by default", () => {
+  expect(useWorkspaceStore.getInitialState()).toMatchObject({ peopleModuleVisible: false, peopleMode: false });
+});
+
 it("remembers and restores thumbnail orientation per folder", () => {
   const store = useWorkspaceStore.getState();
   store.setThumbnailOrientation("portrait", "/photos");
