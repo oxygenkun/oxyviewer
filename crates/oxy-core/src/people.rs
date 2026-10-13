@@ -1,25 +1,10 @@
-//! The person domain.
-//!
-//! Two halves meet here. One is what a person *is*: identity, the review
-//! decisions over it, the history of both, the tag an identity pushes onto its
-//! photos, and the reference a query is anchored on ([`People`]). The other is
-//! the pipeline that proposes identities: manifest validation, stage
-//! fingerprints, detection geometry, artifact verification, and the model
-//! adapters that will consume them.
-//!
-//! The claims the boundary is supposed to make true:
-//!
-//! - **A person fact is never a cache.** Identity, reviews, references, and
-//!   history are declared `user` in `crate::storage::schema`; detections, feature
-//!   vectors, and the analysis run ledger are declared `cache`. Emptying the
-//!   second never reaches the first, and that audit runs in `oxy_store`.
-//! - **The domain does not name the storage engine.** Every statement is a
-//!   function in `crate::storage::repo::person_cache`; this crate holds the rules.
-//!   [`audit`] asserts both halves of that.
-//! - **`oxy-people` is a sibling of `oxy-tags`, not a layer above it.** A
-//!   person identity may push a tag onto its photos, so the two domains talk to
-//!   each other's rows through repository statements rather than through each
-//!   other's API. Nothing here names `oxy_tags`.
+//! Human identity, review and references together with derived person evidence.
+//! User facts and analysis caches stay in separately classified tables declared
+//! by this feature; cache rebuilding never deletes human decisions.
+
+pub(crate) mod repo;
+pub(crate) mod schema;
+pub mod types;
 
 pub mod alignment;
 pub mod clusters;
@@ -35,7 +20,7 @@ pub mod inference;
 #[cfg(test)]
 mod testing;
 
-use crate::contracts::{
+use crate::people::types::{
     PersonModelLicenseStatus, PersonStageKind, PersonStageManifest, PipelineManifest,
 };
 use crate::storage::Store;
@@ -187,7 +172,7 @@ pub fn validate_manifest(manifest: &PipelineManifest) -> Result<(), PipelineErro
     let mut visiting = HashSet::new();
     fn visit<'a>(
         id: &'a str,
-        stages: &HashMap<&'a str, &'a crate::contracts::PersonStageManifest>,
+        stages: &HashMap<&'a str, &'a crate::people::types::PersonStageManifest>,
         visited: &mut HashSet<&'a str>,
         visiting: &mut HashSet<&'a str>,
     ) -> Result<(), PipelineError> {
@@ -380,11 +365,11 @@ pub fn require_installable(manifest: &PipelineManifest) -> Result<(), PipelineEr
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::contracts::{
-        PersonDistanceMetric, PersonModelArtifact, PersonModelArtifactFormat, PersonStageManifest,
-    };
     use crate::people::environment::artifacts::{
         ArtifactInstallError, install_artifact_reader, install_local_artifact,
+    };
+    use crate::people::types::{
+        PersonDistanceMetric, PersonModelArtifact, PersonModelArtifactFormat, PersonStageManifest,
     };
 
     fn manifest() -> PipelineManifest {

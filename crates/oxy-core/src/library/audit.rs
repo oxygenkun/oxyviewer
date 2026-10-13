@@ -41,7 +41,7 @@ fn no_module_writes_tables_owned_by_the_other_namespace() {
 }
 
 /// Every statement against a user-owned table now has a home in
-/// `crate::storage::repo`.
+/// `the owning feature repository`.
 ///
 /// The audit above catches a write to the *other* namespace. This one catches a
 /// statement that should not be in this crate at all: naming a repository
@@ -71,7 +71,7 @@ fn the_user_namespace_carries_no_sql_of_its_own() {
     }
     assert!(
         offenders.is_empty(),
-        "a user-domain statement belongs in crate::storage::repo, not here:\n{}",
+        "a user-domain statement belongs in the owning feature repository, not here:\n{}",
         offenders.join("\n")
     );
 }

@@ -2,11 +2,11 @@
 //! Inference and storage are supplied by callers; this module never starts
 //! work as part of the interactive folder-open path.
 
-use crate::contracts::{
+use crate::files::{FsCatalog, FsError, observe_file, scan_assets_with_progress_and_cancel};
+use crate::people::types::{
     PersonAnalysisRun, PersonAnalysisState, PersonAnalysisTaskInput, PersonStageKind,
     PipelineManifest,
 };
-use crate::files::{FsCatalog, FsError, observe_file, scan_assets_with_progress_and_cancel};
 use crate::people::{PipelineError, pipeline_fingerprint, require_installable, stage_fingerprint};
 use std::{collections::HashMap, error::Error, path::Path};
 use thiserror::Error;
@@ -66,7 +66,7 @@ pub fn asset_stage_order(manifest: &PipelineManifest) -> Result<Vec<String>, Pip
     let mut visited = std::collections::HashSet::new();
     fn visit<'a>(
         id: &'a str,
-        stages: &HashMap<&'a str, &'a crate::contracts::PersonStageManifest>,
+        stages: &HashMap<&'a str, &'a crate::people::types::PersonStageManifest>,
         visited: &mut std::collections::HashSet<&'a str>,
         ordered: &mut Vec<String>,
     ) -> Result<(), PipelineError> {
@@ -182,11 +182,11 @@ pub fn enroll_folder_snapshot<S: AnalysisTaskSink>(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::contracts::{
+    use crate::people::testing;
+    use crate::people::types::{
         BeginPersonAnalysis, PersonDistanceMetric, PersonModelArtifact, PersonModelArtifactFormat,
         PersonModelLicenseStatus, PersonStageManifest,
     };
-    use crate::people::testing;
     use crate::people::{People, PeopleError};
     use std::{fs, path::PathBuf};
 

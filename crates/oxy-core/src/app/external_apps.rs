@@ -1,4 +1,4 @@
-use crate::contracts::{ExternalAppSettings, ExternalApplication};
+use crate::files::types::{ExternalAppSettings, ExternalApplication};
 use serde::{Deserialize, Serialize};
 use std::{
     collections::HashSet,

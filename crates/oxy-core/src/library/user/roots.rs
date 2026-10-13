@@ -9,7 +9,6 @@
 //! derived from it.
 
 use crate::library::{Library, LibraryError, cache::index::forget_root};
-use crate::storage::repo;
 use std::{
     collections::HashSet,
     path::{Path, PathBuf},
@@ -18,7 +17,7 @@ use std::{
 impl Library {
     pub fn add_root(&self, path: &Path) -> Result<(), LibraryError> {
         let canonical = path.canonicalize()?;
-        repo::library::insert_root(&self.write(), &canonical.to_string_lossy())?;
+        crate::library::repo::insert_root(&self.write(), &canonical.to_string_lossy())?;
         Ok(())
     }
 
@@ -31,7 +30,7 @@ impl Library {
         let root = path.to_string_lossy();
         let mut connection = self.write();
         let transaction = connection.transaction()?;
-        repo::library::delete_root(&transaction, root.as_ref())?;
+        crate::library::repo::delete_root(&transaction, root.as_ref())?;
         // The index owns its own rows. Asking it to forget the root keeps the
         // delete list next to the schema that defines those tables.
         forget_root(&transaction, root.as_ref())?;
@@ -40,7 +39,7 @@ impl Library {
     }
 
     pub fn roots(&self) -> Result<Vec<PathBuf>, LibraryError> {
-        Ok(repo::library::list_roots(&self.read_connection())?
+        Ok(crate::library::repo::list_roots(&self.read_connection())?
             .into_iter()
             .map(PathBuf::from)
             .collect())
@@ -48,7 +47,7 @@ impl Library {
 
     pub fn reorder_roots(&self, paths: &[PathBuf]) -> Result<(), LibraryError> {
         let mut connection = self.write();
-        let stored = repo::library::root_paths(&connection)?;
+        let stored = crate::library::repo::root_paths(&connection)?;
         let requested = paths
             .iter()
             .map(|path| path.to_string_lossy().into_owned())
@@ -59,7 +58,7 @@ impl Library {
 
         let transaction = connection.transaction()?;
         for (sort_order, path) in paths.iter().enumerate() {
-            repo::library::set_sort_order(
+            crate::library::repo::set_sort_order(
                 &transaction,
                 &path.to_string_lossy(),
                 sort_order as i64,
@@ -71,7 +70,7 @@ impl Library {
 
     pub fn contains_root(&self, path: &Path) -> Result<bool, LibraryError> {
         let path = path.canonicalize().unwrap_or_else(|_| path.to_owned());
-        Ok(repo::library::contains_root(
+        Ok(crate::library::repo::contains_root(
             &self.read_connection(),
             &path.to_string_lossy(),
         )?)

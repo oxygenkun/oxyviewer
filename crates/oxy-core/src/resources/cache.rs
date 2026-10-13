@@ -1,4 +1,4 @@
-use crate::contracts::{CacheSettings, CacheSettingsUpdate};
+use crate::resources::types::{CacheSettings, CacheSettingsUpdate};
 use crate::runtime::CoreRuntime;
 use oxy_media::MediaCache;
 use serde::{Deserialize, Serialize};

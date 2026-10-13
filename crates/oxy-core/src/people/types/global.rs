@@ -1,5 +1,6 @@
 //! App-wide identities and folder projections over individual person tuples.
-use crate::contracts::{AssetSummary, PersonReviewDecision};
+use crate::browse::types::AssetSummary;
+use crate::people::types::PersonReviewDecision;
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 

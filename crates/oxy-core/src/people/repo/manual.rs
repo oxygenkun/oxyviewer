@@ -5,7 +5,7 @@
 //! event, and record a request id live here; the rules about which of them a
 //! given user action performs live in the crate that owns the person domain.
 
-use crate::contracts::{
+use crate::people::types::{
     FolderPerson, HistoricalPerson, ManualPersonAnchor, PersonInstance, PersonReview,
     PersonReviewDecision, PersonTagLink, PersonTagOverride,
 };

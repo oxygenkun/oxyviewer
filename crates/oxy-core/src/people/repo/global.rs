@@ -1,5 +1,5 @@
 //! Statements only. Identity migration, review and matching policy live in oxy-people.
-use crate::contracts::{GlobalPerson, GlobalPersonFolder, PersonReviewDecision, PersonTuple};
+use crate::people::types::{GlobalPerson, GlobalPersonFolder, PersonReviewDecision, PersonTuple};
 use crate::storage::StoreError;
 use rusqlite::{Connection, OptionalExtension, params};
 

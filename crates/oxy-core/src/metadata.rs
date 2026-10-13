@@ -1,9 +1,8 @@
 pub mod provider;
-use crate::contracts::{
-    AssetKind, CaptureMetadata, EditableMetadata, FocusInfo, MetadataProjection, PickLabel,
-    ResourceLoadStatus,
-};
+pub mod types;
 use crate::files::sidecar_path;
+use crate::resources::types::{MetadataProjection, ResourceLoadStatus};
+use oxy_media::types::{AssetKind, CaptureMetadata, EditableMetadata, FocusInfo, PickLabel};
 use serde_json::Value;
 #[cfg(unix)]
 use std::os::unix::fs::PermissionsExt;
@@ -88,7 +87,7 @@ struct SummaryMetadataFingerprint {
 /// request entered the coordinator, rather than when its worker completes.
 #[derive(Debug, Clone)]
 pub struct MetadataObservation {
-    asset: crate::contracts::AssetSummary,
+    asset: crate::browse::types::AssetSummary,
     fingerprint: SummaryMetadataFingerprint,
     valid_at: u64,
 }
@@ -146,20 +145,20 @@ impl MetadataFacade {
     /// versioned state used by grid enrichment and metadata filtering.
     pub fn read_document_for_asset(
         &self,
-        asset: &crate::contracts::AssetSummary,
+        asset: &crate::browse::types::AssetSummary,
         display_dimensions: Option<(u32, u32)>,
     ) -> Result<(MetadataDocument, MetadataProjection), MetadataError> {
         let observation = self.observe_asset(asset);
         self.read_document_observation(&observation, display_dimensions)
     }
 
-    pub fn observe_asset(&self, asset: &crate::contracts::AssetSummary) -> MetadataObservation {
+    pub fn observe_asset(&self, asset: &crate::browse::types::AssetSummary) -> MetadataObservation {
         self.observe_asset_at(asset, self.begin_observation())
     }
 
     pub fn observe_asset_at(
         &self,
-        asset: &crate::contracts::AssetSummary,
+        asset: &crate::browse::types::AssetSummary,
         valid_at: u64,
     ) -> MetadataObservation {
         MetadataObservation {
@@ -291,7 +290,7 @@ impl MetadataFacade {
 
     pub fn enrich_summaries(
         &self,
-        assets: &mut [crate::contracts::AssetSummary],
+        assets: &mut [crate::browse::types::AssetSummary],
     ) -> Result<(), MetadataError> {
         self.enrich_summaries_with_projections(assets).map(|_| ())
     }
@@ -300,7 +299,7 @@ impl MetadataFacade {
     /// for every asset in input order.
     pub fn enrich_summaries_with_projections(
         &self,
-        assets: &mut [crate::contracts::AssetSummary],
+        assets: &mut [crate::browse::types::AssetSummary],
     ) -> Result<Vec<MetadataProjection>, MetadataError> {
         let fingerprints = assets
             .iter()
@@ -370,7 +369,7 @@ impl MetadataFacade {
 
     fn merge_summary_observation(
         &self,
-        asset: &crate::contracts::AssetSummary,
+        asset: &crate::browse::types::AssetSummary,
         fingerprint: SummaryMetadataFingerprint,
         valid_at: u64,
         rating: Option<u8>,
@@ -406,7 +405,7 @@ impl MetadataFacade {
 
     pub fn cached_projection(
         &self,
-        asset: &crate::contracts::AssetSummary,
+        asset: &crate::browse::types::AssetSummary,
     ) -> Option<MetadataProjection> {
         let fingerprint = summary_metadata_fingerprint(asset);
         self.summary_cache
@@ -430,7 +429,7 @@ impl MetadataFacade {
         &self,
         path: &Path,
         kind: AssetKind,
-        patch: &crate::contracts::MetadataPatch,
+        patch: &crate::metadata::types::MetadataPatch,
     ) -> Result<PathBuf, MetadataError> {
         let sidecar = patch_metadata_to_sidecar(path, kind, patch)?;
         self.summary_cache
@@ -445,13 +444,13 @@ impl MetadataFacade {
             return Err(MetadataError::SidecarUnavailable(path.to_path_buf()));
         }
         let metadata = read_sidecar(path)?;
-        let patch = crate::contracts::MetadataPatch {
+        let patch = crate::metadata::types::MetadataPatch {
             rating: Some(metadata.rating),
             color_label: Some(metadata.color_label),
             pick_label: Some(metadata.pick_label),
             keywords: Some(metadata.keywords),
             hierarchical_keywords: Some(metadata.hierarchical_keywords),
-            ..crate::contracts::MetadataPatch::default()
+            ..crate::metadata::types::MetadataPatch::default()
         };
         let executable = self.exiftool();
         let updated = patch_embedded(path, &patch, executable.as_deref())?;
@@ -469,7 +468,7 @@ impl MetadataFacade {
 }
 
 fn summary_metadata_fingerprint(
-    asset: &crate::contracts::AssetSummary,
+    asset: &crate::browse::types::AssetSummary,
 ) -> SummaryMetadataFingerprint {
     let sidecar = sidecar_path(&asset.path);
     let sidecar_metadata = fs::metadata(&sidecar).ok();
@@ -495,7 +494,7 @@ fn summary_metadata_fingerprint(
     }
 }
 
-pub fn metadata_source_revision(asset: &crate::contracts::AssetSummary) -> String {
+pub fn metadata_source_revision(asset: &crate::browse::types::AssetSummary) -> String {
     source_revision_from_fingerprint(summary_metadata_fingerprint(asset))
 }
 
@@ -521,7 +520,7 @@ fn stable_bytes_digest(bytes: &[u8]) -> u64 {
 }
 
 fn projection_from_cache(
-    asset: &crate::contracts::AssetSummary,
+    asset: &crate::browse::types::AssetSummary,
     cached: &CachedSummaryMetadata,
 ) -> MetadataProjection {
     MetadataProjection {
@@ -559,13 +558,13 @@ pub fn read_metadata_with_exiftool(
 /// Enriches summaries in-place. A single ExifTool process is used per chunk so
 /// metadata filtering does not spawn a worker for every JPEG/HEIF file.
 pub fn enrich_summaries(
-    assets: &mut [crate::contracts::AssetSummary],
+    assets: &mut [crate::browse::types::AssetSummary],
 ) -> Result<(), MetadataError> {
     enrich_summaries_with_exiftool(assets, None)
 }
 
 pub fn enrich_summaries_with_exiftool(
-    assets: &mut [crate::contracts::AssetSummary],
+    assets: &mut [crate::browse::types::AssetSummary],
     exiftool: Option<&Path>,
 ) -> Result<(), MetadataError> {
     let embedded = assets
@@ -597,7 +596,7 @@ pub fn enrich_summaries_with_exiftool(
 pub fn patch_metadata(
     path: &Path,
     kind: AssetKind,
-    patch: &crate::contracts::MetadataPatch,
+    patch: &crate::metadata::types::MetadataPatch,
 ) -> Result<PathBuf, MetadataError> {
     patch_metadata_to_sidecar(path, kind, patch)
 }
@@ -605,13 +604,13 @@ pub fn patch_metadata(
 pub fn patch_metadata_to_sidecar(
     path: &Path,
     _kind: AssetKind,
-    patch: &crate::contracts::MetadataPatch,
+    patch: &crate::metadata::types::MetadataPatch,
 ) -> Result<PathBuf, MetadataError> {
     validate_patch(patch)?;
     patch_sidecar(path, patch)
 }
 
-fn validate_patch(patch: &crate::contracts::MetadataPatch) -> Result<(), MetadataError> {
+fn validate_patch(patch: &crate::metadata::types::MetadataPatch) -> Result<(), MetadataError> {
     if let Some(Some(rating)) = patch.rating
         && rating > 5
     {
@@ -751,7 +750,7 @@ fn string_value(value: Option<&Value>) -> Option<String> {
 
 fn patch_embedded(
     path: &Path,
-    patch: &crate::contracts::MetadataPatch,
+    patch: &crate::metadata::types::MetadataPatch,
     exiftool: Option<&Path>,
 ) -> Result<PathBuf, MetadataError> {
     let mut command = exiftool_command(exiftool);
@@ -775,7 +774,7 @@ fn patch_embedded(
 
 fn add_patch_args(
     command: &mut Command,
-    patch: &crate::contracts::MetadataPatch,
+    patch: &crate::metadata::types::MetadataPatch,
     sony_hif: bool,
 ) -> Result<(), MetadataError> {
     if let Some(value) = patch.rating {
@@ -878,7 +877,7 @@ fn exiftool_output(command: &mut Command) -> Result<Output, MetadataError> {
 
 fn patch_sidecar(
     asset_path: &Path,
-    patch: &crate::contracts::MetadataPatch,
+    patch: &crate::metadata::types::MetadataPatch,
 ) -> Result<PathBuf, MetadataError> {
     let destination = sidecar_path(asset_path);
     let mut xml = if destination.is_file() {
@@ -1200,7 +1199,7 @@ mod tests {
 
         fs::write(crate::metadata::sidecar_path(&path), r#"<x:xmpmeta xmlns:x="adobe:ns:meta/"><rdf:RDF xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#"><rdf:Description xmlns:crs="http://ns.adobe.com/camera-raw-settings/1.0/" crs:Temperature="7000" /></rdf:RDF></x:xmpmeta>"#).unwrap();
         let merged = crate::metadata::MetadataFacade::default()
-            .read_document(&path, crate::contracts::AssetKind::Heif, None)
+            .read_document(&path, oxy_media::types::AssetKind::Heif, None)
             .unwrap();
         assert_eq!(merged.capture.color_temperature.as_deref(), Some("7000 K"));
         assert_eq!(merged.capture.tint.as_deref(), Some("8"));
@@ -1245,16 +1244,16 @@ mod tests {
         patch_metadata(
             &raw,
             AssetKind::Raw,
-            &crate::contracts::MetadataPatch {
+            &crate::metadata::types::MetadataPatch {
                 rating: Some(Some(5)),
                 color_label: Some(Some("Blue".into())),
-                ..crate::contracts::MetadataPatch::default()
+                ..crate::metadata::types::MetadataPatch::default()
             },
         )
         .unwrap();
         let mut assets = crate::files::scan_directory(
             directory.path(),
-            &crate::contracts::AssetQuery::default(),
+            &crate::browse::types::AssetQuery::default(),
             0,
         )
         .unwrap()
@@ -1280,10 +1279,10 @@ mod tests {
         patch_metadata(
             &raw,
             AssetKind::Raw,
-            &crate::contracts::MetadataPatch {
+            &crate::metadata::types::MetadataPatch {
                 rating: Some(Some(2)),
                 color_label: Some(Some("Purple".into())),
-                ..crate::contracts::MetadataPatch::default()
+                ..crate::metadata::types::MetadataPatch::default()
             },
         )
         .unwrap();
@@ -1302,7 +1301,7 @@ mod tests {
         fs::write(&raw, b"camera image bytes").unwrap();
         let asset = crate::files::scan_directory(
             directory.path(),
-            &crate::contracts::AssetQuery::default(),
+            &crate::browse::types::AssetQuery::default(),
             0,
         )
         .unwrap()
@@ -1348,7 +1347,7 @@ mod tests {
         fs::write(&hif, content(1)).unwrap();
         let asset = crate::files::scan_directory(
             directory.path(),
-            &crate::contracts::AssetQuery::default(),
+            &crate::browse::types::AssetQuery::default(),
             0,
         )
         .unwrap()
@@ -1386,9 +1385,9 @@ mod tests {
             .patch_metadata(
                 &raw,
                 AssetKind::Raw,
-                &crate::contracts::MetadataPatch {
+                &crate::metadata::types::MetadataPatch {
                     rating: Some(Some(2)),
-                    ..crate::contracts::MetadataPatch::default()
+                    ..crate::metadata::types::MetadataPatch::default()
                 },
             )
             .unwrap();
@@ -1407,7 +1406,7 @@ mod tests {
         fs::write(&raw, minimal_raw_with_xmp(1, "red")).unwrap();
         let mut assets = crate::files::scan_directory(
             directory.path(),
-            &crate::contracts::AssetQuery::default(),
+            &crate::browse::types::AssetQuery::default(),
             0,
         )
         .unwrap()
@@ -1441,9 +1440,9 @@ mod tests {
             .patch_metadata(
                 &copy,
                 AssetKind::Raw,
-                &crate::contracts::MetadataPatch {
+                &crate::metadata::types::MetadataPatch {
                     rating: Some(Some(2)),
-                    ..crate::contracts::MetadataPatch::default()
+                    ..crate::metadata::types::MetadataPatch::default()
                 },
             )
             .unwrap();
@@ -1463,10 +1462,10 @@ mod tests {
         patch_metadata(
             &hif,
             AssetKind::Heif,
-            &crate::contracts::MetadataPatch {
+            &crate::metadata::types::MetadataPatch {
                 rating: Some(Some(4)),
                 color_label: Some(Some("Green".into())),
-                ..crate::contracts::MetadataPatch::default()
+                ..crate::metadata::types::MetadataPatch::default()
             },
         )
         .unwrap();
@@ -1699,10 +1698,10 @@ mod tests {
         let mut command = Command::new("exiftool");
         add_patch_args(
             &mut command,
-            &crate::contracts::MetadataPatch {
+            &crate::metadata::types::MetadataPatch {
                 rating: Some(None),
                 color_label: Some(Some("Red".into())),
-                ..crate::contracts::MetadataPatch::default()
+                ..crate::metadata::types::MetadataPatch::default()
             },
             true,
         )
@@ -1727,9 +1726,9 @@ mod tests {
             let mut command = Command::new("exiftool");
             add_patch_args(
                 &mut command,
-                &crate::contracts::MetadataPatch {
+                &crate::metadata::types::MetadataPatch {
                     color_label: Some(Some(ui_value.into())),
-                    ..crate::contracts::MetadataPatch::default()
+                    ..crate::metadata::types::MetadataPatch::default()
                 },
                 true,
             )
@@ -1745,9 +1744,9 @@ mod tests {
         let mut clear_command = Command::new("exiftool");
         add_patch_args(
             &mut clear_command,
-            &crate::contracts::MetadataPatch {
+            &crate::metadata::types::MetadataPatch {
                 color_label: Some(None),
-                ..crate::contracts::MetadataPatch::default()
+                ..crate::metadata::types::MetadataPatch::default()
             },
             true,
         )
@@ -1841,10 +1840,10 @@ mod tests {
 
         patch_sidecar(
             &raw,
-            &crate::contracts::MetadataPatch {
+            &crate::metadata::types::MetadataPatch {
                 keywords: Some(vec!["external".into(), "Friends".into()]),
                 hierarchical_keywords: Some(vec!["People|Friends".into()]),
-                ..crate::contracts::MetadataPatch::default()
+                ..crate::metadata::types::MetadataPatch::default()
             },
         )
         .unwrap();
@@ -1887,9 +1886,9 @@ mod tests {
 
         patch_sidecar(
             &raw,
-            &crate::contracts::MetadataPatch {
+            &crate::metadata::types::MetadataPatch {
                 pick_label: Some(Some(PickLabel::Accepted)),
-                ..crate::contracts::MetadataPatch::default()
+                ..crate::metadata::types::MetadataPatch::default()
             },
         )
         .unwrap();
@@ -1924,11 +1923,11 @@ mod tests {
 
         patch_sidecar(
             &raw,
-            &crate::contracts::MetadataPatch {
+            &crate::metadata::types::MetadataPatch {
                 rating: Some(None),
                 color_label: Some(None),
                 pick_label: Some(None),
-                ..crate::contracts::MetadataPatch::default()
+                ..crate::metadata::types::MetadataPatch::default()
             },
         )
         .unwrap();

@@ -93,7 +93,7 @@ impl People {
         let snapshot = self.cluster_folder_evidence(&folder, token, input.person_ids.is_some())?;
         let mut suggestions = convert(&snapshot)?;
         let (detector, _, _) = crate::people::clusters::parameters()?;
-        let evidence = repo::person_clusters::evidence(
+        let evidence = crate::people::repo::clusters::evidence(
             &self.store.read(),
             &folder.to_string_lossy(),
             &snapshot.run_id,
@@ -193,9 +193,9 @@ impl People {
         check(token)?;
         if db::catalog(&tx)? != people
             || db::reference_vectors(&tx, &space, &encoder)? != refs
-            || repo::person_cache::analysis_head(&tx, &folder.to_string_lossy())?
+            || crate::people::repo::cache::analysis_head(&tx, &folder.to_string_lossy())?
                 .is_none_or(|(_, id)| id != snapshot.run_id)
-            || repo::person_clusters::evidence(
+            || crate::people::repo::clusters::evidence(
                 &tx,
                 &folder.to_string_lossy(),
                 &snapshot.run_id,

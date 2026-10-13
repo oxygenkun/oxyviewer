@@ -1,32 +1,17 @@
-//! The tag vocabulary the user built, the assignments they made, and the XMP
-//! state that mirrors them.
-//!
-//! Tags are facts the user entered, so they are never part of a cache rebuild;
-//! only an explicit delete removes them. The tables and their `user` class are
-//! declared in `crate::storage::schema::user`, next to the DDL, and every statement
-//! that reads or writes them is a function in `crate::storage::repo::tags`. What
-//! this crate owns is what a tag *is*: that a name is unique among its
-//! siblings, that a tag cannot be moved below itself, which sources a hand
-//! assignment may drop, and what deleting one cascades into.
-//!
-//! It is a crate rather than a module in `oxy-library` for one reason: the
-//! person side has to be out of reach. Tag policy and person policy are
-//! separate rules, and only a crate boundary makes "tags cannot name people" a
-//! compile error instead of a convention — inside one crate both directions of
-//! `use` are legal and silent. The same boundary keeps the storage engine out:
-//! this crate names `crate::storage::Connection` and `crate::storage::Transaction`, never
-//! `rusqlite`. [`audit`] states both, from this crate's own source.
-//!
-//! A file that moved or was deleted is the one place a tag operation has to
-//! reach beyond its own rows. That act is
-//! `crate::storage::repo::cross::{relocate_asset, forget_asset}` — it belongs to no
-//! single domain, so it lives next to the tables rather than in a sibling.
+//! User tag vocabulary, independent assignment sources and durable XMP mirrors.
+//! Schema and statements live beside these rules. Cross-feature asset changes
+//! and person contributions use named application workflows in one transaction.
 
-use crate::contracts::{
-    AssetQuery, AssetSummary, AssetTagAssignment, AssetTagAssignmentsByPath, CustomTag,
-    CustomTagId, TagDeleteImpact, TagMatchMode, TagSyncStatus,
+pub(crate) mod repo;
+pub(crate) mod schema;
+pub mod types;
+
+use crate::browse::types::{AssetQuery, AssetSummary, TagMatchMode};
+use crate::storage::{Store, StoreError};
+use crate::tags::types::{
+    AssetTagAssignment, AssetTagAssignmentsByPath, CustomTag, CustomTagId, TagDeleteImpact,
+    TagSyncStatus,
 };
-use crate::storage::{Store, StoreError, repo};
 use std::{
     collections::HashMap,
     path::{Path, PathBuf},
@@ -69,7 +54,7 @@ impl Tags {
         path: &Path,
         tag_id: CustomTagId,
     ) -> Result<Vec<String>, TagError> {
-        Ok(repo::tags::source_kinds(
+        Ok(crate::tags::repo::source_kinds(
             &self.store.read(),
             &path.to_string_lossy(),
             tag_id,
@@ -90,7 +75,7 @@ impl Tags {
         let selected = serde_json::to_string(&query.tag_ids)?;
         let paths =
             serde_json::to_string(&assets.iter().map(|asset| &asset.path).collect::<Vec<_>>())?;
-        let matches = repo::tags::assets_matching_tags(
+        let matches = crate::tags::repo::assets_matching_tags(
             &self.store.read(),
             &selected,
             &paths,
@@ -104,7 +89,7 @@ impl Tags {
     }
 
     pub fn custom_tags(&self) -> Result<Vec<CustomTag>, TagError> {
-        Ok(repo::tags::list_tags(&self.store.read())?)
+        Ok(crate::tags::repo::list_tags(&self.store.read())?)
     }
 
     pub fn create_custom_tag(
@@ -116,13 +101,14 @@ impl Tags {
         let mut connection = self.store.write();
         let transaction = connection.transaction().map_err(StoreError::from)?;
         if let Some(parent_id) = parent_id
-            && !repo::tags::tag_exists(&transaction, parent_id)?
+            && !crate::tags::repo::tag_exists(&transaction, parent_id)?
         {
             return Err(TagError::MissingTagParent);
         }
-        let sort_order = repo::tags::next_sort_order(&transaction, parent_id)?;
-        let id = repo::tags::insert_tag(&transaction, parent_id, &name, &name_key, sort_order)
-            .map_err(map_constraint)?;
+        let sort_order = crate::tags::repo::next_sort_order(&transaction, parent_id)?;
+        let id =
+            crate::tags::repo::insert_tag(&transaction, parent_id, &name, &name_key, sort_order)
+                .map_err(map_constraint)?;
         transaction.commit().map_err(StoreError::from)?;
         drop(connection);
         self.custom_tags()?
@@ -141,24 +127,24 @@ impl Tags {
         let mut connection = self.store.write();
         let transaction = connection.transaction().map_err(StoreError::from)?;
         let (current_parent_id, current_sort_order) =
-            repo::tags::tag_position(&transaction, id)?.ok_or(TagError::MissingTagParent)?;
+            crate::tags::repo::tag_position(&transaction, id)?.ok_or(TagError::MissingTagParent)?;
         if let Some(parent_id) = parent_id {
-            if !repo::tags::tag_exists(&transaction, parent_id)? {
+            if !crate::tags::repo::tag_exists(&transaction, parent_id)? {
                 return Err(TagError::MissingTagParent);
             }
-            if repo::tags::subtree_contains(&transaction, id, parent_id)? {
+            if crate::tags::repo::subtree_contains(&transaction, id, parent_id)? {
                 return Err(TagError::TagHierarchyCycle);
             }
         }
-        let affected = repo::tags::descendant_asset_paths(&transaction, id)?;
+        let affected = crate::tags::repo::descendant_asset_paths(&transaction, id)?;
         let sort_order = if current_parent_id == parent_id {
             current_sort_order
         } else {
-            repo::tags::next_sort_order_excluding(&transaction, parent_id, id)?
+            crate::tags::repo::next_sort_order_excluding(&transaction, parent_id, id)?
         };
-        repo::tags::update_tag(&transaction, id, parent_id, &name, &name_key, sort_order)
+        crate::tags::repo::update_tag(&transaction, id, parent_id, &name, &name_key, sort_order)
             .map_err(map_constraint)?;
-        repo::tags::enqueue_sync(&transaction, &affected)?;
+        crate::tags::repo::enqueue_sync(&transaction, &affected)?;
         transaction.commit().map_err(StoreError::from)?;
         drop(connection);
         self.custom_tags()?
@@ -168,7 +154,7 @@ impl Tags {
     }
 
     pub fn custom_tag_delete_impact(&self, id: CustomTagId) -> Result<TagDeleteImpact, TagError> {
-        let (tag_count, asset_count) = repo::tags::delete_impact(&self.store.read(), id)?;
+        let (tag_count, asset_count) = crate::tags::repo::delete_impact(&self.store.read(), id)?;
         Ok(TagDeleteImpact {
             tag_count,
             asset_count,
@@ -179,9 +165,9 @@ impl Tags {
         let impact = self.custom_tag_delete_impact(id)?;
         let mut connection = self.store.write();
         let transaction = connection.transaction().map_err(StoreError::from)?;
-        let affected = repo::tags::descendant_asset_paths(&transaction, id)?;
-        repo::tags::delete_tag(&transaction, id)?;
-        repo::tags::enqueue_sync(&transaction, &affected)?;
+        let affected = crate::tags::repo::descendant_asset_paths(&transaction, id)?;
+        crate::tags::repo::delete_tag(&transaction, id)?;
+        crate::tags::repo::enqueue_sync(&transaction, &affected)?;
         transaction.commit().map_err(StoreError::from)?;
         Ok(impact)
     }
@@ -193,7 +179,7 @@ impl Tags {
         let tags = self.custom_tags()?;
         let path_strings = selection_paths(paths);
         let mut assigned = HashMap::<CustomTagId, usize>::new();
-        for (_, tag_id) in repo::tags::assigned_tag_ids(&self.store.read(), &path_strings)? {
+        for (_, tag_id) in crate::tags::repo::assigned_tag_ids(&self.store.read(), &path_strings)? {
             *assigned.entry(tag_id).or_default() += 1;
         }
         Ok(tags
@@ -215,7 +201,7 @@ impl Tags {
         let tags = self.custom_tags()?;
         let mut assigned = HashMap::<String, std::collections::HashSet<CustomTagId>>::new();
         for (path, tag_id) in
-            repo::tags::assigned_tag_ids(&self.store.read(), &selection_paths(paths))?
+            crate::tags::repo::assigned_tag_ids(&self.store.read(), &selection_paths(paths))?
         {
             assigned.entry(path).or_default().insert(tag_id);
         }
@@ -248,7 +234,7 @@ impl Tags {
     ) -> Result<(), TagError> {
         let mut connection = self.store.write();
         let transaction = connection.transaction().map_err(StoreError::from)?;
-        if !repo::tags::tag_exists(&transaction, tag_id)? {
+        if !crate::tags::repo::tag_exists(&transaction, tag_id)? {
             return Err(TagError::MissingTagParent);
         }
         let path_strings = selection_paths(paths);
@@ -256,16 +242,16 @@ impl Tags {
             // A hand assignment drops the legacy inference and records a manual
             // source; removing it drops both. Either way the effective set is
             // then re-derived from the sources that remain.
-            repo::tags::replace_manual_source(&transaction, path, tag_id, assigned)?;
-            repo::tags::reconcile_effective(&transaction, path, tag_id)?;
+            crate::tags::repo::replace_manual_source(&transaction, path, tag_id, assigned)?;
+            crate::tags::repo::reconcile_effective(&transaction, path, tag_id)?;
         }
-        repo::tags::enqueue_sync(&transaction, &path_strings)?;
+        crate::tags::repo::enqueue_sync(&transaction, &path_strings)?;
         transaction.commit().map_err(StoreError::from)?;
         Ok(())
     }
 
     pub fn pending_tag_sync_paths(&self) -> Result<Vec<PathBuf>, TagError> {
-        Ok(repo::tags::pending_sync_paths(&self.store.read())?
+        Ok(crate::tags::repo::pending_sync_paths(&self.store.read())?
             .into_iter()
             .map(Into::into)
             .collect())
@@ -274,13 +260,13 @@ impl Tags {
     pub fn tag_xmp_payload(&self, path: &Path) -> Result<TagXmpPayload, TagError> {
         let connection = self.store.read();
         let asset_path = path.to_string_lossy();
-        let tags = repo::tags::assigned_tag_paths(&connection, &asset_path)?;
+        let tags = crate::tags::repo::assigned_tag_paths(&connection, &asset_path)?;
         let subjects = tags
             .iter()
             .filter_map(|value| value.rsplit('|').next().map(str::to_owned))
             .collect::<Vec<_>>();
         let (previous_subjects, previous_hierarchical) =
-            repo::tags::xmp_state(&connection, &asset_path)?.map_or_else(
+            crate::tags::repo::xmp_state(&connection, &asset_path)?.map_or_else(
                 || Ok((Vec::new(), Vec::new())),
                 |(subjects, hierarchical)| {
                     Ok::<_, serde_json::Error>((
@@ -305,31 +291,35 @@ impl Tags {
     ) -> Result<(), TagError> {
         let connection = self.store.write();
         let asset_path = path.to_string_lossy();
-        repo::tags::put_xmp_state(
+        crate::tags::repo::put_xmp_state(
             &connection,
             &asset_path,
             &serde_json::to_string(subjects)?,
             &serde_json::to_string(hierarchical)?,
         )?;
-        let current_hierarchical = repo::tags::assigned_tag_paths(&connection, &asset_path)?;
+        let current_hierarchical = crate::tags::repo::assigned_tag_paths(&connection, &asset_path)?;
         let current_subjects = current_hierarchical
             .iter()
             .filter_map(|value| value.rsplit('|').next().map(str::to_owned))
             .collect::<Vec<_>>();
         if subjects == current_subjects && hierarchical == current_hierarchical {
-            repo::tags::delete_sync_entry(&connection, &asset_path)?;
+            crate::tags::repo::delete_sync_entry(&connection, &asset_path)?;
         }
         Ok(())
     }
 
     pub fn fail_tag_xmp_sync(&self, path: &Path, error: &str) -> Result<(), TagError> {
-        repo::tags::record_sync_failure(&self.store.write(), &path.to_string_lossy(), error)?;
+        crate::tags::repo::record_sync_failure(
+            &self.store.write(),
+            &path.to_string_lossy(),
+            error,
+        )?;
         Ok(())
     }
 
     pub fn tag_sync_status(&self) -> Result<TagSyncStatus, TagError> {
         let (pending_count, failed_count, last_error) =
-            repo::tags::sync_status(&self.store.read())?;
+            crate::tags::repo::sync_status(&self.store.read())?;
         Ok(TagSyncStatus {
             pending_count,
             failed_count,
@@ -350,7 +340,7 @@ impl Tags {
         hierarchical: &[String],
     ) -> Result<(), TagError> {
         let asset_path = path.to_string_lossy();
-        if repo::tags::has_pending_sync(&self.store.write(), &asset_path)? {
+        if crate::tags::repo::has_pending_sync(&self.store.write(), &asset_path)? {
             return Ok(());
         }
 
@@ -359,7 +349,8 @@ impl Tags {
             let mut parent_id = None;
             for segment in value.split('|') {
                 let (name, name_key) = normalize_name(segment)?;
-                let existing = repo::tags::tag_id_at(&self.store.write(), parent_id, &name_key)?;
+                let existing =
+                    crate::tags::repo::tag_id_at(&self.store.write(), parent_id, &name_key)?;
                 parent_id = Some(match existing {
                     Some(id) => id,
                     None => self.create_custom_tag(parent_id, &name)?.id,
@@ -379,7 +370,7 @@ impl Tags {
                 continue;
             }
             let (name, name_key) = normalize_name(subject)?;
-            let existing = repo::tags::tag_id_at(&self.store.write(), None, &name_key)?;
+            let existing = crate::tags::repo::tag_id_at(&self.store.write(), None, &name_key)?;
             let tag_id = match existing {
                 Some(id) => id,
                 None => self.create_custom_tag(None, &name)?.id,
@@ -389,18 +380,25 @@ impl Tags {
 
         let mut connection = self.store.write();
         let transaction = connection.transaction().map_err(StoreError::from)?;
-        for tag_id in repo::tags::source_tag_ids_for_kind(&transaction, &asset_path, "sidecar")? {
+        for tag_id in
+            crate::tags::repo::source_tag_ids_for_kind(&transaction, &asset_path, "sidecar")?
+        {
             if !desired_tag_ids.contains(&tag_id) {
-                repo::tags::delete_source_of_kind(&transaction, &asset_path, tag_id, "sidecar")?;
-                repo::tags::reconcile_effective(&transaction, &asset_path, tag_id)?;
+                crate::tags::repo::delete_source_of_kind(
+                    &transaction,
+                    &asset_path,
+                    tag_id,
+                    "sidecar",
+                )?;
+                crate::tags::repo::reconcile_effective(&transaction, &asset_path, tag_id)?;
             }
         }
         for tag_id in &desired_tag_ids {
-            repo::tags::insert_source(&transaction, &asset_path, *tag_id, "sidecar", "")?;
-            repo::tags::reconcile_effective(&transaction, &asset_path, *tag_id)?;
+            crate::tags::repo::insert_source(&transaction, &asset_path, *tag_id, "sidecar", "")?;
+            crate::tags::repo::reconcile_effective(&transaction, &asset_path, *tag_id)?;
         }
-        if repo::tags::effective_tag_ids(&transaction, &asset_path)? != desired_tag_ids {
-            repo::tags::enqueue_sync(&transaction, &[asset_path.into_owned()])?;
+        if crate::tags::repo::effective_tag_ids(&transaction, &asset_path)? != desired_tag_ids {
+            crate::tags::repo::enqueue_sync(&transaction, &[asset_path.into_owned()])?;
         }
         transaction.commit().map_err(StoreError::from)?;
         drop(connection);
@@ -419,7 +417,12 @@ impl Tags {
         let destination = destination.to_string_lossy();
         let mut connection = self.store.write();
         let transaction = connection.transaction().map_err(StoreError::from)?;
-        repo::cross::relocate_asset(&transaction, &source, &destination, same_folder)?;
+        crate::app::workflows::asset_move::relocate_asset(
+            &transaction,
+            &source,
+            &destination,
+            same_folder,
+        )?;
         transaction.commit().map_err(StoreError::from)?;
         Ok(())
     }
@@ -434,9 +437,9 @@ impl Tags {
         let destination = destination.to_string_lossy();
         let mut connection = self.store.write();
         let transaction = connection.transaction().map_err(StoreError::from)?;
-        repo::tags::copy_source_rows(&transaction, &source, &destination, false)?;
-        repo::tags::copy_effective_rows(&transaction, &source, &destination, false)?;
-        repo::tags::enqueue_sync(&transaction, &[destination.into_owned()])?;
+        crate::tags::repo::copy_source_rows(&transaction, &source, &destination, false)?;
+        crate::tags::repo::copy_effective_rows(&transaction, &source, &destination, false)?;
+        crate::tags::repo::enqueue_sync(&transaction, &[destination.into_owned()])?;
         transaction.commit().map_err(StoreError::from)?;
         Ok(())
     }
@@ -444,7 +447,7 @@ impl Tags {
     pub fn remove_asset_state(&self, path: &Path) -> Result<(), TagError> {
         let mut connection = self.store.write();
         let transaction = connection.transaction().map_err(StoreError::from)?;
-        repo::cross::forget_asset(&transaction, &path.to_string_lossy())?;
+        crate::app::workflows::asset_delete::forget_asset(&transaction, &path.to_string_lossy())?;
         transaction.commit().map_err(StoreError::from)?;
         Ok(())
     }
@@ -489,7 +492,7 @@ fn selection_paths(paths: &[PathBuf]) -> Vec<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::contracts::{AssetKind, PickLabel};
+    use oxy_media::types::{AssetKind, PickLabel};
 
     /// A vocabulary over a store nobody else keeps. The cases that drive a
     /// person identity, or that simulate a file written by an earlier build,
@@ -507,7 +510,7 @@ mod tests {
 
     #[test]
     fn filters_snapshot_by_subtrees_and_groups_before_paging() {
-        use crate::contracts::{AssetQuery, AssetSummary, TagMatchMode};
+        use crate::browse::types::{AssetQuery, AssetSummary, TagMatchMode};
         let tags = tags();
         let parent = tags.create_custom_tag(None, "People").unwrap();
         let child = tags.create_custom_tag(Some(parent.id), "Family").unwrap();
@@ -786,7 +789,8 @@ mod tests {
         );
         assert_eq!(tags.pending_tag_sync_paths().unwrap(), vec![asset.clone()]);
         let sources =
-            repo::tags::source_kinds(&store.read(), &asset.to_string_lossy(), tag.id).unwrap();
+            crate::tags::repo::source_kinds(&store.read(), &asset.to_string_lossy(), tag.id)
+                .unwrap();
         assert_eq!(sources, ["manual"]);
     }
 
@@ -800,15 +804,20 @@ mod tests {
         let tag = tags.create_custom_tag(None, "Legacy").unwrap();
         // An assignment with no recorded reason: the shape a database written
         // before the sources table existed is in.
-        repo::tags::insert_effective_assignment(&store.write(), &path.to_string_lossy(), tag.id)
-            .unwrap();
+        crate::tags::repo::insert_effective_assignment(
+            &store.write(),
+            &path.to_string_lossy(),
+            tag.id,
+        )
+        .unwrap();
         drop(tags);
         drop(store);
 
         let store = Arc::new(Store::open(&database).unwrap());
         let reopened = Tags::new(Arc::clone(&store));
         let sources =
-            repo::tags::source_kinds(&store.read(), &path.to_string_lossy(), tag.id).unwrap();
+            crate::tags::repo::source_kinds(&store.read(), &path.to_string_lossy(), tag.id)
+                .unwrap();
         assert_eq!(sources, ["legacy"]);
         reopened
             .set_asset_tag(std::slice::from_ref(&path), tag.id, false)
@@ -824,8 +833,8 @@ mod tests {
     /// only when the last instance stops belonging.
     #[test]
     fn person_sources_require_last_belonging_instance_and_preserve_manual_tag() {
-        use crate::contracts::{PersonReviewDecision, SetPersonReview};
         use crate::people::People;
+        use crate::people::types::{PersonReviewDecision, SetPersonReview};
         use std::path::Path as StdPath;
 
         let (tags, store) = in_memory_with_store();
@@ -837,7 +846,7 @@ mod tests {
         let second = people.create_folder_person(&folder, "second").unwrap();
         {
             let connection = store.write();
-            repo::people::insert_historical_person(
+            crate::people::repo::manual::insert_historical_person(
                 &connection,
                 "history",
                 "Alex",
@@ -846,13 +855,18 @@ mod tests {
             )
             .unwrap();
             for subject in [&first.id, &second.id] {
-                repo::people::upsert_historical_link(&connection, subject, "history").unwrap();
+                crate::people::repo::manual::upsert_historical_link(
+                    &connection,
+                    subject,
+                    "history",
+                )
+                .unwrap();
             }
         }
         let mut reviews = Vec::new();
         for (index, subject) in [&first, &second].into_iter().enumerate() {
             let instance = people
-                .create_person_instance(&crate::contracts::CreatePersonInstance {
+                .create_person_instance(&crate::people::types::CreatePersonInstance {
                     folder_path: folder.clone(),
                     asset_path: image.clone(),
                     source_revision: "10:20".into(),
@@ -873,7 +887,7 @@ mod tests {
                 .unwrap();
             reviews.push(review);
         }
-        let input = crate::contracts::SetPersonTagLink {
+        let input = crate::people::types::SetPersonTagLink {
             folder_path: folder.clone(),
             subject_id: first.id.clone(),
             tag_id: Some(tag.id),
@@ -909,7 +923,7 @@ mod tests {
                 .assigned_count,
             1
         );
-        let override_input = crate::contracts::SetPersonTagOverride {
+        let override_input = crate::people::types::SetPersonTagOverride {
             folder_path: folder.clone(),
             subject_id: input.subject_id.clone(),
             asset_path: image.clone(),
@@ -929,7 +943,7 @@ mod tests {
             0
         );
         people
-            .set_person_tag_override(&crate::contracts::SetPersonTagOverride {
+            .set_person_tag_override(&crate::people::types::SetPersonTagOverride {
                 suppressed: false,
                 expected_revision: suppressed.revision,
                 request_id: "restore-photo".into(),
@@ -986,10 +1000,10 @@ mod tests {
     /// asset: the person claim is dropped and the instance has to be reviewed.
     #[test]
     fn same_folder_rename_moves_person_facts_with_tag_sources() {
-        use crate::contracts::{
+        use crate::people::People;
+        use crate::people::types::{
             CreatePersonInstance, PersonReviewDecision, SetPersonReview, SetPersonTagLink,
         };
-        use crate::people::People;
 
         let (tags, store) = in_memory_with_store();
         let people = People::new(Arc::clone(&store));
@@ -1010,7 +1024,7 @@ mod tests {
             .unwrap();
         {
             let connection = store.write();
-            repo::people::insert_historical_person(
+            crate::people::repo::manual::insert_historical_person(
                 &connection,
                 "history",
                 "Alex",
@@ -1018,7 +1032,8 @@ mod tests {
                 "10:20",
             )
             .unwrap();
-            repo::people::upsert_historical_link(&connection, &person.id, "history").unwrap();
+            crate::people::repo::manual::upsert_historical_link(&connection, &person.id, "history")
+                .unwrap();
         }
         people
             .set_person_review(&SetPersonReview {

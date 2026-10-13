@@ -4,14 +4,15 @@
 //! Deleting every row here only costs a re-scan; no user-owned fact is stored
 //! in these tables.
 
-use crate::contracts::{
-    AssetKind, AssetQuery, AssetSort, AssetSummary, DirectorySearchMatch, DirectorySummary, Page,
+use crate::browse::types::{
+    AssetQuery, AssetSort, AssetSummary, DirectorySearchMatch, DirectorySummary, Page,
     SortDirection,
 };
 use crate::library::{
     DEFAULT_PAGE_SIZE, INDEX_WRITE_BATCH_SIZE, INDEX_WRITE_TIME_SLICE, Library, LibraryError,
     MAX_PAGE_SIZE,
 };
+use oxy_media::types::AssetKind;
 use parking_lot::MutexGuard;
 use rusqlite::{Connection, OptionalExtension, Transaction, params};
 use std::{

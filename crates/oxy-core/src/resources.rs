@@ -2,10 +2,13 @@ pub mod cache;
 pub mod directory_tree;
 pub mod metadata;
 pub mod preview;
+pub(crate) mod schema;
+pub mod types;
 
-use crate::contracts::{DebugQueueItem, DebugQueueState, LibraryIndexUpdate};
 use crate::files::FsCatalog;
+use crate::library::types::LibraryIndexUpdate;
 use crate::library::{IndexProgress, IndexStage, Library};
+use crate::resources::types::{DebugQueueItem, DebugQueueState};
 use crate::{events::CoreEvent, runtime::CoreRuntime};
 use std::{
     collections::HashMap,

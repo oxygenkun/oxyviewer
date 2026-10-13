@@ -1,15 +1,5 @@
-//! Tables that can always be rebuilt from the original photos plus the
-//! user-owned facts.
-//!
-//! Losing any of them costs re-scanning, re-decoding, or a model pass; it never
-//! costs a name, a review decision, or a tag the user assigned. Every table
-//! here is emptied by [`super::clear_cache`] — except the `marker` ones, which
-//! hold an allocator or a cache-format version rather than content.
-//!
-//! The derived person data lives here, not with the rest of the person tables
-//! in [`super::user`]. That is the one place a reader is likely to look for it
-//! in the wrong file: a person's identity is user-owned, the face vectors
-//! computed from their photographs are not.
+//! Register derived and marker declarations. Only derived classes are cleared;
+//! format invalidation and column compatibility are still being migrated.
 
 use super::has_column;
 use crate::storage::table;
@@ -24,139 +14,17 @@ const DETECTION_CACHE_SCHEMA_VERSION: i64 = 2;
 /// [`DETECTION_CACHE_SCHEMA_VERSION`]: drop and recompute.
 const FEATURE_CACHE_SCHEMA_VERSION: i64 = 3;
 
-crate::storage::table::tables! {
-    cache create global_person_suggestions =
-        "folder_path TEXT PRIMARY KEY, run_id TEXT NOT NULL, payload TEXT NOT NULL";
-    cache create indexed_roots =
-        "root_path TEXT PRIMARY KEY NOT NULL,
-        indexed_at INTEGER NOT NULL DEFAULT (unixepoch()),
-        asset_count INTEGER NOT NULL,
-        directory_count INTEGER NOT NULL";
-    cache create indexed_directory_roots =
-        "root_path TEXT PRIMARY KEY NOT NULL,
-        indexed_at INTEGER NOT NULL DEFAULT (unixepoch()),
-        directory_count INTEGER NOT NULL";
-    cache create indexed_assets =
-        "root_path TEXT NOT NULL,
-        path TEXT NOT NULL,
-        parent_path TEXT NOT NULL,
-        id TEXT NOT NULL,
-        name TEXT NOT NULL,
-        extension TEXT NOT NULL,
-        kind TEXT NOT NULL,
-        modified_at_ms INTEGER NOT NULL,
-        size_bytes INTEGER NOT NULL,
-        has_sidecar INTEGER NOT NULL,
-        scan_id INTEGER NOT NULL,
-        PRIMARY KEY(root_path, path)";
-    cache create indexed_directories =
-        "root_path TEXT NOT NULL,
-        path TEXT NOT NULL,
-        parent_path TEXT NOT NULL,
-        name TEXT NOT NULL,
-        has_children INTEGER NOT NULL,
-        scan_id INTEGER NOT NULL,
-        PRIMARY KEY(root_path, path)";
-    marker create library_index_sequence = "id INTEGER PRIMARY KEY CHECK(id = 1), next_scan_id INTEGER NOT NULL";
-    // An FTS5 virtual table and the backfill table that gives its rows a stable
-    // identity: both are built by `ensure_search_tables`, and both are declared
-    // here so a cache clear still empties them.
-    cache external indexed_asset_search;
-    cache external indexed_asset_search_keys;
-    cache create directory_snapshots =
-        "root_path TEXT NOT NULL,
-        directory_path TEXT NOT NULL,
-        assets_json TEXT NOT NULL,
-        PRIMARY KEY(root_path, directory_path)";
-    marker create resource_projection_sequence = "id INTEGER PRIMARY KEY CHECK(id = 1), next_revision INTEGER NOT NULL";
-    cache create resource_projections =
-        "path TEXT NOT NULL,
-        parent_path TEXT NOT NULL,
-        projection_kind TEXT NOT NULL,
-        source_revision TEXT NOT NULL,
-        valid_at INTEGER NOT NULL,
-        state_revision INTEGER NOT NULL,
-        status TEXT NOT NULL,
-        rating INTEGER,
-        color_label TEXT,
-        pick_label TEXT,
-        result_json TEXT,
-        error TEXT,
-        PRIMARY KEY(path, projection_kind)";
-    marker create person_detection_cache_meta = "schema_version INTEGER NOT NULL";
-    cache create person_instances_cache =
-        "folder_path TEXT NOT NULL,
-        asset_path TEXT NOT NULL,
-        instance_id TEXT NOT NULL,
-        source_revision TEXT NOT NULL,
-        producer_fingerprint TEXT NOT NULL,
-        pipeline_fingerprint TEXT NOT NULL,
-        run_id TEXT NOT NULL,
-        face_box TEXT,
-        face_landmarks TEXT,
-        body_box TEXT,
-        face_score REAL,
-        body_score REAL,
-        association_score REAL,
-        updated_at INTEGER NOT NULL DEFAULT (unixepoch()),
-        PRIMARY KEY(folder_path,asset_path,producer_fingerprint,instance_id)";
-    marker create person_vector_cache_meta = "schema_version INTEGER NOT NULL";
-    cache create person_feature_spaces =
-        "id TEXT PRIMARY KEY,
-        modality TEXT NOT NULL CHECK(modality IN ('face','body')),
-        dimension INTEGER NOT NULL CHECK(dimension > 0 AND dimension <= 4096),
-        producer_fingerprint TEXT NOT NULL,
-        format_version INTEGER NOT NULL DEFAULT 1";
-    cache create person_features_cache =
-        "feature_row_id INTEGER PRIMARY KEY,
-        folder_path TEXT NOT NULL,
-        asset_path TEXT NOT NULL,
-        instance_id TEXT NOT NULL,
-        source_revision TEXT NOT NULL,
-        feature_space_id TEXT NOT NULL REFERENCES person_feature_spaces(id),
-        pipeline_fingerprint TEXT NOT NULL,
-        vector BLOB NOT NULL,
-        updated_at INTEGER NOT NULL DEFAULT (unixepoch()),
-        UNIQUE(folder_path,asset_path,instance_id,feature_space_id)";
-    cache create person_analysis_heads = "folder_path TEXT PRIMARY KEY, generation INTEGER NOT NULL, run_id TEXT NOT NULL";
-    cache create person_analysis_runs =
-        "run_id TEXT PRIMARY KEY,
-        folder_path TEXT NOT NULL,
-        pipeline_id TEXT NOT NULL,
-        pipeline_fingerprint TEXT NOT NULL,
-        generation INTEGER NOT NULL,
-        state TEXT NOT NULL CHECK(state IN ('queued','running','completed','failed','cancelled')),
-        enumeration_complete INTEGER NOT NULL DEFAULT 0,
-        total_tasks INTEGER NOT NULL DEFAULT 0,
-        completed_tasks INTEGER NOT NULL DEFAULT 0,
-        failed_tasks INTEGER NOT NULL DEFAULT 0,
-        created_at INTEGER NOT NULL DEFAULT (unixepoch()),
-        updated_at INTEGER NOT NULL DEFAULT (unixepoch())";
-    cache create person_analysis_requests =
-        "request_id TEXT PRIMARY KEY,
-        operation TEXT NOT NULL,
-        run_id TEXT NOT NULL REFERENCES person_analysis_runs(run_id)";
-    cache create person_analysis_tasks =
-        "run_id TEXT NOT NULL REFERENCES person_analysis_runs(run_id),
-        asset_path TEXT NOT NULL,
-        source_revision TEXT NOT NULL,
-        stage_id TEXT NOT NULL,
-        stage_fingerprint TEXT NOT NULL,
-        stage_order INTEGER NOT NULL,
-        state TEXT NOT NULL CHECK(state IN ('queued','running','completed','failed')),
-        claim_token TEXT,
-        error TEXT,
-        PRIMARY KEY(run_id,asset_path,stage_id),
-        UNIQUE(run_id,asset_path,stage_order)";
-    cache create person_cluster_snapshots =
-        "folder_path TEXT PRIMARY KEY,
-        run_id TEXT NOT NULL,
-        snapshot_json TEXT NOT NULL";
-}
+pub static DEFS: std::sync::LazyLock<Vec<table::TableDef>> = std::sync::LazyLock::new(|| {
+    super::definitions()
+        .iter()
+        .copied()
+        .filter(|def| def.class != table::DataClass::UserOwned)
+        .collect()
+});
 
 /// Creates or migrates every rebuildable table.
 pub(super) fn ensure_schema(connection: &mut Connection) -> Result<(), rusqlite::Error> {
-    table::create_all(connection, DEFS)?;
+    table::create_all(connection, &DEFS)?;
     connection.execute_batch(
         "INSERT OR IGNORE INTO indexed_directory_roots(root_path, indexed_at, directory_count)
            SELECT root_path, indexed_at, directory_count FROM indexed_roots;
@@ -200,7 +68,7 @@ pub(super) fn ensure_schema(connection: &mut Connection) -> Result<(), rusqlite:
 /// it `user` or `marker` is the only way to opt out.
 pub(super) fn clear(connection: &mut Connection) -> Result<(), rusqlite::Error> {
     let transaction = connection.transaction()?;
-    table::clear_all(&transaction, DEFS)?;
+    table::clear_all(&transaction, &DEFS)?;
     transaction.commit()
 }
 
@@ -262,7 +130,7 @@ fn reset_detection_cache_if_stale(connection: &mut Connection) -> Result<(), rus
             [DETECTION_CACHE_SCHEMA_VERSION],
         )?;
         // Runs again because the drop above removed a declared table.
-        table::create_all(&transaction, DEFS)?;
+        table::create_all(&transaction, &DEFS)?;
     }
     transaction.commit()
 }
@@ -291,7 +159,7 @@ fn reset_feature_cache_if_stale(connection: &mut Connection) -> Result<(), rusql
             [FEATURE_CACHE_SCHEMA_VERSION],
         )?;
         // Runs again because the drops above removed declared tables.
-        table::create_all(&transaction, DEFS)?;
+        table::create_all(&transaction, &DEFS)?;
     }
     transaction.commit()
 }

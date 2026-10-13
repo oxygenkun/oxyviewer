@@ -1,4 +1,5 @@
-use crate::contracts::{JobId, JobPriority};
+pub mod types;
+use crate::jobs::types::{JobId, JobPriority};
 mod foreground;
 pub use foreground::{ForegroundGate, ForegroundGuard};
 use parking_lot::RwLock;

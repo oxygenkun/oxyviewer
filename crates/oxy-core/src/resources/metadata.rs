@@ -1,16 +1,20 @@
-use crate::contracts::{
-    AssetDetails, AssetDetailsResult, AssetKind, AssetSummary, DebugQueueItem, DebugQueueState,
-    EditableMetadata, MetadataCapability, MetadataProjection, MetadataProvider,
-    MetadataRequestPriority, ResourceLoadStatus,
-};
+use crate::browse::types::AssetSummary;
 use crate::files::FsCatalog;
 use crate::jobs::CoalescingPriorityQueue;
 use crate::library::Library;
+use crate::metadata::types::{
+    AssetDetails, AssetDetailsResult, MetadataCapability, MetadataProvider,
+};
 use crate::metadata::{
     MetadataDocument, MetadataFacade, MetadataObservation, metadata_source_revision,
 };
+use crate::resources::types::{
+    DebugQueueItem, DebugQueueState, MetadataProjection, MetadataRequestPriority,
+    ResourceLoadStatus,
+};
 use crate::tags::Tags;
 use crate::{events::CoreEvent, runtime::CoreRuntime};
+use oxy_media::types::{AssetKind, EditableMetadata};
 use std::{
     collections::HashMap,
     path::PathBuf,

@@ -391,7 +391,7 @@ fn retrieval_uses_only_confirmed_explicit_references_and_preserves_rejections() 
             .unwrap();
         let mut face = tuple.face_box.unwrap();
         face[1] += 1e-17;
-        repo::people::update_instance_geometry(
+        crate::people::repo::manual::update_instance_geometry(
             &c,
             &id,
             Some(&serde_json::to_string(&face).unwrap()),
@@ -473,14 +473,20 @@ fn migration_merges_explicit_history_links_but_not_equal_names() {
     let people = crate::people::testing::in_memory();
     {
         let c = people.store.write();
-        repo::people::insert_historical_person(&c, "history", "姓名", "/reference.jpg", "1:1")
-            .unwrap();
+        crate::people::repo::manual::insert_historical_person(
+            &c,
+            "history",
+            "姓名",
+            "/reference.jpg",
+            "1:1",
+        )
+        .unwrap();
         for (id, folder) in [("a", "/a"), ("b", "/b"), ("c", "/c")] {
-            repo::people::insert_folder_person(&c, id, folder).unwrap();
-            repo::people::reset_identity(&c, id, folder, "姓名", 1).unwrap();
+            crate::people::repo::manual::insert_folder_person(&c, id, folder).unwrap();
+            crate::people::repo::manual::reset_identity(&c, id, folder, "姓名", 1).unwrap();
         }
-        repo::people::upsert_historical_link(&c, "a", "history").unwrap();
-        repo::people::upsert_historical_link(&c, "b", "history").unwrap();
+        crate::people::repo::manual::upsert_historical_link(&c, "a", "history").unwrap();
+        crate::people::repo::manual::upsert_historical_link(&c, "b", "history").unwrap();
     }
     let catalog = people.global_people().unwrap();
     assert_eq!(catalog.len(), 2);
@@ -488,7 +494,7 @@ fn migration_merges_explicit_history_links_but_not_equal_names() {
     assert!(catalog.iter().any(|p| p.id == "legacy:c"));
     assert_eq!(people.global_people().unwrap(), catalog);
     assert_eq!(
-        repo::people::list_folder_people(&people.store.read(), "/a")
+        crate::people::repo::manual::list_folder_people(&people.store.read(), "/a")
             .unwrap()
             .len(),
         1
@@ -504,9 +510,10 @@ fn geometry_change_withdraws_reference_and_person_tag_but_preserves_manual_tag()
     let t = manual(&people, &folder, "face", Some([0.1, 0.1, 0.2, 0.2]), None);
     let tag = {
         let c = people.store.write();
-        let tag = repo::tags::insert_tag(&c, None, "人物", "人物", 0).unwrap();
-        repo::tags::insert_source(&c, &t.asset_path.to_string_lossy(), tag, "manual", "").unwrap();
-        repo::tags::reconcile_effective(&c, &t.asset_path.to_string_lossy(), tag).unwrap();
+        let tag = crate::tags::repo::insert_tag(&c, None, "人物", "人物", 0).unwrap();
+        crate::tags::repo::insert_source(&c, &t.asset_path.to_string_lossy(), tag, "manual", "")
+            .unwrap();
+        crate::tags::repo::reconcile_effective(&c, &t.asset_path.to_string_lossy(), tag).unwrap();
         tag
     };
     people
@@ -543,7 +550,7 @@ fn geometry_change_withdraws_reference_and_person_tag_but_preserves_manual_tag()
         })
         .unwrap();
     assert!(
-        !repo::tags::source_tag_ids_of(
+        !crate::tags::repo::source_tag_ids_of(
             &people.store.read(),
             &t.asset_path.to_string_lossy(),
             "person",
@@ -579,7 +586,7 @@ fn geometry_change_withdraws_reference_and_person_tag_but_preserves_manual_tag()
             .is_empty()
     );
     assert!(
-        repo::tags::source_tag_ids_of(
+        crate::tags::repo::source_tag_ids_of(
             &people.store.read(),
             &edited.asset_path.to_string_lossy(),
             "person",
@@ -589,7 +596,7 @@ fn geometry_change_withdraws_reference_and_person_tag_but_preserves_manual_tag()
         .is_empty()
     );
     assert!(
-        repo::tags::effective_assignment_present(
+        crate::tags::repo::effective_assignment_present(
             &people.store.read(),
             &edited.asset_path.to_string_lossy(),
             tag
@@ -606,7 +613,7 @@ fn conflicting_legacy_links_keep_exclusions_and_original_decisions() {
     let tuple = manual(&people, &folder, "legacy", Some([0.1, 0.1, 0.2, 0.2]), None);
     {
         let c = people.store.write();
-        repo::people::insert_historical_person(
+        crate::people::repo::manual::insert_historical_person(
             &c,
             "history",
             "姓名",
@@ -618,9 +625,11 @@ fn conflicting_legacy_links_keep_exclusions_and_original_decisions() {
             ("a", PersonReviewDecision::Belongs),
             ("b", PersonReviewDecision::DoesNotBelong),
         ] {
-            repo::people::insert_folder_person(&c, id, &folder.to_string_lossy()).unwrap();
-            repo::people::upsert_historical_link(&c, id, "history").unwrap();
-            repo::people::upsert_review_decision(&c, &tuple.id, id, decision, 1).unwrap();
+            crate::people::repo::manual::insert_folder_person(&c, id, &folder.to_string_lossy())
+                .unwrap();
+            crate::people::repo::manual::upsert_historical_link(&c, id, "history").unwrap();
+            crate::people::repo::manual::upsert_review_decision(&c, &tuple.id, id, decision, 1)
+                .unwrap();
         }
     }
     let w = people.folder_people_workspace(&folder).unwrap();
@@ -634,9 +643,13 @@ fn conflicting_legacy_links_keep_exclusions_and_original_decisions() {
                 && g.members[0].decision == Some(PersonReviewDecision::DoesNotBelong))
     );
     assert_eq!(
-        repo::people::list_reviews(&people.store.read(), &folder.to_string_lossy(), "a").unwrap()
-            [0]
-        .decision,
+        crate::people::repo::manual::list_reviews(
+            &people.store.read(),
+            &folder.to_string_lossy(),
+            "a"
+        )
+        .unwrap()[0]
+            .decision,
         PersonReviewDecision::Belongs
     );
     assert_eq!(

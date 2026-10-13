@@ -6,10 +6,10 @@
 //! its own set and nothing else's, and that a detection never answers a review
 //! decision.
 
-use crate::contracts::DetectedPersonInstance;
 use crate::people::geometry::valid_box;
+use crate::people::types::DetectedPersonInstance;
 use crate::people::{People, PeopleError};
-use crate::storage::{Transaction, repo};
+use crate::storage::Transaction;
 use std::path::Path;
 
 fn valid_score(value: Option<f32>) -> bool {
@@ -66,16 +66,16 @@ pub(crate) fn replace_stage_detections(
     }
     let folder = context.folder.to_string_lossy();
     let asset = context.asset.to_string_lossy();
-    repo::person_cache::clear_stage_detections(
+    crate::people::repo::cache::clear_stage_detections(
         transaction,
         &folder,
         &asset,
         context.producer_fingerprint,
     )?;
     for item in detections {
-        repo::person_cache::insert_detection(
+        crate::people::repo::cache::insert_detection(
             transaction,
-            &repo::person_cache::NewDetection {
+            &crate::people::repo::cache::NewDetection {
                 folder_path: &folder,
                 asset_path: &asset,
                 instance_id: &item.instance_id,
@@ -110,7 +110,7 @@ impl People {
         {
             return Err(PeopleError::InvalidPersonDetection);
         }
-        Ok(repo::person_cache::list_detections(
+        Ok(crate::people::repo::cache::list_detections(
             &self.store.read(),
             &folder.to_string_lossy(),
             &asset.to_string_lossy(),
@@ -123,8 +123,8 @@ impl People {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::contracts::{BeginPersonAnalysis, PersonAnalysisTaskInput};
     use crate::people::testing;
+    use crate::people::types::{BeginPersonAnalysis, PersonAnalysisTaskInput};
 
     #[test]
     fn detection_commit_is_atomic_source_scoped_and_replaces_stage_set() {
@@ -233,7 +233,7 @@ mod tests {
         let folder = std::path::Path::new("/photos");
         let asset = folder.join("a.jpg");
         let manual = people
-            .create_person_instance(&crate::contracts::CreatePersonInstance {
+            .create_person_instance(&crate::people::types::CreatePersonInstance {
                 folder_path: folder.to_path_buf(),
                 asset_path: asset.clone(),
                 source_revision: "10:20".into(),
@@ -246,9 +246,9 @@ mod tests {
         let pipeline = "a".repeat(64);
         {
             let connection = people.store.write();
-            repo::person_cache::insert_detection(
+            crate::people::repo::cache::insert_detection(
                 &connection,
-                &repo::person_cache::NewDetection {
+                &crate::people::repo::cache::NewDetection {
                     folder_path: "/photos",
                     asset_path: "/photos/a.jpg",
                     instance_id: &"c".repeat(64),

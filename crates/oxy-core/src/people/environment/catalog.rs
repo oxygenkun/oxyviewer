@@ -1,7 +1,7 @@
 //! Application-pinned research pipeline. The third-party WebFace12M ONNX was
 //! compared with author-published WebFace12M weights; see the dated source audit.
 
-use crate::contracts::{
+use crate::people::types::{
     PersonDistanceMetric, PersonModelArtifact, PersonModelArtifactFormat, PersonModelLicenseStatus,
     PersonModelStatus, PersonStageKind, PersonStageManifest, PipelineManifest,
 };
@@ -185,7 +185,7 @@ mod tests {
                     instance_id: "face".into(),
                     source_revision: "unchanged-source".into(),
                     feature_space_id: space.clone(),
-                    modality: crate::contracts::FeatureModality::Face,
+                    modality: crate::people::types::FeatureModality::Face,
                     producer_fingerprint: crate::people::stage_fingerprint(
                         manifest,
                         super::ENCODER,

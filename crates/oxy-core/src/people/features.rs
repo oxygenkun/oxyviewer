@@ -6,9 +6,9 @@
 //! feature space it claims to belong to, what a rebuild may replace, and what
 //! makes a cached vector still eligible for a candidate query.
 
-use crate::contracts::{FeatureModality, PersonFeatureMatch};
+use crate::people::types::{FeatureModality, PersonFeatureMatch};
 use crate::people::{People, PeopleError};
-use crate::storage::{StoreError, Transaction, repo};
+use crate::storage::{StoreError, Transaction};
 use std::{collections::HashMap, path::PathBuf};
 
 #[derive(Debug, Clone)]
@@ -78,7 +78,7 @@ pub(crate) fn write_feature(
     transaction: &Transaction<'_>,
     feature: &PersonFeature,
 ) -> Result<(), PeopleError> {
-    repo::person_cache::ensure_feature_space(
+    crate::people::repo::cache::ensure_feature_space(
         transaction,
         &feature.feature_space_id,
         feature.modality,
@@ -86,7 +86,7 @@ pub(crate) fn write_feature(
         &feature.producer_fingerprint,
     )?;
     let contract =
-        repo::person_cache::feature_space_contract(transaction, &feature.feature_space_id)?;
+        crate::people::repo::cache::feature_space_contract(transaction, &feature.feature_space_id)?;
     let Some((stored_modality, stored_dimension, stored_producer)) = contract else {
         return Err(PeopleError::InvalidPersonFeature);
     };
@@ -96,9 +96,9 @@ pub(crate) fn write_feature(
     {
         return Err(PeopleError::InvalidPersonFeature);
     }
-    repo::person_cache::upsert_feature(
+    crate::people::repo::cache::upsert_feature(
         transaction,
-        &repo::person_cache::NewFeature {
+        &crate::people::repo::cache::NewFeature {
             folder_path: &feature.folder_path.to_string_lossy(),
             asset_path: &feature.asset_path.to_string_lossy(),
             instance_id: &feature.instance_id,
@@ -211,7 +211,8 @@ impl People {
             return Ok(Vec::new());
         }
         let connection = self.store.read();
-        let dimension = repo::person_cache::feature_space_dimension(&connection, feature_space_id)?;
+        let dimension =
+            crate::people::repo::cache::feature_space_dimension(&connection, feature_space_id)?;
         let Some(dimension) = dimension else {
             return Ok(Vec::new());
         };
@@ -223,9 +224,9 @@ impl People {
             .iter()
             .map(|(path, revision)| (path.to_string_lossy().into_owned(), revision.clone()))
             .collect();
-        Ok(repo::person_cache::search_features(
+        Ok(crate::people::repo::cache::search_features(
             &connection,
-            &repo::person_cache::FeatureQuery {
+            &crate::people::repo::cache::FeatureQuery {
                 folder_path: &folder,
                 feature_space_id,
                 vector: &vector_blob(query),
@@ -241,9 +242,9 @@ impl People {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::contracts::DetectedPersonInstance;
     use crate::people::detections::{DetectionStageContext, replace_stage_detections};
     use crate::people::testing;
+    use crate::people::types::DetectedPersonInstance;
     use std::path::Path;
 
     fn feature(
@@ -574,7 +575,7 @@ mod tests {
             // spans the tag rows, the person rows, and this cache.
             let mut connection = reopened.store.write();
             let transaction = connection.transaction().unwrap();
-            crate::storage::repo::cross::relocate_asset(
+            crate::app::workflows::asset_move::relocate_asset(
                 &transaction,
                 &replacement.asset_path.to_string_lossy(),
                 &moved.to_string_lossy(),

@@ -1,27 +1,7 @@
-//! The local SQLite store: the file, the connections, and the schema.
-//!
-//! This crate owns the database. It opens the file, enables the pragmas every
-//! connection needs, registers the vector extension before connecting, holds
-//! every table declaration, and runs the migrations that upgrade a file
-//! written by an earlier build. It ships as one SQLite file per application.
-//!
-//! It is deliberately *not* where the meaning of a row lives. What a tag is,
-//! whether a person identity may be merged, what a user action is allowed to do
-//! — none of that is here. This crate knows that `custom_tags` has a
-//! `parent_id`; it does not know that a tag tree must not contain a cycle.
-//!
-//! The one classification it does hold is [`table::DataClass`]: whether a table
-//! is derived (a clear may empty it) or holds something the user typed (a clear
-//! must not). That is a property of the declaration, so it is written next to
-//! the declaration rather than reconstructed from where the declaring file
-//! happens to live.
-//!
-//! The structural decision this crate makes on its own is the *reader fan-out*:
-//! a disk store keeps read-only WAL connections so a foreground query never
-//! waits for a background index write. [`Store::read`] falls back to the write
-//! connection for in-memory stores, which cannot share WAL.
+//! SQLite connections, WAL readers, schema registration and typed cache clearing.
+//! Feature modules own their table declarations and statements; named application
+//! workflows choose cross-feature transaction policy.
 
-pub mod repo;
 pub mod schema;
 pub mod table;
 mod vector;

@@ -331,18 +331,18 @@ mod tests {
         facade
             .patch_metadata(
                 &hif,
-                crate::contracts::AssetKind::Heif,
-                &crate::contracts::MetadataPatch {
+                oxy_media::types::AssetKind::Heif,
+                &crate::metadata::types::MetadataPatch {
                     rating: Some(Some(4)),
                     color_label: Some(Some("Blue".into())),
-                    ..crate::contracts::MetadataPatch::default()
+                    ..crate::metadata::types::MetadataPatch::default()
                 },
             )
             .unwrap();
         facade.sync_metadata_to_embedded(&hif).unwrap();
         fs::remove_file(crate::files::sidecar_path(&hif)).unwrap();
         let embedded = facade
-            .read_metadata(&hif, crate::contracts::AssetKind::Heif)
+            .read_metadata(&hif, oxy_media::types::AssetKind::Heif)
             .unwrap();
         assert_eq!(embedded.rating, Some(4));
         assert_eq!(embedded.color_label.as_deref(), Some("Blue"));

@@ -2,7 +2,7 @@
 //! Sessions belong to a background worker; mutable runs are serialized.
 //! Installation and licensing stay in the pipeline manifest and artifact store.
 
-use crate::contracts::{
+use crate::people::types::{
     DetectedPersonInstance, PersonModelArtifactFormat, PersonStageKind, PipelineManifest,
 };
 use crate::people::{

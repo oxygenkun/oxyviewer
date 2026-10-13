@@ -17,9 +17,9 @@ pub struct PersonClusterMember {
 pub struct PersonCluster {
     pub id: String,
     pub members: Vec<PersonClusterMember>,
-    pub cover: Option<crate::contracts::AssetSummary>,
+    pub cover: Option<crate::browse::types::AssetSummary>,
     #[serde(default)]
-    pub people: Vec<crate::contracts::FolderPerson>,
+    pub people: Vec<crate::people::types::FolderPerson>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -59,7 +59,7 @@ pub struct AdoptPersonCluster {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct AdoptPersonClusterResult {
-    pub person: crate::contracts::FolderPerson,
+    pub person: crate::people::types::FolderPerson,
     pub added: usize,
     pub preserved: usize,
     pub conflicted: usize,

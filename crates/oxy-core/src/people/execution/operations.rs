@@ -1,7 +1,7 @@
 //! One bounded background person operation per application. Locks protect only
 //! small snapshots; downloads, decoding, inference and database work run outside.
 
-use crate::contracts::{PersonOperationState, PersonOperationStatus};
+use crate::people::types::{PersonOperationState, PersonOperationStatus};
 use std::sync::{
     Arc, Mutex,
     atomic::{AtomicBool, Ordering},

@@ -1,6 +1,7 @@
-use crate::contracts::{DebugQueueItem, DebugQueueState, DirectoryTreeSnapshot};
+use crate::browse::types::DirectoryTreeSnapshot;
 use crate::files::FsCatalog;
 use crate::jobs::CoalescingPriorityQueue;
+use crate::resources::types::{DebugQueueItem, DebugQueueState};
 use crate::{events::CoreEvent, runtime::CoreRuntime};
 use std::{
     collections::{HashMap, HashSet},

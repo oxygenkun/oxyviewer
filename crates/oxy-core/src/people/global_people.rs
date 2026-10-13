@@ -1,10 +1,9 @@
 //! One app-wide identity registry; folder groups are projections over tuples.
-use crate::contracts::*;
+use crate::browse::types::AssetSummary;
+use crate::people::repo::global as db;
+use crate::people::types::*;
 use crate::people::{People, PeopleError};
-use crate::storage::{
-    Connection, StoreError,
-    repo::{self, global_people as db},
-};
+use crate::storage::{Connection, StoreError};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::{
@@ -37,7 +36,7 @@ struct Suggestions {
 
 fn migrate(c: &Connection) -> Result<(), PeopleError> {
     // Retain all legacy facts/events. Only explicit historical links merge identities.
-    for p in repo::people::list_historical_people(c)? {
+    for p in crate::people::repo::manual::list_historical_people(c)? {
         db::insert_person(c, &p.id, &p.display_name)?;
         db::migrate_tag(c, &p.id)?;
     }
@@ -48,7 +47,7 @@ fn migrate(c: &Connection) -> Result<(), PeopleError> {
             .clone()
             .unwrap_or_else(|| format!("legacy:{}", p.id));
         db::insert_person(c, &id, &p.name)?;
-        for old in repo::people::list_reviews(c, &p.folder, &p.id)? {
+        for old in crate::people::repo::manual::list_reviews(c, &p.folder, &p.id)? {
             let previous = db::reviews(c, Some(&p.folder))?
                 .into_iter()
                 .find(|r| r.instance_id == old.instance.id && r.person_id == id);
@@ -164,7 +163,7 @@ fn load(c: &Connection, folder: &Path) -> Result<Option<Suggestions>, PeopleErro
         .map(|j| serde_json::from_str(&j))
         .transpose()?;
     if result.is_none()
-        && let Some(json) = repo::person_clusters::snapshot(c, &path)?
+        && let Some(json) = crate::people::repo::clusters::snapshot(c, &path)?
     {
         let old: PersonClusterSnapshot = serde_json::from_str(&json)?;
         result = Some(convert(&old)?);
@@ -402,16 +401,19 @@ impl People {
     }
     pub fn has_current_person_features(&self, folder: &Path) -> Result<bool, PeopleError> {
         let c = self.store.read();
-        let Some((_, id)) = repo::person_cache::analysis_head(&c, &folder.to_string_lossy())?
+        let Some((_, id)) =
+            crate::people::repo::cache::analysis_head(&c, &folder.to_string_lossy())?
         else {
             return Ok(false);
         };
         let fingerprint =
             crate::people::pipeline_fingerprint(&crate::people::environment::catalog::manifest())
                 .map_err(|e| failure(&e.to_string()))?;
-        Ok(repo::person_cache::analysis_run(&c, &id)?.is_some_and(|r| {
-            r.state == PersonAnalysisState::Completed && r.pipeline_fingerprint == fingerprint
-        }))
+        Ok(
+            crate::people::repo::cache::analysis_run(&c, &id)?.is_some_and(|r| {
+                r.state == PersonAnalysisState::Completed && r.pipeline_fingerprint == fingerprint
+            }),
+        )
     }
     pub fn initialize_global_people(&self) -> Result<(), PeopleError> {
         if !db::migration_needed(&self.store.read())? {

@@ -5,10 +5,10 @@
 //! XMP sidecars, but the sidecar remains the source of truth, so clearing this
 //! table is a re-read, not a loss.
 
-use crate::contracts::{
-    AssetSummary, ImageProjection, MetadataProjection, PickLabel, RenderLevel, ResourceLoadStatus,
-};
+use crate::browse::types::AssetSummary;
 use crate::library::{Library, LibraryError};
+use crate::resources::types::{ImageProjection, MetadataProjection, ResourceLoadStatus};
+use oxy_media::types::{PickLabel, RenderLevel};
 use rusqlite::{Connection, OptionalExtension, Transaction, TransactionBehavior, params};
 use std::path::Path;
 
@@ -135,8 +135,8 @@ impl Library {
         let persisted_result = candidate.result.as_ref().and_then(|result| {
             let restart_safe = matches!(
                 result.persistence,
-                Some(crate::contracts::MediaPersistence::Persisted)
-                    | Some(crate::contracts::MediaPersistence::NotApplicable)
+                Some(oxy_media::types::MediaPersistence::Persisted)
+                    | Some(oxy_media::types::MediaPersistence::NotApplicable)
                     | None
             ) && result.path.is_file();
             restart_safe.then(|| {

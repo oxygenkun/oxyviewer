@@ -1,16 +1,18 @@
-use crate::contracts::{
-    AssetKind, DebugQueueItem, DebugQueueState, ImageProjection, MediaPersistence,
-    MediaResourceDescriptor, MediaSatisfaction, OmittedScheduleAction, PreviewOmittedPolicy,
-    PreviewPriority, PreviewResult, PreviewScheduleIntent, RenderLevel, ResourceLoadStatus,
-    SchedulePlacement,
-};
 use crate::jobs::{
     CancellationToken, CoalescingPriorityQueue, EffectiveScheduleChange, OmittedIntentPolicy,
     QueuePlacement, SchedulePosition, ScopedIntentScheduler,
 };
 use crate::library::Library;
 use crate::resources::cache::CacheManager;
+use crate::resources::types::{
+    DebugQueueItem, DebugQueueState, ImageProjection, OmittedScheduleAction, PreviewOmittedPolicy,
+    PreviewScheduleIntent, ResourceLoadStatus, SchedulePlacement,
+};
 use crate::{events::CoreEvent, runtime::CoreRuntime};
+use oxy_media::types::{
+    AssetKind, MediaPersistence, MediaResourceDescriptor, MediaSatisfaction, PreviewPriority,
+    PreviewResult, RenderLevel,
+};
 use sha2::{Digest, Sha256};
 use std::{
     collections::{HashMap, HashSet, VecDeque},
@@ -1839,7 +1841,7 @@ fn restore_projection_resource(
     if lease.is_some() {
         // This request restored a validated disk artifact, not the decoder
         // invocation whose historical timings may be stored in the projection.
-        result.diagnostics = Some(crate::contracts::PreviewDiagnostics {
+        result.diagnostics = Some(oxy_media::types::PreviewDiagnostics {
             backend: Some("cached artifact".into()),
             ..Default::default()
         });
@@ -1946,7 +1948,7 @@ fn priority_from_position(position: SchedulePosition) -> PreviewPriority {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::contracts::PreviewKind;
+    use oxy_media::types::PreviewKind;
 
     #[test]
     fn stopping_cancels_pending_active_and_session_work_and_releases_waiters() {
@@ -2670,7 +2672,7 @@ mod tests {
                 resource: None,
                 satisfaction: Some(MediaSatisfaction::Interim),
                 persistence: Some(MediaPersistence::Persisted),
-                diagnostics: Some(crate::contracts::PreviewDiagnostics {
+                diagnostics: Some(oxy_media::types::PreviewDiagnostics {
                     backend: Some("old decoder".into()),
                     decode_ms: Some(3000),
                     ..Default::default()
@@ -2706,33 +2708,33 @@ mod tests {
             status: ResourceLoadStatus::Ready,
             level: RenderLevel::Thumbnail,
             result: Some(PreviewResult {
-                image_facts: Some(crate::contracts::ArtifactFacts {
+                image_facts: Some(oxy_media::types::ArtifactFacts {
                     exif_orientation: 1,
-                    source: crate::contracts::SourceImage {
+                    source: oxy_media::types::SourceImage {
                         exif_orientation: 1,
                         revision_id: source_revision.media_revision.revision_id.clone(),
                         candidate_id: "primary".into(),
-                        origin: crate::contracts::ImageOrigin::PrimaryImage,
-                        encoded_dimensions: Some(crate::contracts::EncodedDimensions(
+                        origin: oxy_media::types::ImageOrigin::PrimaryImage,
+                        encoded_dimensions: Some(oxy_media::types::EncodedDimensions(
                             (8, 4).into(),
                         )),
-                        display_dimensions: crate::contracts::DisplayDimensions((8, 4).into()),
+                        display_dimensions: oxy_media::types::DisplayDimensions((8, 4).into()),
                     },
-                    encoded_dimensions: crate::contracts::EncodedDimensions((8, 4).into()),
-                    display_dimensions: crate::contracts::DisplayDimensions((8, 4).into()),
-                    detail: crate::contracts::DetailCoverage {
-                        reference_dimensions: crate::contracts::DisplayDimensions((8, 4).into()),
-                        region: crate::contracts::PreviewContentRect {
+                    encoded_dimensions: oxy_media::types::EncodedDimensions((8, 4).into()),
+                    display_dimensions: oxy_media::types::DisplayDimensions((8, 4).into()),
+                    detail: oxy_media::types::DetailCoverage {
+                        reference_dimensions: oxy_media::types::DisplayDimensions((8, 4).into()),
+                        region: oxy_media::types::PreviewContentRect {
                             x: 0,
                             y: 0,
                             width: 8,
                             height: 4,
                         },
-                        sampled_dimensions: crate::contracts::DisplayDimensions((8, 4).into()),
-                        sampling: crate::contracts::Sampling::Native,
+                        sampled_dimensions: oxy_media::types::DisplayDimensions((8, 4).into()),
+                        sampling: oxy_media::types::Sampling::Native,
                     },
                     processing: Vec::new(),
-                    byte_integrity: crate::contracts::ByteIntegrity::SourceFile,
+                    byte_integrity: oxy_media::types::ByteIntegrity::SourceFile,
                 }),
                 geometry: None,
                 path,
@@ -2842,15 +2844,15 @@ mod tests {
             path: directory.path().join("pending.jpg"),
             width: 8,
             height: 4,
-            kind: crate::contracts::PreviewKind::Original,
+            kind: oxy_media::types::PreviewKind::Original,
             render_level: RenderLevel::Thumbnail,
-            resource: Some(crate::contracts::MediaResourceDescriptor {
+            resource: Some(oxy_media::types::MediaResourceDescriptor {
                 resource_id: handle.descriptor.resource_id,
                 url: handle.descriptor.url,
                 media_type: "image/jpeg".into(),
             }),
-            satisfaction: Some(crate::contracts::MediaSatisfaction::Satisfied),
-            persistence: Some(crate::contracts::MediaPersistence::Pending),
+            satisfaction: Some(oxy_media::types::MediaSatisfaction::Satisfied),
+            persistence: Some(oxy_media::types::MediaPersistence::Pending),
             diagnostics: None,
         };
         assert!(preview_result_is_live(&result));

@@ -1,5 +1,5 @@
 use super::{Library, LibraryError};
-use crate::contracts::AssetSummary;
+use crate::browse::types::AssetSummary;
 use parking_lot::Mutex;
 use rusqlite::{Connection, OptionalExtension, params};
 use std::{
@@ -1094,7 +1094,7 @@ mod tests {
             .unwrap();
         let library = Library::open(&database).unwrap();
         let original = library.browse_directory(&root, &root, |_| {}).unwrap();
-        let query = crate::contracts::AssetQuery {
+        let query = crate::browse::types::AssetQuery {
             page_size: Some(1),
             ..Default::default()
         };

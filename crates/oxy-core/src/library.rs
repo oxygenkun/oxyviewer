@@ -1,34 +1,18 @@
-//! The local photo library: the roots the user added and the derived state
-//! over one SQLite store.
-//!
-//! The store — the file, the connections, the table declarations, and the
-//! migrations — lives in [`oxy_store`]. This crate owns what the rows *mean*,
-//! and it splits them by ownership: [`cache`] holds derived state that can
-//! always be rebuilt from the original photos, and [`user`] holds facts the
-//! user typed, named, confirmed, or assigned. Table classes, the list of
-//! rebuildable tables, and the cache-clearing entry point are declared where
-//! the tables are, in `crate::storage::schema`; what stays here is every rule about
-//! what the data means and the source-level audit that the two namespaces do
-//! not write across their boundary.
-//!
-//! It owns neither the tag vocabulary nor the person domain. Those are
-//! `oxy-tags` and `oxy-people` — siblings over the same store, because domain
-//! rules must not be able to name each other and only crates enforce that.
-//! Both were carved out of this crate's `user` namespace; what remains under
-//! `user` is the favourites, and what remains under `cache` is browsing,
-//! indexing, and resource projections.
-//!
-//! The split is a safety property, not just layout: a cache migration, a
-//! preview clear, or a re-index must never be able to reach a person identity,
-//! a review decision, a tag, or an explicit root.
+//! Registered library roots and their derived index and browsing state.
+//! User facts survive cache clearing. The feature owns its declarations and
+//! statements; shared SQLite mechanisms live in storage.
+
+pub(crate) mod repo;
+pub(crate) mod schema;
+pub mod types;
 
 mod cache;
 pub use cache::browsing::DirectoryRead;
+pub(crate) use cache::index::forget_root;
 pub use cache::index::{IndexProgress, IndexStage, IndexStats};
 #[cfg(test)]
 mod audit;
-mod relocation;
-pub use relocation::reuse_root_artifacts;
+pub use crate::app::workflows::root_relocation::reuse_root_artifacts;
 mod user;
 
 use crate::storage::Store;
@@ -84,7 +68,7 @@ pub struct Library {
     directory_snapshots: cache::browsing::DirectorySnapshots,
     pub foreground: crate::jobs::ForegroundGate,
     indexing_roots: Mutex<HashSet<PathBuf>>,
-    index_gate: Mutex<()>,
+    pub(crate) index_gate: Mutex<()>,
 }
 
 impl Library {
@@ -99,12 +83,12 @@ impl Library {
     }
 
     /// The write connection. Domain modules hold it for the duration of a write.
-    fn write(&self) -> MutexGuard<'_, Connection> {
+    pub(crate) fn write(&self) -> MutexGuard<'_, Connection> {
         self.store.write()
     }
 
     /// A read connection that never waits for a background index write.
-    fn read_connection(&self) -> MutexGuard<'_, Connection> {
+    pub(crate) fn read_connection(&self) -> MutexGuard<'_, Connection> {
         self.store.read()
     }
 
@@ -161,10 +145,9 @@ impl Library {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::contracts::{
-        AssetKind, AssetQuery, AssetSort, AssetSummary, ImageProjection, MetadataProjection,
-        PickLabel, RenderLevel, ResourceLoadStatus, SortDirection,
-    };
+    use crate::browse::types::{AssetQuery, AssetSort, AssetSummary, SortDirection};
+    use crate::resources::types::{ImageProjection, MetadataProjection, ResourceLoadStatus};
+    use oxy_media::types::{AssetKind, PickLabel, RenderLevel};
     use rusqlite::params;
     use std::time::Instant;
     use tempfile::tempdir;
@@ -445,7 +428,7 @@ mod tests {
                         .is_some()
                 );
                 assert!(
-                    crate::storage::repo::tags::list_tags(&library.store().read())
+                    crate::tags::repo::list_tags(&library.store().read())
                         .unwrap()
                         .is_empty()
                 );
@@ -1182,13 +1165,13 @@ mod tests {
                 valid_at,
                 status: ResourceLoadStatus::Ready,
                 level: RenderLevel::Preview,
-                result: Some(crate::contracts::PreviewResult {
+                result: Some(oxy_media::types::PreviewResult {
                     image_facts: None,
                     geometry: None,
                     path: artifact.clone(),
                     width: 1600,
                     height: 1067,
-                    kind: crate::contracts::PreviewKind::Decoded,
+                    kind: oxy_media::types::PreviewKind::Decoded,
                     render_level: RenderLevel::Preview,
                     resource: None,
                     satisfaction: None,
@@ -1222,17 +1205,17 @@ mod tests {
             valid_at,
             status: ResourceLoadStatus::Ready,
             level: RenderLevel::Thumbnail,
-            result: Some(crate::contracts::PreviewResult {
+            result: Some(oxy_media::types::PreviewResult {
                 image_facts: None,
                 geometry: None,
                 path: artifact.clone(),
                 width: 160,
                 height: 120,
-                kind: crate::contracts::PreviewKind::Embedded,
+                kind: oxy_media::types::PreviewKind::Embedded,
                 render_level: RenderLevel::Thumbnail,
                 resource: None,
-                satisfaction: Some(crate::contracts::MediaSatisfaction::Interim),
-                persistence: Some(crate::contracts::MediaPersistence::Persisted),
+                satisfaction: Some(oxy_media::types::MediaSatisfaction::Interim),
+                persistence: Some(oxy_media::types::MediaPersistence::Persisted),
                 diagnostics: None,
             }),
             error: None,
@@ -1257,7 +1240,7 @@ mod tests {
             "processing": [], "byteIntegrity": "sourcePayload"
         });
         assert!(
-            serde_json::from_value::<crate::contracts::PreviewResult>(obsolete.clone()).is_err()
+            serde_json::from_value::<oxy_media::types::PreviewResult>(obsolete.clone()).is_err()
         );
         for incompatible in [obsolete.to_string(), "{".into()] {
             let accepted = library.accept_image_projection(projection.clone()).unwrap();
@@ -1305,21 +1288,21 @@ mod tests {
             valid_at,
             status: ResourceLoadStatus::Ready,
             level: RenderLevel::Preview,
-            result: Some(crate::contracts::PreviewResult {
+            result: Some(oxy_media::types::PreviewResult {
                 image_facts: None,
                 geometry: None,
                 path: artifact,
                 width: 16,
                 height: 8,
-                kind: crate::contracts::PreviewKind::Decoded,
+                kind: oxy_media::types::PreviewKind::Decoded,
                 render_level: RenderLevel::Preview,
-                resource: Some(crate::contracts::MediaResourceDescriptor {
+                resource: Some(oxy_media::types::MediaResourceDescriptor {
                     resource_id: "old-process-resource".into(),
                     url: "oxy-media://localhost/resource/old-process-resource".into(),
                     media_type: "image/jpeg".into(),
                 }),
-                satisfaction: Some(crate::contracts::MediaSatisfaction::Satisfied),
-                persistence: Some(crate::contracts::MediaPersistence::Persisted),
+                satisfaction: Some(oxy_media::types::MediaSatisfaction::Satisfied),
+                persistence: Some(oxy_media::types::MediaPersistence::Persisted),
                 diagnostics: None,
             }),
             error: None,
@@ -1347,21 +1330,21 @@ mod tests {
                 valid_at,
                 status: ResourceLoadStatus::Ready,
                 level: RenderLevel::Preview,
-                result: Some(crate::contracts::PreviewResult {
+                result: Some(oxy_media::types::PreviewResult {
                     image_facts: None,
                     geometry: None,
                     path: PathBuf::new(),
                     width: 16,
                     height: 8,
-                    kind: crate::contracts::PreviewKind::Embedded,
+                    kind: oxy_media::types::PreviewKind::Embedded,
                     render_level: RenderLevel::Preview,
-                    resource: Some(crate::contracts::MediaResourceDescriptor {
+                    resource: Some(oxy_media::types::MediaResourceDescriptor {
                         resource_id: "pending-resource".into(),
                         url: "oxy-media://localhost/resource/pending-resource".into(),
                         media_type: "image/jpeg".into(),
                     }),
-                    satisfaction: Some(crate::contracts::MediaSatisfaction::Interim),
-                    persistence: Some(crate::contracts::MediaPersistence::Pending),
+                    satisfaction: Some(oxy_media::types::MediaSatisfaction::Interim),
+                    persistence: Some(oxy_media::types::MediaPersistence::Pending),
                     diagnostics: None,
                 }),
                 error: None,
@@ -1435,13 +1418,13 @@ mod tests {
             valid_at,
             status: ResourceLoadStatus::Ready,
             level: RenderLevel::Thumbnail,
-            result: Some(crate::contracts::PreviewResult {
+            result: Some(oxy_media::types::PreviewResult {
                 image_facts: None,
                 geometry: None,
                 path: artifact.to_owned(),
                 width: 160,
                 height: 120,
-                kind: crate::contracts::PreviewKind::Embedded,
+                kind: oxy_media::types::PreviewKind::Embedded,
                 render_level: RenderLevel::Thumbnail,
                 resource: None,
                 satisfaction: None,

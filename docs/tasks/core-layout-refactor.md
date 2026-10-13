@@ -77,7 +77,15 @@ resource leases, cancellation and stale-publication semantics.
   Strict workspace Clippy and frontend check pass; frontend tests remain
   73 files / 419 passing. A media handoff test's fixed sleep was replaced by
   waiting for the actual subscriber after its parallel-run failure reproduced.
-- Next: distribute contracts/repos/schema by feature, introduce named workflows,
+- Application types moved to feature types modules; contracts is now an export
+  facade, and core implementations import their owner directly. Existing
+  repositories moved next to library/tags/people; the central storage repo
+  entrance was removed. Named app workflows now hold asset moves/deletions,
+  person tag contributions and root recovery; root row writes were separated
+  into their owning feature repositories. All 48 table declarations now sit in
+  feature schemas; storage registers their classes without guessing from names.
+  Strict workspace Clippy and 270 core tests pass after these moves.
+- Next: distribute remaining schema initialization and browsing SQL,
   move remaining desktop use-case coordination, remove legacy paths, generate
   frontend contracts and complete final release/performance qualification.
 

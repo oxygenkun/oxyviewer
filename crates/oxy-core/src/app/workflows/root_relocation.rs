@@ -1,11 +1,9 @@
 //! Explicit, confirmed root recovery. User records move atomically; derived
 //! browsing state is invalidated, never used as the source of user facts.
-use crate::contracts::{RelocationEntry, RelocationMatch, RootRelocationPlan};
-use crate::library::{Library, LibraryError, cache::index::forget_root};
-use crate::storage::{
-    Connection,
-    repo::{self, cross::relocation as rows},
-};
+use crate::library::types::{RelocationEntry, RelocationMatch, RootRelocationPlan};
+use crate::library::{Library, LibraryError, forget_root};
+use crate::storage::Connection;
+mod queries;
 use std::{
     collections::{BTreeSet, HashSet},
     path::{Path, PathBuf},
@@ -39,13 +37,14 @@ impl Library {
         if current != *expected {
             return Err(invalid("files changed since preview; inspect the new plan"));
         }
-        let folders = rows::folder_paths(&transaction)?;
+        let folders = crate::people::repo::relocation::folder_paths(&transaction)?;
         for entry in &current.entries {
             let source = entry.old_path.to_string_lossy();
             let destination = entry.new_path.to_string_lossy();
-            rows::move_asset(&transaction, &source, &destination)?;
+            crate::tags::repo::move_asset(&transaction, &source, &destination)?;
+            crate::people::repo::relocation::move_asset(&transaction, &source, &destination)?;
             let verified = entry.status == RelocationMatch::Verified;
-            rows::rebind_instances(
+            crate::people::repo::relocation::rebind_instances(
                 &transaction,
                 &destination,
                 entry.old_identity_revision.as_deref(),
@@ -62,20 +61,44 @@ impl Library {
                     .parent()
                     .ok_or_else(|| invalid("invalid asset path"))?
                     .to_string_lossy();
-                rows::rebind_features(&transaction, &source, &destination, &folder, old, new)?;
-                rows::rebind_detections(&transaction, &source, &destination, &folder, old, new)?;
+                crate::people::repo::relocation::rebind_features(
+                    &transaction,
+                    &source,
+                    &destination,
+                    &folder,
+                    old,
+                    new,
+                )?;
+                crate::people::repo::relocation::rebind_detections(
+                    &transaction,
+                    &source,
+                    &destination,
+                    &folder,
+                    old,
+                    new,
+                )?;
             }
         }
         for folder in folders {
             if let Ok(relative) = Path::new(&folder).strip_prefix(&current.old_root) {
                 let destination = current.new_root.join(relative);
-                rows::move_folder(&transaction, &folder, &destination.to_string_lossy())?;
-                for subject in rows::subjects(&transaction, &destination.to_string_lossy())? {
-                    repo::cross::reconcile_person_sources_for_subject(&transaction, &subject)?;
+                crate::people::repo::relocation::move_folder(
+                    &transaction,
+                    &folder,
+                    &destination.to_string_lossy(),
+                )?;
+                for subject in crate::people::repo::relocation::subjects(
+                    &transaction,
+                    &destination.to_string_lossy(),
+                )? {
+                    crate::app::workflows::person_tags::reconcile_person_sources_for_subject(
+                        &transaction,
+                        &subject,
+                    )?;
                 }
             }
         }
-        rows::replace_root(
+        crate::library::repo::replace_root(
             &transaction,
             &current.old_root.to_string_lossy(),
             &current.new_root.to_string_lossy(),
@@ -110,7 +133,7 @@ fn plan(
             "source and destination must be separate directories",
         ));
     }
-    let roots = repo::library::list_roots(connection)?;
+    let roots = crate::library::repo::list_roots(connection)?;
     if !roots.iter().any(|root| Path::new(root) == old) {
         return Err(invalid("source is no longer registered"));
     }
@@ -127,10 +150,10 @@ fn plan(
         ));
     }
     let cached: HashSet<_> = cached.iter().cloned().collect();
-    let paths = rows::asset_paths(connection)?;
+    let paths = queries::asset_paths(connection)?;
     if paths
         .iter()
-        .chain(rows::folder_paths(connection)?.iter())
+        .chain(crate::people::repo::relocation::folder_paths(connection)?.iter())
         .any(|path| Path::new(path).starts_with(&new))
     {
         return Err(invalid(
@@ -166,7 +189,10 @@ fn plan(
                 entry.new_identity_revision = Some(observed.revision_id());
                 observed.canonical_path = path.clone();
                 let previous = observed.revision_id();
-                let evidence = rows::identity_revisions(connection, &path.to_string_lossy())?;
+                let evidence = crate::people::repo::relocation::identity_revisions(
+                    connection,
+                    &path.to_string_lossy(),
+                )?;
                 let verified = evidence.contains(&previous)
                     || cached.contains(&(path.clone(), previous.clone()));
                 entry.status = if verified {
@@ -191,14 +217,14 @@ fn plan(
 /// Reuse verified artifacts after user-record recovery has committed.
 pub fn reuse_root_artifacts(
     cache: &oxy_media::DiskMediaCache,
-    plan: &crate::contracts::RootRelocationPlan,
+    plan: &crate::library::types::RootRelocationPlan,
     sources: &[oxy_media::SourceRevision],
-) -> crate::contracts::RootRelocationResult {
+) -> crate::library::types::RootRelocationResult {
     let sources: std::collections::HashMap<_, _> = sources
         .iter()
         .map(|source| ((&source.canonical_path, &source.revision_id), source))
         .collect();
-    let mut report = crate::contracts::RootRelocationResult {
+    let mut report = crate::library::types::RootRelocationResult {
         root_path: plan.new_root.clone(),
         linked_files: 0,
         needs_review: 0,
@@ -207,7 +233,7 @@ pub fn reuse_root_artifacts(
         cache_failures: 0,
     };
     for entry in &plan.entries {
-        use crate::contracts::RelocationMatch;
+        use crate::library::types::RelocationMatch;
         match entry.status {
             RelocationMatch::Missing => {
                 report.missing_files += 1;
@@ -389,7 +415,7 @@ mod tests {
         library.write().execute_batch("CREATE TRIGGER test_abort_relocation BEFORE UPDATE OF asset_path ON person_manual_instances WHEN OLD.id='same' BEGIN SELECT RAISE(ABORT,'test failure'); END;").unwrap();
         assert!(library.relocate_root(&plan, &proofs).is_err());
         assert_eq!(library.roots().unwrap(), std::slice::from_ref(&old));
-        let paths = rows::asset_paths(&library.read_connection()).unwrap();
+        let paths = queries::asset_paths(&library.read_connection()).unwrap();
         assert!(paths.iter().all(|path| Path::new(path).starts_with(&old)));
     }
 
@@ -433,7 +459,7 @@ mod tests {
                 .unwrap();
             assert_eq!(count, 2);
         }
-        assert!(!repo::person_cache::analysis_is_current(&db, "run").unwrap());
+        assert!(!crate::people::repo::cache::analysis_is_current(&db, "run").unwrap());
     }
 
     #[test]

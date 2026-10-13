@@ -1,165 +1,21 @@
-//! Tables that hold what the user typed, named, confirmed, or assigned.
-//!
-//! Nothing here is ever emptied by a cache clear, a cache migration, or a
-//! re-index. Changing these rows requires an explicit user action and, for a
-//! destructive one, an explicit confirmation.
-//!
-//! Classes are not uniform because the declared module was: `folder_people`
-//! and `person_manual_instances` are identity the user confirmed, while
-//! `person_feature_spaces` and `person_features_cache` are derived vectors
-//! that live in [`super::cache`]. The two sit a few lines apart in separate
-//! files precisely because the class is a word in the declaration.
+//! Register user-owned declarations. Legacy initialization remains until the
+//! isolated fresh-schema step removes compatibility paths.
 
 use super::has_column;
 use crate::storage::table;
 use rusqlite::{Connection, params};
 
-crate::storage::table::tables! {
-    user create library_roots =
-        "path TEXT PRIMARY KEY NOT NULL,
-        added_at INTEGER NOT NULL DEFAULT (unixepoch()),
-        sort_order INTEGER";
-    user create custom_tags =
-        "id INTEGER PRIMARY KEY AUTOINCREMENT,
-        parent_id INTEGER REFERENCES custom_tags(id) ON DELETE CASCADE,
-        name TEXT NOT NULL,
-        name_key TEXT NOT NULL,
-        sort_order INTEGER NOT NULL,
-        created_at INTEGER NOT NULL DEFAULT (unixepoch()),
-        updated_at INTEGER NOT NULL DEFAULT (unixepoch())";
-    user create asset_tags =
-        "asset_path TEXT NOT NULL,
-        tag_id INTEGER NOT NULL REFERENCES custom_tags(id) ON DELETE CASCADE,
-        assigned_at INTEGER NOT NULL DEFAULT (unixepoch()),
-        PRIMARY KEY(asset_path, tag_id)";
-    user create asset_tag_xmp_state =
-        "asset_path TEXT PRIMARY KEY NOT NULL,
-        subjects_json TEXT NOT NULL DEFAULT '[]',
-        hierarchical_json TEXT NOT NULL DEFAULT '[]',
-        synced_at INTEGER NOT NULL DEFAULT (unixepoch())";
-    user create tag_xmp_sync_queue =
-        "asset_path TEXT PRIMARY KEY NOT NULL,
-        requested_at INTEGER NOT NULL DEFAULT (unixepoch()),
-        attempt_count INTEGER NOT NULL DEFAULT 0,
-        last_error TEXT";
-    // Created by `ensure_tag_sources` rather than by `create_all`: its backfill
-    // has to run in its own transaction, after `asset_tags` exists and holds
-    // the assignments the backfill derives sources from.
-    user external asset_tag_sources;
-    user create folder_people =
-        "id TEXT PRIMARY KEY,
-        folder_path TEXT NOT NULL,
-        display_name TEXT,
-        identity_confirmed INTEGER NOT NULL DEFAULT 0,
-        revision INTEGER NOT NULL DEFAULT 1,
-        created_at INTEGER NOT NULL DEFAULT (unixepoch()),
-        updated_at INTEGER NOT NULL DEFAULT (unixepoch())";
-    user create person_cluster_adoptions =
-        "folder_path TEXT NOT NULL,
-        cluster_id TEXT NOT NULL,
-        subject_id TEXT NOT NULL REFERENCES folder_people(id),
-        PRIMARY KEY(folder_path,cluster_id,subject_id)";
-    user create person_manual_instances =
-        "id TEXT PRIMARY KEY,
-        folder_path TEXT NOT NULL,
-        asset_path TEXT NOT NULL,
-        source_revision TEXT NOT NULL,
-        source_identity_revision TEXT,
-        face_box TEXT,
-        body_box TEXT,
-        needs_review INTEGER NOT NULL DEFAULT 0,
-        revision INTEGER NOT NULL DEFAULT 1,
-        created_at INTEGER NOT NULL DEFAULT (unixepoch()),
-        updated_at INTEGER NOT NULL DEFAULT (unixepoch())";
-    user create person_review_decisions =
-        "instance_id TEXT NOT NULL REFERENCES person_manual_instances(id),
-        subject_id TEXT NOT NULL REFERENCES folder_people(id),
-        decision TEXT NOT NULL CHECK(decision IN ('pending','belongs','doesNotBelong','deferred')),
-        revision INTEGER NOT NULL DEFAULT 1,
-        updated_at INTEGER NOT NULL DEFAULT (unixepoch()),
-        PRIMARY KEY(instance_id, subject_id)";
-    user create person_review_events =
-        "id INTEGER PRIMARY KEY AUTOINCREMENT,
-        instance_id TEXT NOT NULL,
-        subject_id TEXT NOT NULL,
-        decision TEXT NOT NULL,
-        revision INTEGER NOT NULL,
-        request_id TEXT NOT NULL UNIQUE,
-        changed_at INTEGER NOT NULL DEFAULT (unixepoch())";
-    user create person_identity_events =
-        "id INTEGER PRIMARY KEY AUTOINCREMENT,
-        subject_id TEXT NOT NULL,
-        event_kind TEXT NOT NULL,
-        display_name TEXT,
-        revision INTEGER NOT NULL,
-        request_id TEXT NOT NULL UNIQUE,
-        changed_at INTEGER NOT NULL DEFAULT (unixepoch())";
-    user create person_references =
-        "subject_id TEXT NOT NULL REFERENCES folder_people(id),
-        instance_id TEXT NOT NULL REFERENCES person_manual_instances(id),
-        source_revision TEXT NOT NULL,
-        confirmed_at INTEGER NOT NULL DEFAULT (unixepoch()),
-        PRIMARY KEY(subject_id, instance_id)";
-    user create person_instance_events =
-        "id INTEGER PRIMARY KEY AUTOINCREMENT,
-        instance_id TEXT NOT NULL,
-        previous_json TEXT NOT NULL,
-        request_id TEXT NOT NULL UNIQUE,
-        changed_at INTEGER NOT NULL DEFAULT (unixepoch())";
-    user create person_request_results = "request_id TEXT PRIMARY KEY, operation TEXT NOT NULL, entity_id TEXT NOT NULL";
-    user create historical_people =
-        "id TEXT PRIMARY KEY,
-        display_name TEXT NOT NULL,
-        reference_asset_path TEXT NOT NULL,
-        reference_source_revision TEXT NOT NULL,
-        revision INTEGER NOT NULL DEFAULT 1,
-        created_at INTEGER NOT NULL DEFAULT (unixepoch())";
-    user create folder_historical_links =
-        "subject_id TEXT PRIMARY KEY REFERENCES folder_people(id),
-        historical_person_id TEXT NOT NULL REFERENCES historical_people(id),
-        linked_at INTEGER NOT NULL DEFAULT (unixepoch())";
-    user create person_history_events =
-        "id INTEGER PRIMARY KEY AUTOINCREMENT,
-        subject_id TEXT NOT NULL,
-        historical_person_id TEXT NOT NULL,
-        event_kind TEXT NOT NULL CHECK(event_kind IN ('link','unlink')),
-        request_id TEXT NOT NULL UNIQUE,
-        linked_at INTEGER NOT NULL DEFAULT (unixepoch())";
-    user create person_tag_links =
-        "historical_person_id TEXT PRIMARY KEY REFERENCES historical_people(id),
-        tag_id INTEGER REFERENCES custom_tags(id) ON DELETE SET NULL,
-        enabled INTEGER NOT NULL DEFAULT 0,
-        revision INTEGER NOT NULL DEFAULT 1,
-        updated_at INTEGER NOT NULL DEFAULT (unixepoch())";
-    user create person_tag_overrides =
-        "historical_person_id TEXT NOT NULL REFERENCES historical_people(id),
-        asset_path TEXT NOT NULL,
-        suppressed INTEGER NOT NULL DEFAULT 1,
-        revision INTEGER NOT NULL DEFAULT 1,
-        PRIMARY KEY(historical_person_id,asset_path)";
-    user create global_people =
-        "id TEXT PRIMARY KEY, display_name TEXT NOT NULL, revision INTEGER NOT NULL DEFAULT 1";
-    user create global_person_migrations =
-        "subject_id TEXT PRIMARY KEY, person_id TEXT NOT NULL REFERENCES global_people(id)";
-    user create global_person_reviews =
-        "instance_id TEXT NOT NULL REFERENCES person_manual_instances(id), person_id TEXT NOT NULL REFERENCES global_people(id),
-         decision TEXT NOT NULL CHECK(decision IN ('pending','belongs','doesNotBelong','deferred')),
-         revision INTEGER NOT NULL DEFAULT 1, PRIMARY KEY(instance_id,person_id)";
-    user create global_person_targets =
-        "instance_id TEXT PRIMARY KEY REFERENCES person_manual_instances(id), person_id TEXT NOT NULL REFERENCES global_people(id)";
-    user create global_person_references =
-        "person_id TEXT NOT NULL REFERENCES global_people(id), instance_id TEXT NOT NULL REFERENCES person_manual_instances(id),
-         PRIMARY KEY(person_id,instance_id)";
-    user create global_person_events =
-        "request_id TEXT PRIMARY KEY, payload TEXT NOT NULL, result TEXT NOT NULL";
-    user create global_person_tags =
-        "person_id TEXT PRIMARY KEY REFERENCES global_people(id), tag_id INTEGER REFERENCES custom_tags(id) ON DELETE SET NULL";
-
-}
+pub static DEFS: std::sync::LazyLock<Vec<table::TableDef>> = std::sync::LazyLock::new(|| {
+    super::definitions()
+        .iter()
+        .copied()
+        .filter(|def| def.class == table::DataClass::UserOwned)
+        .collect()
+});
 
 /// Creates or migrates every user-owned table.
 pub(super) fn ensure_schema(connection: &mut Connection) -> Result<(), rusqlite::Error> {
-    table::create_all(connection, DEFS)?;
+    table::create_all(connection, &DEFS)?;
     connection.execute_batch(
         "CREATE UNIQUE INDEX IF NOT EXISTS custom_tags_sibling_name
            ON custom_tags(COALESCE(parent_id, 0), name_key);

@@ -1,7 +1,7 @@
 //! Explicit user action: copy suggestions to pending reviews in one transaction.
 use super::*;
-use crate::contracts::{AdoptPersonCluster, AdoptPersonClusterResult, PersonReviewDecision};
 use crate::people::alignment::{AlignmentPolicy, DetectedAnchor, ManualAnchor, align_instances};
+use crate::people::types::{AdoptPersonCluster, AdoptPersonClusterResult, PersonReviewDecision};
 
 impl People {
     pub fn adopt_person_cluster(
@@ -15,7 +15,7 @@ impl People {
         let folder_text = folder.to_string_lossy();
         // Replays survive cache clearing: the explicit request is user-owned.
         if let Some((operation, json)) =
-            repo::people::request_result(&self.store.read(), &input.request_id)?
+            crate::people::repo::manual::request_result(&self.store.read(), &input.request_id)?
         {
             if operation != "adoptCluster" {
                 return Err(PeopleError::PersonConflict);
@@ -47,30 +47,30 @@ impl People {
         let tx = connection.transaction().map_err(StoreError::from)?;
         // The snapshot may have been invalidated while files were observed.
         let current: PersonClusterSnapshot = serde_json::from_str(
-            &repo::person_clusters::snapshot(&tx, &folder_text)?
+            &crate::people::repo::clusters::snapshot(&tx, &folder_text)?
                 .ok_or(PeopleError::PersonAnalysisConflict)?,
         )?;
         if current.snapshot_id != snapshot.snapshot_id {
             return Err(PeopleError::PersonAnalysisConflict);
         }
-        if repo::people::request_result(&tx, &input.request_id)?.is_some() {
+        if crate::people::repo::manual::request_result(&tx, &input.request_id)?.is_some() {
             return Err(PeopleError::PersonConflict);
         }
         let subject = if let Some(id) = &input.subject_id {
-            repo::people::folder_person(&tx, id, &folder_text)?
+            crate::people::repo::manual::folder_person(&tx, id, &folder_text)?
                 .ok_or(PeopleError::MissingPersonRecord)?;
             id.clone()
         } else {
-            let id = repo::people::new_id(&tx)?;
-            repo::people::insert_folder_person(&tx, &id, &folder_text)?;
+            let id = crate::people::repo::manual::new_id(&tx)?;
+            crate::people::repo::manual::insert_folder_person(&tx, &id, &folder_text)?;
             if let Some(name) = input
                 .display_name
                 .as_deref()
                 .map(str::trim)
                 .filter(|s| !s.is_empty())
             {
-                repo::people::reset_identity(&tx, &id, &folder_text, name, 1)?;
-                repo::people::insert_identity_event(
+                crate::people::repo::manual::reset_identity(&tx, &id, &folder_text, name, 1)?;
+                crate::people::repo::manual::insert_identity_event(
                     &tx,
                     &id,
                     "reset",
@@ -86,7 +86,7 @@ impl People {
         let mut conflicted = 0;
         for member in &cluster.members {
             let asset = member.asset_path.to_string_lossy();
-            let anchors = repo::people::list_anchors(&tx, &folder_text, &asset)?;
+            let anchors = crate::people::repo::manual::list_anchors(&tx, &folder_text, &asset)?;
             let manual: Vec<_> = anchors
                 .iter()
                 .map(|a| ManualAnchor {
@@ -129,10 +129,10 @@ impl People {
                 conflicted += 1;
                 continue;
             } else {
-                let id = repo::people::new_id(&tx)?;
-                repo::people::insert_instance(
+                let id = crate::people::repo::manual::new_id(&tx)?;
+                crate::people::repo::manual::insert_instance(
                     &tx,
-                    &repo::people::NewInstance {
+                    &crate::people::repo::manual::NewInstance {
                         id: &id,
                         folder_path: &folder_text,
                         asset_path: &asset,
@@ -144,18 +144,18 @@ impl People {
                 )?;
                 id
             };
-            if repo::people::review_revision(&tx, &instance, &subject)?.is_some() {
+            if crate::people::repo::manual::review_revision(&tx, &instance, &subject)?.is_some() {
                 preserved += 1;
                 continue;
             }
-            repo::people::upsert_review_decision(
+            crate::people::repo::manual::upsert_review_decision(
                 &tx,
                 &instance,
                 &subject,
                 PersonReviewDecision::Pending,
                 1,
             )?;
-            repo::people::insert_review_event(
+            crate::people::repo::manual::insert_review_event(
                 &tx,
                 &instance,
                 &subject,
@@ -170,8 +170,8 @@ impl People {
                 "本组的人工标注均需单独核对，请先处理冲突".into(),
             ));
         }
-        repo::people::link_cluster(&tx, &folder_text, &cluster.id, &subject)?;
-        let person = repo::people::folder_person(&tx, &subject, &folder_text)?
+        crate::people::repo::manual::link_cluster(&tx, &folder_text, &cluster.id, &subject)?;
+        let person = crate::people::repo::manual::folder_person(&tx, &subject, &folder_text)?
             .ok_or(PeopleError::MissingPersonRecord)?;
         let result = AdoptPersonClusterResult {
             person,
@@ -179,7 +179,7 @@ impl People {
             preserved,
             conflicted,
         };
-        repo::people::record_request_result(
+        crate::people::repo::manual::record_request_result(
             &tx,
             &input.request_id,
             "adoptCluster",

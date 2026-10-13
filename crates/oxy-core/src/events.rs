@@ -1,7 +1,7 @@
 //! Typed application events. The desktop adapter owns serialization and delivery.
-use crate::contracts::{
-    DirectoryTreeSnapshot, ImageProjection, LibraryIndexUpdate, MetadataProjection,
-};
+use crate::browse::types::DirectoryTreeSnapshot;
+use crate::library::types::LibraryIndexUpdate;
+use crate::resources::types::{ImageProjection, MetadataProjection};
 
 #[derive(Debug, Clone)]
 pub enum CoreEvent {

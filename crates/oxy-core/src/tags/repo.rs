@@ -6,8 +6,8 @@
 //! is the statement that keeps the second derived from the first; the rules
 //! about which sources a given user action may add or drop are not here.
 
-use crate::contracts::{CustomTag, CustomTagId};
 use crate::storage::StoreError;
+use crate::tags::types::{CustomTag, CustomTagId};
 use rusqlite::{Connection, OptionalExtension, params};
 use std::collections::{HashMap, HashSet};
 
@@ -728,4 +728,28 @@ fn tag_path(
     }
     parts.reverse();
     parts.join("|")
+}
+
+pub fn move_asset(
+    connection: &Connection,
+    source: &str,
+    destination: &str,
+) -> Result<(), StoreError> {
+    connection.execute(
+        "UPDATE asset_tags SET asset_path=?2 WHERE asset_path=?1",
+        params![source, destination],
+    )?;
+    connection.execute(
+        "UPDATE asset_tag_sources SET asset_path=?2 WHERE asset_path=?1",
+        params![source, destination],
+    )?;
+    connection.execute(
+        "UPDATE asset_tag_xmp_state SET asset_path=?2 WHERE asset_path=?1",
+        params![source, destination],
+    )?;
+    connection.execute(
+        "UPDATE tag_xmp_sync_queue SET asset_path=?2 WHERE asset_path=?1",
+        params![source, destination],
+    )?;
+    Ok(())
 }

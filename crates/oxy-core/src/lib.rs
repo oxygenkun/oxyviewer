@@ -2,6 +2,7 @@
 
 pub mod app;
 pub use app::{AppPaths, OxyApp};
+pub mod browse;
 pub mod contracts;
 pub mod events;
 pub mod files;

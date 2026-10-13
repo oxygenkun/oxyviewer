@@ -346,8 +346,8 @@ pub fn load_models(root: &Path, operation: &PersonOperation) -> Result<OnnxFaceM
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::contracts::{PersonOperationState, PersonOperationStatus};
     use crate::people::execution::operations::PersonOperations;
+    use crate::people::types::{PersonOperationState, PersonOperationStatus};
 
     fn operation(operations: &PersonOperations) -> std::sync::Arc<PersonOperation> {
         operations

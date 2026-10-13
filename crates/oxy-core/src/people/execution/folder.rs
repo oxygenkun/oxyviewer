@@ -1,13 +1,13 @@
 //! Folder enrollment and lifetime of the three-stage analysis pipeline.
-use crate::contracts::PersonAnalysisTask;
 use crate::people::People;
+use crate::people::types::PersonAnalysisTask;
 /// Run detection and encoding. The operation owner follows with its chosen grouping or retrieval mode.
 #[cfg(any(windows, target_os = "macos"))]
 pub fn analyse_folder(
     people: &People,
     catalog: &crate::files::FsCatalog,
     session_id: &str,
-    request: &crate::contracts::BeginPersonAnalysis,
+    request: &crate::people::types::BeginPersonAnalysis,
     models: &mut crate::people::inference::face::OnnxFaceModels,
     operation: &crate::people::execution::operations::PersonOperation,
     prepare: impl FnMut(
@@ -22,7 +22,7 @@ pub fn analyse_folder(
         fn enqueue(
             &mut self,
             id: &str,
-            tasks: &[crate::contracts::PersonAnalysisTaskInput],
+            tasks: &[crate::people::types::PersonAnalysisTaskInput],
         ) -> Result<usize, Self::Error> {
             self.0.enqueue_person_analysis_tasks(id, tasks)
         }
@@ -45,9 +45,10 @@ pub fn analyse_folder(
         people
             .seal_person_analysis_tasks(&run.run_id)
             .map_err(|error| error.to_string())?;
-        operation.update(|status| status.state = crate::contracts::PersonOperationState::Analysing);
+        operation
+            .update(|status| status.state = crate::people::types::PersonOperationState::Analysing);
         let final_run = super::face::execute(people, &run, &manifest, models, operation, prepare)?;
-        if final_run.state == crate::contracts::PersonAnalysisState::Cancelled {
+        if final_run.state == crate::people::types::PersonAnalysisState::Cancelled {
             return Err("识别任务已取消或被替代".into());
         }
         operation.update(|status| {

@@ -1,5 +1,8 @@
 //! Application assembly and lifetime, shared by desktop and headless hosts.
+
 mod external_apps;
+pub mod types;
+pub(crate) mod workflows;
 pub use external_apps::ExternalAppManager;
 
 use crate::{
@@ -162,7 +165,7 @@ mod tests {
                 .request_summaries(
                     &app.runtime,
                     vec![],
-                    crate::contracts::MetadataRequestPriority::Selected
+                    crate::resources::types::MetadataRequestPriority::Selected
                 )
                 .is_err()
         );
@@ -178,10 +181,10 @@ mod tests {
         .unwrap();
         let operation = app
             .person_operations
-            .reserve(crate::contracts::PersonOperationStatus {
+            .reserve(crate::people::types::PersonOperationStatus {
                 operation_id: "owned-worker".into(),
                 folder_path: None,
-                state: crate::contracts::PersonOperationState::Preparing,
+                state: crate::people::types::PersonOperationState::Preparing,
                 completed: 0,
                 total: 0,
                 detail: String::new(),
@@ -200,7 +203,7 @@ mod tests {
         assert!(app.shutdown(Duration::from_secs(2)));
         assert_eq!(
             operation.snapshot().unwrap().state,
-            crate::contracts::PersonOperationState::Cancelled
+            crate::people::types::PersonOperationState::Cancelled
         );
     }
 }

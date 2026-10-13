@@ -13,7 +13,7 @@
 //! and "a stale source revision is not a candidate" are rules, and they live in
 //! `oxy-people`. What lives here is the statement each rule ends in.
 
-use crate::contracts::{
+use crate::people::types::{
     DetectedPersonInstance, FeatureModality, PersonAnalysisRun, PersonAnalysisState,
     PersonAnalysisTask, PersonFeatureMatch,
 };

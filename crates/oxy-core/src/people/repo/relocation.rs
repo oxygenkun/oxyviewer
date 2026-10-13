@@ -1,12 +1,24 @@
-//! Statements for an explicit root relocation. The caller owns the transaction.
+//! Person rows affected by a confirmed root recovery.
 use crate::storage::{Connection, StoreError};
 use rusqlite::params;
-
-pub fn asset_paths(connection: &Connection) -> Result<Vec<String>, StoreError> {
-    let mut statement = connection.prepare("SELECT asset_path AS path FROM asset_tags UNION SELECT asset_path AS path FROM asset_tag_sources UNION SELECT asset_path AS path FROM asset_tag_xmp_state UNION SELECT asset_path AS path FROM tag_xmp_sync_queue UNION SELECT asset_path AS path FROM person_manual_instances UNION SELECT reference_asset_path AS path FROM historical_people UNION SELECT asset_path AS path FROM person_tag_overrides UNION SELECT path AS path FROM indexed_assets UNION SELECT asset_path AS path FROM person_features_cache UNION SELECT asset_path AS path FROM person_instances_cache")?;
-    Ok(statement
-        .query_map([], |row| row.get("path"))?
-        .collect::<Result<_, _>>()?)
+pub fn move_asset(
+    connection: &Connection,
+    source: &str,
+    destination: &str,
+) -> Result<(), StoreError> {
+    connection.execute(
+        "UPDATE person_manual_instances SET asset_path=?2 WHERE asset_path=?1",
+        params![source, destination],
+    )?;
+    connection.execute(
+        "UPDATE historical_people SET reference_asset_path=?2 WHERE reference_asset_path=?1",
+        params![source, destination],
+    )?;
+    connection.execute(
+        "UPDATE person_tag_overrides SET asset_path=?2 WHERE asset_path=?1",
+        params![source, destination],
+    )?;
+    Ok(())
 }
 
 pub fn folder_paths(connection: &Connection) -> Result<Vec<String>, StoreError> {
@@ -21,54 +33,6 @@ pub fn identity_revisions(connection: &Connection, path: &str) -> Result<Vec<Str
     Ok(statement
         .query_map([path], |row| row.get("revision"))?
         .collect::<Result<_, _>>()?)
-}
-
-pub fn replace_root(
-    connection: &Connection,
-    source: &str,
-    destination: &str,
-) -> Result<(), StoreError> {
-    connection.execute(
-        "UPDATE library_roots SET path=?2 WHERE path=?1",
-        params![source, destination],
-    )?;
-    Ok(())
-}
-
-pub fn move_asset(
-    connection: &Connection,
-    source: &str,
-    destination: &str,
-) -> Result<(), StoreError> {
-    connection.execute(
-        "UPDATE asset_tags SET asset_path=?2 WHERE asset_path=?1",
-        params![source, destination],
-    )?;
-    connection.execute(
-        "UPDATE asset_tag_sources SET asset_path=?2 WHERE asset_path=?1",
-        params![source, destination],
-    )?;
-    connection.execute(
-        "UPDATE asset_tag_xmp_state SET asset_path=?2 WHERE asset_path=?1",
-        params![source, destination],
-    )?;
-    connection.execute(
-        "UPDATE tag_xmp_sync_queue SET asset_path=?2 WHERE asset_path=?1",
-        params![source, destination],
-    )?;
-    connection.execute(
-        "UPDATE person_manual_instances SET asset_path=?2 WHERE asset_path=?1",
-        params![source, destination],
-    )?;
-    connection.execute(
-        "UPDATE historical_people SET reference_asset_path=?2 WHERE reference_asset_path=?1",
-        params![source, destination],
-    )?;
-    connection.execute(
-        "UPDATE person_tag_overrides SET asset_path=?2 WHERE asset_path=?1",
-        params![source, destination],
-    )?;
-    Ok(())
 }
 
 pub fn move_folder(
@@ -111,6 +75,7 @@ pub fn rebind_features(
 ) -> Result<usize, StoreError> {
     Ok(connection.execute("UPDATE person_features_cache SET asset_path=?2,folder_path=?3,source_revision=?5 WHERE asset_path=?1 AND source_revision=?4", params![source,destination,folder,old_revision,new_revision])?)
 }
+
 pub fn rebind_detections(
     connection: &Connection,
     source: &str,

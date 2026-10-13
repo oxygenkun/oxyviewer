@@ -5,7 +5,7 @@
 //! `user` class are declared in `crate::storage::schema::user`, the derived
 //! detection and feature caches that feed this module in
 //! `crate::storage::schema::cache`, and every statement against them is a function
-//! in `crate::storage::repo`.
+//! in `the owning feature repository`.
 //!
 //! What stays here is what an identity *is*: that a review decision carries the
 //! revision it was made against, that renaming a person is an event with a
@@ -18,15 +18,16 @@
 //! tag side does. It reaches the tags through repository statements, so
 //! `oxy-people` and `oxy-tags` stay independent.
 
-use crate::contracts::{
-    AssetSummary, ConfirmFolderPerson, CreatePersonInstance, FolderPerson, HistoricalPerson,
+use crate::browse::types::AssetSummary;
+use crate::people::geometry::valid_box;
+use crate::people::types::{
+    ConfirmFolderPerson, CreatePersonInstance, FolderPerson, HistoricalPerson,
     LinkHistoricalPerson, PersonFilter, PersonFilterState, PersonInstance, PersonReview,
     PersonReviewDecision, PersonTagLink, PersonTagOverride, ResetFolderPerson, SetPersonReview,
     SetPersonTagLink, SetPersonTagOverride, UnlinkHistoricalPerson, UpdatePersonInstance,
 };
-use crate::people::geometry::valid_box;
 use crate::people::{People, PeopleError};
-use crate::storage::{StoreError, repo};
+use crate::storage::StoreError;
 use std::{collections::HashMap, path::Path};
 
 fn path_text(path: &Path) -> String {
@@ -40,7 +41,9 @@ fn valid_source_identity(value: Option<&str>) -> bool {
 
 impl People {
     pub fn list_historical_people(&self) -> Result<Vec<HistoricalPerson>, PeopleError> {
-        Ok(repo::people::list_historical_people(&self.store.read())?)
+        Ok(crate::people::repo::manual::list_historical_people(
+            &self.store.read(),
+        )?)
     }
 
     pub fn get_historical_link(
@@ -48,7 +51,7 @@ impl People {
         folder_path: &Path,
         subject_id: &str,
     ) -> Result<Option<String>, PeopleError> {
-        Ok(repo::people::historical_link(
+        Ok(crate::people::repo::manual::historical_link(
             &self.store.read(),
             &path_text(folder_path),
             subject_id,
@@ -65,10 +68,12 @@ impl People {
         let mut connection = self.store.write();
         let transaction = connection.transaction().map_err(StoreError::from)?;
         let history_id = if let Some((operation, id)) =
-            repo::people::request_result(&transaction, &input.request_id)?
+            crate::people::repo::manual::request_result(&transaction, &input.request_id)?
         {
-            let replay_subject =
-                repo::people::history_event_subject(&transaction, &input.request_id)?;
+            let replay_subject = crate::people::repo::manual::history_event_subject(
+                &transaction,
+                &input.request_id,
+            )?;
             if operation != "linkHistory"
                 || replay_subject.as_deref() != Some(input.subject_id.as_str())
                 || input
@@ -80,7 +85,7 @@ impl People {
             }
             id
         } else {
-            let source = repo::people::link_source(
+            let source = crate::people::repo::manual::link_source(
                 &transaction,
                 &input.subject_id,
                 &path_text(&input.folder_path),
@@ -89,19 +94,21 @@ impl People {
             let Some((name, asset, revision)) = source else {
                 return Err(PeopleError::PersonConflict);
             };
-            let previous =
-                repo::people::historical_link_of_subject(&transaction, &input.subject_id)?;
+            let previous = crate::people::repo::manual::historical_link_of_subject(
+                &transaction,
+                &input.subject_id,
+            )?;
             if previous.is_some() && input.historical_person_id.is_none() {
                 return Err(PeopleError::PersonConflict);
             }
             let id = if let Some(id) = &input.historical_person_id {
-                if !repo::people::historical_person_exists(&transaction, id)? {
+                if !crate::people::repo::manual::historical_person_exists(&transaction, id)? {
                     return Err(PeopleError::MissingPersonRecord);
                 }
                 id.clone()
             } else {
-                let id = repo::people::new_id(&transaction)?;
-                repo::people::insert_historical_person(
+                let id = crate::people::repo::manual::new_id(&transaction)?;
+                crate::people::repo::manual::insert_historical_person(
                     &transaction,
                     &id,
                     &name,
@@ -113,25 +120,32 @@ impl People {
             if previous.as_deref() == Some(id.as_str()) {
                 return Err(PeopleError::PersonConflict);
             }
-            repo::people::upsert_historical_link(&transaction, &input.subject_id, &id)?;
-            repo::people::bump_subject_revision(&transaction, &input.subject_id)?;
-            repo::people::insert_history_event(
+            crate::people::repo::manual::upsert_historical_link(
+                &transaction,
+                &input.subject_id,
+                &id,
+            )?;
+            crate::people::repo::manual::bump_subject_revision(&transaction, &input.subject_id)?;
+            crate::people::repo::manual::insert_history_event(
                 &transaction,
                 &input.subject_id,
                 &id,
                 "link",
                 &input.request_id,
             )?;
-            repo::people::record_request_result(
+            crate::people::repo::manual::record_request_result(
                 &transaction,
                 &input.request_id,
                 "linkHistory",
                 &id,
             )?;
-            repo::cross::reconcile_person_sources_for_subject(&transaction, &input.subject_id)?;
+            crate::app::workflows::person_tags::reconcile_person_sources_for_subject(
+                &transaction,
+                &input.subject_id,
+            )?;
             id
         };
-        let result = repo::people::historical_person(&transaction, &history_id)?
+        let result = crate::people::repo::manual::historical_person(&transaction, &history_id)?
             .ok_or(PeopleError::MissingPersonRecord)?;
         transaction.commit().map_err(StoreError::from)?;
         Ok(result)
@@ -147,35 +161,38 @@ impl People {
         let mut connection = self.store.write();
         let transaction = connection.transaction().map_err(StoreError::from)?;
         if let Some((operation, subject)) =
-            repo::people::request_result(&transaction, &input.request_id)?
+            crate::people::repo::manual::request_result(&transaction, &input.request_id)?
         {
             if operation != "unlinkHistory" || subject != input.subject_id {
                 return Err(PeopleError::PersonConflict);
             }
         } else {
-            let history_id = repo::people::historical_link_at_revision(
+            let history_id = crate::people::repo::manual::historical_link_at_revision(
                 &transaction,
                 &path_text(&input.folder_path),
                 &input.subject_id,
                 input.expected_revision,
             )?
             .ok_or(PeopleError::PersonConflict)?;
-            repo::people::delete_historical_link(&transaction, &input.subject_id)?;
-            repo::people::bump_subject_revision(&transaction, &input.subject_id)?;
-            repo::people::insert_history_event(
+            crate::people::repo::manual::delete_historical_link(&transaction, &input.subject_id)?;
+            crate::people::repo::manual::bump_subject_revision(&transaction, &input.subject_id)?;
+            crate::people::repo::manual::insert_history_event(
                 &transaction,
                 &input.subject_id,
                 &history_id,
                 "unlink",
                 &input.request_id,
             )?;
-            repo::people::record_request_result(
+            crate::people::repo::manual::record_request_result(
                 &transaction,
                 &input.request_id,
                 "unlinkHistory",
                 &input.subject_id,
             )?;
-            repo::cross::reconcile_person_sources_for_subject(&transaction, &input.subject_id)?;
+            crate::app::workflows::person_tags::reconcile_person_sources_for_subject(
+                &transaction,
+                &input.subject_id,
+            )?;
         }
         transaction.commit().map_err(StoreError::from)?;
         Ok(())
@@ -193,7 +210,7 @@ impl People {
         folder_path: &Path,
         subject_id: &str,
     ) -> Result<Option<PersonTagLink>, PeopleError> {
-        Ok(repo::people::person_tag_link(
+        Ok(crate::people::repo::manual::person_tag_link(
             &self.store.read(),
             folder_path,
             subject_id,
@@ -209,47 +226,54 @@ impl People {
         }
         let mut connection = self.store.write();
         let transaction = connection.transaction().map_err(StoreError::from)?;
-        let historical_id = repo::people::historical_person_of_subject(
+        let historical_id = crate::people::repo::manual::historical_person_of_subject(
             &transaction,
             &input.folder_path,
             &input.subject_id,
         )?
         .ok_or(PeopleError::MissingPersonRecord)?;
         if let Some((operation, id)) =
-            repo::people::request_result(&transaction, &input.request_id)?
+            crate::people::repo::manual::request_result(&transaction, &input.request_id)?
         {
             if operation != "setPersonTagLink" || id != historical_id {
                 return Err(PeopleError::PersonConflict);
             }
         } else {
-            let revision = repo::people::person_tag_link_revision(&transaction, &historical_id)?;
+            let revision = crate::people::repo::manual::person_tag_link_revision(
+                &transaction,
+                &historical_id,
+            )?;
             if revision.unwrap_or(0) != input.expected_revision {
                 return Err(PeopleError::PersonConflict);
             }
             if let Some(tag_id) = input.tag_id
-                && !repo::tags::tag_exists(&transaction, tag_id)?
+                && !crate::tags::repo::tag_exists(&transaction, tag_id)?
             {
                 return Err(PeopleError::MissingTagParent);
             }
-            repo::people::upsert_person_tag_link(
+            crate::people::repo::manual::upsert_person_tag_link(
                 &transaction,
                 &historical_id,
                 input.tag_id,
                 input.enabled,
             )?;
-            for subject in
-                repo::people::subjects_of_historical_person(&transaction, &historical_id)?
-            {
-                repo::cross::reconcile_person_sources_for_subject(&transaction, &subject)?;
+            for subject in crate::people::repo::manual::subjects_of_historical_person(
+                &transaction,
+                &historical_id,
+            )? {
+                crate::app::workflows::person_tags::reconcile_person_sources_for_subject(
+                    &transaction,
+                    &subject,
+                )?;
             }
-            repo::people::record_request_result(
+            crate::people::repo::manual::record_request_result(
                 &transaction,
                 &input.request_id,
                 "setPersonTagLink",
                 &historical_id,
             )?;
         }
-        let result = repo::people::person_tag_link_of(&transaction, &historical_id)?
+        let result = crate::people::repo::manual::person_tag_link_of(&transaction, &historical_id)?
             .ok_or(PeopleError::MissingPersonRecord)?;
         transaction.commit().map_err(StoreError::from)?;
         Ok(result)
@@ -261,7 +285,7 @@ impl People {
         subject_id: &str,
         asset_path: &Path,
     ) -> Result<Option<PersonTagOverride>, PeopleError> {
-        Ok(repo::people::person_tag_override(
+        Ok(crate::people::repo::manual::person_tag_override(
             &self.store.read(),
             folder_path,
             subject_id,
@@ -285,7 +309,7 @@ impl People {
         }
         let mut connection = self.store.write();
         let transaction = connection.transaction().map_err(StoreError::from)?;
-        let historical_id = repo::people::historical_person_of_subject(
+        let historical_id = crate::people::repo::manual::historical_person_of_subject(
             &transaction,
             &input.folder_path,
             &input.subject_id,
@@ -294,13 +318,13 @@ impl People {
         let request_entity = format!("{}:{}", historical_id, input.asset_path.display());
         let asset_path = input.asset_path.to_string_lossy();
         if let Some((operation, entity)) =
-            repo::people::request_result(&transaction, &input.request_id)?
+            crate::people::repo::manual::request_result(&transaction, &input.request_id)?
         {
             if operation != "setPersonTagOverride" || entity != request_entity {
                 return Err(PeopleError::PersonConflict);
             }
         } else {
-            let revision = repo::people::person_tag_override_revision(
+            let revision = crate::people::repo::manual::person_tag_override_revision(
                 &transaction,
                 &historical_id,
                 &asset_path,
@@ -308,31 +332,35 @@ impl People {
             if revision.unwrap_or(0) != input.expected_revision {
                 return Err(PeopleError::PersonConflict);
             }
-            repo::people::upsert_person_tag_override(
+            crate::people::repo::manual::upsert_person_tag_override(
                 &transaction,
                 &historical_id,
                 &asset_path,
                 input.suppressed,
             )?;
-            for subject in
-                repo::people::subjects_of_historical_person(&transaction, &historical_id)?
-            {
-                repo::cross::reconcile_person_source_for_asset(
+            for subject in crate::people::repo::manual::subjects_of_historical_person(
+                &transaction,
+                &historical_id,
+            )? {
+                crate::app::workflows::person_tags::reconcile_person_source_for_asset(
                     &transaction,
                     &subject,
                     &asset_path,
                 )?;
             }
-            repo::people::record_request_result(
+            crate::people::repo::manual::record_request_result(
                 &transaction,
                 &input.request_id,
                 "setPersonTagOverride",
                 &request_entity,
             )?;
         }
-        let result =
-            repo::people::person_tag_override_of(&transaction, &historical_id, &asset_path)?
-                .ok_or(PeopleError::MissingPersonRecord)?;
+        let result = crate::people::repo::manual::person_tag_override_of(
+            &transaction,
+            &historical_id,
+            &asset_path,
+        )?
+        .ok_or(PeopleError::MissingPersonRecord)?;
         transaction.commit().map_err(StoreError::from)?;
         Ok(result)
     }
@@ -344,7 +372,7 @@ impl People {
         assets: &[AssetSummary],
         filter: &PersonFilter,
     ) -> Result<Vec<AssetSummary>, PeopleError> {
-        let records = repo::people::instance_records(
+        let records = crate::people::repo::manual::instance_records(
             &self.store.read(),
             &path_text(folder),
             filter.subject_id.as_deref(),
@@ -420,28 +448,34 @@ impl People {
         }
         let mut connection = self.store.write();
         let tx = connection.transaction().map_err(StoreError::from)?;
-        if let Some((operation, entity)) = repo::people::request_result(&tx, &input.request_id)? {
+        if let Some((operation, entity)) =
+            crate::people::repo::manual::request_result(&tx, &input.request_id)?
+        {
             if operation != "updateInstance" || entity != input.instance_id {
                 return Err(PeopleError::PersonConflict);
             }
-            let stored = repo::people::source_identity_revision(&tx, &input.instance_id)?;
+            let stored =
+                crate::people::repo::manual::source_identity_revision(&tx, &input.instance_id)?;
             if stored.as_deref() != source_identity_revision {
                 return Err(PeopleError::PersonConflict);
             }
         } else {
-            let previous =
-                repo::people::instance(&tx, &input.instance_id, &path_text(&input.folder_path))?
-                    .ok_or(PeopleError::MissingPersonRecord)?;
+            let previous = crate::people::repo::manual::instance(
+                &tx,
+                &input.instance_id,
+                &path_text(&input.folder_path),
+            )?
+            .ok_or(PeopleError::MissingPersonRecord)?;
             if previous.revision != input.expected_revision {
                 return Err(PeopleError::PersonConflict);
             }
-            repo::people::insert_instance_event(
+            crate::people::repo::manual::insert_instance_event(
                 &tx,
                 &input.instance_id,
                 &serde_json::to_string(&previous)?,
                 &input.request_id,
             )?;
-            repo::people::update_instance_geometry(
+            crate::people::repo::manual::update_instance_geometry(
                 &tx,
                 &input.instance_id,
                 input
@@ -459,31 +493,36 @@ impl People {
             )?;
             // A changed region is a new human claim: preserve old decisions in the audit,
             // and explicitly require review for every subject using this instance.
-            repo::people::carry_review_decisions_into_events(
+            crate::people::repo::manual::carry_review_decisions_into_events(
                 &tx,
                 &input.instance_id,
                 &input.request_id,
             )?;
-            repo::people::require_review_after_change(&tx, &input.instance_id)?;
-            repo::people::bump_referencing_subjects(&tx, &input.instance_id)?;
-            repo::people::delete_references_of_instance(&tx, &input.instance_id)?;
-            repo::people::record_request_result(
+            crate::people::repo::manual::require_review_after_change(&tx, &input.instance_id)?;
+            crate::people::repo::manual::bump_referencing_subjects(&tx, &input.instance_id)?;
+            crate::people::repo::manual::delete_references_of_instance(&tx, &input.instance_id)?;
+            crate::people::repo::manual::record_request_result(
                 &tx,
                 &input.request_id,
                 "updateInstance",
                 &input.instance_id,
             )?;
-            for subject in repo::people::subjects_of_instance(&tx, &input.instance_id)? {
-                repo::cross::reconcile_person_source_for_asset(
+            for subject in
+                crate::people::repo::manual::subjects_of_instance(&tx, &input.instance_id)?
+            {
+                crate::app::workflows::person_tags::reconcile_person_source_for_asset(
                     &tx,
                     &subject,
                     &path_text(&previous.asset_path),
                 )?;
             }
         }
-        let result =
-            repo::people::instance(&tx, &input.instance_id, &path_text(&input.folder_path))?
-                .ok_or(PeopleError::MissingPersonRecord)?;
+        let result = crate::people::repo::manual::instance(
+            &tx,
+            &input.instance_id,
+            &path_text(&input.folder_path),
+        )?
+        .ok_or(PeopleError::MissingPersonRecord)?;
         tx.commit().map_err(StoreError::from)?;
         Ok(result)
     }
@@ -494,13 +533,15 @@ impl People {
         }
         let mut connection = self.store.write();
         let tx = connection.transaction().map_err(StoreError::from)?;
-        if let Some((operation, entity)) = repo::people::request_result(&tx, &input.request_id)? {
+        if let Some((operation, entity)) =
+            crate::people::repo::manual::request_result(&tx, &input.request_id)?
+        {
             if operation != "resetPerson" || entity != input.subject_id {
                 return Err(PeopleError::PersonConflict);
             }
         } else {
             let name = input.display_name.trim();
-            let changed = repo::people::reset_identity(
+            let changed = crate::people::repo::manual::reset_identity(
                 &tx,
                 &input.subject_id,
                 &path_text(&input.folder_path),
@@ -510,10 +551,14 @@ impl People {
             if changed != 1 {
                 return Err(PeopleError::PersonConflict);
             }
-            repo::people::carry_links_into_events(&tx, &input.subject_id, &input.request_id)?;
-            repo::people::delete_historical_link(&tx, &input.subject_id)?;
-            repo::people::delete_references_of_subject(&tx, &input.subject_id)?;
-            repo::people::insert_identity_event(
+            crate::people::repo::manual::carry_links_into_events(
+                &tx,
+                &input.subject_id,
+                &input.request_id,
+            )?;
+            crate::people::repo::manual::delete_historical_link(&tx, &input.subject_id)?;
+            crate::people::repo::manual::delete_references_of_subject(&tx, &input.subject_id)?;
+            crate::people::repo::manual::insert_identity_event(
                 &tx,
                 &input.subject_id,
                 "reset",
@@ -521,13 +566,16 @@ impl People {
                 input.expected_revision + 1,
                 &input.request_id,
             )?;
-            repo::people::record_request_result(
+            crate::people::repo::manual::record_request_result(
                 &tx,
                 &input.request_id,
                 "resetPerson",
                 &input.subject_id,
             )?;
-            repo::cross::reconcile_person_sources_for_subject(&tx, &input.subject_id)?;
+            crate::app::workflows::person_tags::reconcile_person_sources_for_subject(
+                &tx,
+                &input.subject_id,
+            )?;
         }
         tx.commit().map_err(StoreError::from)?;
         Ok(())
@@ -538,7 +586,7 @@ impl People {
         folder_path: &Path,
         id: &str,
     ) -> Result<PersonInstance, PeopleError> {
-        repo::people::instance(&self.store.read(), id, &path_text(folder_path))?
+        crate::people::repo::manual::instance(&self.store.read(), id, &path_text(folder_path))?
             .ok_or(PeopleError::MissingPersonRecord)
     }
 
@@ -553,20 +601,20 @@ impl People {
         let mut connection = self.store.write();
         let transaction = connection.transaction().map_err(StoreError::from)?;
         if let Some((operation, entity)) =
-            repo::people::request_result(&transaction, &input.request_id)?
+            crate::people::repo::manual::request_result(&transaction, &input.request_id)?
         {
             if operation != "confirmPerson" || entity != input.subject_id {
                 return Err(PeopleError::PersonConflict);
             }
         } else {
-            let source_revision = repo::people::reference_source_revision(
+            let source_revision = crate::people::repo::manual::reference_source_revision(
                 &transaction,
                 &input.reference_instance_id,
                 &path_text(&input.folder_path),
                 &input.subject_id,
             )?
             .ok_or(PeopleError::MissingPersonRecord)?;
-            let changed = repo::people::confirm_identity(
+            let changed = crate::people::repo::manual::confirm_identity(
                 &transaction,
                 &input.subject_id,
                 &path_text(&input.folder_path),
@@ -576,14 +624,17 @@ impl People {
             if changed != 1 {
                 return Err(PeopleError::PersonConflict);
             }
-            repo::people::delete_references_of_subject(&transaction, &input.subject_id)?;
-            repo::people::replace_reference(
+            crate::people::repo::manual::delete_references_of_subject(
+                &transaction,
+                &input.subject_id,
+            )?;
+            crate::people::repo::manual::replace_reference(
                 &transaction,
                 &input.subject_id,
                 &input.reference_instance_id,
                 &source_revision,
             )?;
-            repo::people::insert_identity_event(
+            crate::people::repo::manual::insert_identity_event(
                 &transaction,
                 &input.subject_id,
                 "confirm",
@@ -591,14 +642,14 @@ impl People {
                 input.expected_revision + 1,
                 &input.request_id,
             )?;
-            repo::people::record_request_result(
+            crate::people::repo::manual::record_request_result(
                 &transaction,
                 &input.request_id,
                 "confirmPerson",
                 &input.subject_id,
             )?;
         }
-        let result = repo::people::folder_person(
+        let result = crate::people::repo::manual::folder_person(
             &transaction,
             &input.subject_id,
             &path_text(&input.folder_path),
@@ -609,7 +660,7 @@ impl People {
     }
 
     pub fn list_folder_people(&self, folder_path: &Path) -> Result<Vec<FolderPerson>, PeopleError> {
-        Ok(repo::people::list_folder_people(
+        Ok(crate::people::repo::manual::list_folder_people(
             &self.store.read(),
             &path_text(folder_path),
         )?)
@@ -626,20 +677,30 @@ impl People {
         let mut connection = self.store.write();
         let transaction = connection.transaction().map_err(StoreError::from)?;
         let id = if let Some((operation, id)) =
-            repo::people::request_result(&transaction, request_id)?
+            crate::people::repo::manual::request_result(&transaction, request_id)?
         {
             if operation != "createPerson" {
                 return Err(PeopleError::PersonConflict);
             }
             id
         } else {
-            let id = repo::people::new_id(&transaction)?;
-            repo::people::insert_folder_person(&transaction, &id, &path_text(folder_path))?;
-            repo::people::record_request_result(&transaction, request_id, "createPerson", &id)?;
+            let id = crate::people::repo::manual::new_id(&transaction)?;
+            crate::people::repo::manual::insert_folder_person(
+                &transaction,
+                &id,
+                &path_text(folder_path),
+            )?;
+            crate::people::repo::manual::record_request_result(
+                &transaction,
+                request_id,
+                "createPerson",
+                &id,
+            )?;
             id
         };
-        let result = repo::people::folder_person(&transaction, &id, &path_text(folder_path))?
-            .ok_or(PeopleError::MissingPersonRecord)?;
+        let result =
+            crate::people::repo::manual::folder_person(&transaction, &id, &path_text(folder_path))?
+                .ok_or(PeopleError::MissingPersonRecord)?;
         transaction.commit().map_err(StoreError::from)?;
         Ok(result)
     }
@@ -668,21 +729,21 @@ impl People {
         let mut connection = self.store.write();
         let transaction = connection.transaction().map_err(StoreError::from)?;
         let id = if let Some((operation, id)) =
-            repo::people::request_result(&transaction, &input.request_id)?
+            crate::people::repo::manual::request_result(&transaction, &input.request_id)?
         {
             if operation != "createInstance" {
                 return Err(PeopleError::PersonConflict);
             }
-            let stored = repo::people::source_identity_revision(&transaction, &id)?;
+            let stored = crate::people::repo::manual::source_identity_revision(&transaction, &id)?;
             if stored.as_deref() != source_identity_revision {
                 return Err(PeopleError::PersonConflict);
             }
             id
         } else {
-            let id = repo::people::new_id(&transaction)?;
-            repo::people::insert_instance(
+            let id = crate::people::repo::manual::new_id(&transaction)?;
+            crate::people::repo::manual::insert_instance(
                 &transaction,
-                &repo::people::NewInstance {
+                &crate::people::repo::manual::NewInstance {
                     id: &id,
                     folder_path: &path_text(&input.folder_path),
                     asset_path: &path_text(&input.asset_path),
@@ -700,7 +761,7 @@ impl People {
                         .as_deref(),
                 },
             )?;
-            repo::people::record_request_result(
+            crate::people::repo::manual::record_request_result(
                 &transaction,
                 &input.request_id,
                 "createInstance",
@@ -708,8 +769,12 @@ impl People {
             )?;
             id
         };
-        let result = repo::people::instance(&transaction, &id, &path_text(&input.folder_path))?
-            .ok_or(PeopleError::MissingPersonRecord)?;
+        let result = crate::people::repo::manual::instance(
+            &transaction,
+            &id,
+            &path_text(&input.folder_path),
+        )?
+        .ok_or(PeopleError::MissingPersonRecord)?;
         transaction.commit().map_err(StoreError::from)?;
         Ok(result)
     }
@@ -719,7 +784,7 @@ impl People {
         folder_path: &Path,
         asset_path: &Path,
     ) -> Result<Vec<PersonInstance>, PeopleError> {
-        Ok(repo::people::list_instances(
+        Ok(crate::people::repo::manual::list_instances(
             &self.store.read(),
             &path_text(folder_path),
             &path_text(asset_path),
@@ -730,8 +795,8 @@ impl People {
         &self,
         folder_path: &Path,
         asset_path: &Path,
-    ) -> Result<Vec<crate::contracts::ManualPersonAnchor>, PeopleError> {
-        Ok(repo::people::list_anchors(
+    ) -> Result<Vec<crate::people::types::ManualPersonAnchor>, PeopleError> {
+        Ok(crate::people::repo::manual::list_anchors(
             &self.store.read(),
             &path_text(folder_path),
             &path_text(asset_path),
@@ -746,13 +811,13 @@ impl People {
         let transaction = connection.transaction().map_err(StoreError::from)?;
         let key = format!("{}:{}", input.instance_id, input.subject_id);
         if let Some((operation, entity)) =
-            repo::people::request_result(&transaction, &input.request_id)?
+            crate::people::repo::manual::request_result(&transaction, &input.request_id)?
         {
             if operation != "setReview" || entity != key {
                 return Err(PeopleError::PersonConflict);
             }
         } else {
-            let present = repo::people::review_allowed(
+            let present = crate::people::repo::manual::review_allowed(
                 &transaction,
                 &input.instance_id,
                 &input.subject_id,
@@ -761,12 +826,15 @@ impl People {
             if !present {
                 return Err(PeopleError::MissingPersonRecord);
             }
-            let current =
-                repo::people::review_revision(&transaction, &input.instance_id, &input.subject_id)?;
+            let current = crate::people::repo::manual::review_revision(
+                &transaction,
+                &input.instance_id,
+                &input.subject_id,
+            )?;
             if current.unwrap_or(0) != input.expected_revision {
                 return Err(PeopleError::PersonConflict);
             }
-            repo::people::upsert_review_decision(
+            crate::people::repo::manual::upsert_review_decision(
                 &transaction,
                 &input.instance_id,
                 &input.subject_id,
@@ -774,16 +842,19 @@ impl People {
                 input.expected_revision + 1,
             )?;
             if input.decision != PersonReviewDecision::Belongs {
-                let removed = repo::people::delete_reference(
+                let removed = crate::people::repo::manual::delete_reference(
                     &transaction,
                     &input.subject_id,
                     &input.instance_id,
                 )?;
                 if removed > 0 {
-                    repo::people::bump_subject_revision(&transaction, &input.subject_id)?;
+                    crate::people::repo::manual::bump_subject_revision(
+                        &transaction,
+                        &input.subject_id,
+                    )?;
                 }
             }
-            repo::people::insert_review_event(
+            crate::people::repo::manual::insert_review_event(
                 &transaction,
                 &input.instance_id,
                 &input.subject_id,
@@ -791,21 +862,25 @@ impl People {
                 input.expected_revision + 1,
                 &input.request_id,
             )?;
-            repo::people::record_request_result(
+            crate::people::repo::manual::record_request_result(
                 &transaction,
                 &input.request_id,
                 "setReview",
                 &key,
             )?;
-            let asset_path = repo::people::instance_asset_path(&transaction, &input.instance_id)?;
-            repo::cross::reconcile_person_source_for_asset(
+            let asset_path =
+                crate::people::repo::manual::instance_asset_path(&transaction, &input.instance_id)?;
+            crate::app::workflows::person_tags::reconcile_person_source_for_asset(
                 &transaction,
                 &input.subject_id,
                 &asset_path,
             )?;
         }
-        let Some((instance, decision, revision)) =
-            repo::people::review(&transaction, &input.instance_id, &input.subject_id)?
+        let Some((instance, decision, revision)) = crate::people::repo::manual::review(
+            &transaction,
+            &input.instance_id,
+            &input.subject_id,
+        )?
         else {
             return Err(PeopleError::MissingPersonRecord);
         };
@@ -823,7 +898,7 @@ impl People {
         folder_path: &Path,
         subject_id: &str,
     ) -> Result<Vec<PersonReview>, PeopleError> {
-        Ok(repo::people::list_reviews(
+        Ok(crate::people::repo::manual::list_reviews(
             &self.store.read(),
             &path_text(folder_path),
             subject_id,
@@ -1039,7 +1114,7 @@ mod tests {
                 path: folder.join(format!("{index:03}.jpg")),
                 name: format!("{index:03}.jpg"),
                 extension: "jpg".into(),
-                kind: crate::contracts::AssetKind::Jpeg,
+                kind: oxy_media::types::AssetKind::Jpeg,
                 size_bytes: 10,
                 modified_at_ms: 20,
                 has_sidecar: false,
@@ -1082,7 +1157,7 @@ mod tests {
         assert_eq!(filtered.len(), 2); // Two instances in one photo must not duplicate the photo.
         let page = crate::files::page_assets(
             &filtered,
-            &crate::contracts::AssetQuery {
+            &crate::browse::types::AssetQuery {
                 page_size: Some(1),
                 ..Default::default()
             },

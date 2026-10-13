@@ -45,13 +45,13 @@ impl People {
             return Err(PeopleError::PersonConflict);
         }
         if let Some(tag) = input.tag_id
-            && !repo::tags::tag_exists(&tx, tag)?
+            && !crate::tags::repo::tag_exists(&tx, tag)?
         {
             return Err(PeopleError::MissingTagParent);
         }
         db::set_tag(&tx, &input.person_id, input.tag_id)?;
         db::bump(&tx, &input.person_id)?;
-        repo::cross::reconcile_global_person_sources(&tx, &input.person_id)?;
+        crate::app::workflows::person_tags::reconcile_global_person_sources(&tx, &input.person_id)?;
         record(&tx, &input.request_id, &payload, &())?;
         tx.commit().map_err(StoreError::from)?;
         Ok(())
@@ -97,7 +97,7 @@ impl People {
         let id = before
             .as_ref()
             .map(|t| t.id.clone())
-            .unwrap_or(repo::people::new_id(&tx)?);
+            .unwrap_or(crate::people::repo::manual::new_id(&tx)?);
         let face = input
             .face_box
             .map(|b| serde_json::to_string(&b))
@@ -107,7 +107,7 @@ impl People {
             .map(|b| serde_json::to_string(&b))
             .transpose()?;
         if before.as_ref().is_some_and(|t| t.revision > 0) {
-            repo::people::update_instance_geometry(
+            crate::people::repo::manual::update_instance_geometry(
                 &tx,
                 &id,
                 face.as_deref(),
@@ -116,9 +116,9 @@ impl People {
                 Some(source_identity),
             )?;
         } else {
-            repo::people::insert_instance(
+            crate::people::repo::manual::insert_instance(
                 &tx,
-                &repo::people::NewInstance {
+                &crate::people::repo::manual::NewInstance {
                     id: &id,
                     folder_path: &input.folder_path.to_string_lossy(),
                     asset_path: &input.asset_path.to_string_lossy(),
@@ -138,7 +138,7 @@ impl People {
             }
             db::remove_reference(&tx, &r.person_id, &id)?;
             db::bump(&tx, &r.person_id)?;
-            repo::cross::reconcile_global_person_sources(&tx, &r.person_id)?;
+            crate::app::workflows::person_tags::reconcile_global_person_sources(&tx, &r.person_id)?;
         }
         let tuple = db::tuples(&tx, Some(&input.folder_path.to_string_lossy()))?
             .into_iter()
@@ -173,7 +173,7 @@ impl People {
             if input.expected_revision != 0 {
                 return Err(PeopleError::PersonConflict);
             }
-            let id = repo::people::new_id(&tx)?;
+            let id = crate::people::repo::manual::new_id(&tx)?;
             db::insert_person(&tx, &id, name)?;
             id
         };
@@ -270,9 +270,9 @@ impl People {
             }
             // Bulk transfer to pending cannot undo an explicit previous decision.
             if !manual.iter().any(|t| t.id == tuple.id) {
-                repo::people::insert_instance(
+                crate::people::repo::manual::insert_instance(
                     &tx,
-                    &repo::people::NewInstance {
+                    &crate::people::repo::manual::NewInstance {
                         id: &tuple.id,
                         folder_path: &folder.to_string_lossy(),
                         asset_path: &tuple.asset_path.to_string_lossy(),
@@ -307,7 +307,7 @@ impl People {
         }
         db::bump(&tx, &input.person_id)?;
         for id in affected {
-            repo::cross::reconcile_global_person_sources(&tx, &id)?;
+            crate::app::workflows::person_tags::reconcile_global_person_sources(&tx, &id)?;
         }
         record(&tx, &input.request_id, &payload, &changed)?;
         tx.commit().map_err(StoreError::from)?;

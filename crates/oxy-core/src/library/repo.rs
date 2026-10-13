@@ -62,3 +62,15 @@ pub fn contains_root(connection: &Connection, path: &str) -> Result<bool, StoreE
         |row| row.get("present"),
     )?)
 }
+
+pub fn replace_root(
+    connection: &Connection,
+    source: &str,
+    destination: &str,
+) -> Result<(), StoreError> {
+    connection.execute(
+        "UPDATE library_roots SET path=?2 WHERE path=?1",
+        params![source, destination],
+    )?;
+    Ok(())
+}

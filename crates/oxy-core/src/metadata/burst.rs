@@ -8,7 +8,7 @@
 //! `oxy_domain`, so a run that straddles two pages still collapses once both
 //! are loaded.
 
-use crate::contracts::{BurstFrame, BurstGroup};
+use crate::metadata::types::{BurstFrame, BurstGroup};
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Mutex;
@@ -84,7 +84,7 @@ impl BurstScanner {
                 .filter_map(|path| cache.get(path).cloned())
                 .collect::<Vec<_>>()
         };
-        crate::contracts::group_bursts(&frames)
+        crate::metadata::types::group_bursts(&frames)
     }
 }
 

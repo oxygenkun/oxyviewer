@@ -1,11 +1,12 @@
 //! Conservative folder suggestions. Computation never writes user facts.
-use crate::contracts::{
-    AssetSummary, PersonAnalysisState, PersonCluster, PersonClusterFilter, PersonClusterMember,
+use crate::browse::types::AssetSummary;
+use crate::jobs::CancellationToken;
+use crate::people::types::{
+    PersonAnalysisState, PersonCluster, PersonClusterFilter, PersonClusterMember,
     PersonClusterSnapshot,
 };
-use crate::jobs::CancellationToken;
 use crate::people::{People, PeopleError, environment::catalog};
-use crate::storage::{StoreError, repo};
+use crate::storage::StoreError;
 use sha2::{Digest, Sha256};
 use std::{
     collections::{HashMap, HashSet},
@@ -35,10 +36,10 @@ fn digest(value: &impl serde::Serialize) -> Result<String, PeopleError> {
 fn current_run(
     connection: &crate::storage::Connection,
     folder: &str,
-) -> Result<crate::contracts::PersonAnalysisRun, PeopleError> {
-    let (_, id) = repo::person_cache::analysis_head(connection, folder)?
+) -> Result<crate::people::types::PersonAnalysisRun, PeopleError> {
+    let (_, id) = crate::people::repo::cache::analysis_head(connection, folder)?
         .ok_or_else(|| PeopleError::Cluster("没有识别结果，请先识别当前文件夹".into()))?;
-    let run = repo::person_cache::analysis_run(connection, &id)?
+    let run = crate::people::repo::cache::analysis_run(connection, &id)?
         .ok_or(PeopleError::MissingPersonAnalysis)?;
     if run.state != PersonAnalysisState::Completed {
         return Err(PeopleError::Cluster(
@@ -197,7 +198,7 @@ impl People {
         let (run, evidence, completed) = {
             let connection = self.store.read();
             let run = current_run(&connection, &folder_text)?;
-            let evidence = repo::person_clusters::evidence(
+            let evidence = crate::people::repo::clusters::evidence(
                 &connection,
                 &folder_text,
                 &run.run_id,
@@ -205,7 +206,7 @@ impl People {
                 &space,
                 &encoder,
             )?;
-            let completed = repo::person_clusters::completed_sources(
+            let completed = crate::people::repo::clusters::completed_sources(
                 &connection,
                 &run.run_id,
                 catalog::DETECTOR,
@@ -328,7 +329,7 @@ impl People {
         let tx = connection.transaction().map_err(StoreError::from)?;
         cancelled(token)?;
         if current_run(&tx, &folder_text)?.run_id != run.run_id
-            || repo::person_clusters::evidence(
+            || crate::people::repo::clusters::evidence(
                 &tx,
                 &folder_text,
                 &run.run_id,
@@ -340,7 +341,7 @@ impl People {
             return Err(PeopleError::PersonAnalysisConflict);
         }
         if !instances_only {
-            repo::person_clusters::save_snapshot(&tx, &folder_text, &run.run_id, &json)?;
+            crate::people::repo::clusters::save_snapshot(&tx, &folder_text, &run.run_id, &json)?;
         }
         tx.commit().map_err(StoreError::from)?;
         Ok(snapshot)
@@ -350,7 +351,8 @@ impl People {
         &self,
         folder: &Path,
     ) -> Result<Option<PersonClusterSnapshot>, PeopleError> {
-        let raw = repo::person_clusters::snapshot(&self.store.read(), &folder.to_string_lossy())?;
+        let raw =
+            crate::people::repo::clusters::snapshot(&self.store.read(), &folder.to_string_lossy())?;
         let snapshot: Option<PersonClusterSnapshot> =
             raw.map(|s| serde_json::from_str(&s)).transpose()?;
         let fingerprint = crate::people::pipeline_fingerprint(&catalog::manifest())
@@ -359,8 +361,12 @@ impl People {
             snapshot.filter(|s| s.algorithm == ALGORITHM && s.pipeline_fingerprint == fingerprint);
         if let Some(snapshot) = &mut snapshot {
             let connection = self.store.read();
-            let people = repo::people::list_folder_people(&connection, &folder.to_string_lossy())?;
-            let links = repo::people::cluster_links(&connection, &folder.to_string_lossy())?;
+            let people = crate::people::repo::manual::list_folder_people(
+                &connection,
+                &folder.to_string_lossy(),
+            )?;
+            let links =
+                crate::people::repo::manual::cluster_links(&connection, &folder.to_string_lossy())?;
             for cluster in &mut snapshot.clusters {
                 cluster.people = people
                     .iter()

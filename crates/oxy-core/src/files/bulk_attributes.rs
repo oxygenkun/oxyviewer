@@ -6,7 +6,7 @@ use super::{
     AssetSummary, FsError, ScanProgress, sidecar_key, sidecar_path, summary_from_attributes,
     summary_from_metadata,
 };
-use crate::contracts::AssetKind;
+use oxy_media::types::AssetKind;
 use std::{
     collections::HashSet,
     ffi::OsStr,

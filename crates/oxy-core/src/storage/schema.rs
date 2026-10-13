@@ -1,21 +1,6 @@
-//! Table classification and the schema step.
-//!
-//! This crate owns every table: the declaration, the `CREATE TABLE`, the
-//! migration that upgrades an older file, and the `DELETE` that empties a
-//! derived table. [`table`] holds the mechanism; this module holds the
-//! declarations, split by class into [`cache`] and [`user`].
-//!
-//! The class is a word in each declaration rather than a consequence of the
-//! directory the declaring file sits in, because after this change one schema
-//! file declares tables of every class — a person's cached face vectors are
-//! derived, the person's name is not, and they are declared a few lines apart.
-//!
-//! Two invariants are asserted here rather than trusted:
-//!
-//! - every table that exists in the database is declared, so a future cache
-//!   clear knows whether it may delete its rows;
-//! - emptying every rebuildable table leaves every user-owned table with its
-//!   rows, which is the whole reason the two classes are separated.
+//! Register feature-owned declarations and audit their user/cache/marker classes.
+//! Creation and clearing use the same declarations in dependency order; table
+//! names are never used to guess deletion ownership.
 
 pub mod cache;
 pub mod user;
@@ -24,6 +9,24 @@ pub use crate::storage::table::DataClass;
 
 use crate::storage::table;
 use rusqlite::Connection;
+
+/// Features are registered once in creation dependency order. Class-specific
+/// creation and clearing both derive their views from this same registry.
+pub(super) fn definitions() -> &'static [table::TableDef] {
+    static DEFS: std::sync::LazyLock<Vec<table::TableDef>> = std::sync::LazyLock::new(|| {
+        [
+            crate::library::schema::DEFS,
+            crate::tags::schema::DEFS,
+            crate::people::schema::DEFS,
+            crate::browse::schema::DEFS,
+            crate::resources::schema::DEFS,
+        ]
+        .into_iter()
+        .flat_map(|defs| defs.iter().copied())
+        .collect()
+    });
+    &DEFS
+}
 
 /// Every table the schema declares, with the class that decides who may
 /// delete from it.
@@ -39,12 +42,12 @@ pub fn tables() -> impl Iterator<Item = (&'static str, DataClass)> {
 
 /// Tables a cache clear may empty.
 pub fn rebuildable_tables() -> impl Iterator<Item = &'static str> {
-    table::names(cache::DEFS)
+    table::names(&cache::DEFS)
 }
 
 /// Tables that survive every cache clear, migration, and re-index.
 pub fn user_owned_tables() -> impl Iterator<Item = &'static str> {
-    table::names(user::DEFS)
+    table::names(&user::DEFS)
 }
 
 /// The class of a declared table, if the schema claims it.
@@ -62,7 +65,7 @@ pub fn class_of(name: &str) -> Option<DataClass> {
 /// everything written after. Clearing a schema marker would only force a
 /// needless rebuild of an otherwise valid cache.
 pub fn preserved_on_clear() -> impl Iterator<Item = &'static str> {
-    table::preserved(cache::DEFS)
+    table::preserved(&cache::DEFS)
 }
 
 /// Creates or migrates every declared table.

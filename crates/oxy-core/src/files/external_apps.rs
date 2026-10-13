@@ -1,5 +1,5 @@
 //! OS launch boundary. Call from a blocking worker; never pass preview cache paths.
-use crate::contracts::ExternalOpenResult;
+use crate::files::types::ExternalOpenResult;
 use std::{borrow::Cow, io, path::Path, process::Command};
 
 pub fn validate_application(path: &Path) -> io::Result<()> {

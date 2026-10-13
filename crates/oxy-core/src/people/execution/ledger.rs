@@ -1,19 +1,19 @@
 //! The analysis run ledger: which run is the folder's head, which stages are
 //! outstanding, and which commit is allowed to land.
 //!
-//! Every statement lives in `crate::storage::repo::person_cache`. What stays here is
+//! Every statement lives in `repo::person_cache`. What stays here is
 //! the fence itself: that a run is only current while it is the head and
 //! unfinished, that a claim token from a superseded worker may not publish, and
 //! that a failure ends the stages that depended on it.
 
-use crate::contracts::{
+use crate::people::detections::{DetectionStageContext, replace_stage_detections};
+use crate::people::features::{PersonFeature, validate_feature, write_feature};
+use crate::people::types::{
     BeginPersonAnalysis, DetectedPersonInstance, PersonAnalysisRun, PersonAnalysisState,
     PersonAnalysisTask, PersonAnalysisTaskInput,
 };
-use crate::people::detections::{DetectionStageContext, replace_stage_detections};
-use crate::people::features::{PersonFeature, validate_feature, write_feature};
 use crate::people::{People, PeopleError};
-use crate::storage::{StoreError, Transaction, repo};
+use crate::storage::{StoreError, Transaction};
 
 fn valid_fingerprint(value: &str) -> bool {
     value.len() == 64 && value.bytes().all(|byte| byte.is_ascii_hexdigit())
@@ -27,9 +27,9 @@ fn current_run(
     transaction: &Transaction<'_>,
     run_id: &str,
 ) -> Result<PersonAnalysisRun, PeopleError> {
-    let run = repo::person_cache::analysis_run(transaction, run_id)?
+    let run = crate::people::repo::cache::analysis_run(transaction, run_id)?
         .ok_or(PeopleError::MissingPersonAnalysis)?;
-    let is_head = repo::person_cache::analysis_head_matches(
+    let is_head = crate::people::repo::cache::analysis_head_matches(
         transaction,
         &run.folder_path.to_string_lossy(),
         &run.run_id,
@@ -63,12 +63,12 @@ impl People {
         let mut connection = self.store.write();
         let transaction = connection.transaction().map_err(StoreError::from)?;
         if let Some((operation, run_id)) =
-            repo::person_cache::analysis_request(&transaction, &input.request_id)?
+            crate::people::repo::cache::analysis_request(&transaction, &input.request_id)?
         {
             if operation != "begin" {
                 return Err(PeopleError::PersonAnalysisConflict);
             }
-            let run = repo::person_cache::analysis_run(&transaction, &run_id)?
+            let run = crate::people::repo::cache::analysis_run(&transaction, &run_id)?
                 .ok_or(PeopleError::MissingPersonAnalysis)?;
             if run.folder_path != input.folder_path
                 || run.pipeline_id != input.pipeline_id
@@ -79,18 +79,18 @@ impl People {
             return Ok(run);
         }
         let folder = input.folder_path.to_string_lossy();
-        let previous = repo::person_cache::analysis_head(&transaction, &folder)?;
+        let previous = crate::people::repo::cache::analysis_head(&transaction, &folder)?;
         let generation = previous
             .as_ref()
             .map_or(Some(1), |(value, _)| value.checked_add(1))
             .ok_or(PeopleError::PersonAnalysisConflict)?;
         if let Some((_, previous_id)) = previous {
-            repo::person_cache::cancel_analysis_run(&transaction, &previous_id)?;
+            crate::people::repo::cache::cancel_analysis_run(&transaction, &previous_id)?;
         }
-        let run_id = repo::person_cache::new_cache_id(&transaction)?;
-        repo::person_cache::insert_analysis_run(
+        let run_id = crate::people::repo::cache::new_cache_id(&transaction)?;
+        crate::people::repo::cache::insert_analysis_run(
             &transaction,
-            &repo::person_cache::NewAnalysisRun {
+            &crate::people::repo::cache::NewAnalysisRun {
                 run_id: &run_id,
                 folder_path: &folder,
                 pipeline_id: &input.pipeline_id,
@@ -98,13 +98,13 @@ impl People {
                 generation,
             },
         )?;
-        repo::person_cache::insert_analysis_request(
+        crate::people::repo::cache::insert_analysis_request(
             &transaction,
             &input.request_id,
             "begin",
             &run_id,
         )?;
-        let run = repo::person_cache::analysis_run(&transaction, &run_id)?
+        let run = crate::people::repo::cache::analysis_run(&transaction, &run_id)?
             .ok_or(PeopleError::MissingPersonAnalysis)?;
         transaction.commit().map_err(StoreError::from)?;
         Ok(run)
@@ -112,7 +112,7 @@ impl People {
 
     pub fn get_person_analysis(&self, run_id: &str) -> Result<PersonAnalysisRun, PeopleError> {
         let connection = self.store.read();
-        repo::person_cache::analysis_run(&connection, run_id)?
+        crate::people::repo::cache::analysis_run(&connection, run_id)?
             .ok_or(PeopleError::MissingPersonAnalysis)
     }
 
@@ -127,24 +127,26 @@ impl People {
         let mut connection = self.store.write();
         let transaction = connection.transaction().map_err(StoreError::from)?;
         if let Some((operation, prior_id)) =
-            repo::person_cache::analysis_request(&transaction, request_id)?
+            crate::people::repo::cache::analysis_request(&transaction, request_id)?
         {
             if operation != "cancel" || prior_id != run_id {
                 return Err(PeopleError::PersonAnalysisConflict);
             }
         } else {
-            let changed = repo::person_cache::cancel_analysis_run(&transaction, run_id)?;
-            if changed == 0 && !repo::person_cache::analysis_run_exists(&transaction, run_id)? {
+            let changed = crate::people::repo::cache::cancel_analysis_run(&transaction, run_id)?;
+            if changed == 0
+                && !crate::people::repo::cache::analysis_run_exists(&transaction, run_id)?
+            {
                 return Err(PeopleError::MissingPersonAnalysis);
             }
-            repo::person_cache::insert_analysis_request(
+            crate::people::repo::cache::insert_analysis_request(
                 &transaction,
                 request_id,
                 "cancel",
                 run_id,
             )?;
         }
-        let run = repo::person_cache::analysis_run(&transaction, run_id)?
+        let run = crate::people::repo::cache::analysis_run(&transaction, run_id)?
             .ok_or(PeopleError::MissingPersonAnalysis)?;
         transaction.commit().map_err(StoreError::from)?;
         Ok(run)
@@ -176,7 +178,7 @@ impl People {
                 return Err(PeopleError::InvalidPersonAnalysis);
             }
             let asset_path = task.asset_path.to_string_lossy();
-            let existing = repo::person_cache::analysis_task_identity(
+            let existing = crate::people::repo::cache::analysis_task_identity(
                 &transaction,
                 run_id,
                 &asset_path,
@@ -191,7 +193,7 @@ impl People {
                 }
                 continue;
             }
-            if repo::person_cache::analysis_task_order_taken(
+            if crate::people::repo::cache::analysis_task_order_taken(
                 &transaction,
                 run_id,
                 &asset_path,
@@ -199,9 +201,9 @@ impl People {
             )? {
                 return Err(PeopleError::PersonAnalysisConflict);
             }
-            repo::person_cache::insert_analysis_task(
+            crate::people::repo::cache::insert_analysis_task(
                 &transaction,
-                &repo::person_cache::NewAnalysisTask {
+                &crate::people::repo::cache::NewAnalysisTask {
                     run_id,
                     asset_path: &asset_path,
                     source_revision: &task.source_revision,
@@ -212,7 +214,7 @@ impl People {
             )?;
             added += 1;
         }
-        repo::person_cache::add_run_tasks(&transaction, run_id, added as i64)?;
+        crate::people::repo::cache::add_run_tasks(&transaction, run_id, added as i64)?;
         transaction.commit().map_err(StoreError::from)?;
         Ok(added)
     }
@@ -224,8 +226,8 @@ impl People {
         let mut connection = self.store.write();
         let transaction = connection.transaction().map_err(StoreError::from)?;
         current_run(&transaction, run_id)?;
-        repo::person_cache::seal_analysis_run(&transaction, run_id)?;
-        let run = repo::person_cache::analysis_run(&transaction, run_id)?
+        crate::people::repo::cache::seal_analysis_run(&transaction, run_id)?;
+        let run = crate::people::repo::cache::analysis_run(&transaction, run_id)?
             .ok_or(PeopleError::MissingPersonAnalysis)?;
         transaction.commit().map_err(StoreError::from)?;
         Ok(run)
@@ -262,10 +264,10 @@ impl People {
         let transaction = connection.transaction().map_err(StoreError::from)?;
         current_run(&transaction, run_id)?;
         let mut task =
-            repo::person_cache::claimable_task(&transaction, run_id, stage_id, asset_path)?;
+            crate::people::repo::cache::claimable_task(&transaction, run_id, stage_id, asset_path)?;
         if let Some(task) = &mut task {
-            let claim_token = repo::person_cache::new_cache_id(&transaction)?;
-            let changed = repo::person_cache::claim_analysis_task(
+            let claim_token = crate::people::repo::cache::new_cache_id(&transaction)?;
+            let changed = crate::people::repo::cache::claim_analysis_task(
                 &transaction,
                 run_id,
                 &task.asset_path.to_string_lossy(),
@@ -276,7 +278,7 @@ impl People {
                 return Err(PeopleError::PersonAnalysisConflict);
             }
             task.claim_token = claim_token;
-            repo::person_cache::start_analysis_run(&transaction, run_id)?;
+            crate::people::repo::cache::start_analysis_run(&transaction, run_id)?;
         }
         transaction.commit().map_err(StoreError::from)?;
         Ok(task)
@@ -289,9 +291,9 @@ impl People {
         let mut connection = self.store.write();
         let transaction = connection.transaction().map_err(StoreError::from)?;
         current_run(&transaction, run_id)?;
-        let recovered = repo::person_cache::requeue_running_tasks(&transaction, run_id)?;
+        let recovered = crate::people::repo::cache::requeue_running_tasks(&transaction, run_id)?;
         if recovered > 0 {
-            repo::person_cache::requeue_analysis_run(&transaction, run_id)?;
+            crate::people::repo::cache::requeue_analysis_run(&transaction, run_id)?;
         }
         transaction.commit().map_err(StoreError::from)?;
         Ok(recovered)
@@ -358,7 +360,7 @@ impl People {
             return Err(PeopleError::PersonAnalysisConflict);
         }
         let asset_path = task.asset_path.to_string_lossy();
-        let recorded = repo::person_cache::analysis_task_record(
+        let recorded = crate::people::repo::cache::analysis_task_record(
             &transaction,
             &task.run_id,
             &asset_path,
@@ -400,14 +402,14 @@ impl People {
             }
             write_feature(&transaction, feature)?;
         }
-        repo::person_cache::complete_analysis_task(
+        crate::people::repo::cache::complete_analysis_task(
             &transaction,
             &task.run_id,
             &asset_path,
             &task.stage_id,
         )?;
-        repo::person_cache::bump_completed_tasks(&transaction, &task.run_id)?;
-        let updated = repo::person_cache::analysis_run(&transaction, &task.run_id)?
+        crate::people::repo::cache::bump_completed_tasks(&transaction, &task.run_id)?;
+        let updated = crate::people::repo::cache::analysis_run(&transaction, &task.run_id)?
             .ok_or(PeopleError::MissingPersonAnalysis)?;
         transaction.commit().map_err(StoreError::from)?;
         Ok(updated)
@@ -431,18 +433,22 @@ impl People {
         }
         let asset_path = task.asset_path.to_string_lossy();
         let changed =
-            repo::person_cache::fail_analysis_task(&transaction, task, &asset_path, error)?;
+            crate::people::repo::cache::fail_analysis_task(&transaction, task, &asset_path, error)?;
         if changed != 1 {
             return Err(PeopleError::PersonAnalysisConflict);
         }
-        let skipped = repo::person_cache::fail_dependent_tasks(
+        let skipped = crate::people::repo::cache::fail_dependent_tasks(
             &transaction,
             &task.run_id,
             &asset_path,
             i64::from(task.stage_order),
         )?;
-        repo::person_cache::bump_failed_tasks(&transaction, &task.run_id, 1 + skipped as i64)?;
-        let updated = repo::person_cache::analysis_run(&transaction, &task.run_id)?
+        crate::people::repo::cache::bump_failed_tasks(
+            &transaction,
+            &task.run_id,
+            1 + skipped as i64,
+        )?;
+        let updated = crate::people::repo::cache::analysis_run(&transaction, &task.run_id)?
             .ok_or(PeopleError::MissingPersonAnalysis)?;
         transaction.commit().map_err(StoreError::from)?;
         Ok(updated)
@@ -451,7 +457,7 @@ impl People {
     /// A worker must check this inside the same write transaction that commits
     /// its result. This read helper is only for scheduling and diagnostics.
     pub fn person_analysis_is_current(&self, run_id: &str) -> Result<bool, PeopleError> {
-        Ok(repo::person_cache::analysis_is_current(
+        Ok(crate::people::repo::cache::analysis_is_current(
             &self.store.read(),
             run_id,
         )?)
@@ -461,8 +467,8 @@ impl People {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::contracts::FeatureModality;
     use crate::people::testing;
+    use crate::people::types::FeatureModality;
     use std::path::{Path, PathBuf};
 
     fn input(request_id: &str) -> BeginPersonAnalysis {

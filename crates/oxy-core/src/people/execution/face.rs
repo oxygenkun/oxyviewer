@@ -4,8 +4,9 @@ use super::{
     persistence::{FaceOutput, InferredAsset, save},
     pipeline,
 };
-use crate::contracts::{
-    AnalysisRequirement, FeatureModality, PersonAnalysisRun, PersonAnalysisTask, PipelineManifest,
+use crate::contracts::AnalysisRequirement;
+use crate::people::types::{
+    FeatureModality, PersonAnalysisRun, PersonAnalysisTask, PipelineManifest,
 };
 use crate::people::{
     People, environment::catalog, features::PersonFeature, inference::face::OnnxFaceModels,

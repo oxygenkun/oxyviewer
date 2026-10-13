@@ -50,7 +50,7 @@ fn missing_features_remain_singletons_and_cancellation_stops_work() {
 }
 
 pub(crate) fn analyzed_fixture(people: &People, folder: &Path) {
-    use crate::contracts::{
+    use crate::people::types::{
         BeginPersonAnalysis, DetectedPersonInstance, FeatureModality, PersonAnalysisTaskInput,
     };
     let manifest = catalog::manifest();
@@ -134,7 +134,7 @@ pub(crate) fn analyzed_fixture(people: &People, folder: &Path) {
 
 #[test]
 fn groups_survive_reopen_and_adoption_preserves_negatives_and_cache_clear_preserves_names() {
-    use crate::contracts::{AdoptPersonCluster, PersonReviewDecision, SetPersonReview};
+    use crate::people::types::{AdoptPersonCluster, PersonReviewDecision, SetPersonReview};
     use std::sync::Arc;
     let temporary = tempfile::tempdir().unwrap();
     let folder = temporary.path().canonicalize().unwrap();
@@ -180,7 +180,7 @@ fn groups_survive_reopen_and_adoption_preserves_negatives_and_cache_clear_preser
         )
         .unwrap();
     assert_eq!(filtered.len(), 2);
-    let query = crate::contracts::AssetQuery {
+    let query = crate::browse::types::AssetQuery {
         page_size: Some(1),
         ..Default::default()
     };
@@ -249,7 +249,7 @@ fn stale_source_cancellation_and_new_run_cannot_publish_or_adopt_old_groups() {
         Some(snapshot.clone())
     );
     std::fs::write(folder.join("a.jpg"), b"changed source").unwrap();
-    let request = crate::contracts::AdoptPersonCluster {
+    let request = crate::people::types::AdoptPersonCluster {
         folder_path: folder.clone(),
         snapshot_id: snapshot.snapshot_id,
         cluster_id: snapshot.clusters[0].id.clone(),
@@ -260,7 +260,7 @@ fn stale_source_cancellation_and_new_run_cannot_publish_or_adopt_old_groups() {
     assert!(people.adopt_person_cluster(&request).is_err());
     assert!(people.list_folder_people(&folder).unwrap().is_empty());
     people
-        .begin_person_analysis(&crate::contracts::BeginPersonAnalysis {
+        .begin_person_analysis(&crate::people::types::BeginPersonAnalysis {
             folder_path: folder.clone(),
             pipeline_id: "new".into(),
             pipeline_fingerprint: "b".repeat(64),

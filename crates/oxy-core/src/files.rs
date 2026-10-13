@@ -1,8 +1,10 @@
-use crate::contracts::{
-    AssetKind, AssetQuery, AssetSort, AssetSummary, DirectorySummary, DirectoryTreeNode,
-    DirectoryTreeSnapshot, FileDeletionMode, FileOperation, FileOperationResult, FolderSession,
-    Page, SortDirection,
+pub mod types;
+use crate::browse::types::{
+    AssetQuery, AssetSort, AssetSummary, DirectorySummary, DirectoryTreeNode,
+    DirectoryTreeSnapshot, FolderSession, Page, SortDirection,
 };
+use crate::files::types::{FileDeletionMode, FileOperation, FileOperationResult};
+use oxy_media::types::AssetKind;
 use parking_lot::{Mutex, RwLock};
 use std::{
     cmp::Ordering,
@@ -1279,7 +1281,7 @@ fn epoch_ms(time: SystemTime) -> u64 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::contracts::PickLabel;
+    use oxy_media::types::PickLabel;
     use std::fs::File;
     use tempfile::tempdir;
 

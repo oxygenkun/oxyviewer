@@ -1,7 +1,7 @@
 //! Only this stage publishes detections/features and progress. Existing ledger
 //! methods reobserve source identity and fence generation/claim in transactions.
 use super::operations::PersonOperation;
-use crate::contracts::{DetectedPersonInstance, PersonAnalysisRun, PersonAnalysisTask};
+use crate::people::types::{DetectedPersonInstance, PersonAnalysisRun, PersonAnalysisTask};
 use crate::people::{People, features::PersonFeature};
 
 pub(super) struct FaceOutput {

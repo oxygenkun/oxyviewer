@@ -1,7 +1,7 @@
 //! Opt-in, equal-input backend benchmark; does not alter application settings.
 use super::*;
-use crate::contracts::{PersonOperationState, PersonOperationStatus};
 use crate::people::execution::operations::PersonOperations;
+use crate::people::types::{PersonOperationState, PersonOperationStatus};
 use image::{RgbImage, imageops::FilterType};
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};

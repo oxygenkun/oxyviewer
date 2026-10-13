@@ -1,7 +1,7 @@
 //! Verified local artifact import. Download transports can stream to a temporary
 //! source file and use the same verification and atomic installation boundary.
 
-use crate::contracts::{PersonModelArtifact, PipelineManifest};
+use crate::people::types::{PersonModelArtifact, PipelineManifest};
 use crate::people::{PipelineError, require_installable};
 use sha2::{Digest, Sha256};
 use std::{

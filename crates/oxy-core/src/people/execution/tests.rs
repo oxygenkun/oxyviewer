@@ -3,7 +3,7 @@ use super::{
     persistence::{FaceOutput, InferredAsset, save},
     pipeline,
 };
-use crate::contracts::{
+use crate::people::types::{
     BeginPersonAnalysis, PersonAnalysisRun, PersonAnalysisState, PersonAnalysisTaskInput,
     PersonOperationState, PersonOperationStatus,
 };

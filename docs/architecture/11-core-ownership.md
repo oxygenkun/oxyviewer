@@ -30,6 +30,10 @@ I/O 完成后重新检查目录、generation 和停止状态。停止不会清�
 headless 测试覆盖装配与退出、人物取消、待执行和活动 preview 等待者释放，以及
 SQLite admission 被阻塞时仍可观察队列并停止。
 
-重构仍在实施：部分用例协调留在 desktop commands，repo/schema 和应用类型尚未全部
-分配到功能拥有方，旧入口与 schema 兼容路径尚未清除。详见
+应用类型已移到功能的 types 模块，contracts 只导出对外契约。repository 也跟随
+Library、Tags 和 People；跨功能资产移动、删除、人物标签贡献及根目录恢复进入具名
+workflow。48 个表声明在功能的 schema 模块中，storage 汇总它们的分类与创建/清理顺序。
+
+重构仍在实施：部分用例协调留在 desktop commands，浏览和索引中的 SQL 仍待进一步
+收敛，schema 初始化与兼容代码尚未完全分配，旧入口与 schema 兼容路径尚未清除。详见
 [实施清单](../tasks/core-layout-refactor.md)；包数量收敛不代表该清单已经完成。
