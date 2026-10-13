@@ -5,6 +5,7 @@
 pub(crate) mod repo;
 pub(crate) mod schema;
 pub mod types;
+pub mod xmp_sync;
 
 use crate::browse::types::{AssetQuery, AssetSummary, TagMatchMode};
 use crate::storage::{Store, StoreError};

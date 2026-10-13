@@ -40,6 +40,11 @@ frontend types 仅保留由生成类型派生的界面模型，例如 resolved U
 原始 IPC 的 null 由适配层明确处理；metadata 的空值在显示投影中按缺省值比较，
 继续保留可见字段未变化时的 asset 对象身份。
 
+BrowseService 负责打开、分页、条件组合、目录树、切目录取消和刷新失效，桌面命令只把
+整个同步用例放到 blocking executor。快照的后台校验使用 CoreRuntime，浏览进度也通过
+类型化事件转发。TagXmpSync 用单个合并 worker 处理持久镜像队列，锁只保护 running/
+requested 状态，不包住文件或数据库 I/O。失败项留在队列里供后续重试，停止拒绝新调度。
+
 重构仍在实施：部分用例协调留在 desktop commands，浏览和索引中的 SQL 仍待进一步
 收敛，schema 初始化与兼容代码尚未完全分配，旧入口与 schema 兼容路径尚未清除。详见
 [实施清单](../tasks/core-layout-refactor.md)；包数量收敛不代表该清单已经完成。

@@ -94,6 +94,15 @@ resource leases, cancellation and stale-publication semantics.
   contracts feature pass: 771 tests / 28 ignored; frontend check, 419 tests and
   production build pass. Cross-platform CI and final native performance remain
   qualification gates, not claims established by these Windows checks.
+- Eight browsing use cases moved out of desktop commands into BrowseService:
+  folder open, paging and multi-feature query composition, directory-tree
+  operations, active-directory cancellation, search and refresh invalidation.
+  Snapshot validation is runtime-owned and browse progress is a typed event.
+  Tag mirror helpers and their test moved to core; publication bursts coalesce
+  into one owned worker and failed syncs remain durable for retry. Core and
+  desktop tests passed (273 / 5), followed by the added worker-lifetime test.
+  Headless tests prove nonrecursive paging and tag/metadata filter intersection.
+  Strict workspace Clippy and frontend check pass for the migration.
 - Next: distribute remaining schema initialization and browsing SQL,
   move remaining desktop use-case coordination, remove legacy paths, generate
   frontend contracts and complete final release/performance qualification.

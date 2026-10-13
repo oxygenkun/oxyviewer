@@ -6,6 +6,7 @@ pub(crate) mod workflows;
 pub use external_apps::ExternalAppManager;
 
 use crate::{
+    browse::BrowseService,
     events::CoreEvent,
     files::FsCatalog,
     jobs::JobRegistry,
@@ -18,7 +19,7 @@ use crate::{
     },
     runtime::CoreRuntime,
     storage::Store,
-    tags::Tags,
+    tags::{Tags, xmp_sync::TagXmpSync},
 };
 use std::{
     path::PathBuf,
@@ -39,6 +40,8 @@ pub struct OxyApp {
     pub jobs: JobRegistry,
     pub library: Arc<Library>,
     pub tags: Arc<Tags>,
+    pub tag_sync: Arc<TagXmpSync>,
+    pub browse: Arc<BrowseService>,
     pub people: Arc<People>,
     pub person_operations: Arc<PersonOperations>,
     pub person_model_dir: PathBuf,
@@ -96,6 +99,25 @@ impl OxyApp {
         );
         let preview_queue = PreviewQueue::new(runtime.clone(), library.clone(), cache.clone());
         let library_index_queue = LibraryIndexQueue::new(library.clone(), files.clone());
+        let tag_sync = Arc::new(TagXmpSync::new(
+            runtime.clone(),
+            tags.clone(),
+            files.clone(),
+            metadata.clone(),
+        ));
+        let browse = Arc::new(BrowseService {
+            files: files.clone(),
+            library: library.clone(),
+            metadata: metadata.clone(),
+            tags: tags.clone(),
+            people: people.clone(),
+            metadata_queue: metadata_queue.clone(),
+            preview_queue: preview_queue.clone(),
+            directory_tree_queue: directory_tree_queue.clone(),
+            library_index_queue: library_index_queue.clone(),
+            runtime: runtime.clone(),
+            tag_sync: tag_sync.clone(),
+        });
         cache.schedule_prune(None);
         Ok((
             Self {
@@ -105,6 +127,8 @@ impl OxyApp {
                 jobs: JobRegistry::default(),
                 library,
                 tags,
+                tag_sync,
+                browse,
                 people,
                 person_operations,
                 person_model_dir,

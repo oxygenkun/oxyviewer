@@ -35,6 +35,9 @@ pub(crate) fn forward(app: AppHandle, events: Receiver<CoreEvent>) {
                     CoreEvent::DirectoryTreeUpdated(value) => {
                         let _ = app.emit("directory-tree-updated", value);
                     }
+                    CoreEvent::DirectoryBrowseProgress(value) => {
+                        let _ = app.emit("directory-browse-progress", value);
+                    }
                     CoreEvent::LibraryDirectoriesIndexed(value) => {
                         let _ = app.emit("library-directory-index-updated", value);
                     }

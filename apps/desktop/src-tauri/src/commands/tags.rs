@@ -1,113 +1,10 @@
 use crate::state::AppState;
 use oxy_core::contracts::{
-    AssetTagAssignment, AssetTagAssignmentsByPath, CustomTag, CustomTagId, MetadataPatch,
-    TagDeleteImpact, TagSyncStatus,
+    AssetTagAssignment, AssetTagAssignmentsByPath, CustomTag, CustomTagId, TagDeleteImpact,
+    TagSyncStatus,
 };
-use oxy_core::files::FsCatalog;
-use oxy_core::metadata::MetadataFacade;
-use oxy_core::tags::Tags;
-use std::{collections::HashSet, path::PathBuf, sync::Arc};
+use std::{path::PathBuf, sync::Arc};
 use tauri::State;
-
-static TAG_SYNC_GATE: std::sync::Mutex<()> = std::sync::Mutex::new(());
-
-pub(crate) fn schedule_tag_xmp_sync(
-    tags: Arc<Tags>,
-    files: Arc<FsCatalog>,
-    metadata: MetadataFacade,
-) {
-    tauri::async_runtime::spawn_blocking(move || {
-        if let Err(error) = drain_tag_xmp_sync(&tags, &files, &metadata) {
-            eprintln!("failed to run tag XMP sync: {error}");
-        }
-    });
-}
-
-fn drain_tag_xmp_sync(
-    tags: &Tags,
-    files: &FsCatalog,
-    metadata: &MetadataFacade,
-) -> Result<(), String> {
-    let _gate = TAG_SYNC_GATE
-        .lock()
-        .map_err(|_| "tag XMP sync lock poisoned".to_owned())?;
-    for path in tags
-        .pending_tag_sync_paths()
-        .map_err(|error| error.to_string())?
-    {
-        let result = sync_path(tags, files, metadata, &path);
-        if let Err(error) = result {
-            tags.fail_tag_xmp_sync(&path, &error)
-                .map_err(|db_error| db_error.to_string())?;
-        }
-    }
-    Ok(())
-}
-
-fn sync_path(
-    tags: &Tags,
-    files: &FsCatalog,
-    metadata: &MetadataFacade,
-    path: &std::path::Path,
-) -> Result<(), String> {
-    let asset = files.get_asset(path).map_err(|error| error.to_string())?;
-    let current = metadata
-        .read_metadata(path, asset.kind)
-        .map_err(|error| error.to_string())?;
-    let payload = tags
-        .tag_xmp_payload(path)
-        .map_err(|error| error.to_string())?;
-    let subjects = merge_managed_values(
-        current.keywords,
-        &payload.previous_subjects,
-        &payload.subjects,
-    );
-    let hierarchical = merge_managed_values(
-        current.hierarchical_keywords,
-        &payload.previous_hierarchical,
-        &payload.hierarchical,
-    );
-    metadata
-        .patch_metadata(
-            path,
-            asset.kind,
-            &MetadataPatch {
-                keywords: Some(subjects),
-                hierarchical_keywords: Some(hierarchical),
-                ..MetadataPatch::default()
-            },
-        )
-        .map_err(|error| error.to_string())?;
-    tags.complete_tag_xmp_sync(path, &payload.subjects, &payload.hierarchical)
-        .map_err(|error| error.to_string())?;
-    if let Some(parent) = path.parent() {
-        files.invalidate_directory(parent);
-    }
-    Ok(())
-}
-
-fn merge_managed_values(
-    current: Vec<String>,
-    previous_managed: &[String],
-    desired: &[String],
-) -> Vec<String> {
-    let previous = previous_managed.iter().collect::<HashSet<_>>();
-    let mut seen = HashSet::new();
-    current
-        .into_iter()
-        .filter(|value| !previous.contains(value))
-        .chain(desired.iter().cloned())
-        .filter(|value| seen.insert(value.clone()))
-        .collect()
-}
-
-fn start_sync(state: &AppState) {
-    schedule_tag_xmp_sync(
-        Arc::clone(&state.tags),
-        Arc::clone(&state.files),
-        state.metadata.clone(),
-    );
-}
 
 #[tauri::command]
 pub(crate) fn list_custom_tags(state: State<'_, AppState>) -> Result<Vec<CustomTag>, String> {
@@ -180,7 +77,7 @@ pub(crate) fn update_custom_tag(
         .tags
         .update_custom_tag(id, parent_id, &name)
         .map_err(|error| error.to_string())?;
-    start_sync(&state);
+    state.tag_sync.schedule();
     Ok(tag)
 }
 
@@ -204,7 +101,7 @@ pub(crate) fn delete_custom_tag(
         .tags
         .delete_custom_tag(id)
         .map_err(|error| error.to_string())?;
-    start_sync(&state);
+    state.tag_sync.schedule();
     Ok(impact)
 }
 
@@ -219,7 +116,7 @@ pub(crate) fn set_asset_custom_tag(
         .tags
         .set_asset_tag(&paths, tag_id, assigned)
         .map_err(|error| error.to_string())?;
-    start_sync(&state);
+    state.tag_sync.schedule();
     Ok(())
 }
 
@@ -233,22 +130,5 @@ pub(crate) fn get_tag_sync_status(state: State<'_, AppState>) -> Result<TagSyncS
 
 #[tauri::command]
 pub(crate) fn retry_tag_xmp_sync(state: State<'_, AppState>) {
-    start_sync(&state);
-}
-
-#[cfg(test)]
-mod tests {
-    use super::merge_managed_values;
-
-    #[test]
-    fn replaces_only_values_managed_by_oxyviewer() {
-        assert_eq!(
-            merge_managed_values(
-                vec!["external".into(), "old".into()],
-                &["old".into()],
-                &["new".into()]
-            ),
-            ["external", "new"]
-        );
-    }
+    state.tag_sync.schedule();
 }
