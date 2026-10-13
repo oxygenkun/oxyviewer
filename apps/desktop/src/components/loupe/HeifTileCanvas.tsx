@@ -307,7 +307,7 @@ export function HeifTileCanvas({
     };
 
     const handleStatus = (event: HeifStatusEvent) => {
-      onStatus(event.status, event.diagnostics);
+      onStatus(event.status, event.diagnostics ?? undefined);
       perfMark(`heif:backend-${event.status}`, {
         assetName: asset.name,
         diagnostics: event.diagnostics,
@@ -320,7 +320,7 @@ export function HeifTileCanvas({
       }
       if (event.status === "complete") {
         backendComplete = true;
-        backendDiagnostics = event.diagnostics;
+        backendDiagnostics = event.diagnostics ?? undefined;
         progress?.finishReceiving();
         maybeComplete();
       } else if (event.status === "failed") {

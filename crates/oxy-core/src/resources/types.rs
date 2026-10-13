@@ -15,6 +15,7 @@ use std::path::PathBuf;
 /// A missing rating or color label is an authoritative empty value when
 /// `status` is `Ready`, rather than a field that a caller may freely replace.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[cfg_attr(feature = "contracts", derive(ts_rs::TS))]
 #[serde(rename_all = "camelCase")]
 pub struct MetadataProjection {
     pub path: PathBuf,
@@ -32,6 +33,7 @@ pub struct MetadataProjection {
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[cfg_attr(feature = "contracts", derive(ts_rs::TS))]
 #[serde(rename_all = "camelCase")]
 pub enum ResourceLoadStatus {
     Loading,
@@ -40,6 +42,7 @@ pub enum ResourceLoadStatus {
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, PartialOrd, Ord)]
+#[cfg_attr(feature = "contracts", derive(ts_rs::TS))]
 #[serde(rename_all = "camelCase")]
 pub enum MetadataRequestPriority {
     Background,
@@ -50,6 +53,7 @@ pub enum MetadataRequestPriority {
 
 /// Read-only diagnostics for one queued or running unit of work.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[cfg_attr(feature = "contracts", derive(ts_rs::TS))]
 #[serde(rename_all = "camelCase")]
 pub struct DebugQueueItem {
     pub key: String,
@@ -73,6 +77,7 @@ pub struct DebugQueueItem {
 /// A point-in-time view of a scheduler. This contract is intentionally
 /// read-only so diagnostics cannot alter production scheduling.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[cfg_attr(feature = "contracts", derive(ts_rs::TS))]
 #[serde(rename_all = "camelCase")]
 pub struct DebugQueueState {
     pub name: String,
@@ -82,6 +87,7 @@ pub struct DebugQueueState {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[cfg_attr(feature = "contracts", derive(ts_rs::TS))]
 #[serde(rename_all = "camelCase")]
 pub struct DebugQueueSnapshot {
     pub captured_at_unix_ms: u64,
@@ -92,6 +98,7 @@ pub struct DebugQueueSnapshot {
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[cfg_attr(feature = "contracts", derive(ts_rs::TS))]
 #[serde(rename_all = "camelCase")]
 pub enum SchedulePlacement {
     Front,
@@ -99,6 +106,7 @@ pub enum SchedulePlacement {
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[cfg_attr(feature = "contracts", derive(ts_rs::TS))]
 #[serde(rename_all = "camelCase")]
 pub enum OmittedScheduleAction {
     Release,
@@ -106,6 +114,7 @@ pub enum OmittedScheduleAction {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[cfg_attr(feature = "contracts", derive(ts_rs::TS))]
 #[serde(rename_all = "camelCase")]
 pub struct PreviewScheduleIntent {
     pub path: PathBuf,
@@ -115,6 +124,7 @@ pub struct PreviewScheduleIntent {
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[cfg_attr(feature = "contracts", derive(ts_rs::TS))]
 #[serde(rename_all = "camelCase")]
 pub struct PreviewOmittedPolicy {
     pub action: OmittedScheduleAction,
@@ -124,6 +134,7 @@ pub struct PreviewOmittedPolicy {
 
 /// Rust-owned state for one semantic render level of an asset.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[cfg_attr(feature = "contracts", derive(ts_rs::TS))]
 #[serde(rename_all = "camelCase")]
 pub struct ImageProjection {
     pub path: PathBuf,
@@ -141,6 +152,7 @@ pub struct ImageProjection {
 
 /// User-visible policy and current state for the rebuildable preview cache.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[cfg_attr(feature = "contracts", derive(ts_rs::TS))]
 #[serde(rename_all = "camelCase")]
 pub struct CacheSettings {
     /// The app-owned directory that contains preview artifacts.
@@ -155,6 +167,7 @@ pub struct CacheSettings {
 /// Mutable cache preferences. `custom_parent = None` restores the platform
 /// default; custom parents always receive an app-owned child directory.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[cfg_attr(feature = "contracts", derive(ts_rs::TS))]
 #[serde(rename_all = "camelCase")]
 pub struct CacheSettingsUpdate {
     pub custom_parent: Option<PathBuf>,
@@ -162,6 +175,7 @@ pub struct CacheSettingsUpdate {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[cfg_attr(feature = "contracts", derive(ts_rs::TS))]
 #[serde(tag = "delivery", rename_all = "camelCase")]
 pub enum HeifFullPresentation {
     Artifact { projection: Box<ImageProjection> },
@@ -169,6 +183,7 @@ pub enum HeifFullPresentation {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[cfg_attr(feature = "contracts", derive(ts_rs::TS))]
 #[serde(rename_all = "camelCase")]
 pub struct HeifTileReady {
     pub session_id: SessionId,
@@ -182,6 +197,7 @@ pub struct HeifTileReady {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[cfg_attr(feature = "contracts", derive(ts_rs::TS))]
 #[serde(rename_all = "camelCase")]
 pub struct HeifStatusEvent {
     pub session_id: SessionId,

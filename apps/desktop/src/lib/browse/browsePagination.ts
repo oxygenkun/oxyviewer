@@ -10,6 +10,6 @@ export const firstBrowseCursor: BrowseCursor = { offset: 0 };
 export function nextBrowseCursor(page: Page<unknown>): BrowseCursor | undefined {
   return page.nextCursor === undefined || page.nextCursor === null ? undefined : {
     offset: page.nextCursor,
-    snapshotRevision: page.snapshotRevision,
+    snapshotRevision: page.snapshotRevision ?? undefined,
   };
 }

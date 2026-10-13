@@ -65,7 +65,7 @@ export function useMarkingShortcuts(
         return;
       }
       if (!targets.length) return;
-      const value = markingPatchForAction(action, projection?.colorLabel ?? activeAsset?.colorLabel);
+      const value = markingPatchForAction(action, (projection?.colorLabel ?? activeAsset?.colorLabel) ?? undefined);
       if (!value) return;
       event.preventDefault();
       patch.mutate({ paths: targets.map((asset) => asset.path), value });

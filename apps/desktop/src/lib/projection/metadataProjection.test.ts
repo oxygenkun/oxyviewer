@@ -30,8 +30,8 @@ const projection = (stateRevision: number, rating?: number): MetadataProjection 
   stateRevision,
   validAt: stateRevision,
   status: "ready",
-  rating,
-  colorLabel: rating ? "Red" : undefined,
+  rating: rating ?? null,
+  colorLabel: rating ? "Red" : null,
   pickLabel: rating ? "accepted" : undefined,
 });
 

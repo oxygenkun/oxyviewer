@@ -10,9 +10,11 @@ workspace = true
 
 [features]
 default = []
+contracts = ["dep:ts-rs", "oxy-media/contracts"]
 winml-backup = []
 
 [dependencies]
+ts-rs = { version = "=12.0.1", optional = true }
 oxy-media = { path = "../oxy-media" }
 image.workspace = true
 flate2 = "1.1"
@@ -42,3 +44,8 @@ windows = { workspace = true, features = [
   "Win32_UI_Shell",
   "Win32_System_Com",
 ] }
+
+[[bin]]
+name = "export-contracts"
+path = "src/bin/export_contracts.rs"
+required-features = ["contracts"]

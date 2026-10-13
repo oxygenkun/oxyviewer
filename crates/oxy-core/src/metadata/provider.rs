@@ -26,6 +26,7 @@ struct ProviderConfig {
 }
 
 #[derive(Debug, Clone, Serialize)]
+#[cfg_attr(feature = "contracts", derive(ts_rs::TS))]
 #[serde(rename_all = "camelCase")]
 pub struct ExiftoolStatus {
     pub available: bool,

@@ -11,6 +11,7 @@ mod burst;
 pub use burst::*;
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[cfg_attr(feature = "contracts", derive(ts_rs::TS))]
 #[serde(rename_all = "camelCase")]
 pub enum MetadataProvider {
     Sidecar,
@@ -19,6 +20,7 @@ pub enum MetadataProvider {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[cfg_attr(feature = "contracts", derive(ts_rs::TS))]
 #[serde(rename_all = "camelCase")]
 pub struct MetadataCapability {
     pub provider: MetadataProvider,
@@ -29,6 +31,7 @@ pub struct MetadataCapability {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[cfg_attr(feature = "contracts", derive(ts_rs::TS))]
 #[serde(rename_all = "camelCase")]
 pub struct AssetDetails {
     pub asset: AssetSummary,
@@ -48,6 +51,7 @@ pub struct AssetDetails {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[cfg_attr(feature = "contracts", derive(ts_rs::TS))]
 #[serde(rename_all = "camelCase")]
 pub struct AssetDetailsResult {
     pub details: AssetDetails,
@@ -55,23 +59,33 @@ pub struct AssetDetailsResult {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[cfg_attr(feature = "contracts", derive(ts_rs::TS))]
 #[serde(rename_all = "camelCase")]
 pub struct MetadataPatch {
     #[serde(default, deserialize_with = "deserialize_nullable_field")]
+    #[cfg_attr(feature = "contracts", ts(optional))]
     pub rating: Option<Option<u8>>,
     #[serde(default, deserialize_with = "deserialize_nullable_field")]
+    #[cfg_attr(feature = "contracts", ts(optional))]
     pub color_label: Option<Option<String>>,
     #[serde(default, deserialize_with = "deserialize_nullable_field")]
+    #[cfg_attr(feature = "contracts", ts(optional))]
     pub pick_label: Option<Option<PickLabel>>,
     #[serde(default, deserialize_with = "deserialize_nullable_field")]
+    #[cfg_attr(feature = "contracts", ts(optional))]
     pub title: Option<Option<String>>,
     #[serde(default, deserialize_with = "deserialize_nullable_field")]
+    #[cfg_attr(feature = "contracts", ts(optional))]
     pub description: Option<Option<String>>,
     #[serde(default, deserialize_with = "deserialize_nullable_field")]
+    #[cfg_attr(feature = "contracts", ts(optional))]
     pub creator: Option<Option<String>>,
     #[serde(default, deserialize_with = "deserialize_nullable_field")]
+    #[cfg_attr(feature = "contracts", ts(optional))]
     pub copyright: Option<Option<String>>,
+    #[cfg_attr(feature = "contracts", ts(optional))]
     pub keywords: Option<Vec<String>>,
+    #[cfg_attr(feature = "contracts", ts(optional))]
     pub hierarchical_keywords: Option<Vec<String>>,
 }
 

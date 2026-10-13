@@ -16,6 +16,7 @@ pub const BURST_MAX_GAP_SECONDS: i64 = 10;
 
 /// Burst-relevant values read from one asset's metadata.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[cfg_attr(feature = "contracts", derive(ts_rs::TS))]
 #[serde(rename_all = "camelCase")]
 pub struct BurstFrame {
     pub path: PathBuf,
@@ -47,6 +48,7 @@ impl BurstFrame {
 
 /// A run of frames the camera shot in one burst, in shooting order.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[cfg_attr(feature = "contracts", derive(ts_rs::TS))]
 #[serde(rename_all = "camelCase")]
 pub struct BurstGroup {
     /// First frame of the run: the tile the grid keeps visible when collapsed.

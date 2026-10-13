@@ -14,6 +14,7 @@ mod tests;
 pub type SessionId = String;
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Hash)]
+#[cfg_attr(feature = "contracts", derive(ts_rs::TS))]
 #[serde(rename_all = "lowercase")]
 pub enum AssetKind {
     Raw,
@@ -50,6 +51,7 @@ impl AssetKind {
 /// A portable review flag stored in the digiKam XMP namespace. The numeric
 /// wire values are handled by the metadata crate; serialized IPC uses names.
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[cfg_attr(feature = "contracts", derive(ts_rs::TS))]
 #[serde(rename_all = "camelCase")]
 pub enum PickLabel {
     Rejected,
@@ -71,6 +73,7 @@ impl PickLabel {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq, Eq)]
+#[cfg_attr(feature = "contracts", derive(ts_rs::TS))]
 #[serde(rename_all = "camelCase")]
 pub struct EditableMetadata {
     pub rating: Option<u8>,
@@ -86,6 +89,7 @@ pub struct EditableMetadata {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[cfg_attr(feature = "contracts", derive(ts_rs::TS))]
 #[serde(rename_all = "camelCase")]
 pub struct FocusRegion {
     /// Center point in the camera focus-coordinate space.
@@ -100,6 +104,7 @@ pub struct FocusRegion {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[cfg_attr(feature = "contracts", derive(ts_rs::TS))]
 #[serde(rename_all = "camelCase")]
 pub struct FocusInfo {
     /// Dimensions of the coordinate space stored by the camera. They can
@@ -113,6 +118,7 @@ pub struct FocusInfo {
 /// embedded EXIF/MakerNotes, with adjacent sidecar XMP taking precedence over
 /// embedded XMP. Fields absent from XMP retain their camera value.
 #[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq, Eq)]
+#[cfg_attr(feature = "contracts", derive(ts_rs::TS))]
 #[serde(default, rename_all = "camelCase")]
 pub struct CaptureMetadata {
     pub aperture: Option<String>,
@@ -138,6 +144,7 @@ pub struct CaptureMetadata {
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[cfg_attr(feature = "contracts", derive(ts_rs::TS))]
 #[serde(rename_all = "camelCase")]
 pub enum RenderLevel {
     /// Fastest representation used by grids and filmstrips.
@@ -149,6 +156,7 @@ pub enum RenderLevel {
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, PartialOrd, Ord)]
+#[cfg_attr(feature = "contracts", derive(ts_rs::TS))]
 #[serde(rename_all = "camelCase")]
 pub enum PreviewPriority {
     Preload,
@@ -158,6 +166,7 @@ pub enum PreviewPriority {
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[cfg_attr(feature = "contracts", derive(ts_rs::TS))]
 #[serde(rename_all = "camelCase")]
 pub enum PreviewKind {
     Embedded,
@@ -170,6 +179,7 @@ pub enum PreviewKind {
 /// Format-agnostic decode diagnostics. Generalizes `HeifDiagnostics` so any
 /// decoder (RAW, system, future formats) can report timing/backend info.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
+#[cfg_attr(feature = "contracts", derive(ts_rs::TS))]
 #[serde(rename_all = "camelCase")]
 pub struct PreviewDiagnostics {
     /// Bytes returned by source-file reads, including bounded header read-ahead.
@@ -199,6 +209,7 @@ pub struct PreviewDiagnostics {
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[cfg_attr(feature = "contracts", derive(ts_rs::TS))]
 #[serde(rename_all = "camelCase")]
 pub enum MediaSatisfaction {
     Satisfied,
@@ -206,6 +217,7 @@ pub enum MediaSatisfaction {
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[cfg_attr(feature = "contracts", derive(ts_rs::TS))]
 #[serde(rename_all = "camelCase")]
 pub enum MediaPersistence {
     NotApplicable,
@@ -215,6 +227,7 @@ pub enum MediaPersistence {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[cfg_attr(feature = "contracts", derive(ts_rs::TS))]
 #[serde(rename_all = "camelCase")]
 pub struct MediaResourceDescriptor {
     pub resource_id: String,
@@ -224,6 +237,7 @@ pub struct MediaResourceDescriptor {
 
 /// A neutral extent in image pixels, independent of orientation and ownership.
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Hash)]
+#[cfg_attr(feature = "contracts", derive(ts_rs::TS))]
 #[serde(rename_all = "camelCase")]
 pub struct PixelDimensions {
     pub width: u32,
@@ -238,11 +252,13 @@ impl From<(u32, u32)> for PixelDimensions {
 
 /// Pixel storage before EXIF orientation is applied.
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Hash)]
+#[cfg_attr(feature = "contracts", derive(ts_rs::TS))]
 #[serde(transparent)]
 pub struct EncodedDimensions(pub PixelDimensions);
 
 /// Image pixels in viewing orientation; never CSS/layout units.
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Hash)]
+#[cfg_attr(feature = "contracts", derive(ts_rs::TS))]
 #[serde(transparent)]
 pub struct DisplayDimensions(pub PixelDimensions);
 
@@ -258,6 +274,7 @@ impl EncodedDimensions {
 
 /// Content provenance, independent of decoder, cache location, or render level.
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Hash)]
+#[cfg_attr(feature = "contracts", derive(ts_rs::TS))]
 #[serde(rename_all = "camelCase")]
 pub enum ImageOrigin {
     PrimaryImage,
@@ -266,6 +283,7 @@ pub enum ImageOrigin {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Hash)]
+#[cfg_attr(feature = "contracts", derive(ts_rs::TS))]
 #[serde(rename_all = "camelCase")]
 pub struct SourceImage {
     pub exif_orientation: u8,
@@ -278,6 +296,7 @@ pub struct SourceImage {
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Hash)]
+#[cfg_attr(feature = "contracts", derive(ts_rs::TS))]
 #[serde(rename_all = "camelCase")]
 pub enum Sampling {
     Native,
@@ -285,6 +304,7 @@ pub enum Sampling {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Hash)]
+#[cfg_attr(feature = "contracts", derive(ts_rs::TS))]
 #[serde(rename_all = "camelCase")]
 pub struct DetailCoverage {
     pub reference_dimensions: DisplayDimensions,
@@ -305,6 +325,7 @@ impl DetailCoverage {
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Hash)]
+#[cfg_attr(feature = "contracts", derive(ts_rs::TS))]
 #[serde(rename_all = "camelCase")]
 pub enum ByteIntegrity {
     SourceFile,
@@ -317,6 +338,7 @@ pub enum ByteIntegrity {
 
 /// Completed operations only. Planned operations must never populate this list.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Hash)]
+#[cfg_attr(feature = "contracts", derive(ts_rs::TS))]
 #[serde(
     tag = "operation",
     rename_all = "camelCase",
@@ -356,6 +378,7 @@ pub enum ImageOperation {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Hash)]
+#[cfg_attr(feature = "contracts", derive(ts_rs::TS))]
 #[serde(rename_all = "camelCase")]
 pub struct ArtifactFacts {
     pub exif_orientation: u8,
@@ -437,6 +460,7 @@ impl ArtifactFacts {
 /// Geometry in display-oriented pixels. The content rectangle covers the whole
 /// logical display canvas; encoded padding lies outside that rectangle.
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Hash)]
+#[cfg_attr(feature = "contracts", derive(ts_rs::TS))]
 #[serde(rename_all = "camelCase")]
 pub struct PreviewGeometry {
     pub display_size: PreviewDisplaySize,
@@ -444,6 +468,7 @@ pub struct PreviewGeometry {
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Hash)]
+#[cfg_attr(feature = "contracts", derive(ts_rs::TS))]
 #[serde(rename_all = "camelCase")]
 pub struct PreviewDisplaySize {
     pub width: u32,
@@ -451,6 +476,7 @@ pub struct PreviewDisplaySize {
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Hash)]
+#[cfg_attr(feature = "contracts", derive(ts_rs::TS))]
 #[serde(rename_all = "camelCase")]
 pub struct PreviewContentRect {
     pub x: u32,
@@ -460,6 +486,7 @@ pub struct PreviewContentRect {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[cfg_attr(feature = "contracts", derive(ts_rs::TS))]
 #[serde(rename_all = "camelCase")]
 pub struct PreviewResult {
     /// Actual source, geometry, and completed transformations; retained through cache recovery.
@@ -489,6 +516,7 @@ pub struct PreviewResult {
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[cfg_attr(feature = "contracts", derive(ts_rs::TS))]
 #[serde(rename_all = "camelCase")]
 pub enum HeifBackendKind {
     CachedArtifact,
@@ -500,6 +528,7 @@ pub enum HeifBackendKind {
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[cfg_attr(feature = "contracts", derive(ts_rs::TS))]
 #[serde(rename_all = "camelCase")]
 pub enum AccelerationKind {
     Hardware,
@@ -508,6 +537,7 @@ pub enum AccelerationKind {
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[cfg_attr(feature = "contracts", derive(ts_rs::TS))]
 #[serde(rename_all = "camelCase")]
 pub enum HeifDecodeStatus {
     Decoding,
@@ -517,6 +547,7 @@ pub enum HeifDecodeStatus {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[cfg_attr(feature = "contracts", derive(ts_rs::TS))]
 #[serde(rename_all = "camelCase")]
 pub struct HeifCapabilities {
     pub backend: HeifBackendKind,
@@ -526,6 +557,7 @@ pub struct HeifCapabilities {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[cfg_attr(feature = "contracts", derive(ts_rs::TS))]
 #[serde(rename_all = "camelCase")]
 pub struct HeifDecodeSession {
     pub id: SessionId,
@@ -540,6 +572,7 @@ pub struct HeifDecodeSession {
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[cfg_attr(feature = "contracts", derive(ts_rs::TS))]
 #[serde(rename_all = "camelCase")]
 pub enum HeifTilePayload {
     Rgba,
@@ -547,6 +580,7 @@ pub enum HeifTilePayload {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[cfg_attr(feature = "contracts", derive(ts_rs::TS))]
 #[serde(rename_all = "camelCase")]
 pub struct HeifDiagnostics {
     pub backend: HeifBackendKind,
@@ -563,6 +597,7 @@ pub struct HeifDiagnostics {
 
 /// A snapshot of registry ownership; file bytes are never encoded memory.
 #[derive(Debug, Default, Clone, Copy, Serialize, Deserialize)]
+#[cfg_attr(feature = "contracts", derive(ts_rs::TS))]
 #[serde(rename_all = "camelCase")]
 pub struct ResourceRegistryStats {
     pub max_entries: usize,

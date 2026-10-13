@@ -16,6 +16,7 @@ scenario and the code that runs it stay together.
 | --- | --- | --- |
 | `release/` | `node` and PowerShell, from CI | `.github/workflows/ci.yml` |
 | `browser/` | Pasted into a browser or WebView page | not runnable by Node |
+| `contracts.mjs` | Node invoking the optional Rust generator | `pnpm contracts:generate` / `pnpm contracts:check` |
 
 ### `release/`
 

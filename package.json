@@ -5,6 +5,8 @@
   "license": "AGPL-3.0-only OR LicenseRef-OxyViewer-Commercial",
   "packageManager": "pnpm@10.34.5",
   "scripts": {
+    "contracts:generate": "node scripts/contracts.mjs generate",
+    "contracts:check": "node scripts/contracts.mjs check",
     "ffmpeg:prepare": "node 3rdpart/ffmpeg/prepare.mjs",
     "heif:prepare": "node 3rdpart/libheif/prepare.mjs",
     "native:prepare": "pnpm ffmpeg:prepare && pnpm heif:prepare",

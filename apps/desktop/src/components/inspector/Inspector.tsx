@@ -304,7 +304,7 @@ export function Inspector({ asset, selectedCount, selectedPaths, t }: InspectorP
   );
 }
 
-function CaptureValue({ label, value }: { label: string; value?: string }) {
+function CaptureValue({ label, value }: { label: string; value?: string | null }) {
   return (
     <div className="capture-value">
       <strong>{value ?? "—"}</strong>
@@ -320,8 +320,8 @@ function CaptureIsoValue({
   exposureLabel,
 }: {
   label: string;
-  value?: string;
-  exposureCompensation?: string;
+  value?: string | null;
+  exposureCompensation?: string | null;
   exposureLabel: string;
 }) {
   return (
@@ -341,7 +341,7 @@ function CaptureIsoValue({
   );
 }
 
-function formatExifDate(value?: string): string {
+function formatExifDate(value?: string | null): string {
   if (!value) return "—";
   return value.replace(/^(\d{4}):(\d{2}):(\d{2})/, "$1-$2-$3");
 }

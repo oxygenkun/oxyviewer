@@ -180,7 +180,7 @@ export function Loupe({
     ? matchDisplayOrientation(metadataSize, focusPreviewSize)
     : metadataSize;
   const mappedFocusRegions = useMemo(
-    () => mapFocusRegions(details.data?.focusInfo, focusPreviewSize, focusFullSize),
+    () => mapFocusRegions(details.data?.focusInfo ?? undefined, focusPreviewSize, focusFullSize),
     [details.data?.focusInfo, focusPreviewSize, focusFullSize],
   );
   const showFocusAreas = focusAreasVisible !== focusTemporarilyInverted;

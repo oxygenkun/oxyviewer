@@ -5,6 +5,7 @@ use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[cfg_attr(feature = "contracts", derive(ts_rs::TS))]
 #[serde(rename_all = "camelCase")]
 pub struct GlobalPerson {
     pub id: String,
@@ -16,6 +17,7 @@ pub struct GlobalPerson {
 
 /// Paged human-confirmed history, retained even when a source is offline.
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[cfg_attr(feature = "contracts", derive(ts_rs::TS))]
 #[serde(rename_all = "camelCase")]
 pub struct GlobalPersonGallery {
     pub tuples: Vec<PersonTuple>,
@@ -25,6 +27,7 @@ pub struct GlobalPersonGallery {
 
 /// One folder in a person's confirmed history, independent of source availability.
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[cfg_attr(feature = "contracts", derive(ts_rs::TS))]
 #[serde(rename_all = "camelCase")]
 pub struct GlobalPersonFolder {
     pub folder_path: PathBuf,
@@ -34,6 +37,7 @@ pub struct GlobalPersonFolder {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[cfg_attr(feature = "contracts", derive(ts_rs::TS))]
 #[serde(rename_all = "camelCase")]
 pub struct GlobalPersonFolders {
     pub folders: Vec<GlobalPersonFolder>,
@@ -41,6 +45,7 @@ pub struct GlobalPersonFolders {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[cfg_attr(feature = "contracts", derive(ts_rs::TS))]
 #[serde(rename_all = "camelCase")]
 pub struct SetGlobalPersonTag {
     pub person_id: String,
@@ -50,6 +55,7 @@ pub struct SetGlobalPersonTag {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[cfg_attr(feature = "contracts", derive(ts_rs::TS))]
 #[serde(rename_all = "camelCase")]
 pub struct PersonTuple {
     pub id: String,
@@ -66,6 +72,7 @@ pub struct PersonTuple {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[cfg_attr(feature = "contracts", derive(ts_rs::TS))]
 #[serde(rename_all = "camelCase")]
 pub struct PersonTupleGroup {
     pub id: String,
@@ -75,6 +82,7 @@ pub struct PersonTupleGroup {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[cfg_attr(feature = "contracts", derive(ts_rs::TS))]
 #[serde(rename_all = "camelCase")]
 pub struct FolderPeopleWorkspace {
     pub folder_path: PathBuf,
@@ -89,6 +97,7 @@ pub struct FolderPeopleWorkspace {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[cfg_attr(feature = "contracts", derive(ts_rs::TS))]
 #[serde(rename_all = "camelCase")]
 pub struct PersonTupleFilter {
     pub group_id: String,
@@ -96,6 +105,7 @@ pub struct PersonTupleFilter {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[cfg_attr(feature = "contracts", derive(ts_rs::TS))]
 #[serde(rename_all = "camelCase")]
 pub struct SaveGlobalPerson {
     pub id: Option<String>,
@@ -106,6 +116,7 @@ pub struct SaveGlobalPerson {
 
 /// The exact tuples the user saw, including their geometry/source revisions.
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[cfg_attr(feature = "contracts", derive(ts_rs::TS))]
 #[serde(rename_all = "camelCase")]
 pub struct ReviewPersonTuples {
     pub folder_path: PathBuf,
@@ -118,6 +129,7 @@ pub struct ReviewPersonTuples {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[cfg_attr(feature = "contracts", derive(ts_rs::TS))]
 #[serde(rename_all = "camelCase")]
 pub struct SetGlobalPersonReference {
     pub person_id: String,
@@ -128,6 +140,7 @@ pub struct SetGlobalPersonReference {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[cfg_attr(feature = "contracts", derive(ts_rs::TS))]
 #[serde(rename_all = "camelCase")]
 pub struct RunPeopleGrouping {
     pub folder_path: PathBuf,
@@ -139,6 +152,7 @@ pub struct RunPeopleGrouping {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[cfg_attr(feature = "contracts", derive(ts_rs::TS))]
 #[serde(rename_all = "camelCase")]
 pub struct SavePersonTupleGeometry {
     pub folder_path: PathBuf,

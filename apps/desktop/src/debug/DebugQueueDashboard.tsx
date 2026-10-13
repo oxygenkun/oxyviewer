@@ -2,7 +2,7 @@ import { Activity, CirclePause, CirclePlay, RefreshCw, Server, Waves } from "luc
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { listen } from "@tauri-apps/api/event";
 import { getCurrentWindow } from "@tauri-apps/api/window";
-import type { DebugQueueItem, DebugQueueSnapshot, DebugQueueState } from "@/types";
+import type { DebugQueueItem as NativeDebugQueueItem, DebugQueueSnapshot, DebugQueueState } from "@/types";
 import { getDebugQueueSnapshot, isTauri } from "@/lib/api";
 import {
   aggregatePreviewDebugSnapshot,
@@ -11,10 +11,12 @@ import {
 } from "@/lib/diagnostics/previewDebug";
 import "./debugQueueDashboard.css";
 
+interface DebugQueueItem extends NativeDebugQueueItem { resource?: string }
+
 const REFRESH_MS = 250;
 const PRIORITY_ORDER = ["loupe", "selected", "active", "visible", "filter", "session", "nearby", "background", "preload"];
 
-function basename(path?: string) {
+function basename(path?: string | null) {
   return path?.split(/[\\/]/).pop() || "—";
 }
 
@@ -28,7 +30,8 @@ function queueItemFromWeb(item: TrackedPreview): DebugQueueItem {
     key: String(item.id),
     stage: item.resourceLabel ? `${item.stage} · ${item.resourceLabel}` : item.stage,
     priority: item.priority,
-    path: item.assetName,
+    path: item.assetName ?? null,
+    rootPath: null, rank: null, pendingCount: null, assetCount: null, directoryCount: null,
     resource: item.resourceKey?.replace(/^[^:]+:/, ""),
     consumers: item.consumers ?? 1,
   };
@@ -41,14 +44,14 @@ function QueueRows({ items, empty }: { items: DebugQueueItem[]; empty: string })
       {items.map((item) => (
         <div className="debug-row" key={item.key}>
           <span className={`debug-priority priority-${item.priority}`}>{item.priority}</span>
-          <span className="debug-file" title={item.path}>
+          <span className="debug-file" title={item.path ?? undefined}>
             <b>{basename(item.path)}</b>
             {item.rootPath ? <small title={item.rootPath}>root · {item.rootPath}</small> : null}
             {!item.rootPath && item.resource ? <small>{item.resource}</small> : null}
           </span>
           <span className="debug-stage">
             <span>{item.stage}</span>
-            {item.pendingCount !== undefined ? (
+            {item.pendingCount != null ? (
               <small>
                 pending {item.pendingCount.toLocaleString()} · assets {(item.assetCount ?? 0).toLocaleString()} · dirs {(item.directoryCount ?? 0).toLocaleString()}
               </small>

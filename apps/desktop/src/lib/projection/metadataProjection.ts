@@ -95,14 +95,18 @@ export function projectAssetMetadata(
   asset: AssetSummary,
   projection?: MetadataProjection,
 ): AssetSummary {
-  if (!projection || (asset.rating === projection.rating && asset.colorLabel === projection.colorLabel && asset.pickLabel === projection.pickLabel)) return asset;
+  if (!projection) return asset;
+  const rating = projection.rating ?? undefined;
+  const colorLabel = projection.colorLabel ?? undefined;
+  const pickLabel = projection.pickLabel ?? undefined;
+  if ((asset.rating ?? undefined) === rating && (asset.colorLabel ?? undefined) === colorLabel && (asset.pickLabel ?? undefined) === pickLabel) return asset;
   const previous = projectedAssets.get(asset);
-  if (previous && previous.rating === projection.rating && previous.colorLabel === projection.colorLabel && previous.pickLabel === projection.pickLabel) return previous;
+  if (previous && previous.rating === rating && previous.colorLabel === colorLabel && previous.pickLabel === pickLabel) return previous;
   const projected = {
     ...asset,
-    rating: projection.rating,
-    colorLabel: projection.colorLabel,
-    pickLabel: projection.pickLabel,
+    rating,
+    colorLabel,
+    pickLabel,
   };
   projectedAssets.set(asset, projected);
   return projected;

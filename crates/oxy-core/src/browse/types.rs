@@ -13,6 +13,7 @@ use std::path::PathBuf;
 pub type AssetId = String;
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[cfg_attr(feature = "contracts", derive(ts_rs::TS))]
 #[serde(rename_all = "camelCase")]
 pub struct FolderSession {
     pub id: SessionId,
@@ -24,6 +25,7 @@ pub struct FolderSession {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[cfg_attr(feature = "contracts", derive(ts_rs::TS))]
 #[serde(rename_all = "camelCase")]
 pub struct DirectorySummary {
     pub path: PathBuf,
@@ -32,6 +34,7 @@ pub struct DirectorySummary {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[cfg_attr(feature = "contracts", derive(ts_rs::TS))]
 #[serde(rename_all = "camelCase")]
 pub struct DirectoryTreeNode {
     pub entry: DirectorySummary,
@@ -42,6 +45,7 @@ pub struct DirectoryTreeNode {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[cfg_attr(feature = "contracts", derive(ts_rs::TS))]
 #[serde(rename_all = "camelCase")]
 pub struct DirectoryTreeSnapshot {
     pub session_id: SessionId,
@@ -50,6 +54,7 @@ pub struct DirectoryTreeSnapshot {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[cfg_attr(feature = "contracts", derive(ts_rs::TS))]
 #[serde(rename_all = "camelCase")]
 pub struct DirectorySearchMatch {
     pub directory: DirectorySummary,
@@ -57,6 +62,7 @@ pub struct DirectorySearchMatch {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[cfg_attr(feature = "contracts", derive(ts_rs::TS))]
 #[serde(rename_all = "camelCase")]
 pub struct AssetSummary {
     pub id: AssetId,
@@ -76,6 +82,7 @@ pub struct AssetSummary {
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, Default, PartialEq, Eq)]
+#[cfg_attr(feature = "contracts", derive(ts_rs::TS))]
 #[serde(rename_all = "camelCase")]
 pub enum TagMatchMode {
     #[default]
@@ -84,6 +91,7 @@ pub enum TagMatchMode {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[cfg_attr(feature = "contracts", derive(ts_rs::TS))]
 #[serde(rename_all = "camelCase")]
 pub struct AssetQuery {
     pub person_filter: Option<PersonFilter>,
@@ -117,6 +125,7 @@ impl AssetQuery {
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, Default)]
+#[cfg_attr(feature = "contracts", derive(ts_rs::TS))]
 #[serde(rename_all = "camelCase")]
 pub enum AssetSort {
     #[default]
@@ -127,6 +136,7 @@ pub enum AssetSort {
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, Default)]
+#[cfg_attr(feature = "contracts", derive(ts_rs::TS))]
 #[serde(rename_all = "camelCase")]
 pub enum SortDirection {
     #[default]
@@ -135,6 +145,7 @@ pub enum SortDirection {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[cfg_attr(feature = "contracts", derive(ts_rs::TS))]
 #[serde(rename_all = "camelCase")]
 pub struct Page<T> {
     pub items: Vec<T>,
@@ -143,6 +154,7 @@ pub struct Page<T> {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[cfg_attr(feature = "contracts", derive(ts_rs::TS))]
 #[serde(rename_all = "camelCase")]
 pub struct DirectoryBrowseProgress {
     pub session_id: String,
@@ -162,6 +174,7 @@ pub struct DirectoryBrowseProgress {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[cfg_attr(feature = "contracts", derive(ts_rs::TS))]
 #[serde(rename_all = "camelCase")]
 pub struct BrowsePage {
     #[serde(flatten)]

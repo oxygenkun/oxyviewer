@@ -5,6 +5,7 @@ use serde::{Deserialize, Serialize};
 /// The version comes from the running package, so a rebuilt bundle cannot drift
 /// from the number the About panel reports.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[cfg_attr(feature = "contracts", derive(ts_rs::TS))]
 #[serde(rename_all = "camelCase")]
 pub struct AppInfo {
     pub name: String,
@@ -19,6 +20,7 @@ pub struct AppInfo {
 /// The check is advisory: OxyViewer reports the newest published release and
 /// links to it, and never downloads or installs anything from this path.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[cfg_attr(feature = "contracts", derive(ts_rs::TS))]
 #[serde(rename_all = "camelCase")]
 pub struct UpdateStatus {
     pub current_version: String,
@@ -33,6 +35,7 @@ pub struct UpdateStatus {
 
 /// Fixed external destinations the About panel is allowed to open.
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[cfg_attr(feature = "contracts", derive(ts_rs::TS))]
 #[serde(rename_all = "camelCase")]
 pub enum AboutLink {
     Repository,

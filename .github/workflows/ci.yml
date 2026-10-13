@@ -63,7 +63,9 @@ jobs:
         # Incremental artifacts are stripped by Swatinem/rust-cache before it
         # saves, so enabling incremental compilation only slows these steps and
         # inflates the target directory.
-        run: cargo clippy --workspace --all-targets -- -D warnings
+        run: cargo clippy --workspace --all-targets --features oxy-core/contracts -- -D warnings
+      - name: Check generated TypeScript contracts
+        run: node scripts/contracts.mjs check
       - name: cargo test
         run: cargo test --workspace
 
@@ -230,7 +232,7 @@ jobs:
       - name: Cross-platform HIF detail and media regression tests
         # The lint job already tests the full workspace on this Linux image.
         if: runner.os != 'Linux'
-        run: cargo test -p oxy-media -p oxy-metadata -p oxyviewer
+        run: cargo test -p oxy-media -p oxy-core -p oxyviewer
       - name: Build Tauri app
         if: runner.os == 'Linux'
         working-directory: apps/desktop

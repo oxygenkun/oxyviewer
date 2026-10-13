@@ -34,6 +34,12 @@ SQLite admission 被阻塞时仍可观察队列并停止。
 Library、Tags 和 People；跨功能资产移动、删除、人物标签贡献及根目录恢复进入具名
 workflow。48 个表声明在功能的 schema 模块中，storage 汇总它们的分类与创建/清理顺序。
 
+序列化契约通过固定版本的 [ts-rs](https://docs.rs/ts-rs/12.0.1/ts_rs/) 生成
+`apps/desktop/src/generated/contracts.ts`，由 `pnpm contracts:check` 检查漂移。
+frontend types 仅保留由生成类型派生的界面模型，例如 resolved URL 和本地树的根键。
+原始 IPC 的 null 由适配层明确处理；metadata 的空值在显示投影中按缺省值比较，
+继续保留可见字段未变化时的 asset 对象身份。
+
 重构仍在实施：部分用例协调留在 desktop commands，浏览和索引中的 SQL 仍待进一步
 收敛，schema 初始化与兼容代码尚未完全分配，旧入口与 schema 兼容路径尚未清除。详见
 [实施清单](../tasks/core-layout-refactor.md)；包数量收敛不代表该清单已经完成。

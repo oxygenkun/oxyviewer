@@ -268,7 +268,7 @@ export async function listFolderPeople(folderPath: string): Promise<FolderPerson
 export async function createFolderPerson(folderPath: string): Promise<FolderPerson> {
   const requestId = crypto.randomUUID();
   if (isTauri()) return invoke("create_folder_person", { folderPath, requestId });
-  const person: FolderPerson = { id: nextDemoPersonId(), folderPath, displayName: null, identityConfirmed: false, revision: 1 };
+  const person: FolderPerson = { id: nextDemoPersonId(), folderPath, displayName: null, identityConfirmed: false, revision: 1, referenceInstanceId: null, pendingCount: 0 };
   demoPeople.set(folderPath, [...(demoPeople.get(folderPath) ?? []), person]);
   return person;
 }
@@ -497,7 +497,7 @@ export async function listAssets(
   sessionId: string,
   directory: string,
   query: AssetQuery,
-  cursor?: number,
+  cursor?: number | null,
   snapshotRevision?: number,
 ): Promise<Page<AssetSummary>> {
   if (!isTauri()) {
@@ -799,9 +799,11 @@ export async function getAssetDetails(asset: AssetSummary): Promise<AssetDetails
       width: 6_240,
       height: 4_160,
       metadata: {
-        rating: asset.rating,
-        colorLabel: asset.colorLabel,
-        pickLabel: asset.pickLabel,
+        rating: asset.rating ?? null,
+        colorLabel: asset.colorLabel ?? null,
+        pickLabel: asset.pickLabel ?? null,
+        title: null,
+        description: null,
         creator: "OxyViewer Demo",
         copyright: "Personal archive",
         keywords: ["field-notes", asset.kind],
@@ -814,7 +816,7 @@ export async function getAssetDetails(asset: AssetSummary): Promise<AssetDetails
         readable: true,
         writable: true,
       },
-      sidecarPath: asset.hasSidecar ? asset.path.replace(/\.[^.]+$/, ".xmp") : undefined,
+      sidecarPath: asset.hasSidecar ? asset.path.replace(/\.[^.]+$/, ".xmp") : null,
       captureMetadata: {
         aperture: "f/2.8",
         exposureTime: "1/250 s",
@@ -830,6 +832,8 @@ export async function getAssetDetails(asset: AssetSummary): Promise<AssetDetails
         colorTemperature: "Auto",
         tint: "0",
         dynamicRangeOptimizer: "Auto",
+        releaseMode: null,
+        sequenceNumber: null,
       },
       focusInfo: ["raw", "heif", "jpeg"].includes(asset.kind) ? {
         coordinateWidth: 6_240,
@@ -859,9 +863,9 @@ export async function requestMetadata(
       stateRevision: Date.now() + index,
       validAt: Date.now() + index,
       status: "ready",
-      rating: asset.rating,
-      colorLabel: asset.colorLabel,
-      pickLabel: asset.pickLabel,
+      rating: asset.rating ?? null,
+      colorLabel: asset.colorLabel ?? null,
+      pickLabel: asset.pickLabel ?? null,
     }));
   }
   return invoke<MetadataProjection[]>("request_metadata", { paths, priority });
@@ -1037,7 +1041,7 @@ export async function setAssetCustomTag(paths: string[], tagId: number, assigned
 }
 
 export async function getTagSyncStatus(): Promise<TagSyncStatus> {
-  if (!isTauri()) return { pendingCount: 0, failedCount: 0 };
+  if (!isTauri()) return { pendingCount: 0, failedCount: 0, lastError: null };
   return invoke<TagSyncStatus>("get_tag_sync_status");
 }
 
@@ -1052,17 +1056,17 @@ export async function syncMetadataToEmbedded(paths: string[]): Promise<string> {
 }
 
 export async function getExiftoolStatus(): Promise<ExiftoolStatus> {
-  if (!isTauri()) return { available: true, source: "path", version: "demo" };
+  if (!isTauri()) return { available: true, source: "path", version: "demo", executablePath: null, detail: null };
   return invoke<ExiftoolStatus>("get_exiftool_status");
 }
 
 export async function installExiftool(): Promise<ExiftoolStatus> {
-  if (!isTauri()) return { available: true, source: "managed", version: "demo" };
+  if (!isTauri()) return { available: true, source: "managed", version: "demo", executablePath: null, detail: null };
   return invoke<ExiftoolStatus>("install_exiftool");
 }
 
 export async function chooseAndConfigureExiftool(): Promise<ExiftoolStatus | null> {
-  if (!isTauri()) return { available: true, source: "user", version: "demo" };
+  if (!isTauri()) return { available: true, source: "user", version: "demo", executablePath: null, detail: null };
   const selection = await open({
     directory: false,
     multiple: false,
@@ -1123,7 +1127,7 @@ const demoAppInfo: AppInfo = {
 let demoCacheSettings: CacheSettings = {
   location: "/demo/OxyViewer Cache/previews",
   defaultLocation: "/demo/OxyViewer Cache/previews",
-  customParent: undefined,
+  customParent: null,
   isCustomLocation: false,
   maxSizeBytes: 10 * 1024 ** 3,
   usedSizeBytes: 2.4 * 1024 ** 3,
@@ -1154,7 +1158,7 @@ export async function updateCacheSettings(
       location: customParent
         ? `${customParent}/OxyViewer Cache/previews`
         : demoCacheSettings.defaultLocation,
-      customParent: customParent ?? undefined,
+      customParent,
       isCustomLocation: Boolean(customParent),
       maxSizeBytes,
       usedSizeBytes: Math.min(demoCacheSettings.usedSizeBytes, maxSizeBytes),
@@ -1301,7 +1305,7 @@ async function requestGeneratedPreview(
     // either Satisfied or terminal Error into the projection store. Settling
     // here also lets independent full-detail renderers (HEIF tiles) start.
     interim = level !== "thumbnail" && result.satisfaction === "interim";
-    return { ...result, url: mediaProtocolUrl(result.resource.url) };
+    return { ...result, url: mediaProtocolUrl(result.resource.url), geometry: result.geometry ?? undefined };
   } catch (error) {
     if (signal?.aborted) debug?.cancel();
     else debug?.fail(error);
@@ -1439,7 +1443,7 @@ export async function startHeifFull(
       if (!result.resource) throw new Error("Ready HEIF artifact has no registered resource");
       return {
         ...presentation,
-        result: { ...result, url: mediaProtocolUrl(result.resource.url) },
+        result: { ...result, url: mediaProtocolUrl(result.resource.url), geometry: result.geometry ?? undefined },
       };
     }
     perfMark("heif:decode-session", { path, sessionId: presentation.session.id });

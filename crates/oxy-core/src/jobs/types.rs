@@ -4,6 +4,7 @@ use serde::{Deserialize, Serialize};
 pub type JobId = String;
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, PartialOrd, Ord)]
+#[cfg_attr(feature = "contracts", derive(ts_rs::TS))]
 #[serde(rename_all = "camelCase")]
 pub enum JobPriority {
     LibraryIndex,
@@ -14,6 +15,7 @@ pub enum JobPriority {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[cfg_attr(feature = "contracts", derive(ts_rs::TS))]
 #[serde(rename_all = "camelCase")]
 pub struct JobProgress {
     pub job_id: JobId,

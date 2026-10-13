@@ -145,7 +145,7 @@ export function PerfHarness({
     queueMicrotask(() => {
       if (controller.signal.aborted) return;
       stressRef.current = true;
-      void runResourceStress(scenario.resourceStress!, () => assetsRef.current, controller.signal, scenario.expectedAssets)
+      void runResourceStress(scenario.resourceStress!, () => assetsRef.current, controller.signal, scenario.expectedAssets ?? undefined)
         .catch((error) => {
           if (!controller.signal.aborted) perfMark("resource:stress-failed", { message: String(error) });
         });

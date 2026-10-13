@@ -5,6 +5,7 @@ mod external_apps;
 pub use external_apps::*;
 
 #[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[cfg_attr(feature = "contracts", derive(ts_rs::TS))]
 #[serde(rename_all = "camelCase")]
 pub enum FileDeletionMode {
     #[default]
@@ -13,6 +14,7 @@ pub enum FileDeletionMode {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[cfg_attr(feature = "contracts", derive(ts_rs::TS))]
 #[serde(tag = "type", rename_all = "camelCase")]
 pub enum FileOperation {
     Rename {
@@ -36,6 +38,7 @@ pub enum FileOperation {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[cfg_attr(feature = "contracts", derive(ts_rs::TS))]
 #[serde(rename_all = "camelCase")]
 pub struct FileOperationResult {
     pub affected_paths: Vec<PathBuf>,

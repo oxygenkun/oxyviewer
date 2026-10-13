@@ -8,6 +8,7 @@ pub use about::*;
 /// the `OXY_PERF_SCENARIO` environment variable. Consumed by the frontend
 /// performance harness; see `docs/PERF_E2E.md`.
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[cfg_attr(feature = "contracts", derive(ts_rs::TS))]
 #[serde(rename_all = "camelCase")]
 pub struct PerfScenario {
     #[serde(default)]

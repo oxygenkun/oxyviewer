@@ -125,7 +125,7 @@ describe("preview scheduling policy", () => {
       scope.id,
       1,
       latest,
-      { action: "release" },
+      { action: "release", priority: null, placement: null },
     );
   });
 
@@ -148,7 +148,7 @@ describe("preview scheduling policy", () => {
       scope.id,
       2,
       snapshot("c"),
-      { action: "release" },
+      { action: "release", priority: null, placement: null },
     );
   });
 
@@ -176,7 +176,7 @@ describe("preview scheduling policy", () => {
       scope.id,
       2,
       snapshot("c"),
-      { action: "release" },
+      { action: "release", priority: null, placement: null },
     );
   });
 
@@ -193,7 +193,7 @@ describe("preview scheduling policy", () => {
       scope.id,
       1,
       [],
-      { action: "release" },
+      { action: "release", priority: null, placement: null },
     );
   });
 });

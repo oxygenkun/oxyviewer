@@ -2,6 +2,7 @@ use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[cfg_attr(feature = "contracts", derive(ts_rs::TS))]
 #[serde(rename_all = "camelCase")]
 pub struct FolderPerson {
     pub id: String,
@@ -14,6 +15,7 @@ pub struct FolderPerson {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[cfg_attr(feature = "contracts", derive(ts_rs::TS))]
 #[serde(rename_all = "camelCase")]
 pub struct HistoricalPerson {
     pub id: String,
@@ -24,6 +26,7 @@ pub struct HistoricalPerson {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[cfg_attr(feature = "contracts", derive(ts_rs::TS))]
 #[serde(rename_all = "camelCase")]
 pub struct LinkHistoricalPerson {
     pub folder_path: PathBuf,
@@ -35,6 +38,7 @@ pub struct LinkHistoricalPerson {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[cfg_attr(feature = "contracts", derive(ts_rs::TS))]
 #[serde(rename_all = "camelCase")]
 pub struct UnlinkHistoricalPerson {
     pub folder_path: PathBuf,
@@ -44,6 +48,7 @@ pub struct UnlinkHistoricalPerson {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[cfg_attr(feature = "contracts", derive(ts_rs::TS))]
 #[serde(rename_all = "camelCase")]
 pub struct PersonTagLink {
     pub historical_person_id: String,
@@ -53,6 +58,7 @@ pub struct PersonTagLink {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[cfg_attr(feature = "contracts", derive(ts_rs::TS))]
 #[serde(rename_all = "camelCase")]
 pub struct SetPersonTagLink {
     pub folder_path: PathBuf,
@@ -64,6 +70,7 @@ pub struct SetPersonTagLink {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[cfg_attr(feature = "contracts", derive(ts_rs::TS))]
 #[serde(rename_all = "camelCase")]
 pub struct PersonTagOverride {
     pub historical_person_id: String,
@@ -73,6 +80,7 @@ pub struct PersonTagOverride {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[cfg_attr(feature = "contracts", derive(ts_rs::TS))]
 #[serde(rename_all = "camelCase")]
 pub struct SetPersonTagOverride {
     pub folder_path: PathBuf,
@@ -84,6 +92,7 @@ pub struct SetPersonTagOverride {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[cfg_attr(feature = "contracts", derive(ts_rs::TS))]
 #[serde(rename_all = "camelCase")]
 pub struct PipelineManifest {
     pub pipeline_id: String,
@@ -92,6 +101,7 @@ pub struct PipelineManifest {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[cfg_attr(feature = "contracts", derive(ts_rs::TS))]
 #[serde(rename_all = "camelCase")]
 pub struct PersonStageManifest {
     pub stage_id: String,
@@ -109,6 +119,7 @@ pub struct PersonStageManifest {
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Hash)]
+#[cfg_attr(feature = "contracts", derive(ts_rs::TS))]
 #[serde(rename_all = "camelCase")]
 pub enum PersonStageKind {
     FaceDetector,
@@ -122,12 +133,14 @@ pub enum PersonStageKind {
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[cfg_attr(feature = "contracts", derive(ts_rs::TS))]
 #[serde(rename_all = "camelCase")]
 pub enum PersonDistanceMetric {
     Cosine,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[cfg_attr(feature = "contracts", derive(ts_rs::TS))]
 #[serde(rename_all = "camelCase")]
 pub struct PersonModelArtifact {
     pub artifact_id: String,
@@ -141,6 +154,7 @@ pub struct PersonModelArtifact {
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[cfg_attr(feature = "contracts", derive(ts_rs::TS))]
 #[serde(rename_all = "camelCase")]
 pub enum PersonModelArtifactFormat {
     Onnx,
@@ -148,6 +162,7 @@ pub enum PersonModelArtifactFormat {
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[cfg_attr(feature = "contracts", derive(ts_rs::TS))]
 #[serde(rename_all = "camelCase")]
 pub enum PersonModelLicenseStatus {
     VerifiedForDistribution,
@@ -156,6 +171,7 @@ pub enum PersonModelLicenseStatus {
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[cfg_attr(feature = "contracts", derive(ts_rs::TS))]
 #[serde(rename_all = "camelCase")]
 pub enum PersonAnalysisState {
     Queued,
@@ -166,6 +182,7 @@ pub enum PersonAnalysisState {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[cfg_attr(feature = "contracts", derive(ts_rs::TS))]
 #[serde(rename_all = "camelCase")]
 pub struct PersonAnalysisRun {
     pub run_id: String,
@@ -183,6 +200,7 @@ pub struct PersonAnalysisRun {
 /// Snapshot of an explicitly started background operation. Progress polling
 /// reads this small snapshot rather than hashing model files or scanning images.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[cfg_attr(feature = "contracts", derive(ts_rs::TS))]
 #[serde(rename_all = "camelCase")]
 pub struct PersonOperationStatus {
     pub operation_id: String,
@@ -196,6 +214,7 @@ pub struct PersonOperationStatus {
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[cfg_attr(feature = "contracts", derive(ts_rs::TS))]
 #[serde(rename_all = "camelCase")]
 pub enum PersonOperationState {
     Downloading,
@@ -208,6 +227,7 @@ pub enum PersonOperationState {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[cfg_attr(feature = "contracts", derive(ts_rs::TS))]
 #[serde(rename_all = "camelCase")]
 pub struct PersonModelStatus {
     pub id: String,
@@ -221,6 +241,7 @@ pub struct PersonModelStatus {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[cfg_attr(feature = "contracts", derive(ts_rs::TS))]
 #[serde(rename_all = "camelCase")]
 pub struct BeginPersonAnalysis {
     pub folder_path: PathBuf,
@@ -230,6 +251,7 @@ pub struct BeginPersonAnalysis {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[cfg_attr(feature = "contracts", derive(ts_rs::TS))]
 #[serde(rename_all = "camelCase")]
 pub struct PersonAnalysisTaskInput {
     pub asset_path: PathBuf,
@@ -240,6 +262,7 @@ pub struct PersonAnalysisTaskInput {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[cfg_attr(feature = "contracts", derive(ts_rs::TS))]
 #[serde(rename_all = "camelCase")]
 pub struct PersonAnalysisTask {
     pub run_id: String,
@@ -256,6 +279,7 @@ pub struct PersonAnalysisTask {
 /// Rebuildable detector evidence for one image instance. It cannot establish
 /// a person's identity or override an explicit review decision.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[cfg_attr(feature = "contracts", derive(ts_rs::TS))]
 #[serde(rename_all = "camelCase")]
 pub struct DetectedPersonInstance {
     /// Content-derived cache ID, independent of detector output order.
@@ -272,6 +296,7 @@ pub struct DetectedPersonInstance {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[cfg_attr(feature = "contracts", derive(ts_rs::TS))]
 #[serde(rename_all = "camelCase")]
 pub struct PersonDetectionSnapshot {
     pub source_revision: String,
@@ -324,6 +349,7 @@ pub struct PersonFeatureMatch {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[cfg_attr(feature = "contracts", derive(ts_rs::TS))]
 #[serde(rename_all = "camelCase")]
 pub struct PersonFilter {
     pub subject_id: Option<String>,
@@ -331,6 +357,7 @@ pub struct PersonFilter {
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[cfg_attr(feature = "contracts", derive(ts_rs::TS))]
 #[serde(rename_all = "camelCase")]
 pub enum PersonFilterState {
     Pending,
@@ -343,6 +370,7 @@ pub enum PersonFilterState {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[cfg_attr(feature = "contracts", derive(ts_rs::TS))]
 #[serde(rename_all = "camelCase")]
 pub struct UpdatePersonInstance {
     pub folder_path: PathBuf,
@@ -355,6 +383,7 @@ pub struct UpdatePersonInstance {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[cfg_attr(feature = "contracts", derive(ts_rs::TS))]
 #[serde(rename_all = "camelCase")]
 pub struct ResetFolderPerson {
     pub folder_path: PathBuf,
@@ -375,6 +404,7 @@ pub struct ManualPersonAnchor {
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[cfg_attr(feature = "contracts", derive(ts_rs::TS))]
 #[serde(rename_all = "camelCase")]
 pub enum PersonReviewDecision {
     Pending,
@@ -410,6 +440,7 @@ impl PersonReviewDecision {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[cfg_attr(feature = "contracts", derive(ts_rs::TS))]
 #[serde(rename_all = "camelCase")]
 pub struct PersonInstance {
     pub id: String,
@@ -424,6 +455,7 @@ pub struct PersonInstance {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[cfg_attr(feature = "contracts", derive(ts_rs::TS))]
 #[serde(rename_all = "camelCase")]
 pub struct PersonReview {
     pub instance: PersonInstance,
@@ -433,6 +465,7 @@ pub struct PersonReview {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[cfg_attr(feature = "contracts", derive(ts_rs::TS))]
 #[serde(rename_all = "camelCase")]
 pub struct CreatePersonInstance {
     pub folder_path: PathBuf,
@@ -444,6 +477,7 @@ pub struct CreatePersonInstance {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[cfg_attr(feature = "contracts", derive(ts_rs::TS))]
 #[serde(rename_all = "camelCase")]
 pub struct SetPersonReview {
     pub folder_path: PathBuf,
@@ -455,6 +489,7 @@ pub struct SetPersonReview {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[cfg_attr(feature = "contracts", derive(ts_rs::TS))]
 #[serde(rename_all = "camelCase")]
 pub struct ConfirmFolderPerson {
     pub folder_path: PathBuf,

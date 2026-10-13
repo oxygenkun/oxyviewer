@@ -5,6 +5,7 @@ use std::path::PathBuf;
 pub type CustomTagId = i64;
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[cfg_attr(feature = "contracts", derive(ts_rs::TS))]
 #[serde(rename_all = "camelCase")]
 pub struct CustomTag {
     pub id: CustomTagId,
@@ -15,6 +16,7 @@ pub struct CustomTag {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[cfg_attr(feature = "contracts", derive(ts_rs::TS))]
 #[serde(rename_all = "camelCase")]
 pub struct AssetTagAssignment {
     pub tag: CustomTag,
@@ -23,6 +25,7 @@ pub struct AssetTagAssignment {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[cfg_attr(feature = "contracts", derive(ts_rs::TS))]
 #[serde(rename_all = "camelCase")]
 pub struct AssetTagAssignmentsByPath {
     pub path: PathBuf,
@@ -30,6 +33,7 @@ pub struct AssetTagAssignmentsByPath {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[cfg_attr(feature = "contracts", derive(ts_rs::TS))]
 #[serde(rename_all = "camelCase")]
 pub struct TagDeleteImpact {
     pub tag_count: usize,
@@ -37,6 +41,7 @@ pub struct TagDeleteImpact {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[cfg_attr(feature = "contracts", derive(ts_rs::TS))]
 #[serde(rename_all = "camelCase")]
 pub struct TagSyncStatus {
     pub pending_count: usize,

@@ -519,7 +519,7 @@ export function App({ perfScenario }: { perfScenario?: PerfScenario }) {
     ? { kind: "error", message: error ?? String(foldersQuery.error), detail: undefined }
     : recoveryNotice ? { kind: "status", message: recoveryNotice, detail: undefined }
     : importNotice ?? (currentBrowseProgress?.stage === "stale"
-      ? { kind: "status", message: t("browseSnapshotOffline"), detail: currentBrowseProgress.error }
+      ? { kind: "status", message: t("browseSnapshotOffline"), detail: currentBrowseProgress.error ?? undefined }
       : currentBrowseProgress?.source === "snapshot"
         ? { kind: "status", message: t("browseSnapshotChecking"), detail: undefined }
         : undefined);

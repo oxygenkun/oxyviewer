@@ -23,7 +23,7 @@ resource leases, cancellation and stale-publication semantics.
       owns service assembly, workers and shutdown without a Tauri dependency.
 - [ ] Old packages, forwarding APIs and legacy identity/schema compatibility
       paths are removed; new data uses an isolated versioned directory.
-- [ ] Frontend IPC types are generated from the explicit Rust contracts and
+- [x] Frontend IPC types are generated from the explicit Rust contracts and
       checked for drift; demo behavior follows the final commands.
 - [ ] Build tooling, CI, benchmarks and authoritative architecture documents
       reflect the final ownership rules.
@@ -85,6 +85,15 @@ resource leases, cancellation and stale-publication semantics.
   into their owning feature repositories. All 48 table declarations now sit in
   feature schemas; storage registers their classes without guessing from names.
   Strict workspace Clippy and 270 core tests pass after these moves.
+- Pinned ts-rs 12.0.1 exports 155 serialized types and four aliases to the
+  checked TypeScript artifact. Frontend-only URL, tree-root, query-control and
+  paging projections derive their fields from those definitions. Browser demo
+  output and nullable consumers now match Rust; metadata null normalization
+  preserves unchanged visible asset identity. CI checks contract drift and
+  includes the optional generator in Clippy. Full workspace tests with the
+  contracts feature pass: 771 tests / 28 ignored; frontend check, 419 tests and
+  production build pass. Cross-platform CI and final native performance remain
+  qualification gates, not claims established by these Windows checks.
 - Next: distribute remaining schema initialization and browsing SQL,
   move remaining desktop use-case coordination, remove legacy paths, generate
   frontend contracts and complete final release/performance qualification.

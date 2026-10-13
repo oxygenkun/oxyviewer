@@ -3,6 +3,7 @@ use std::path::PathBuf;
 
 /// A model suggestion, never a confirmed identity or review decision.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[cfg_attr(feature = "contracts", derive(ts_rs::TS))]
 #[serde(rename_all = "camelCase")]
 pub struct PersonClusterMember {
     pub asset_path: PathBuf,
@@ -13,6 +14,7 @@ pub struct PersonClusterMember {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[cfg_attr(feature = "contracts", derive(ts_rs::TS))]
 #[serde(rename_all = "camelCase")]
 pub struct PersonCluster {
     pub id: String,
@@ -23,6 +25,7 @@ pub struct PersonCluster {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[cfg_attr(feature = "contracts", derive(ts_rs::TS))]
 #[serde(rename_all = "camelCase")]
 pub struct PersonClusterSnapshot {
     pub snapshot_id: String,
@@ -38,6 +41,7 @@ pub struct PersonClusterSnapshot {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[cfg_attr(feature = "contracts", derive(ts_rs::TS))]
 #[serde(rename_all = "camelCase")]
 pub struct PersonClusterFilter {
     pub snapshot_id: String,
@@ -46,6 +50,7 @@ pub struct PersonClusterFilter {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[cfg_attr(feature = "contracts", derive(ts_rs::TS))]
 #[serde(rename_all = "camelCase")]
 pub struct AdoptPersonCluster {
     pub folder_path: PathBuf,
@@ -57,6 +62,7 @@ pub struct AdoptPersonCluster {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[cfg_attr(feature = "contracts", derive(ts_rs::TS))]
 #[serde(rename_all = "camelCase")]
 pub struct AdoptPersonClusterResult {
     pub person: crate::people::types::FolderPerson,

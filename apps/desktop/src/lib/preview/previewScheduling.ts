@@ -18,7 +18,7 @@ export interface PreviewViewportCandidate {
   distance: number;
 }
 
-const RELEASE_OMITTED: PreviewOmittedPolicy = { action: "release" };
+const RELEASE_OMITTED: PreviewOmittedPolicy = { action: "release", priority: null, placement: null };
 
 export const DEMOTE_OMITTED_TO_BACKGROUND: PreviewOmittedPolicy = {
   action: "demote",

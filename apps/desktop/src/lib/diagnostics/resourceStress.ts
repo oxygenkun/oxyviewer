@@ -35,6 +35,7 @@ export async function runResourceStress(
     }
     return stats;
   };
+  if (mode !== "grid" && mode !== "loupe") throw new Error(`Unknown resource stress mode: ${mode}`);
   useWorkspaceStore.setState({
     view: mode, thumbnailOrientation: "portrait", inspectorOpen: false,
     leftPanelOpen: false, displaySharpening: false,

@@ -1,6 +1,7 @@
 import { releaseUnretainedMediaResource } from "@/lib/cache/mediaResourceLease";
 import { create } from "zustand";
 import type { ImageProjection, PreviewResult, RenderLevel } from "@/types";
+import type { PreviewResult as NativePreviewResult } from "@/generated/contracts";
 import {
   clearBrowserImageResources,
   discardBrowserImageResource,
@@ -24,7 +25,7 @@ export const imageProjectionKey = (path: string, level: RenderLevel) => `${path}
 const retiredSources = new Map<string, string>();
 
 /** Read-only frontend mirror of image artifacts accepted by Rust. */
-function projectionResultUrl(result: Omit<PreviewResult, "url">): string {
+function projectionResultUrl(result: NativePreviewResult): string {
   if (result.resource) return mediaProtocolUrl(result.resource.url);
   const nativeWindow = window as Window & { __TAURI_INTERNALS__?: unknown };
   return nativeWindow.__TAURI_INTERNALS__ ? "" : result.path;
@@ -40,6 +41,7 @@ export const useImageProjectionStore = create<ImageProjectionState>((set) => ({
       ? {
           ...projection.result,
           url: projectionResultUrl(projection.result),
+          geometry: projection.result.geometry ?? undefined,
         }
       : current?.sourceRevision === projection.sourceRevision
         ? current.result
