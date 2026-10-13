@@ -93,11 +93,6 @@ impl Library {
         self.store.read()
     }
 
-    /// A read connection reserved for resource projections.
-    fn read_projection_connection(&self) -> MutexGuard<'_, Connection> {
-        self.store.read_projection()
-    }
-
     /// The shared write connection, for tests that drive the snapshot
     /// persistence worker directly.
     #[cfg(test)]
@@ -146,9 +141,9 @@ impl Library {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::browse::types::{AssetQuery, AssetSort, AssetSummary, SortDirection};
-    use crate::resources::types::{ImageProjection, MetadataProjection, ResourceLoadStatus};
-    use oxy_media::types::{AssetKind, PickLabel, RenderLevel};
+    use crate::browse::types::{AssetQuery, AssetSort, SortDirection};
+    use crate::resources::types::{MetadataProjection, ResourceLoadStatus};
+    use oxy_media::types::RenderLevel;
     use rusqlite::params;
     use std::time::Instant;
     use tempfile::tempdir;
@@ -357,9 +352,10 @@ mod tests {
     fn projection_reads_do_not_wait_for_browsing_or_the_writer() {
         let state = tempdir().unwrap();
         let library = Library::open(&state.path().join("library.sqlite")).unwrap();
+        let projections = crate::resources::projections::ResourceProjections::new(library.store());
         let path = state.path().join("photo.jpg");
-        let valid_at = library.next_resource_revision().unwrap();
-        library
+        let valid_at = projections.next_resource_revision().unwrap();
+        projections
             .accept_metadata_projection(MetadataProjection {
                 path: path.clone(),
                 source_revision: "100:200:xmp-a".into(),
@@ -378,7 +374,7 @@ mod tests {
         let completed = std::thread::scope(|scope| {
             scope.spawn(|| {
                 assert_eq!(
-                    library
+                    projections
                         .metadata_projection(&path, "100:200:xmp-a")
                         .unwrap()
                         .unwrap()
@@ -386,7 +382,7 @@ mod tests {
                     Some(4)
                 );
                 assert!(
-                    library
+                    projections
                         .image_projection(&path, RenderLevel::Thumbnail, "missing")
                         .unwrap()
                         .is_none()
@@ -409,6 +405,7 @@ mod tests {
     fn wal_interaction_latency_during_large_index() {
         let state = tempdir().unwrap();
         let library = Library::open(&state.path().join("library.sqlite")).unwrap();
+        let projections = crate::resources::projections::ResourceProjections::new(library.store());
         let root = tempdir().unwrap();
         let root = root.path().canonicalize().unwrap();
         std::fs::write(root.join("visible.jpg"), b"jpeg").unwrap();
@@ -444,15 +441,15 @@ mod tests {
                     .unwrap()
                     .unwrap();
                 assert_eq!(page.items.len(), 1);
-                library
+                projections
                     .metadata_projection(&template.path, "missing")
                     .unwrap();
-                library
+                projections
                     .image_projection(&template.path, RenderLevel::Thumbnail, "missing")
                     .unwrap();
                 reads.push(started.elapsed());
                 let started = Instant::now();
-                library.next_resource_revision().unwrap();
+                projections.next_resource_revision().unwrap();
                 writes.push(started.elapsed());
             }
         });
@@ -887,466 +884,5 @@ mod tests {
             .unwrap()
             .unwrap();
         assert_eq!(page.total, 0);
-    }
-
-    #[test]
-    fn metadata_projection_survives_database_reopen() {
-        let state = tempdir().unwrap();
-        let database = state.path().join("library.sqlite");
-        let path = state.path().join("rated.HIF");
-        let source_revision = "100:200:xmp-a";
-        {
-            let library = Library::open(&database).unwrap();
-            let valid_at = library.next_resource_revision().unwrap();
-            let accepted = library
-                .accept_metadata_projection(MetadataProjection {
-                    path: path.clone(),
-                    source_revision: source_revision.into(),
-                    state_revision: 0,
-                    valid_at,
-                    status: ResourceLoadStatus::Ready,
-                    rating: Some(4),
-                    color_label: Some("Red".into()),
-                    pick_label: Some(PickLabel::Accepted),
-                    error: None,
-                })
-                .unwrap();
-            assert!(accepted.state_revision > valid_at);
-        }
-
-        let reopened = Library::open(&database).unwrap();
-        let cached = reopened
-            .metadata_projection(&path, source_revision)
-            .unwrap()
-            .unwrap();
-        assert_eq!(cached.rating, Some(4));
-        assert_eq!(cached.color_label.as_deref(), Some("Red"));
-        assert_eq!(cached.pick_label, Some(PickLabel::Accepted));
-    }
-
-    #[test]
-    fn cheap_asset_stat_can_publish_a_snapshot_before_full_revision_validation() {
-        let library = Library::in_memory().unwrap();
-        let path = PathBuf::from("C:/photos/rated.HIF");
-        let asset = AssetSummary {
-            id: "rated".into(),
-            path: path.clone(),
-            name: "rated.HIF".into(),
-            extension: "HIF".into(),
-            kind: AssetKind::Heif,
-            size_bytes: 200,
-            modified_at_ms: 100,
-            has_sidecar: false,
-            rating: None,
-            color_label: None,
-            pick_label: None,
-        };
-        let valid_at = library.next_resource_revision().unwrap();
-        library
-            .accept_metadata_projection(MetadataProjection {
-                path,
-                source_revision: "100:200:0:0:embedded-xmp-digest".into(),
-                state_revision: 0,
-                valid_at,
-                status: ResourceLoadStatus::Ready,
-                rating: Some(3),
-                color_label: Some("Yellow".into()),
-                pick_label: None,
-                error: None,
-            })
-            .unwrap();
-
-        assert_eq!(
-            library
-                .metadata_projection_for_asset(&asset)
-                .unwrap()
-                .unwrap()
-                .rating,
-            Some(3)
-        );
-        assert!(
-            library
-                .metadata_projection_for_asset(&AssetSummary {
-                    modified_at_ms: 101,
-                    ..asset
-                })
-                .unwrap()
-                .is_none()
-        );
-    }
-
-    #[test]
-    fn sqlite_order_rejects_an_older_result_from_another_connection() {
-        let state = tempdir().unwrap();
-        let database = state.path().join("library.sqlite");
-        let first = Library::open(&database).unwrap();
-        let second = Library::open(&database).unwrap();
-        let path = state.path().join("shared.HIF");
-        let source_revision = "shared-source";
-        let older = first.next_resource_revision().unwrap();
-        let newer = second.next_resource_revision().unwrap();
-
-        second
-            .accept_metadata_projection(MetadataProjection {
-                path: path.clone(),
-                source_revision: source_revision.into(),
-                state_revision: 0,
-                valid_at: newer,
-                status: ResourceLoadStatus::Ready,
-                rating: Some(5),
-                color_label: None,
-                pick_label: None,
-                error: None,
-            })
-            .unwrap();
-        let winner = first
-            .accept_metadata_projection(MetadataProjection {
-                path: path.clone(),
-                source_revision: source_revision.into(),
-                state_revision: 0,
-                valid_at: older,
-                status: ResourceLoadStatus::Ready,
-                rating: Some(1),
-                color_label: None,
-                pick_label: None,
-                error: None,
-            })
-            .unwrap();
-
-        assert_eq!(winner.valid_at, newer);
-        assert_eq!(winner.rating, Some(5));
-        assert_eq!(
-            first
-                .metadata_projection(&path, source_revision)
-                .unwrap()
-                .unwrap()
-                .rating,
-            Some(5)
-        );
-    }
-
-    #[test]
-    fn stale_descriptor_restore_cannot_overwrite_a_newer_state_of_the_same_request() {
-        let library = Library::in_memory().unwrap();
-        let loading = library
-            .accept_image_projection(ImageProjection {
-                path: PathBuf::from("one.HIF"),
-                source_revision: "source".into(),
-                state_revision: 0,
-                valid_at: library.next_resource_revision().unwrap(),
-                status: ResourceLoadStatus::Loading,
-                level: RenderLevel::Thumbnail,
-                result: None,
-                error: None,
-            })
-            .unwrap();
-        let terminal = library
-            .accept_image_projection(ImageProjection {
-                state_revision: 0,
-                status: ResourceLoadStatus::Error,
-                error: Some("decode failed".into()),
-                ..loading.clone()
-            })
-            .unwrap();
-        let restored = library.accept_image_projection(loading).unwrap();
-        assert_eq!(restored.state_revision, terminal.state_revision);
-        assert_eq!(restored.status, ResourceLoadStatus::Error);
-        assert_eq!(restored.error, terminal.error);
-    }
-
-    #[test]
-    fn image_projection_round_trips_artifact_without_pixel_payload() {
-        let library = Library::in_memory().unwrap();
-        let directory = tempdir().unwrap();
-        let path = directory.path().join("one.HIF");
-        let artifact = directory.path().join("one-preview.jpg");
-        std::fs::write(&artifact, b"restart-safe artifact").unwrap();
-        let valid_at = library.next_resource_revision().unwrap();
-        let accepted = library
-            .accept_image_projection(ImageProjection {
-                path: path.clone(),
-                source_revision: "image-source".into(),
-                state_revision: 0,
-                valid_at,
-                status: ResourceLoadStatus::Ready,
-                level: RenderLevel::Preview,
-                result: Some(oxy_media::types::PreviewResult {
-                    image_facts: None,
-                    geometry: None,
-                    path: artifact.clone(),
-                    width: 1600,
-                    height: 1067,
-                    kind: oxy_media::types::PreviewKind::Decoded,
-                    render_level: RenderLevel::Preview,
-                    resource: None,
-                    satisfaction: None,
-                    persistence: None,
-                    diagnostics: None,
-                }),
-                error: None,
-            })
-            .unwrap();
-
-        assert!(accepted.state_revision > valid_at);
-        let cached = library
-            .image_projection(&path, RenderLevel::Preview, "image-source")
-            .unwrap()
-            .unwrap();
-        assert_eq!(cached.result.unwrap().path, artifact);
-    }
-
-    #[test]
-    fn incompatible_image_projection_can_be_rebuilt_without_losing_ordering() {
-        let library = Library::in_memory().unwrap();
-        let directory = tempdir().unwrap();
-        let source = directory.path().join("source.HIF");
-        let artifact = directory.path().join("thumbnail.jpg");
-        std::fs::write(&artifact, b"restart-safe artifact").unwrap();
-        let valid_at = library.next_resource_revision().unwrap();
-        let projection = ImageProjection {
-            path: source.clone(),
-            source_revision: "source-revision".into(),
-            state_revision: 0,
-            valid_at,
-            status: ResourceLoadStatus::Ready,
-            level: RenderLevel::Thumbnail,
-            result: Some(oxy_media::types::PreviewResult {
-                image_facts: None,
-                geometry: None,
-                path: artifact.clone(),
-                width: 160,
-                height: 120,
-                kind: oxy_media::types::PreviewKind::Embedded,
-                render_level: RenderLevel::Thumbnail,
-                resource: None,
-                satisfaction: Some(oxy_media::types::MediaSatisfaction::Interim),
-                persistence: Some(oxy_media::types::MediaPersistence::Persisted),
-                diagnostics: None,
-            }),
-            error: None,
-        };
-        let mut obsolete = serde_json::to_value(projection.result.as_ref().unwrap()).unwrap();
-        // Reproduce the intermediate image-facts schema stored before sampledDimensions.
-        obsolete["imageFacts"] = serde_json::json!({
-            "exifOrientation": 1,
-            "source": {
-                "exifOrientation": 1, "revisionId": "source-revision",
-                "candidateId": "sony-jpeg", "origin": "embeddedPreview",
-                "encodedDimensions": {"width": 160, "height": 120},
-                "displayDimensions": {"width": 160, "height": 120}
-            },
-            "encodedDimensions": {"width": 160, "height": 120},
-            "displayDimensions": {"width": 160, "height": 120},
-            "detail": {
-                "referenceDimensions": {"width": 7008, "height": 4672},
-                "region": {"x": 0, "y": 0, "width": 7008, "height": 4672},
-                "sampling": "native"
-            },
-            "processing": [], "byteIntegrity": "sourcePayload"
-        });
-        assert!(
-            serde_json::from_value::<oxy_media::types::PreviewResult>(obsolete.clone()).is_err()
-        );
-        for incompatible in [obsolete.to_string(), "{".into()] {
-            let accepted = library.accept_image_projection(projection.clone()).unwrap();
-            library
-                .write()
-                .execute(
-                    "UPDATE resource_projections SET result_json = ?1 WHERE path = ?2",
-                    params![incompatible, source.to_string_lossy()],
-                )
-                .unwrap();
-            let cached = library
-                .image_projection(&source, RenderLevel::Thumbnail, "source-revision")
-                .unwrap()
-                .unwrap();
-            assert!(cached.result.is_none());
-            assert_eq!(cached.valid_at, accepted.valid_at);
-            assert_eq!(cached.state_revision, accepted.state_revision);
-            let mut stale = projection.clone();
-            stale.valid_at = valid_at - 1;
-            let rejected = library.accept_image_projection(stale).unwrap();
-            assert_eq!(rejected.state_revision, accepted.state_revision);
-            assert!(rejected.result.is_none());
-            let rebuilt = library.accept_image_projection(projection.clone()).unwrap();
-            assert!(rebuilt.state_revision > accepted.state_revision);
-            let cached = library
-                .image_projection(&source, RenderLevel::Thumbnail, "source-revision")
-                .unwrap()
-                .unwrap();
-            assert_eq!(cached.result.unwrap().path, artifact);
-        }
-    }
-
-    #[test]
-    fn image_projection_strips_process_local_resource_before_sqlite_persistence() {
-        let library = Library::in_memory().unwrap();
-        let directory = tempdir().unwrap();
-        let source = directory.path().join("source.HIF");
-        let artifact = directory.path().join("artifact.jpg");
-        std::fs::write(&artifact, b"restart-safe artifact").unwrap();
-        let valid_at = library.next_resource_revision().unwrap();
-        let projection = ImageProjection {
-            path: source.clone(),
-            source_revision: "source-revision".into(),
-            state_revision: 0,
-            valid_at,
-            status: ResourceLoadStatus::Ready,
-            level: RenderLevel::Preview,
-            result: Some(oxy_media::types::PreviewResult {
-                image_facts: None,
-                geometry: None,
-                path: artifact,
-                width: 16,
-                height: 8,
-                kind: oxy_media::types::PreviewKind::Decoded,
-                render_level: RenderLevel::Preview,
-                resource: Some(oxy_media::types::MediaResourceDescriptor {
-                    resource_id: "old-process-resource".into(),
-                    url: "oxy-media://localhost/resource/old-process-resource".into(),
-                    media_type: "image/jpeg".into(),
-                }),
-                satisfaction: Some(oxy_media::types::MediaSatisfaction::Satisfied),
-                persistence: Some(oxy_media::types::MediaPersistence::Persisted),
-                diagnostics: None,
-            }),
-            error: None,
-        };
-        let accepted = library.accept_image_projection(projection).unwrap();
-        assert!(accepted.result.unwrap().resource.is_some());
-
-        let restored = library
-            .image_projection(&source, RenderLevel::Preview, "source-revision")
-            .unwrap()
-            .unwrap();
-        assert!(restored.result.unwrap().resource.is_none());
-    }
-
-    #[test]
-    fn pending_resource_only_projection_is_not_restart_persisted() {
-        let library = Library::in_memory().unwrap();
-        let source = PathBuf::from("pending.HIF");
-        let valid_at = library.next_resource_revision().unwrap();
-        library
-            .accept_image_projection(ImageProjection {
-                path: source.clone(),
-                source_revision: "source-revision".into(),
-                state_revision: 0,
-                valid_at,
-                status: ResourceLoadStatus::Ready,
-                level: RenderLevel::Preview,
-                result: Some(oxy_media::types::PreviewResult {
-                    image_facts: None,
-                    geometry: None,
-                    path: PathBuf::new(),
-                    width: 16,
-                    height: 8,
-                    kind: oxy_media::types::PreviewKind::Embedded,
-                    render_level: RenderLevel::Preview,
-                    resource: Some(oxy_media::types::MediaResourceDescriptor {
-                        resource_id: "pending-resource".into(),
-                        url: "oxy-media://localhost/resource/pending-resource".into(),
-                        media_type: "image/jpeg".into(),
-                    }),
-                    satisfaction: Some(oxy_media::types::MediaSatisfaction::Interim),
-                    persistence: Some(oxy_media::types::MediaPersistence::Pending),
-                    diagnostics: None,
-                }),
-                error: None,
-            })
-            .unwrap();
-
-        assert!(
-            library
-                .image_projection(&source, RenderLevel::Preview, "source-revision")
-                .unwrap()
-                .unwrap()
-                .result
-                .is_none()
-        );
-    }
-
-    #[test]
-    fn directory_invalidation_blocks_a_late_worker_result() {
-        let library = Library::in_memory().unwrap();
-        let directory = PathBuf::from("C:/photos");
-        let path = directory.join("late.HIF");
-        let valid_at = library.next_resource_revision().unwrap();
-        let loading = MetadataProjection {
-            path: path.clone(),
-            source_revision: "source-before-refresh".into(),
-            state_revision: 0,
-            valid_at,
-            status: ResourceLoadStatus::Loading,
-            rating: None,
-            color_label: None,
-            pick_label: None,
-            error: None,
-        };
-        library.accept_metadata_projection(loading.clone()).unwrap();
-        library.invalidate_resource_projections(&directory).unwrap();
-
-        let rejected = library
-            .accept_metadata_projection(MetadataProjection {
-                status: ResourceLoadStatus::Ready,
-                rating: Some(5),
-                ..loading
-            })
-            .unwrap();
-
-        assert_eq!(rejected.error.as_deref(), Some("invalidated"));
-        assert!(
-            library
-                .metadata_projection(&path, "source-before-refresh")
-                .unwrap()
-                .is_none()
-        );
-    }
-
-    #[test]
-    fn sqlite_order_also_rejects_an_older_image_result() {
-        let state = tempdir().unwrap();
-        let database = state.path().join("library.sqlite");
-        let first = Library::open(&database).unwrap();
-        let second = Library::open(&database).unwrap();
-        let path = state.path().join("shared.HIF");
-        let older = first.next_resource_revision().unwrap();
-        let newer = second.next_resource_revision().unwrap();
-        let old_artifact = state.path().join("old.jpg");
-        let new_artifact = state.path().join("new.jpg");
-        std::fs::write(&old_artifact, b"old").unwrap();
-        std::fs::write(&new_artifact, b"new").unwrap();
-        let make_projection = |valid_at, artifact: &Path| ImageProjection {
-            path: path.clone(),
-            source_revision: "same-image-source".into(),
-            state_revision: 0,
-            valid_at,
-            status: ResourceLoadStatus::Ready,
-            level: RenderLevel::Thumbnail,
-            result: Some(oxy_media::types::PreviewResult {
-                image_facts: None,
-                geometry: None,
-                path: artifact.to_owned(),
-                width: 160,
-                height: 120,
-                kind: oxy_media::types::PreviewKind::Embedded,
-                render_level: RenderLevel::Thumbnail,
-                resource: None,
-                satisfaction: None,
-                persistence: None,
-                diagnostics: None,
-            }),
-            error: None,
-        };
-
-        second
-            .accept_image_projection(make_projection(newer, &new_artifact))
-            .unwrap();
-        let winner = first
-            .accept_image_projection(make_projection(older, &old_artifact))
-            .unwrap();
-
-        assert_eq!(winner.valid_at, newer);
-        assert_eq!(winner.result.unwrap().path, new_artifact);
     }
 }

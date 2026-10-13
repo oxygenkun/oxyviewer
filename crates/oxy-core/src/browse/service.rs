@@ -25,6 +25,7 @@ use std::{
 pub struct BrowseService {
     pub(crate) files: Arc<FsCatalog>,
     pub(crate) library: Arc<Library>,
+    pub(crate) projections: Arc<crate::resources::projections::ResourceProjections>,
     pub(crate) metadata: MetadataFacade,
     pub(crate) tags: Arc<Tags>,
     pub(crate) people: Arc<People>,
@@ -383,7 +384,7 @@ impl BrowseService {
                 .map_err(|error| error.to_string())?;
             Ok::<_, String>((tree, root, resolved_directory))
         }?;
-        self.library
+        self.projections
             .invalidate_resource_projections(&resolved_directory)
             .map_err(|error| error.to_string())?;
         self.metadata_queue

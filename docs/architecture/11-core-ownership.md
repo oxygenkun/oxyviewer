@@ -65,6 +65,12 @@ prepared 或已改变的记录要求检查文件与 sidecar，不会自动重做
 普通 transfer 针对资产文件；外部移动后的整个根目录使用已确认的 root recovery。
 删除目录后按路径边界清理已知资产的标签与派生特征，人工人物事实仍保留。
 
+资源投影持久化属于 `resources::projections`，SQL 在相邻的 `resources::repo`。
+OxyApp 为 metadata、preview 和 browse 装配一个共享投影句柄；Library 不再提供
+投影读取、版本分配或提交入口。投影模块决定事务与接受顺序，repo 不开启事务。
+WAL projection reader 仍独立于浏览 reader 和 writer；源观察版本、validAt、
+stateRevision、清理后的顺序 fence、重启时移除旧进程 descriptor 的规则继续成立。
+
 默认数据和缓存路径使用 `core-v2` 子目录，custom cache 也有独立的版本子目录。
 Store 只接收本核心的 application ID/schema version，或尚未创建表的空文件。
 打开已有文件先做只读检查，未识别的旧库或未来版本不会被升级、重建或 checkpoint。

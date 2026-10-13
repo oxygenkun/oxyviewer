@@ -1,3 +1,4 @@
+use super::projections::ResourceProjections;
 use crate::jobs::{
     CancellationToken, CoalescingPriorityQueue, EffectiveScheduleChange, OmittedIntentPolicy,
     QueuePlacement, SchedulePosition, ScopedIntentScheduler,
@@ -448,15 +449,21 @@ impl PreviewQueue {
         Ok(())
     }
 
-    pub fn new(app: CoreRuntime, library: Arc<Library>, cache: Arc<CacheManager>) -> Self {
+    pub(crate) fn new(
+        app: CoreRuntime,
+        library: Arc<Library>,
+        persistent: Arc<ResourceProjections>,
+        cache: Arc<CacheManager>,
+    ) -> Self {
         Self {
             thumbnail: RenderQueue::new(
                 app.clone(),
                 library.clone(),
+                persistent.clone(),
                 cache.clone(),
                 RenderLevel::Thumbnail,
             ),
-            loupe: RenderQueue::new(app, library, cache, RenderLevel::Full),
+            loupe: RenderQueue::new(app, library, persistent, cache, RenderLevel::Full),
         }
     }
 
@@ -579,7 +586,7 @@ impl PreviewQueue {
     }
 
     pub fn invalidate_all(&self) {
-        if let Err(error) = self.thumbnail.library.invalidate_image_projections() {
+        if let Err(error) = self.thumbnail.persistent.invalidate_image_projections() {
             eprintln!("failed to invalidate persisted image projections: {error}");
         }
         self.thumbnail.invalidate_all();
@@ -597,6 +604,7 @@ struct RenderQueue {
     lane: RenderLevel,
     projections: Arc<RwLock<HashMap<(PathBuf, RenderLevel), ImageProjection>>>,
     library: Arc<Library>,
+    persistent: Arc<ResourceProjections>,
     cache: Arc<CacheManager>,
     request_generation: Arc<AtomicU64>,
 }
@@ -605,6 +613,7 @@ impl RenderQueue {
     fn new(
         app: CoreRuntime,
         library: Arc<Library>,
+        persistent: Arc<ResourceProjections>,
         cache: Arc<CacheManager>,
         lane: RenderLevel,
     ) -> Self {
@@ -613,6 +622,7 @@ impl RenderQueue {
             lane,
             projections: Arc::new(RwLock::new(HashMap::new())),
             library,
+            persistent,
             cache,
             request_generation: Arc::new(AtomicU64::new(0)),
         };
@@ -660,7 +670,7 @@ impl RenderQueue {
             return Err("HEIF source changed during display cache lookup".into());
         }
         let sequence = self
-            .library
+            .persistent
             .next_resource_revision()
             .map_err(|error| error.to_string())?;
         Ok(Some(ImageProjection {
@@ -704,7 +714,7 @@ impl RenderQueue {
             // Descriptor replacement is an observable projection change. Use
             // the existing authoritative sequence, preserving validAt fences.
             restored = self
-                .library
+                .persistent
                 .accept_image_projection(restored)
                 .map_err(|error| error.to_string())?;
         }
@@ -836,7 +846,7 @@ impl RenderQueue {
 
         // 持久化(sqlite) Projection 命中
         if let Some(cached) = self
-            .library
+            .persistent
             .image_projection(
                 &source_revision.path,
                 source_revision.level,
@@ -954,7 +964,7 @@ impl RenderQueue {
         }
 
         drop(work);
-        let valid_at = match self.library.next_resource_revision() {
+        let valid_at = match self.persistent.next_resource_revision() {
             Ok(valid_at) => valid_at,
             Err(error) => {
                 let mut work = self.work.0.lock().expect("preview queue lock poisoned");
@@ -1345,7 +1355,7 @@ impl RenderQueue {
             error,
         };
         let projection = self
-            .library
+            .persistent
             .accept_image_projection(projection)
             .map_err(|error| error.to_string())?;
         let mut projections = self
@@ -2045,11 +2055,13 @@ mod tests {
     }
 
     fn thumbnail_queue(directory: &std::path::Path) -> RenderQueue {
+        let library = Arc::new(Library::in_memory().unwrap());
         RenderQueue {
             lane: RenderLevel::Thumbnail,
             work: Arc::new((Mutex::new(WorkState::default()), Condvar::new())),
             projections: Arc::new(RwLock::new(HashMap::new())),
-            library: Arc::new(Library::in_memory().unwrap()),
+            persistent: Arc::new(ResourceProjections::new(library.store())),
+            library,
             cache: Arc::new(
                 CacheManager::load(
                     CoreRuntime::default(),
@@ -2387,6 +2399,7 @@ mod tests {
             lane,
             work: Arc::new((Mutex::new(WorkState::default()), Condvar::new())),
             projections: Arc::new(RwLock::new(HashMap::new())),
+            persistent: Arc::new(ResourceProjections::new(library.store())),
             library: library.clone(),
             cache: cache.clone(),
             request_generation: Arc::new(AtomicU64::new(0)),
@@ -2552,6 +2565,7 @@ mod tests {
             work: Arc::new((Mutex::new(WorkState::default()), Condvar::new())),
             lane: RenderLevel::Thumbnail,
             projections: Arc::new(RwLock::new(HashMap::new())),
+            persistent: Arc::new(ResourceProjections::new(library.store())),
             library,
             cache,
             request_generation: Arc::new(AtomicU64::new(0)),
@@ -2754,7 +2768,9 @@ mod tests {
             error: None,
         };
         let library = Arc::new(Library::in_memory().unwrap());
-        let accepted = library.accept_image_projection(projection).unwrap();
+        let accepted = ResourceProjections::new(library.store())
+            .accept_image_projection(projection)
+            .unwrap();
         let mut oversized = accepted.clone();
         oversized.result.as_mut().unwrap().width = 7008;
         assert!(
@@ -2767,6 +2783,7 @@ mod tests {
             work: Arc::new((Mutex::new(WorkState::default()), Condvar::new())),
             lane: RenderLevel::Thumbnail,
             projections: Arc::new(RwLock::new(HashMap::new())),
+            persistent: Arc::new(ResourceProjections::new(library.store())),
             library,
             cache: Arc::new(
                 CacheManager::load(

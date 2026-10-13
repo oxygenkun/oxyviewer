@@ -133,6 +133,13 @@ resource leases, cancellation and stale-publication semantics.
   preflight sidecar collisions and retained earlier batch commits. Core's 275
   tests, desktop's 5 tests, contracts-feature strict Clippy, contract drift,
   frontend check, 419 frontend tests and production frontend build pass.
+- Resource projection ownership moved out of Library into resources. Shared
+  projection assembly feeds metadata, preview and browsing; its repository
+  owns statements, while projection policy owns transaction scope and ordering.
+  Existing projection acceptance/reopen/fencing tests moved with the owner;
+  independent-reader contention tests still drive browsing and indexing together.
+  Core's 275 tests and desktop's 5 tests pass, followed by all 11 projection-owner
+  tests including the added SQL ownership audit. Strict workspace Clippy passes.
 - Next: distribute browsing SQL, move remaining desktop use-case coordination,
   remove legacy person identity paths and finish ownership/docs/tooling gates,
   then complete final release/performance qualification.

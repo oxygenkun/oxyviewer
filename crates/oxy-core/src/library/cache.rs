@@ -13,7 +13,6 @@
 
 pub(crate) mod browsing;
 pub(crate) mod index;
-pub(crate) mod projections;
 
 use crate::library::{Library, LibraryError};
 

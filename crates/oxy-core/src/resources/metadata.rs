@@ -1,7 +1,7 @@
+use super::projections::ResourceProjections;
 use crate::browse::types::AssetSummary;
 use crate::files::FsCatalog;
 use crate::jobs::CoalescingPriorityQueue;
-use crate::library::Library;
 use crate::metadata::types::{
     AssetDetails, AssetDetailsResult, MetadataCapability, MetadataProvider,
 };
@@ -54,9 +54,8 @@ struct WorkState {
 pub struct MetadataQueue {
     files: Arc<FsCatalog>,
     metadata: MetadataFacade,
-    library: Arc<Library>,
-    /// A sidecar's keywords are the tag vocabulary's business, not the
-    /// library's.
+    projections: Arc<ResourceProjections>,
+    /// Tags own a sidecar's keyword vocabulary and assignment sources.
     tags: Arc<Tags>,
     work: Arc<(Mutex<WorkState>, Condvar)>,
     details: Arc<RwLock<HashMap<RequestKey, AssetDetailsResult>>>,
@@ -64,17 +63,17 @@ pub struct MetadataQueue {
 }
 
 impl MetadataQueue {
-    pub fn new(
+    pub(crate) fn new(
         app: CoreRuntime,
         files: Arc<FsCatalog>,
         metadata: MetadataFacade,
-        library: Arc<Library>,
+        projections: Arc<ResourceProjections>,
         tags: Arc<Tags>,
     ) -> Self {
         let queue = Self {
             files,
             metadata,
-            library,
+            projections,
             tags,
             work: Arc::new((Mutex::new(WorkState::default()), Condvar::new())),
             details: Arc::new(RwLock::new(HashMap::new())),
@@ -117,7 +116,7 @@ impl MetadataQueue {
                 .get_asset(&path)
                 .map_err(|error| error.to_string())?;
             let optimistic = self
-                .library
+                .projections
                 .metadata_projection_for_asset(&asset)
                 .map_err(|error| error.to_string())?;
             if let Some(projection) = &optimistic {
@@ -125,7 +124,7 @@ impl MetadataQueue {
             }
             let source_revision = metadata_source_revision(&asset);
             if let Some(cached) = self
-                .library
+                .projections
                 .metadata_projection(&asset.path, &source_revision)
                 .map_err(|error| error.to_string())?
                 && cached.status == ResourceLoadStatus::Ready
@@ -301,25 +300,25 @@ impl MetadataQueue {
         drop(work);
 
         let valid_at = self
-            .library
+            .projections
             .next_resource_revision()
             .map_err(|error| error.to_string())?;
         let observation = self.metadata.observe_asset_at(&asset, valid_at);
         if let Some(cached) = self
-            .library
+            .projections
             .metadata_projection(&asset.path, &key.source_revision)
             .map_err(|error| error.to_string())?
         {
             self.metadata.restore_projection(&observation, &cached);
         } else if let Some(cached) = self
-            .library
+            .projections
             .metadata_projection_for_asset(&asset)
             .map_err(|error| error.to_string())?
         {
             self.metadata.restore_projection(&observation, &cached);
         }
         let loading = self
-            .library
+            .projections
             .accept_metadata_projection(self.metadata.mark_observation_loading(&observation))
             .map_err(|error| error.to_string())?;
         let request = Request {
@@ -395,15 +394,16 @@ impl MetadataQueue {
                         if app.is_stopping() {
                             return;
                         }
-                        let projection = match queue.library.accept_metadata_projection(candidate) {
-                            Ok(projection) => projection,
-                            Err(error) => {
-                                eprintln!("failed to persist metadata projection: {error}");
-                                queue
-                                    .metadata
-                                    .fail_observation(&observation, error.to_string())
-                            }
-                        };
+                        let projection =
+                            match queue.projections.accept_metadata_projection(candidate) {
+                                Ok(projection) => projection,
+                                Err(error) => {
+                                    eprintln!("failed to persist metadata projection: {error}");
+                                    queue
+                                        .metadata
+                                        .fail_observation(&observation, error.to_string())
+                                }
+                            };
                         if projection.error.as_deref() != Some("invalidated") {
                             let _ = app.publish(CoreEvent::MetadataProjectionUpdated(projection));
                         }
@@ -452,7 +452,7 @@ impl MetadataQueue {
                             (Err(error), projection)
                         }
                     };
-                    let projection = match queue.library.accept_metadata_projection(candidate) {
+                    let projection = match queue.projections.accept_metadata_projection(candidate) {
                         Ok(projection) => projection,
                         Err(error) => {
                             eprintln!("failed to persist metadata projection: {error}");
@@ -605,15 +605,15 @@ mod tests {
         let runtime = CoreRuntime::default();
         let files = Arc::new(FsCatalog::default());
         let asset = files.get_asset(&path).unwrap();
-        let library = Arc::new(Library::in_memory().unwrap());
+        let store = Arc::new(crate::storage::Store::in_memory().unwrap());
+        let projections = Arc::new(ResourceProjections::new(store.clone()));
         let queue = MetadataQueue::new(
             runtime.clone(),
             files,
             MetadataFacade::new(None),
-            library.clone(),
-            Arc::new(Tags::new(library.store())),
+            projections,
+            Arc::new(Tags::new(store.clone())),
         );
-        let store = library.store();
         let writer = store.write();
         let admission_queue = queue.clone();
         let admission_runtime = runtime.clone();

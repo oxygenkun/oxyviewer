@@ -2,6 +2,8 @@ pub mod cache;
 pub mod directory_tree;
 pub mod metadata;
 pub mod preview;
+pub(crate) mod projections;
+pub(crate) mod repo;
 pub(crate) mod schema;
 pub mod types;
 

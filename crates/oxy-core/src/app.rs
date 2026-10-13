@@ -81,6 +81,9 @@ impl OxyApp {
                 .map_err(|error| error.to_string())?,
         );
         let library = Arc::new(Library::with_store(store.clone()));
+        let projections = Arc::new(crate::resources::projections::ResourceProjections::new(
+            store.clone(),
+        ));
         let tags = Arc::new(Tags::new(store.clone()));
         let people = Arc::new(People::new(store.clone()));
         let person_model_dir = paths.data_dir.join("person-models");
@@ -108,10 +111,15 @@ impl OxyApp {
             runtime.clone(),
             files.clone(),
             metadata.clone(),
-            library.clone(),
+            projections.clone(),
             tags.clone(),
         );
-        let preview_queue = PreviewQueue::new(runtime.clone(), library.clone(), cache.clone());
+        let preview_queue = PreviewQueue::new(
+            runtime.clone(),
+            library.clone(),
+            projections.clone(),
+            cache.clone(),
+        );
         let jobs = Arc::new(JobRegistry::default());
         let metadata_service = Arc::new(MetadataService {
             runtime: runtime.clone(),
@@ -144,6 +152,7 @@ impl OxyApp {
             gate: Default::default(),
         });
         let browse = Arc::new(BrowseService {
+            projections,
             files: files.clone(),
             library: library.clone(),
             metadata: metadata.clone(),
