@@ -1,5 +1,5 @@
 use crate::MediaError;
-use oxy_fs::observe_file;
+use crate::source::observe_file;
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 
@@ -29,9 +29,9 @@ impl SourceRevision {
     }
 }
 
-pub use oxy_domain::PixelDimensions;
+pub use crate::types::PixelDimensions;
 
-pub use oxy_domain::ImageOrigin;
+pub use crate::types::ImageOrigin;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -58,7 +58,7 @@ pub enum SharpeningState {
 #[serde(rename_all = "camelCase")]
 pub struct ArtifactPresentation {
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub geometry: Option<oxy_domain::PreviewGeometry>,
+    pub geometry: Option<crate::types::PreviewGeometry>,
     pub orientation: OrientationState,
     pub color: ColorState,
     pub sharpening: SharpeningState,
@@ -100,7 +100,7 @@ pub enum DetailRequirement {
 impl DetailRequirement {
     pub(crate) fn accepts(
         self,
-        dimensions: oxy_domain::DisplayDimensions,
+        dimensions: crate::types::DisplayDimensions,
         native_detail: bool,
     ) -> bool {
         let dimensions = dimensions.0;
@@ -148,7 +148,7 @@ pub struct MediaArtifact {
     pub artifact_id: String,
     pub source_revision: SourceRevision,
     pub variant: VariantIdentity,
-    pub facts: oxy_domain::ArtifactFacts,
+    pub facts: crate::types::ArtifactFacts,
     pub byte_size: u64,
     pub media_type: String,
     pub location: ArtifactLocation,
@@ -330,19 +330,19 @@ mod tests {
                 height: 2731,
             },
         );
-        candidate.facts.detail.sampling = oxy_domain::Sampling::Native;
+        candidate.facts.detail.sampling = crate::types::Sampling::Native;
         let mut bounded = request(
             &candidate,
             DetailRequirement::Display { min_long_edge: 512 },
         );
         bounded.artifact = ArtifactRequirement::BoundedThumbnail { target: "test" };
         assert_eq!(satisfies(&candidate, &bounded), None);
-        candidate.facts.display_dimensions = oxy_domain::DisplayDimensions(PixelDimensions {
+        candidate.facts.display_dimensions = crate::types::DisplayDimensions(PixelDimensions {
             width: 512,
             height: 341,
         });
         candidate.facts.encoded_dimensions =
-            oxy_domain::EncodedDimensions(candidate.facts.display_dimensions.0);
+            crate::types::EncodedDimensions(candidate.facts.display_dimensions.0);
         candidate.facts.detail.sampled_dimensions = candidate.facts.display_dimensions;
         assert_eq!(
             satisfies(&candidate, &bounded),
@@ -403,12 +403,12 @@ mod tests {
             satisfies(&candidate, &request),
             Some(Satisfaction::Satisfied)
         );
-        candidate.facts.display_dimensions = oxy_domain::DisplayDimensions(PixelDimensions {
+        candidate.facts.display_dimensions = crate::types::DisplayDimensions(PixelDimensions {
             width: 400,
             height: 600,
         });
         candidate.facts.encoded_dimensions =
-            oxy_domain::EncodedDimensions(candidate.facts.display_dimensions.0);
+            crate::types::EncodedDimensions(candidate.facts.display_dimensions.0);
         candidate.facts.detail.sampled_dimensions = candidate.facts.display_dimensions;
         assert_eq!(
             satisfies(&candidate, &request),
@@ -417,16 +417,16 @@ mod tests {
         candidate.facts.display_dimensions.0.width = 399;
         candidate.facts.encoded_dimensions.0.width = 399;
         candidate.facts.detail.sampled_dimensions.0.width = 399;
-        candidate.facts.detail.sampling = oxy_domain::Sampling::Native;
+        candidate.facts.detail.sampling = crate::types::Sampling::Native;
         assert_eq!(satisfies(&candidate, &request), Some(Satisfaction::Interim));
         request.allow_interim = false;
         assert_eq!(satisfies(&candidate, &request), None);
-        candidate.facts.display_dimensions = oxy_domain::DisplayDimensions(PixelDimensions {
+        candidate.facts.display_dimensions = crate::types::DisplayDimensions(PixelDimensions {
             width: 400,
             height: 599,
         });
         candidate.facts.encoded_dimensions =
-            oxy_domain::EncodedDimensions(candidate.facts.display_dimensions.0);
+            crate::types::EncodedDimensions(candidate.facts.display_dimensions.0);
         candidate.facts.detail.sampled_dimensions = candidate.facts.display_dimensions;
         assert_eq!(satisfies(&candidate, &request), None);
         candidate.facts.display_dimensions.0.height = 600;
@@ -466,7 +466,7 @@ mod tests {
                 height: 600,
             },
         );
-        original.facts.detail.sampling = oxy_domain::Sampling::Native;
+        original.facts.detail.sampling = crate::types::Sampling::Native;
         assert_eq!(
             satisfies(
                 &original,

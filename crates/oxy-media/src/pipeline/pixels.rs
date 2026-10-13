@@ -1,10 +1,10 @@
 use super::input::{MediaPixels, check_cancelled};
-use crate::{CacheColorState, MediaError, SourceRevision};
-use image::{DynamicImage, metadata::Orientation};
-use oxy_domain::{
+use crate::control::CancellationToken;
+use crate::types::{
     ArtifactFacts, DisplayDimensions, EncodedDimensions, ImageOperation, PixelDimensions,
 };
-use oxy_runtime::CancellationToken;
+use crate::{CacheColorState, MediaError, SourceRevision};
+use image::{DynamicImage, metadata::Orientation};
 
 pub(super) fn orient(
     image: &mut DynamicImage,

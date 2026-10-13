@@ -91,7 +91,7 @@ pub trait MediaCache: Send + Sync {
 pub struct PendingArtifact {
     pub source_revision: SourceRevision,
     pub variant: VariantIdentity,
-    pub facts: oxy_domain::ArtifactFacts,
+    pub facts: crate::types::ArtifactFacts,
     pub media_type: String,
     pub extension: String,
     pub bytes: Arc<[u8]>,
@@ -101,7 +101,7 @@ pub struct PendingArtifact {
 pub struct PendingStagedArtifact {
     pub source_revision: SourceRevision,
     pub variant: VariantIdentity,
-    pub facts: oxy_domain::ArtifactFacts,
+    pub facts: crate::types::ArtifactFacts,
     pub media_type: String,
     pub extension: String,
     pub staged_path: PathBuf,
@@ -259,7 +259,7 @@ struct Manifest {
 struct ManifestArtifact {
     artifact_id: String,
     variant: VariantIdentity,
-    facts: oxy_domain::ArtifactFacts,
+    facts: crate::types::ArtifactFacts,
     byte_size: u64,
     media_type: String,
     file_name: String,
@@ -314,56 +314,6 @@ impl DiskMediaCache {
             }
         }
         Ok(sources)
-    }
-
-    /// Cache migration after the user-record transaction has committed. Failures
-    /// are reported separately; they must not roll back a successful recovery.
-    pub fn reuse_root_relocation(
-        &self,
-        plan: &oxy_domain::RootRelocationPlan,
-        sources: &[SourceRevision],
-    ) -> oxy_domain::RootRelocationResult {
-        let sources: HashMap<_, _> = sources
-            .iter()
-            .map(|source| ((&source.canonical_path, &source.revision_id), source))
-            .collect();
-        let mut report = oxy_domain::RootRelocationResult {
-            root_path: plan.new_root.clone(),
-            linked_files: 0,
-            needs_review: 0,
-            missing_files: 0,
-            reused_artifacts: 0,
-            cache_failures: 0,
-        };
-        for entry in &plan.entries {
-            use oxy_domain::RelocationMatch;
-            match entry.status {
-                RelocationMatch::Missing => {
-                    report.missing_files += 1;
-                    report.needs_review += 1;
-                }
-                RelocationMatch::Unverified => {
-                    report.linked_files += 1;
-                    report.needs_review += 1;
-                }
-                RelocationMatch::Verified => {
-                    report.linked_files += 1;
-                    if let Some(old) = entry
-                        .old_identity_revision
-                        .as_ref()
-                        .and_then(|revision| sources.get(&(&entry.old_path, revision)))
-                    {
-                        match SourceRevision::observe(&entry.new_path)
-                            .and_then(|new| self.reuse_relocated_source(old, &new))
-                        {
-                            Ok(count) => report.reused_artifacts += count,
-                            Err(_) => report.cache_failures += 1,
-                        }
-                    }
-                }
-            }
-        }
-        report
     }
 
     /// Republish validated encoded pixels under a new source identity, without decoding.
@@ -486,7 +436,7 @@ impl DiskMediaCache {
         &self,
         path: &Path,
         expected_source: &SourceRevision,
-        expected_facts: &oxy_domain::ArtifactFacts,
+        expected_facts: &crate::types::ArtifactFacts,
     ) -> Result<Option<ArtifactLease>, MediaError> {
         let Some(source_dir) = path.parent() else {
             return Ok(None);
@@ -1589,7 +1539,7 @@ fn write_generation(root: &Path, generation: u64) -> Result<(), MediaError> {
 fn artifact_hasher(
     source_revision: &SourceRevision,
     variant: &VariantIdentity,
-    facts: &oxy_domain::ArtifactFacts,
+    facts: &crate::types::ArtifactFacts,
 ) -> Sha256 {
     let mut hasher = Sha256::new();
     hasher.update(b"oxy-media-artifact-v3\0");
@@ -1643,7 +1593,7 @@ fn validate_extension(extension: &str) -> Result<(), MediaError> {
     Ok(())
 }
 
-fn dimensions_match(encoded: (u32, u32), facts: &oxy_domain::ArtifactFacts) -> bool {
+fn dimensions_match(encoded: (u32, u32), facts: &crate::types::ArtifactFacts) -> bool {
     facts.is_consistent()
         && encoded
             == (
@@ -1913,8 +1863,8 @@ mod tests {
         ImageOrigin, MEDIA_CACHE_POLICY_REVISION, OrientationRequirement, OrientationState,
         PresentationRequirement, SharpeningState,
     };
+    use crate::types::PixelDimensions;
     use image::{DynamicImage, ImageFormat};
-    use oxy_domain::PixelDimensions;
     use std::{io::Cursor, thread};
 
     fn fixture() -> (tempfile::TempDir, SourceRevision) {
@@ -2099,7 +2049,7 @@ mod tests {
         let mut first = pending(&source, 512, generation);
         first.facts.source.origin = ImageOrigin::EmbeddedPreview;
         first.facts.source.candidate_id = "mpf:100:200".into();
-        first.facts.byte_integrity = oxy_domain::ByteIntegrity::Reencoded;
+        first.facts.byte_integrity = crate::types::ByteIntegrity::Reencoded;
         let mut second = first.clone();
         second.facts.source.candidate_id = "mpf:300:200".into();
         let planned = cache.planned_location(&first).unwrap().unwrap();
@@ -2141,7 +2091,7 @@ mod tests {
         ));
         let mut swapped = pending(&source, 512, generation);
         swapped.variant.presentation.orientation = OrientationState::Metadata;
-        swapped.facts.encoded_dimensions = oxy_domain::EncodedDimensions((256, 512).into());
+        swapped.facts.encoded_dimensions = crate::types::EncodedDimensions((256, 512).into());
         swapped.facts.exif_orientation = 6;
         // Internally consistent rotation, but its payload is really encoded as 512 x 256.
         assert!(swapped.facts.is_consistent());
@@ -2158,10 +2108,10 @@ mod tests {
         let mut derived = pending(&source, 512, cache.generation().unwrap());
         derived
             .facts
-            .resize(oxy_domain::DisplayDimensions((128, 64).into()));
+            .resize(crate::types::DisplayDimensions((128, 64).into()));
         derived
             .facts
-            .resize(oxy_domain::DisplayDimensions((512, 256).into()));
+            .resize(crate::types::DisplayDimensions((512, 256).into()));
         cache.publish(derived).unwrap();
         assert!(matches!(
             cache.lookup_or_generation(&request(&source, 512)).unwrap(),

@@ -188,9 +188,89 @@ fn plan(
     })
 }
 
+/// Reuse verified artifacts after user-record recovery has committed.
+pub fn reuse_root_artifacts(
+    cache: &oxy_media::DiskMediaCache,
+    plan: &oxy_domain::RootRelocationPlan,
+    sources: &[oxy_media::SourceRevision],
+) -> oxy_domain::RootRelocationResult {
+    let sources: std::collections::HashMap<_, _> = sources
+        .iter()
+        .map(|source| ((&source.canonical_path, &source.revision_id), source))
+        .collect();
+    let mut report = oxy_domain::RootRelocationResult {
+        root_path: plan.new_root.clone(),
+        linked_files: 0,
+        needs_review: 0,
+        missing_files: 0,
+        reused_artifacts: 0,
+        cache_failures: 0,
+    };
+    for entry in &plan.entries {
+        use oxy_domain::RelocationMatch;
+        match entry.status {
+            RelocationMatch::Missing => {
+                report.missing_files += 1;
+                report.needs_review += 1;
+            }
+            RelocationMatch::Unverified => {
+                report.linked_files += 1;
+                report.needs_review += 1;
+            }
+            RelocationMatch::Verified => {
+                report.linked_files += 1;
+                if let Some(old) = entry
+                    .old_identity_revision
+                    .as_ref()
+                    .and_then(|revision| sources.get(&(&entry.old_path, revision)))
+                {
+                    match oxy_media::SourceRevision::observe(&entry.new_path)
+                        .and_then(|new| cache.reuse_relocated_source(old, &new))
+                    {
+                        Ok(count) => report.reused_artifacts += count,
+                        Err(_) => report.cache_failures += 1,
+                    }
+                }
+            }
+        }
+    }
+    report
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn cache_failure_does_not_reclassify_a_verified_user_recovery() {
+        let temporary = tempfile::tempdir().unwrap();
+        let old_path = temporary.path().join("old.jpg");
+        std::fs::write(&old_path, b"source observation").unwrap();
+        let source = oxy_media::SourceRevision::observe(&old_path).unwrap();
+        let new_root = temporary.path().join("recovered");
+        let plan = RootRelocationPlan {
+            old_root: temporary.path().to_owned(),
+            new_root: new_root.clone(),
+            entries: vec![RelocationEntry {
+                old_path: source.canonical_path.clone(),
+                new_path: new_root.join("old.jpg"),
+                status: RelocationMatch::Verified,
+                old_identity_revision: Some(source.revision_id.clone()),
+                new_identity_revision: Some("verified-user-record".into()),
+            }],
+        };
+        let cache = oxy_media::DiskMediaCache::new(temporary.path().join("cache"), 256).unwrap();
+
+        // The destination disappears after the user-record transaction. That
+        // may prevent artifact reuse, but cannot undo confirmed recovery.
+        let report = reuse_root_artifacts(&cache, &plan, &[source]);
+        assert_eq!(report.root_path, new_root);
+        assert_eq!(report.linked_files, 1);
+        assert_eq!(report.needs_review, 0);
+        assert_eq!(report.missing_files, 0);
+        assert_eq!(report.reused_artifacts, 0);
+        assert_eq!(report.cache_failures, 1);
+    }
     use std::fs;
 
     type Fixture = (

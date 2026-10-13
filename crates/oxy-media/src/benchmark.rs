@@ -22,7 +22,7 @@ pub fn raw_backend(
             path,
             output,
             false,
-            &oxy_runtime::CancellationToken::default(),
+            &crate::control::CancellationToken::default(),
         )?;
         return Ok(serde_json::json!({
             "result": result, "totalMs": started.elapsed().as_secs_f64() * 1000.0,
@@ -34,7 +34,7 @@ pub fn raw_backend(
             let decoded = crate::backends::libraw::developed(
                 path,
                 None,
-                &oxy_runtime::CancellationToken::default(),
+                &crate::control::CancellationToken::default(),
             )?;
             (decoded.image, serde_json::json!({"nativeFull": true}))
         }
@@ -44,7 +44,7 @@ pub fn raw_backend(
         "wic-qualified" => {
             let decoded = crate::backends::windows_wic::raw::decode(
                 path,
-                &oxy_runtime::CancellationToken::default(),
+                &crate::control::CancellationToken::default(),
             )?;
             (decoded.image, serde_json::to_value(decoded.facts)?)
         }

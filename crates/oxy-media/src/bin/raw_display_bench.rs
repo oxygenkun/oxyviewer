@@ -3,9 +3,9 @@
 //! Run from the workspace root:
 //! `cargo run --release -p oxy-media --bin raw_display_bench -- tests/fixtures/DSC00529.ARW`
 
-use oxy_domain::{AssetKind, PreviewPriority, RenderLevel};
+use oxy_media::control::CancellationToken;
+use oxy_media::types::{AssetKind, PreviewPriority, RenderLevel};
 use oxy_media::{dimensions, preview};
-use oxy_runtime::CancellationToken;
 use std::{env, error::Error, path::PathBuf, time::Instant};
 
 fn main() -> Result<(), Box<dyn Error>> {

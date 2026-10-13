@@ -3,6 +3,8 @@ pub(crate) use pixels::decode_pixels;
 pub(super) use pixels::{decode_bytes, decode_with_limit};
 // Native raster delivery.
 use super::artifact::{ArtifactCache, ArtifactEncoding, register_original_resource};
+use crate::control::CancellationToken;
+use crate::types::{PreviewKind, PreviewResult, RenderLevel};
 use crate::{
     MediaError,
     cache::{
@@ -15,8 +17,6 @@ use crate::{
     policy::RASTER_THUMBNAIL,
 };
 use image::{ImageEncoder, codecs::png::PngEncoder};
-use oxy_domain::{PreviewKind, PreviewResult, RenderLevel};
-use oxy_runtime::CancellationToken;
 use std::path::Path;
 
 pub(crate) fn thumbnail(
@@ -97,12 +97,12 @@ pub(crate) fn thumbnail(
                 output.height,
                 image::ExtendedColorType::Rgba8,
             )?;
-            facts.processing.push(oxy_domain::ImageOperation::Encode {
+            facts.processing.push(crate::types::ImageOperation::Encode {
                 format: "png".into(),
             });
-            facts.encoded_dimensions = oxy_domain::EncodedDimensions(output);
+            facts.encoded_dimensions = crate::types::EncodedDimensions(output);
             facts.exif_orientation = 1;
-            facts.byte_integrity = oxy_domain::ByteIntegrity::Reencoded;
+            facts.byte_integrity = crate::types::ByteIntegrity::Reencoded;
             artifacts.publish_encoded(
                 bytes.into(),
                 facts.clone(),

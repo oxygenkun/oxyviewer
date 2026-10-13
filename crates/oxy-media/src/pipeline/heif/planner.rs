@@ -1,4 +1,5 @@
 //! HEIF candidate ordering and request policy; no file probes or decoder calls.
+use crate::types::{AccelerationKind, HeifBackendKind};
 use crate::{
     cache::{
         ArtifactRequirement, DetailRequirement, ImageOrigin, OrientationRequirement,
@@ -6,7 +7,6 @@ use crate::{
     },
     pipeline::artifact::ArtifactCache,
 };
-use oxy_domain::{AccelerationKind, HeifBackendKind};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum HeifOperation {
@@ -213,8 +213,8 @@ pub(super) struct HeifPreviewPlan {
 }
 
 impl HeifPreviewPlan {
-    pub fn for_level(level: oxy_domain::RenderLevel) -> Self {
-        use oxy_domain::RenderLevel;
+    pub fn for_level(level: crate::types::RenderLevel) -> Self {
+        use crate::types::RenderLevel;
         Self {
             max_size: match level {
                 RenderLevel::Thumbnail => 512,

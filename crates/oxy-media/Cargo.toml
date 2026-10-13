@@ -44,10 +44,7 @@ image = { workspace = true, features = ["tiff"] }
 lcms2.workspace = true
 libc.workspace = true
 libheif-rs.workspace = true
-oxy-domain = { path = "../oxy-domain" }
-oxy-fs = { path = "../oxy-fs" }
 oxy-metadata-parser = { path = "../oxy-metadata-parser", default-features = false, features = ["jpeg", "tiff", "xmp"] }
-oxy-runtime = { path = "../oxy-runtime" }
 serde.workspace = true
 serde_json.workspace = true
 sha2.workspace = true
@@ -57,6 +54,7 @@ thiserror.workspace = true
 [target.'cfg(target_os = "windows")'.dependencies]
 windows = { workspace = true, features = [
   "Win32_Foundation",
+  "Win32_Storage_FileSystem",
   "Win32_Graphics_Imaging",
   "Win32_System_Com",
   "Win32_System_Com_StructuredStorage",

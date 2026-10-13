@@ -4,6 +4,8 @@ use super::{
     artifact::{ArtifactCache, register_original_resource},
     jpeg_transform::{EncodedJpegThumbnail, normalize, plan_conversion},
 };
+use crate::control::CancellationToken;
+use crate::types::{PreviewKind, PreviewResult, RenderLevel};
 use crate::{
     MediaError,
     cache::{ArtifactPresentation, PixelDimensions, SourceRevision},
@@ -11,8 +13,6 @@ use crate::{
     formats::jpeg::{self, Header},
     policy::JPEG_THUMBNAIL,
 };
-use oxy_domain::{PreviewKind, PreviewResult, RenderLevel};
-use oxy_runtime::CancellationToken;
 use std::{
     fs::File,
     io::{BufReader, Cursor, Read, Seek, SeekFrom},
@@ -109,7 +109,7 @@ pub(crate) fn thumbnail(
                             generation,
                             &request,
                         )?;
-                        result.diagnostics = Some(oxy_domain::PreviewDiagnostics {
+                        result.diagnostics = Some(crate::types::PreviewDiagnostics {
                             backend: Some("jpeg-mpf-thumbnail".into()),
                             source_read_bytes: Some(reader.get_ref().bytes),
                             source_read_calls: Some(reader.get_ref().calls),
@@ -148,7 +148,7 @@ pub(crate) fn thumbnail(
                 generation,
                 &request,
             )?;
-            result.diagnostics = Some(oxy_domain::PreviewDiagnostics {
+            result.diagnostics = Some(crate::types::PreviewDiagnostics {
                 backend: Some("jpeg-primary-thumbnail".into()),
                 source_read_bytes: Some(reader.get_ref().bytes),
                 source_read_calls: Some(reader.get_ref().calls),
@@ -191,12 +191,12 @@ fn thumbnail_presentation(
         let display = encoded_source
             .to_display(primary.exif.orientation.unwrap_or(1) as u8)
             .0;
-        result.geometry = Some(oxy_domain::PreviewGeometry {
-            display_size: oxy_domain::PreviewDisplaySize {
+        result.geometry = Some(crate::types::PreviewGeometry {
+            display_size: crate::types::PreviewDisplaySize {
                 width: display.width,
                 height: display.height,
             },
-            content_rect: oxy_domain::PreviewContentRect {
+            content_rect: crate::types::PreviewContentRect {
                 x: 0,
                 y: 0,
                 width: encoded.width,
@@ -332,7 +332,7 @@ mod tests {
     #[test]
     fn thumbnail_keeps_primary_display_geometry_separate_from_rounded_mpf_pixels() {
         let header = Header {
-            encoded_dimensions: Some(oxy_domain::EncodedDimensions(PixelDimensions {
+            encoded_dimensions: Some(crate::types::EncodedDimensions(PixelDimensions {
                 width: 7008,
                 height: 4672,
             })),
@@ -391,8 +391,8 @@ mod tests {
             &path,
             directory.path(),
             RenderLevel::Full,
-            oxy_domain::PreviewPriority::Loupe,
-            oxy_domain::AssetKind::Jpeg,
+            crate::types::PreviewPriority::Loupe,
+            crate::types::AssetKind::Jpeg,
             &cancellation,
         )
         .unwrap();

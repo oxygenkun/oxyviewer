@@ -152,7 +152,7 @@ fn embedded_is_eligible_for(
         && primary.exif.orientation.is_some()
         && request
             .detail
-            .accepts(oxy_domain::DisplayDimensions(candidate_dimensions), false)
+            .accepts(crate::types::DisplayDimensions(candidate_dimensions), false)
         && ratio_reference > 0
         && ratio_difference * 1000 <= ratio_reference * 5
 }
@@ -162,7 +162,7 @@ mod tests {
     use super::*;
     fn header(width: u32, height: u32) -> Header {
         Header {
-            encoded_dimensions: Some(oxy_domain::EncodedDimensions(PixelDimensions {
+            encoded_dimensions: Some(crate::types::EncodedDimensions(PixelDimensions {
                 width,
                 height,
             })),

@@ -76,7 +76,7 @@ pub fn dimensions(path: &Path) -> Result<crate::ImageDimensions, String> {
 pub fn embedded(
     path: &Path,
     max_size: u32,
-) -> Result<(Preview, oxy_domain::DisplayDimensions), String> {
+) -> Result<(Preview, crate::types::DisplayDimensions), String> {
     let (image, reference) = embedded_preview(path, max_size)?;
     if image.image_type() == LIBRAW_IMAGE_JPEG {
         Ok((Preview::EmbeddedJpeg(image.data().to_vec()), reference))
@@ -87,20 +87,20 @@ pub fn embedded(
         use sha2::{Digest, Sha256};
         let candidate_id = format!("libraw-bitmap:{:x}", Sha256::digest(image.data()));
         let image = image.decode()?;
-        let source = oxy_domain::DisplayDimensions((image.width(), image.height()).into());
+        let source = crate::types::DisplayDimensions((image.width(), image.height()).into());
         let mut facts = crate::media_source::source_facts(
-            oxy_domain::ImageOrigin::EmbeddedPreview,
+            crate::types::ImageOrigin::EmbeddedPreview,
             candidate_id,
-            oxy_domain::EncodedDimensions(source.0),
+            crate::types::EncodedDimensions(source.0),
             1,
             source,
         );
         facts.source.encoded_dimensions = None;
         let image = fit(image, max_size);
-        facts.resize(oxy_domain::DisplayDimensions(
+        facts.resize(crate::types::DisplayDimensions(
             (image.width(), image.height()).into(),
         ));
-        facts.encoded_dimensions = oxy_domain::EncodedDimensions(facts.display_dimensions.0);
+        facts.encoded_dimensions = crate::types::EncodedDimensions(facts.display_dimensions.0);
         Ok((
             Preview::EmbeddedImage(crate::media_source::DecodedImage { image, facts }),
             reference,
@@ -111,10 +111,10 @@ pub fn embedded(
 pub fn developed(
     path: &Path,
     max_size: Option<u32>,
-    cancellation: &oxy_runtime::CancellationToken,
+    cancellation: &crate::control::CancellationToken,
 ) -> Result<crate::media_source::DecodedImage, String> {
     let (image, source_dimensions) = developed_preview(path, max_size.is_none(), cancellation)?;
-    let developed = oxy_domain::DisplayDimensions((image.width(), image.height()).into());
+    let developed = crate::types::DisplayDimensions((image.width(), image.height()).into());
     // Full development establishes the actual active-area canvas. Header estimates
     // may differ slightly and must not be reported as a resize that never happened.
     let reference = if max_size.is_none() {
@@ -123,43 +123,45 @@ pub fn developed(
         source_dimensions
     };
     let mut facts = crate::media_source::source_facts(
-        oxy_domain::ImageOrigin::RawSensor,
+        crate::types::ImageOrigin::RawSensor,
         "raw-sensor".into(),
-        oxy_domain::EncodedDimensions(reference.0),
+        crate::types::EncodedDimensions(reference.0),
         1,
         reference,
     );
     facts.source.encoded_dimensions = None;
-    facts.processing.push(oxy_domain::ImageOperation::Develop {
-        backend: "LibRaw".into(),
-    });
     facts
         .processing
-        .push(oxy_domain::ImageOperation::ColorConvert {
+        .push(crate::types::ImageOperation::Develop {
+            backend: "LibRaw".into(),
+        });
+    facts
+        .processing
+        .push(crate::types::ImageOperation::ColorConvert {
             target: "sRGB".into(),
         });
     facts.display_dimensions = developed;
     facts.detail.sampled_dimensions = developed;
     if max_size.is_some() {
-        facts.detail.sampling = oxy_domain::Sampling::Reduced;
+        facts.detail.sampling = crate::types::Sampling::Reduced;
     }
     let image = match max_size {
         Some(size) => fit(image, size),
         None => image,
     };
-    facts.resize(oxy_domain::DisplayDimensions(
+    facts.resize(crate::types::DisplayDimensions(
         (image.width(), image.height()).into(),
     ));
-    facts.encoded_dimensions = oxy_domain::EncodedDimensions(facts.display_dimensions.0);
+    facts.encoded_dimensions = crate::types::EncodedDimensions(facts.display_dimensions.0);
     Ok(crate::media_source::DecodedImage { image, facts })
 }
 
 fn embedded_preview(
     path: &Path,
     max_size: u32,
-) -> Result<(ProcessedImage, oxy_domain::DisplayDimensions), String> {
+) -> Result<(ProcessedImage, crate::types::DisplayDimensions), String> {
     let raw = Processor::open(path)?;
-    let reference = oxy_domain::DisplayDimensions(raw.dimensions()?);
+    let reference = crate::types::DisplayDimensions(raw.dimensions()?);
     embedded::resolve_unknown_dimensions(path, &raw)?;
     check(unsafe { oxy_libraw_unpack_sized_thumb(raw.inner, max_size) })?;
     Ok((ProcessedImage::thumbnail(&raw)?, reference))
@@ -172,15 +174,15 @@ extern "C" fn development_cancelled(
     _expected: c_int,
 ) -> c_int {
     // LibRaw invokes this synchronously; the borrowed token outlives Processor.
-    let cancellation = unsafe { &*context.cast::<oxy_runtime::CancellationToken>() };
+    let cancellation = unsafe { &*context.cast::<crate::control::CancellationToken>() };
     c_int::from(cancellation.is_cancelled())
 }
 
 fn developed_preview(
     path: &Path,
     full: bool,
-    cancellation: &oxy_runtime::CancellationToken,
-) -> Result<(DynamicImage, oxy_domain::DisplayDimensions), String> {
+    cancellation: &crate::control::CancellationToken,
+) -> Result<(DynamicImage, crate::types::DisplayDimensions), String> {
     if cancellation.is_cancelled() {
         return Err("RAW development cancelled".into());
     }
@@ -199,9 +201,9 @@ fn developed_preview(
     // adjust_sizes_info_only advances LibRaw's processing state and cannot run
     // on the instance that will subsequently unpack/develop sensor data.
     let reference = if full {
-        oxy_domain::DisplayDimensions((image.width(), image.height()).into())
+        crate::types::DisplayDimensions((image.width(), image.height()).into())
     } else {
-        oxy_domain::DisplayDimensions(dimensions(path)?)
+        crate::types::DisplayDimensions(dimensions(path)?)
     };
     Ok((image, reference))
 }
@@ -216,7 +218,7 @@ fn fit(image: DynamicImage, max_size: u32) -> DynamicImage {
 
 struct Processor<'c> {
     inner: *mut LibRawData,
-    _cancellation: std::marker::PhantomData<&'c oxy_runtime::CancellationToken>,
+    _cancellation: std::marker::PhantomData<&'c crate::control::CancellationToken>,
 }
 
 impl<'c> Processor<'c> {
@@ -239,7 +241,7 @@ impl<'c> Processor<'c> {
 
     fn open_cancellable(
         path: &Path,
-        cancellation: Option<&'c oxy_runtime::CancellationToken>,
+        cancellation: Option<&'c crate::control::CancellationToken>,
     ) -> Result<Self, String> {
         let inner = unsafe { libraw_init(LIBRAW_OPTIONS_NO_DATAERR_CALLBACK) };
         if inner.is_null() {
@@ -383,7 +385,7 @@ mod cancellation_tests {
 
     #[test]
     fn progress_callback_observes_cancellation_and_prevents_new_development() {
-        let token = oxy_runtime::CancellationToken::default();
+        let token = crate::control::CancellationToken::default();
         let context = std::ptr::from_ref(&token).cast_mut().cast();
         assert_eq!(development_cancelled(context, 0, 0, 1), 0);
         token.cancel();

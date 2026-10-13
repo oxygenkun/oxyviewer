@@ -1,3 +1,7 @@
+pub mod control;
+pub mod source;
+pub mod types;
+
 #[cfg(not(any(target_os = "windows", target_os = "macos", target_os = "linux")))]
 compile_error!("oxy-media supports only Windows, macOS, and Linux");
 

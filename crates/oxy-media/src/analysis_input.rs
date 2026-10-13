@@ -1,12 +1,12 @@
 //! Model contract adapter. All media selection and preparation belong to pipeline.
 #[cfg(test)]
 mod tests;
+use crate::control::CancellationToken;
 use crate::pipeline::input::{MediaPixels, MediaService};
+pub use crate::types::AnalysisRequirement;
+use crate::types::{ArtifactFacts, AssetKind};
 use crate::{CacheColorState, MediaError, MediaRequest, SourceRevision};
 use image::RgbImage;
-pub use oxy_domain::AnalysisRequirement;
-use oxy_domain::{ArtifactFacts, AssetKind};
-use oxy_runtime::CancellationToken;
 use std::path::Path;
 #[derive(Debug)]
 pub struct AnalysisInput {

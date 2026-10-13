@@ -2550,6 +2550,7 @@ checksum = "cf211e3776eea6aec988552fa118dd746d70e1b1e5e244058d1c98015f3e5872"
 name = "oxy-domain"
 version = "0.1.5"
 dependencies = [
+ "oxy-media",
  "serde",
  "serde_json",
 ]
@@ -2560,6 +2561,7 @@ version = "0.1.5"
 dependencies = [
  "libc",
  "oxy-domain",
+ "oxy-media",
  "parking_lot",
  "sha2",
  "tempfile",
@@ -2574,6 +2576,7 @@ version = "0.1.5"
 dependencies = [
  "oxy-domain",
  "oxy-fs",
+ "oxy-media",
  "oxy-runtime",
  "oxy-store",
  "parking_lot",
@@ -2595,10 +2598,7 @@ dependencies = [
  "lcms2",
  "libc",
  "libheif-rs",
- "oxy-domain",
- "oxy-fs",
  "oxy-metadata-parser",
- "oxy-runtime",
  "serde",
  "serde_json",
  "sha2",
@@ -2655,6 +2655,7 @@ name = "oxy-runtime"
 version = "0.1.5"
 dependencies = [
  "oxy-domain",
+ "oxy-media",
  "parking_lot",
 ]
 

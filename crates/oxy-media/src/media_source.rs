@@ -1,25 +1,25 @@
+use crate::types::{AssetKind, PreviewKind, PreviewResult, RenderLevel};
 use crate::{MediaError, backends::libheif, pipeline::raw};
 use image::ImageReader;
-use oxy_domain::{AssetKind, PreviewKind, PreviewResult, RenderLevel};
 use std::{
     fs::File,
     io::{BufReader, Read, Seek, SeekFrom},
     path::{Path, PathBuf},
 };
 
-pub use oxy_domain::{DisplayDimensions, EncodedDimensions, PixelDimensions};
+pub use crate::types::{DisplayDimensions, EncodedDimensions, PixelDimensions};
 
 // Public source probes report pixel extents; callers must interpret format orientation.
 pub type ImageDimensions = PixelDimensions;
 
 pub(crate) fn source_facts(
-    origin: oxy_domain::ImageOrigin,
+    origin: crate::types::ImageOrigin,
     candidate_id: String,
     encoded_dimensions: EncodedDimensions,
     exif_orientation: u8,
     reference_dimensions: DisplayDimensions,
-) -> oxy_domain::ArtifactFacts {
-    use oxy_domain::{
+) -> crate::types::ArtifactFacts {
+    use crate::types::{
         ArtifactFacts, ByteIntegrity, DetailCoverage, PreviewContentRect, Sampling, SourceImage,
     };
     let display_dimensions = encoded_dimensions.to_display(exif_orientation);
@@ -53,7 +53,7 @@ pub(crate) fn source_facts(
 
 /// Bind newly produced facts once; derivations must retain the same source revision.
 pub(crate) fn bind_facts(
-    facts: &mut oxy_domain::ArtifactFacts,
+    facts: &mut crate::types::ArtifactFacts,
     source: &crate::cache::SourceRevision,
 ) -> Result<(), MediaError> {
     if !facts.source.revision_id.is_empty() && facts.source.revision_id != source.revision_id {
@@ -68,10 +68,10 @@ pub(crate) fn bind_facts(
 
 #[cfg(test)]
 pub(crate) fn test_facts(
-    origin: oxy_domain::ImageOrigin,
+    origin: crate::types::ImageOrigin,
     dimensions: PixelDimensions,
     native: bool,
-) -> oxy_domain::ArtifactFacts {
+) -> crate::types::ArtifactFacts {
     let mut facts = source_facts(
         origin,
         "test-source-image".into(),
@@ -80,7 +80,7 @@ pub(crate) fn test_facts(
         DisplayDimensions(dimensions),
     );
     if !native {
-        facts.detail.sampling = oxy_domain::Sampling::Reduced;
+        facts.detail.sampling = crate::types::Sampling::Reduced;
     }
     facts
 }
@@ -88,17 +88,17 @@ pub(crate) fn test_facts(
 #[derive(Debug)]
 pub(crate) struct DecodedImage {
     pub image: image::DynamicImage,
-    pub facts: oxy_domain::ArtifactFacts,
+    pub facts: crate::types::ArtifactFacts,
 }
 
 pub(crate) fn decoded_facts(
-    origin: oxy_domain::ImageOrigin,
+    origin: crate::types::ImageOrigin,
     candidate_id: String,
     source: DisplayDimensions,
     reference: DisplayDimensions,
     output: DisplayDimensions,
     backend: &str,
-) -> oxy_domain::ArtifactFacts {
+) -> crate::types::ArtifactFacts {
     let mut facts = source_facts(
         origin,
         candidate_id,
@@ -108,7 +108,7 @@ pub(crate) fn decoded_facts(
     );
     // Container decoders report oriented pixels, not the pre-transform storage extent.
     facts.source.encoded_dimensions = None;
-    facts.processing.push(oxy_domain::ImageOperation::Decode {
+    facts.processing.push(crate::types::ImageOperation::Decode {
         backend: backend.into(),
     });
     facts.resize(output);
@@ -149,13 +149,13 @@ pub(crate) fn preview_result(
     let orientation = decoder.orientation()?.to_exif();
     let display = encoded.to_display(orientation);
     let mut facts = source_facts(
-        oxy_domain::ImageOrigin::PrimaryImage,
+        crate::types::ImageOrigin::PrimaryImage,
         "primary".into(),
         encoded,
         orientation,
         display,
     );
-    facts.byte_integrity = oxy_domain::ByteIntegrity::SourceFile;
+    facts.byte_integrity = crate::types::ByteIntegrity::SourceFile;
     facts.source.revision_id = crate::cache::SourceRevision::observe(&path)?.revision_id;
     let size = display.0;
     Ok(PreviewResult {
@@ -189,7 +189,7 @@ pub(crate) fn has_complete_jpeg_markers(path: &Path) -> Result<bool, std::io::Er
 #[cfg(test)]
 mod tests {
     use super::*;
-    use oxy_domain::{ImageOperation, ImageOrigin};
+    use crate::types::{ImageOperation, ImageOrigin};
 
     #[test]
     fn coordinate_frames_validate_all_exif_orientations() {

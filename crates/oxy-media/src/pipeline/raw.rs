@@ -9,6 +9,8 @@ use planner::{
 
 #[cfg(target_os = "macos")]
 use crate::backends::{apple_core_image, apple_image_io};
+use crate::control::CancellationToken;
+use crate::types::{PreviewResult, RenderLevel};
 use crate::{
     ImageDimensions, MediaError,
     backends::libraw,
@@ -28,8 +30,6 @@ use crate::{
 #[cfg(test)]
 use image::metadata::Orientation;
 use image::{ImageDecoder, ImageReader};
-use oxy_domain::{PreviewResult, RenderLevel};
-use oxy_runtime::CancellationToken;
 use std::{
     collections::VecDeque,
     io::Cursor,
@@ -116,7 +116,8 @@ pub(crate) fn preview_with_priority(
 
     let embedded = produce_embedded(path, &artifacts, max_size, level, priority, cancellation);
     if let Ok(result) = &embedded
-        && (allow_interim || result.satisfaction == Some(oxy_domain::MediaSatisfaction::Satisfied))
+        && (allow_interim
+            || result.satisfaction == Some(crate::types::MediaSatisfaction::Satisfied))
     {
         return Ok(result.clone());
     }
@@ -199,14 +200,14 @@ pub(crate) fn full_with_interim(
         )
     {
         if !retry_development
-            && embedded.satisfaction == Some(oxy_domain::MediaSatisfaction::Satisfied)
+            && embedded.satisfaction == Some(crate::types::MediaSatisfaction::Satisfied)
         {
             return Ok(embedded);
         }
         if allow_interim {
             // Loupe already retains its thumbnail. Publish the largest camera
             // JPEG before the queue starts WIC/LibRaw's terminal upgrade.
-            embedded.satisfaction = Some(oxy_domain::MediaSatisfaction::Interim);
+            embedded.satisfaction = Some(crate::types::MediaSatisfaction::Interim);
             return Ok(embedded);
         }
     }
@@ -349,16 +350,16 @@ fn produce_embedded_with_request(
             let destination = artifacts.temporary_output(".jpg")?;
             write_jpeg_atomically(&decoded.image, &destination, 90, CAMERA_JPEG)?;
             let mut facts = decoded.facts;
-            facts.processing.push(oxy_domain::ImageOperation::Encode {
+            facts.processing.push(crate::types::ImageOperation::Encode {
                 format: "jpeg".into(),
             });
-            facts.byte_integrity = oxy_domain::ByteIntegrity::Reencoded;
+            facts.byte_integrity = crate::types::ByteIntegrity::Reencoded;
             (Arc::from(std::fs::read(&destination)?), facts)
         }
     };
     facts.source.origin = ImageOrigin::EmbeddedPreview;
     facts.detail.reference_dimensions = reference;
-    facts.detail.region = oxy_domain::PreviewContentRect {
+    facts.detail.region = crate::types::PreviewContentRect {
         x: 0,
         y: 0,
         width: reference.0.width,
@@ -416,13 +417,13 @@ fn record_embedded_extraction_failure(revision_id: &str) {
 
 fn camera_jpeg_facts(
     bytes: &[u8],
-    reference: oxy_domain::DisplayDimensions,
-) -> Result<oxy_domain::ArtifactFacts, MediaError> {
+    reference: crate::types::DisplayDimensions,
+) -> Result<crate::types::ArtifactFacts, MediaError> {
     use sha2::{Digest, Sha256};
     let mut decoder = ImageReader::new(Cursor::new(bytes))
         .with_guessed_format()?
         .into_decoder()?;
-    let encoded = oxy_domain::EncodedDimensions(decoder.dimensions().into());
+    let encoded = crate::types::EncodedDimensions(decoder.dimensions().into());
     let orientation = decoder.orientation()?.to_exif();
     Ok(crate::media_source::source_facts(
         ImageOrigin::EmbeddedPreview,
@@ -436,7 +437,7 @@ fn camera_jpeg_facts(
 fn extract_embedded(
     path: &Path,
     max_size: u32,
-) -> Result<(libraw::Preview, oxy_domain::DisplayDimensions), MediaError> {
+) -> Result<(libraw::Preview, crate::types::DisplayDimensions), MediaError> {
     libraw::embedded(path, max_size).map_err(|message| MediaError::LibRaw {
         path: path.into(),
         message,
@@ -461,13 +462,13 @@ fn decode_backend(
         #[cfg(target_os = "macos")]
         RawBackend::AppleImageIo => {
             let image = apple_image_io::decode_rgba8(path, max_size.unwrap_or(0))?;
-            let reference = oxy_domain::DisplayDimensions(dimensions(path)?);
+            let reference = crate::types::DisplayDimensions(dimensions(path)?);
             let facts = crate::media_source::decoded_facts(
                 ImageOrigin::RawSensor,
                 "raw-sensor".into(),
                 reference,
                 reference,
-                oxy_domain::DisplayDimensions((image.width(), image.height()).into()),
+                crate::types::DisplayDimensions((image.width(), image.height()).into()),
                 "Apple ImageIO",
             );
             Ok(crate::media_source::DecodedImage { image, facts })
@@ -555,30 +556,32 @@ fn render_developed(
                     facts
                 } else {
                     let dimensions = image::image_dimensions(&destination)?.into();
-                    let reference = oxy_domain::DisplayDimensions(self::dimensions(path)?);
+                    let reference = crate::types::DisplayDimensions(self::dimensions(path)?);
                     let mut facts = crate::media_source::source_facts(
                         ImageOrigin::RawSensor,
                         "raw-sensor".into(),
-                        oxy_domain::EncodedDimensions(reference.0),
+                        crate::types::EncodedDimensions(reference.0),
                         1,
                         reference,
                     );
                     facts.source.encoded_dimensions = None;
-                    facts.processing.push(oxy_domain::ImageOperation::Develop {
-                        backend: format!("{backend:?}"),
-                    });
                     facts
                         .processing
-                        .push(oxy_domain::ImageOperation::ColorConvert {
+                        .push(crate::types::ImageOperation::Develop {
+                            backend: format!("{backend:?}"),
+                        });
+                    facts
+                        .processing
+                        .push(crate::types::ImageOperation::ColorConvert {
                             target: "sRGB".into(),
                         });
-                    facts.resize(oxy_domain::DisplayDimensions(dimensions));
-                    facts.processing.push(oxy_domain::ImageOperation::Encode {
+                    facts.resize(crate::types::DisplayDimensions(dimensions));
+                    facts.processing.push(crate::types::ImageOperation::Encode {
                         format: "jpeg".into(),
                     });
-                    facts.encoded_dimensions = oxy_domain::EncodedDimensions(dimensions);
+                    facts.encoded_dimensions = crate::types::EncodedDimensions(dimensions);
                     facts.exif_orientation = 1;
-                    facts.byte_integrity = oxy_domain::ByteIntegrity::Reencoded;
+                    facts.byte_integrity = crate::types::ByteIntegrity::Reencoded;
 
                     facts
                 };
@@ -604,7 +607,7 @@ fn render_developed(
                     generation,
                     request,
                 )?;
-                result.diagnostics = Some(oxy_domain::PreviewDiagnostics {
+                result.diagnostics = Some(crate::types::PreviewDiagnostics {
                     backend: Some(format!("{backend:?}")),
                     total_ms: Some(started.elapsed().as_millis() as u64),
                     fallback_reason: (!errors.is_empty()).then(|| errors.join("; ")),
@@ -627,7 +630,7 @@ fn encode_developed(
     destination: &Path,
     quality: u8,
     cancellation: &CancellationToken,
-) -> Result<oxy_domain::ArtifactFacts, MediaError> {
+) -> Result<crate::types::ArtifactFacts, MediaError> {
     let mut facts = decoded.facts;
     if cancellation.is_cancelled() {
         return Err(MediaError::Cancelled);
@@ -637,10 +640,10 @@ fn encode_developed(
     if cancellation.is_cancelled() {
         return Err(MediaError::Cancelled);
     }
-    facts.processing.push(oxy_domain::ImageOperation::Encode {
+    facts.processing.push(crate::types::ImageOperation::Encode {
         format: "jpeg".into(),
     });
-    facts.byte_integrity = oxy_domain::ByteIntegrity::Reencoded;
+    facts.byte_integrity = crate::types::ByteIntegrity::Reencoded;
     Ok(facts)
 }
 
@@ -661,7 +664,8 @@ fn oriented_dimensions(dimensions: (u32, u32), orientation: Orientation) -> (u32
 
 #[cfg(test)]
 pub(crate) fn covers_source(candidate: ImageDimensions, source: ImageDimensions) -> bool {
-    planner::camera_preview_detail(source).accepts(oxy_domain::DisplayDimensions(candidate), false)
+    planner::camera_preview_detail(source)
+        .accepts(crate::types::DisplayDimensions(candidate), false)
 }
 
 #[cfg(test)]
@@ -688,7 +692,7 @@ mod tests {
         );
         assert_eq!(
             facts.processing,
-            vec![oxy_domain::ImageOperation::Encode {
+            vec![crate::types::ImageOperation::Encode {
                 format: "jpeg".into()
             }]
         );

@@ -1,7 +1,7 @@
 //! IDCT reduction using the same pinned libjpeg backend as coefficient stitching.
+use crate::control::CancellationToken;
 use crate::{MediaError, media_source::PixelDimensions};
 use image::{DynamicImage, RgbImage};
-use oxy_runtime::CancellationToken;
 use std::ffi::{c_char, c_int, c_ulong, c_void};
 
 unsafe extern "C" {
@@ -24,13 +24,13 @@ unsafe extern "C" {
 
 #[derive(Clone, Copy, Debug)]
 pub(crate) struct DecodePlan {
-    source: oxy_domain::EncodedDimensions,
+    source: crate::types::EncodedDimensions,
     denominator: u32,
-    pub output: oxy_domain::EncodedDimensions,
+    pub output: crate::types::EncodedDimensions,
 }
 
 pub(crate) fn plan_decode(
-    encoded_dimensions: oxy_domain::EncodedDimensions,
+    encoded_dimensions: crate::types::EncodedDimensions,
     target_edge: u32,
 ) -> DecodePlan {
     let dimensions = encoded_dimensions.0;
@@ -43,7 +43,7 @@ pub(crate) fn plan_decode(
     DecodePlan {
         source: encoded_dimensions,
         denominator,
-        output: oxy_domain::EncodedDimensions(PixelDimensions {
+        output: crate::types::EncodedDimensions(PixelDimensions {
             width: dimensions.width.div_ceil(denominator),
             height: dimensions.height.div_ceil(denominator),
         }),
@@ -125,7 +125,7 @@ mod tests {
             .encode_image(&DynamicImage::new_rgb8(source.width, source.height))
             .unwrap();
         for (target, denominator) in [(1600, 1), (800, 2), (512, 2), (200, 8)] {
-            let plan = plan_decode(oxy_domain::EncodedDimensions(source), target);
+            let plan = plan_decode(crate::types::EncodedDimensions(source), target);
             assert_eq!(plan.denominator, denominator);
             let decoded = decode_scaled(&bytes, plan, &CancellationToken::default()).unwrap();
             assert_eq!(
@@ -142,7 +142,7 @@ mod tests {
             .encode_image(&DynamicImage::new_rgb8(32, 24))
             .unwrap();
         let plan = plan_decode(
-            oxy_domain::EncodedDimensions(PixelDimensions {
+            crate::types::EncodedDimensions(PixelDimensions {
                 width: 64,
                 height: 48,
             }),

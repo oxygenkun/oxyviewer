@@ -1,9 +1,9 @@
 //! Consumer-independent qualification for decoded frames and cache candidates.
+use crate::types::{ArtifactFacts, PixelDimensions};
 use crate::{
     ArtifactPresentation, ColorRequirement, DetailRequirement, OrientationRequirement,
     PresentationRequirement, Satisfaction, SharpeningState,
 };
-use oxy_domain::{ArtifactFacts, PixelDimensions};
 
 #[derive(Clone, Copy, Debug)]
 pub struct MediaRequest {

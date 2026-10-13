@@ -1,8 +1,8 @@
 use super::*;
 use crate::SharpeningState;
 use crate::pipeline::input::qualified;
+use crate::types::{DisplayDimensions, EncodedDimensions, PixelDimensions};
 use crate::{DiskMediaCache, MEDIA_CACHE_POLICY_REVISION, MediaCache};
-use oxy_domain::{DisplayDimensions, EncodedDimensions, PixelDimensions};
 fn cached(
     cache: &dyn MediaCache,
     source: &SourceRevision,
@@ -60,8 +60,8 @@ fn raster_display_and_pixel_delivery_preserve_identical_alpha_and_orientation() 
         let display = crate::preview(
             &path,
             directory.path(),
-            oxy_domain::RenderLevel::Thumbnail,
-            oxy_domain::PreviewPriority::Visible,
+            crate::types::RenderLevel::Thumbnail,
+            crate::types::PreviewPriority::Visible,
             kind,
             &CancellationToken::default(),
         )
@@ -154,7 +154,7 @@ fn embedded_detail_requires_both_axes_and_complete_coverage() {
         height: 4000,
     };
     let mut facts = crate::media_source::source_facts(
-        oxy_domain::ImageOrigin::EmbeddedPreview,
+        crate::types::ImageOrigin::EmbeddedPreview,
         "camera".into(),
         EncodedDimensions((1600, 120).into()),
         1,
@@ -162,7 +162,7 @@ fn embedded_detail_requires_both_axes_and_complete_coverage() {
     );
     assert!(!qualified(&facts, reference, 1600));
     facts = crate::media_source::source_facts(
-        oxy_domain::ImageOrigin::EmbeddedPreview,
+        crate::types::ImageOrigin::EmbeddedPreview,
         "camera".into(),
         EncodedDimensions((1600, 1067).into()),
         1,
@@ -172,7 +172,7 @@ fn embedded_detail_requires_both_axes_and_complete_coverage() {
     // Camera crop versus sensor border must not force CR3 development.
     assert!(qualified(&facts, (6022, 4024).into(), 1600));
     let padded = crate::media_source::source_facts(
-        oxy_domain::ImageOrigin::EmbeddedPreview,
+        crate::types::ImageOrigin::EmbeddedPreview,
         "hif-aux".into(),
         EncodedDimensions((1046, 1600).into()),
         1,
@@ -185,8 +185,8 @@ fn embedded_detail_requires_both_axes_and_complete_coverage() {
 
 #[test]
 fn cache_reuses_only_qualified_unsharpened_current_artifacts() {
+    use crate::types::ImageOrigin;
     use crate::{ArtifactPresentation, OrientationState, PendingArtifact, VariantIdentity};
-    use oxy_domain::ImageOrigin;
     let directory = tempfile::tempdir().unwrap();
     let path = directory.path().join("source.raw");
     std::fs::write(&path, b"source identity").unwrap();
@@ -276,7 +276,7 @@ fn hif_frame_selection_matches_display_and_preserves_primary_pixels() {
     assert_eq!(input.pixels, frame.image.to_rgb8());
     assert_eq!(
         input.facts.source.origin,
-        oxy_domain::ImageOrigin::PrimaryImage
+        crate::types::ImageOrigin::PrimaryImage
     );
     assert!(
         input
@@ -284,14 +284,14 @@ fn hif_frame_selection_matches_display_and_preserves_primary_pixels() {
             .processing
             .iter()
             .any(|operation| matches!(operation,
-        oxy_domain::ImageOperation::Decode { backend } if backend == "FFmpeg"))
+        crate::types::ImageOperation::Decode { backend } if backend == "FFmpeg"))
     );
     assert!(
         !input
             .facts
             .processing
             .iter()
-            .any(|operation| matches!(operation, oxy_domain::ImageOperation::Encode { .. }))
+            .any(|operation| matches!(operation, crate::types::ImageOperation::Encode { .. }))
     );
 }
 
@@ -353,8 +353,8 @@ fn real_format_inputs() {
                 crate::preview(
                     &path,
                     cache.path(),
-                    oxy_domain::RenderLevel::Preview,
-                    oxy_domain::PreviewPriority::Preload,
+                    crate::types::RenderLevel::Preview,
+                    crate::types::PreviewPriority::Preload,
                     kind,
                     &token,
                 )

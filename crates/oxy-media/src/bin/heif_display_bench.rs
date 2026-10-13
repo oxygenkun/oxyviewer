@@ -3,9 +3,9 @@
 //! Run from the workspace root:
 //! `cargo run --release -p oxy-media --bin heif_display_bench -- tests/fixtures/DSC00449.HIF 5 all`
 
-use oxy_domain::{AssetKind, PreviewPriority, RenderLevel};
+use oxy_media::control::CancellationToken;
+use oxy_media::types::{AssetKind, PreviewPriority, RenderLevel};
 use oxy_media::{HeifDecodeService, HeifTileData, preview};
-use oxy_runtime::CancellationToken;
 use std::{
     env,
     error::Error,

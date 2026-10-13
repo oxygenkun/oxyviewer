@@ -1,5 +1,8 @@
 //! Helpers shared by preview artifact pipelines.
 
+#[cfg(test)]
+use crate::types::PreviewKind;
+use crate::types::{PreviewResult, RenderLevel};
 use crate::{
     MediaError,
     cache::{
@@ -9,9 +12,6 @@ use crate::{
         PresentationRequirement, Satisfaction, SharpeningState, SourceRevision, VariantIdentity,
     },
 };
-#[cfg(test)]
-use oxy_domain::PreviewKind;
-use oxy_domain::{PreviewResult, RenderLevel};
 use std::{
     cell::{Cell, RefCell},
     collections::VecDeque,
@@ -141,13 +141,13 @@ pub(crate) fn register_original_resource(
         },
         ImageOrigin::PrimaryImage,
     )?;
-    result.resource = Some(oxy_domain::MediaResourceDescriptor {
+    result.resource = Some(crate::types::MediaResourceDescriptor {
         resource_id: resource.descriptor.resource_id,
         url: resource.descriptor.url,
         media_type: resource.descriptor.media_type,
     });
-    result.satisfaction = Some(oxy_domain::MediaSatisfaction::Satisfied);
-    result.persistence = Some(oxy_domain::MediaPersistence::NotApplicable);
+    result.satisfaction = Some(crate::types::MediaSatisfaction::Satisfied);
+    result.persistence = Some(crate::types::MediaPersistence::NotApplicable);
     Ok(result)
 }
 
@@ -273,11 +273,11 @@ impl ArtifactCache {
                     match &*state {
                         RunningWorkState::Ready(result)
                             if result.satisfaction
-                                != Some(oxy_domain::MediaSatisfaction::Interim) =>
+                                != Some(crate::types::MediaSatisfaction::Interim) =>
                         {
                             let mut handoff = (**result).clone();
                             handoff.render_level = level;
-                            handoff.satisfaction = Some(oxy_domain::MediaSatisfaction::Satisfied);
+                            handoff.satisfaction = Some(crate::types::MediaSatisfaction::Satisfied);
                             drop(state);
                             // A staged/encoded result is displayable before its
                             // persistence finishes. Re-enter the normal lookup
@@ -289,7 +289,7 @@ impl ArtifactCache {
                                 ArtifactPreparation::Generate {
                                     cache_generation: _,
                                 } if handoff.persistence
-                                    == Some(oxy_domain::MediaPersistence::Skipped) =>
+                                    == Some(crate::types::MediaPersistence::Skipped) =>
                                 {
                                     Ok(handoff)
                                 }
@@ -472,7 +472,7 @@ impl ArtifactCache {
             height: hit.artifact.facts.display_dimensions.0.height,
             kind: hit.artifact.facts.preview_kind(),
             render_level: level,
-            resource: Some(oxy_domain::MediaResourceDescriptor {
+            resource: Some(crate::types::MediaResourceDescriptor {
                 resource_id: hit.resource.resource_id,
                 url: hit.resource.url,
                 media_type: hit.resource.media_type,
@@ -480,16 +480,16 @@ impl ArtifactCache {
             satisfaction: Some(domain_satisfaction(hit.satisfaction)),
             persistence: Some(match hit.persistence {
                 crate::publication::PersistenceStatus::NotRequested => {
-                    oxy_domain::MediaPersistence::NotApplicable
+                    crate::types::MediaPersistence::NotApplicable
                 }
                 crate::publication::PersistenceStatus::Scheduled => {
-                    oxy_domain::MediaPersistence::Pending
+                    crate::types::MediaPersistence::Pending
                 }
                 crate::publication::PersistenceStatus::Persisted => {
-                    oxy_domain::MediaPersistence::Persisted
+                    crate::types::MediaPersistence::Persisted
                 }
                 crate::publication::PersistenceStatus::SkippedBackpressure => {
-                    oxy_domain::MediaPersistence::Skipped
+                    crate::types::MediaPersistence::Skipped
                 }
             }),
             diagnostics: None,
@@ -524,7 +524,7 @@ impl ArtifactCache {
                         .origin,
                     Some(lease),
                 )?;
-            result.resource = Some(oxy_domain::MediaResourceDescriptor {
+            result.resource = Some(crate::types::MediaResourceDescriptor {
                 resource_id: resource.descriptor.resource_id,
                 url: resource.descriptor.url,
                 media_type: resource.descriptor.media_type,
@@ -537,7 +537,7 @@ impl ArtifactCache {
     pub(crate) fn publish(
         &self,
         bytes: Arc<[u8]>,
-        facts: oxy_domain::ArtifactFacts,
+        facts: crate::types::ArtifactFacts,
         presentation: ArtifactPresentation,
         target: String,
         level: RenderLevel,
@@ -560,7 +560,7 @@ impl ArtifactCache {
     pub(crate) fn publish_encoded(
         &self,
         bytes: Arc<[u8]>,
-        facts: oxy_domain::ArtifactFacts,
+        facts: crate::types::ArtifactFacts,
         presentation: ArtifactPresentation,
         target: String,
         level: RenderLevel,
@@ -619,7 +619,7 @@ impl ArtifactCache {
                     },
                     true,
                 )?;
-            let resource = oxy_domain::MediaResourceDescriptor {
+            let resource = crate::types::MediaResourceDescriptor {
                 resource_id: published.resource.descriptor.resource_id.clone(),
                 url: published.resource.descriptor.url.clone(),
                 media_type: published.resource.descriptor.media_type.clone(),
@@ -637,16 +637,16 @@ impl ArtifactCache {
                 satisfaction: Some(domain_satisfaction(satisfaction)),
                 persistence: Some(match published.persistence {
                     crate::publication::PersistenceStatus::Scheduled => {
-                        oxy_domain::MediaPersistence::Pending
+                        crate::types::MediaPersistence::Pending
                     }
                     crate::publication::PersistenceStatus::NotRequested => {
-                        oxy_domain::MediaPersistence::NotApplicable
+                        crate::types::MediaPersistence::NotApplicable
                     }
                     crate::publication::PersistenceStatus::Persisted => {
-                        oxy_domain::MediaPersistence::Persisted
+                        crate::types::MediaPersistence::Persisted
                     }
                     crate::publication::PersistenceStatus::SkippedBackpressure => {
-                        oxy_domain::MediaPersistence::Skipped
+                        crate::types::MediaPersistence::Skipped
                     }
                 }),
                 diagnostics: None,
@@ -660,7 +660,7 @@ impl ArtifactCache {
     pub(crate) fn publish_staged(
         &self,
         staged: BackendOutput,
-        facts: oxy_domain::ArtifactFacts,
+        facts: crate::types::ArtifactFacts,
         presentation: ArtifactPresentation,
         target: String,
         level: RenderLevel,
@@ -719,7 +719,7 @@ impl ArtifactCache {
                 },
                 true,
             )?;
-            let resource = oxy_domain::MediaResourceDescriptor {
+            let resource = crate::types::MediaResourceDescriptor {
                 resource_id: published.resource.descriptor.resource_id.clone(),
                 url: published.resource.descriptor.url.clone(),
                 media_type: published.resource.descriptor.media_type.clone(),
@@ -737,16 +737,16 @@ impl ArtifactCache {
                 satisfaction: Some(domain_satisfaction(satisfaction)),
                 persistence: Some(match published.persistence {
                     crate::publication::PersistenceStatus::Scheduled => {
-                        oxy_domain::MediaPersistence::Pending
+                        crate::types::MediaPersistence::Pending
                     }
                     crate::publication::PersistenceStatus::NotRequested => {
-                        oxy_domain::MediaPersistence::NotApplicable
+                        crate::types::MediaPersistence::NotApplicable
                     }
                     crate::publication::PersistenceStatus::Persisted => {
-                        oxy_domain::MediaPersistence::Persisted
+                        crate::types::MediaPersistence::Persisted
                     }
                     crate::publication::PersistenceStatus::SkippedBackpressure => {
-                        oxy_domain::MediaPersistence::Skipped
+                        crate::types::MediaPersistence::Skipped
                     }
                 }),
                 diagnostics: None,
@@ -950,10 +950,10 @@ pub(crate) const fn applied_srgb_requirement() -> PresentationRequirement {
     }
 }
 
-const fn domain_satisfaction(satisfaction: Satisfaction) -> oxy_domain::MediaSatisfaction {
+const fn domain_satisfaction(satisfaction: Satisfaction) -> crate::types::MediaSatisfaction {
     match satisfaction {
-        Satisfaction::Satisfied => oxy_domain::MediaSatisfaction::Satisfied,
-        Satisfaction::Interim => oxy_domain::MediaSatisfaction::Interim,
+        Satisfaction::Satisfied => crate::types::MediaSatisfaction::Satisfied,
+        Satisfaction::Interim => crate::types::MediaSatisfaction::Interim,
     }
 }
 
@@ -976,10 +976,10 @@ fn preview_result(
         render_level: level,
         resource: None,
         satisfaction: Some(domain_satisfaction(satisfaction)),
-        persistence: Some(oxy_domain::MediaPersistence::Persisted),
-        diagnostics: Some(oxy_domain::PreviewDiagnostics {
+        persistence: Some(crate::types::MediaPersistence::Persisted),
+        diagnostics: Some(crate::types::PreviewDiagnostics {
             backend: Some("cached artifact".into()),
-            ..oxy_domain::PreviewDiagnostics::default()
+            ..crate::types::PreviewDiagnostics::default()
         }),
     }
 }
@@ -1000,7 +1000,7 @@ pub(crate) fn join_pixel_output(
     cache_root: &Path,
     request: &CacheRequest,
     generation: u64,
-    cancellation: &oxy_runtime::CancellationToken,
+    cancellation: &crate::control::CancellationToken,
 ) -> Result<Option<PixelHandoff>, MediaError> {
     let records = RUNNING_WORK
         .get_or_init(|| Mutex::new(VecDeque::new()))
@@ -1131,7 +1131,7 @@ mod tests {
             panic!("fresh source must own its producer");
         };
         let mut owner = RunningWorkProducerGuard::new(Arc::clone(&work));
-        let cancelled = oxy_runtime::CancellationToken::default();
+        let cancelled = crate::control::CancellationToken::default();
         cancelled.cancel();
         assert!(matches!(
             join_pixel_output(artifacts.cache.root(), &request, generation, &cancelled),
@@ -1141,7 +1141,7 @@ mod tests {
             *work.state.lock().unwrap(),
             RunningWorkState::Pending
         ));
-        let token = oxy_runtime::CancellationToken::default();
+        let token = crate::control::CancellationToken::default();
         let (result, _) = with_app_publication(|| {
             register_original_resource(
                 &path,
@@ -1679,13 +1679,13 @@ mod tests {
                                 height: 8,
                                 kind: PreviewKind::Developed,
                                 render_level: level,
-                                resource: Some(oxy_domain::MediaResourceDescriptor {
+                                resource: Some(crate::types::MediaResourceDescriptor {
                                     resource_id: published.resource.descriptor.resource_id.clone(),
                                     url: published.resource.descriptor.url.clone(),
                                     media_type: published.resource.descriptor.media_type,
                                 }),
-                                satisfaction: Some(oxy_domain::MediaSatisfaction::Satisfied),
-                                persistence: Some(oxy_domain::MediaPersistence::Skipped),
+                                satisfaction: Some(crate::types::MediaSatisfaction::Satisfied),
+                                persistence: Some(crate::types::MediaPersistence::Skipped),
                                 diagnostics: None,
                             })
                         },
@@ -1706,7 +1706,7 @@ mod tests {
         notify.notify_all();
         assert_eq!(
             join_with_timeout(full).persistence,
-            Some(oxy_domain::MediaPersistence::Skipped)
+            Some(crate::types::MediaPersistence::Skipped)
         );
         assert_eq!(
             join_with_timeout(preview).render_level,
@@ -1813,11 +1813,11 @@ mod tests {
         let (waiter_result, waiter_completions) = join_with_timeout(waiter);
         assert_eq!(
             producer_result.unwrap().persistence,
-            Some(oxy_domain::MediaPersistence::Pending)
+            Some(crate::types::MediaPersistence::Pending)
         );
         assert_eq!(
             waiter_result.unwrap().persistence,
-            Some(oxy_domain::MediaPersistence::Pending)
+            Some(crate::types::MediaPersistence::Pending)
         );
         assert_eq!(producer_completions.len(), 1);
         assert_eq!(waiter_completions.len(), 1);

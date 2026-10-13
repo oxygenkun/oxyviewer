@@ -1,6 +1,10 @@
 mod dct_cache;
 mod tile_cache;
 
+use crate::types::{
+    HeifBackendKind, HeifCapabilities, HeifDecodeSession, HeifDecodeStatus, HeifDiagnostics,
+    HeifTilePayload,
+};
 use crate::{
     MediaError,
     backends::libheif,
@@ -12,10 +16,6 @@ use crate::{
     },
 };
 use image::{DynamicImage, RgbaImage};
-use oxy_domain::{
-    HeifBackendKind, HeifCapabilities, HeifDecodeSession, HeifDecodeStatus, HeifDiagnostics,
-    HeifTilePayload,
-};
 use std::{
     cell::Cell,
     collections::HashMap,
@@ -106,7 +106,7 @@ impl HeifDecodeService {
             cache_dir,
             generation,
             display_sharpening,
-            oxy_runtime::CancellationToken::default(),
+            crate::control::CancellationToken::default(),
         )
     }
 
@@ -116,7 +116,7 @@ impl HeifDecodeService {
         cache_dir: &Path,
         generation: u64,
         display_sharpening: bool,
-        cancellation: oxy_runtime::CancellationToken,
+        cancellation: crate::control::CancellationToken,
     ) -> Result<HeifDecodeSession, MediaError> {
         if cancellation.is_cancelled() {
             return Err(MediaError::Cancelled);
@@ -232,7 +232,7 @@ impl HeifDecodeService {
             )
         };
         let decode_permit = acquire_decode(
-            oxy_domain::RenderLevel::Full,
+            crate::types::RenderLevel::Full,
             DecodePriority::Foreground,
             &|| cancelled.load(Ordering::Acquire),
         )?;
@@ -380,10 +380,10 @@ impl HeifDecodeService {
                                 &cancelled,
                             )? {
                                 return Ok(vec![
-                                    oxy_domain::ImageOperation::Encode {
+                                    crate::types::ImageOperation::Encode {
                                         format: "jpeg".into(),
                                     },
-                                    oxy_domain::ImageOperation::Assemble {
+                                    crate::types::ImageOperation::Assemble {
                                         mode: "jpeg-dct-tiles".into(),
                                     },
                                 ]);
@@ -404,17 +404,17 @@ impl HeifDecodeService {
                                 .iter()
                                 .any(|tile| matches!(tile.tile.payload, HeifTileData::Jpeg(_)))
                             {
-                                operations.push(oxy_domain::ImageOperation::Encode {
+                                operations.push(crate::types::ImageOperation::Encode {
                                     format: "jpeg tiles".into(),
                                 });
-                                operations.push(oxy_domain::ImageOperation::Decode {
+                                operations.push(crate::types::ImageOperation::Decode {
                                     backend: "image/jpeg tiles".into(),
                                 });
                             }
-                            operations.push(oxy_domain::ImageOperation::Assemble {
+                            operations.push(crate::types::ImageOperation::Assemble {
                                 mode: "pixel-tiles".into(),
                             });
-                            operations.push(oxy_domain::ImageOperation::Encode {
+                            operations.push(crate::types::ImageOperation::Encode {
                                 format: "jpeg".into(),
                             });
                             Ok(operations)
@@ -810,7 +810,7 @@ fn elapsed_ms(started: Instant) -> u64 {
 mod tests {
     use super::*;
     #[cfg(any(target_os = "macos", target_os = "windows"))]
-    use oxy_domain::AccelerationKind;
+    use crate::types::AccelerationKind;
 
     fn rgba_payload(tile: &HeifTile) -> (u32, &[u8]) {
         match &tile.payload {

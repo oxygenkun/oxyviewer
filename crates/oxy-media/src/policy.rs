@@ -1,4 +1,4 @@
-use oxy_domain::{AssetKind, RenderLevel};
+use crate::types::{AssetKind, RenderLevel};
 
 pub(crate) const RAW_PREVIEW: &str = "raw-native-v11-largest-camera-jpeg";
 pub(crate) const RAW_FULL: &str = "raw-native-full-v10-camera-jpeg-interim";

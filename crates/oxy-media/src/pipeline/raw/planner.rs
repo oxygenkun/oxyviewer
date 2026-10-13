@@ -8,7 +8,7 @@ use crate::{
     pipeline::artifact::{ArtifactCache, applied_srgb_requirement},
 };
 
-use oxy_domain::RenderLevel;
+use crate::types::RenderLevel;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum RawBackend {
@@ -156,12 +156,12 @@ pub(super) fn camera_preview_detail(source: ImageDimensions) -> DetailRequiremen
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::types::{MediaSatisfaction, PreviewKind, RenderLevel};
     use crate::{
         media_source::PixelDimensions,
         pipeline::artifact::{ArtifactPreparation, applied_srgb},
     };
     use image::{DynamicImage, ImageFormat};
-    use oxy_domain::{MediaSatisfaction, PreviewKind, RenderLevel};
     use std::{io::Cursor, sync::Arc};
 
     #[cfg(target_os = "windows")]
@@ -197,7 +197,7 @@ mod tests {
         ] {
             assert_eq!(
                 detail.accepts(
-                    oxy_domain::DisplayDimensions(PixelDimensions { width, height }),
+                    crate::types::DisplayDimensions(PixelDimensions { width, height }),
                     false
                 ),
                 accepted
@@ -208,14 +208,14 @@ mod tests {
             height: 61,
         });
         assert!(!rounded.accepts(
-            oxy_domain::DisplayDimensions(PixelDimensions {
+            crate::types::DisplayDimensions(PixelDimensions {
                 width: 90,
                 height: 55
             }),
             false
         ));
         assert!(rounded.accepts(
-            oxy_domain::DisplayDimensions(PixelDimensions {
+            crate::types::DisplayDimensions(PixelDimensions {
                 width: 91,
                 height: 55
             }),
@@ -227,7 +227,7 @@ mod tests {
                 height: u32::MAX
             })
             .accepts(
-                oxy_domain::DisplayDimensions(PixelDimensions {
+                crate::types::DisplayDimensions(PixelDimensions {
                     width: u32::MAX,
                     height: u32::MAX
                 }),
@@ -242,7 +242,7 @@ mod tests {
         width: u32,
         height: u32,
         developed: bool,
-    ) -> oxy_domain::PreviewResult {
+    ) -> crate::types::PreviewResult {
         let ArtifactPreparation::Generate { cache_generation } =
             artifacts.prepare(request, RenderLevel::Full).unwrap()
         else {
@@ -424,7 +424,7 @@ mod tests {
             4096,
             crate::decode_control::DecodePriority::Foreground,
             false,
-            &oxy_runtime::CancellationToken::default(),
+            &crate::control::CancellationToken::default(),
         )
         .unwrap();
         assert_eq!((preview.width, preview.height), (32, 20));

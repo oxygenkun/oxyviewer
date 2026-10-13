@@ -1,7 +1,7 @@
 //! Bounded primary-item geometry and conservative Sony JPEG padding detection.
 
+use crate::types::{PreviewContentRect, PreviewDisplaySize, PreviewGeometry};
 use image::{DynamicImage, GenericImageView};
-use oxy_domain::{PreviewContentRect, PreviewDisplaySize, PreviewGeometry};
 
 struct BoxView<'a> {
     kind: &'a [u8],

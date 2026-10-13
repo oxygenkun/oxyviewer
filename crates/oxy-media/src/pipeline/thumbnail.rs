@@ -3,6 +3,8 @@ use super::{
     artifact::ArtifactCache,
     jpeg_transform::{EncodedJpegThumbnail, encode_jpeg_thumbnail},
 };
+use crate::control::CancellationToken;
+use crate::types::{PreviewResult, RenderLevel};
 use crate::{
     MediaError,
     cache::{
@@ -12,8 +14,6 @@ use crate::{
     decode_control::DecodePriority,
     delivery::THUMBNAIL_EDGE,
 };
-use oxy_domain::{PreviewResult, RenderLevel};
-use oxy_runtime::CancellationToken;
 use std::path::Path;
 
 pub(crate) fn encode_cached_jpeg_thumbnail(
@@ -44,7 +44,7 @@ pub(crate) fn encode_cached_jpeg_thumbnail(
             "derivation payload disagrees with image facts".into(),
         ));
     }
-    facts.processing.push(oxy_domain::ImageOperation::Decode {
+    facts.processing.push(crate::types::ImageOperation::Decode {
         backend: "libjpeg".into(),
     });
     facts.resize(encoded.facts.display_dimensions);
@@ -57,15 +57,15 @@ pub(crate) fn encode_cached_jpeg_thumbnail(
             .filter(|step| {
                 matches!(
                     step,
-                    oxy_domain::ImageOperation::Orient { .. }
-                        | oxy_domain::ImageOperation::Encode { .. }
+                    crate::types::ImageOperation::Orient { .. }
+                        | crate::types::ImageOperation::Encode { .. }
                 )
             })
             .cloned(),
     );
     facts.encoded_dimensions = encoded.facts.encoded_dimensions;
     facts.exif_orientation = 1;
-    facts.byte_integrity = oxy_domain::ByteIntegrity::Reencoded;
+    facts.byte_integrity = crate::types::ByteIntegrity::Reencoded;
     encoded.facts = facts;
     Ok(encoded)
 }
@@ -116,9 +116,9 @@ pub(crate) fn ensure_thumbnail_delivery(
                 let scale_y = |y: u32| {
                     (u64::from(y) * u64::from(dimensions.height) / u64::from(result.height)) as u32
                 };
-                oxy_domain::PreviewGeometry {
+                crate::types::PreviewGeometry {
                     display_size: geometry.display_size,
-                    content_rect: oxy_domain::PreviewContentRect {
+                    content_rect: crate::types::PreviewContentRect {
                         x: scale_x(rect.x),
                         y: scale_y(rect.y),
                         width: scale_x(rect.width).max(1),
@@ -151,17 +151,19 @@ mod tests {
             .unwrap();
         let mut result = crate::media_source::preview_result(
             path,
-            oxy_domain::PreviewKind::Developed,
+            crate::types::PreviewKind::Developed,
             RenderLevel::Full,
         )
         .unwrap();
         let facts = result.image_facts.as_mut().unwrap();
-        facts.source.origin = oxy_domain::ImageOrigin::RawSensor;
+        facts.source.origin = crate::types::ImageOrigin::RawSensor;
         facts.source.candidate_id = "raw-sensor".into();
-        facts.byte_integrity = oxy_domain::ByteIntegrity::Reencoded;
-        facts.processing.push(oxy_domain::ImageOperation::Develop {
-            backend: "LibRaw".into(),
-        });
+        facts.byte_integrity = crate::types::ByteIntegrity::Reencoded;
+        facts
+            .processing
+            .push(crate::types::ImageOperation::Develop {
+                backend: "LibRaw".into(),
+            });
         let expected_source = facts.source.clone();
         let encoded = encode_cached_jpeg_thumbnail(
             &result,
@@ -172,15 +174,15 @@ mod tests {
         assert_eq!(encoded.facts.source, expected_source);
         assert_eq!(
             encoded.facts.detail.reference_dimensions,
-            oxy_domain::DisplayDimensions((1200, 800).into())
+            crate::types::DisplayDimensions((1200, 800).into())
         );
         assert!(matches!(
             encoded.facts.processing.first(),
-            Some(oxy_domain::ImageOperation::Develop { .. })
+            Some(crate::types::ImageOperation::Develop { .. })
         ));
         assert_eq!(
             encoded.facts.byte_integrity,
-            oxy_domain::ByteIntegrity::Reencoded
+            crate::types::ByteIntegrity::Reencoded
         );
         assert!(!encoded.facts.native_detail());
         assert!(encoded.facts.is_consistent());

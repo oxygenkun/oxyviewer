@@ -57,17 +57,17 @@ mod tests {
         let source = std::path::PathBuf::from(std::env::var_os("OXY_BENCH_IMAGE_DIR").unwrap());
         let output = std::path::PathBuf::from(std::env::var_os("OXY_RESIZE_PARITY_DIR").unwrap());
         std::fs::create_dir_all(&output).unwrap();
-        let mut assets = oxy_fs::scan_assets_with_progress(&source, |_| {}).unwrap();
-        assets.retain(|a| {
-            a.path
-                .extension()
-                .is_some_and(|s| s.eq_ignore_ascii_case("jpg"))
-        });
-        assets.sort_by(|a, b| a.path.cmp(&b.path));
+        let mut assets = std::fs::read_dir(&source)
+            .unwrap()
+            .map(|entry| entry.unwrap().path())
+            .filter(|path| path.is_file())
+            .collect::<Vec<_>>();
+        assets.retain(|a| a.extension().is_some_and(|s| s.eq_ignore_ascii_case("jpg")));
+        assets.sort();
         assert!(assets.len() >= 16);
         let mut rows = Vec::new();
         for i in 0..16 {
-            let path = &assets[i * (assets.len() - 1) / 15].path;
+            let path = &assets[i * (assets.len() - 1) / 15];
             let bytes = std::fs::read(path).unwrap();
             let header = jpeg::probe(
                 &mut std::io::Cursor::new(&bytes),
@@ -77,7 +77,7 @@ mod tests {
             .unwrap();
             let plan = libjpeg::plan_decode(header.encoded_dimensions.unwrap(), 1600);
             let decoded =
-                libjpeg::decode_scaled(&bytes, plan, &oxy_runtime::CancellationToken::default())
+                libjpeg::decode_scaled(&bytes, plan, &crate::control::CancellationToken::default())
                     .unwrap();
             let mut old = decoded.resize(1600, 1600, image::imageops::FilterType::Triangle);
             let started = std::time::Instant::now();

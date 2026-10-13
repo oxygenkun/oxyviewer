@@ -42,8 +42,8 @@ pub(crate) fn display_sharpening(path: &Path, requested: bool) -> bool {
 
 #[derive(Debug)]
 pub struct EmbeddedJpeg {
-    pub facts: oxy_domain::ArtifactFacts,
-    pub geometry: Option<oxy_domain::PreviewGeometry>,
+    pub facts: crate::types::ArtifactFacts,
+    pub geometry: Option<crate::types::PreviewGeometry>,
     pub bytes: Vec<u8>,
 }
 
@@ -190,7 +190,7 @@ fn inspect_bytes(bytes: &[u8], display_size: Option<ImageDimensions>) -> Inspect
     };
     use sha2::{Digest, Sha256};
     let candidate_id = format!("sony-jpeg:{:x}", Sha256::digest(&jpeg));
-    let encoded_dimensions = oxy_domain::EncodedDimensions((width, height).into());
+    let encoded_dimensions = crate::types::EncodedDimensions((width, height).into());
     let output_orientation = if needs_orientation {
         if orientation != 1 { orientation } else { 6 }
     } else {
@@ -216,19 +216,19 @@ fn inspect_bytes(bytes: &[u8], display_size: Option<ImageDimensions>) -> Inspect
         },
     );
     let mut facts = crate::media_source::source_facts(
-        oxy_domain::ImageOrigin::EmbeddedPreview,
+        crate::types::ImageOrigin::EmbeddedPreview,
         candidate_id,
         encoded_dimensions,
         output_orientation as u8,
-        oxy_domain::DisplayDimensions(reference),
+        crate::types::DisplayDimensions(reference),
     );
     facts.byte_integrity = if needs_orientation {
         facts
             .processing
-            .push(oxy_domain::ImageOperation::MetadataEdit);
-        oxy_domain::ByteIntegrity::MetadataAdjusted
+            .push(crate::types::ImageOperation::MetadataEdit);
+        crate::types::ByteIntegrity::MetadataAdjusted
     } else {
-        oxy_domain::ByteIntegrity::SourcePayload
+        crate::types::ByteIntegrity::SourcePayload
     };
     Inspection {
         embedded_jpeg: Some(EmbeddedJpeg {

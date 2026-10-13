@@ -1,13 +1,13 @@
 use super::{heif, input::MediaPixels, raw, system};
+use crate::control::CancellationToken;
+use crate::types::PixelDimensions;
+use crate::types::{AssetKind, PreviewKind, PreviewPriority, PreviewResult, RenderLevel};
 use crate::{
     MediaError, MediaRequest, SourceRevision,
     decode_control::{self, DecodePriority},
     media_source::preview_result,
     pipeline::artifact::register_original_resource,
 };
-use oxy_domain::PixelDimensions;
-use oxy_domain::{AssetKind, PreviewKind, PreviewPriority, PreviewResult, RenderLevel};
-use oxy_runtime::CancellationToken;
 use std::{path::Path, sync::mpsc::Receiver};
 
 pub struct AppPreview {
@@ -22,7 +22,7 @@ pub fn preview(
     cache_dir: &Path,
     level: RenderLevel,
     priority: PreviewPriority,
-    kind: oxy_domain::AssetKind,
+    kind: crate::types::AssetKind,
     cancellation: &CancellationToken,
 ) -> Result<PreviewResult, MediaError> {
     execute(
@@ -44,7 +44,7 @@ pub fn preview_for_app(
     cache_dir: &Path,
     level: RenderLevel,
     priority: PreviewPriority,
-    kind: oxy_domain::AssetKind,
+    kind: crate::types::AssetKind,
     cancellation: &CancellationToken,
 ) -> Result<PreviewResult, MediaError> {
     preview_for_app_with_completion(path, cache_dir, level, priority, kind, cancellation)
@@ -56,7 +56,7 @@ pub fn preview_for_app_with_completion(
     cache_dir: &Path,
     level: RenderLevel,
     priority: PreviewPriority,
-    kind: oxy_domain::AssetKind,
+    kind: crate::types::AssetKind,
     cancellation: &CancellationToken,
 ) -> Result<AppPreview, MediaError> {
     app_preview(path, cache_dir, level, priority, kind, true, cancellation)
@@ -67,7 +67,7 @@ pub fn preview_for_app_upgrade(
     cache_dir: &Path,
     level: RenderLevel,
     priority: PreviewPriority,
-    kind: oxy_domain::AssetKind,
+    kind: crate::types::AssetKind,
     cancellation: &CancellationToken,
 ) -> Result<AppPreview, MediaError> {
     app_preview(path, cache_dir, level, priority, kind, false, cancellation)
@@ -78,7 +78,7 @@ fn app_preview(
     cache_dir: &Path,
     level: RenderLevel,
     priority: PreviewPriority,
-    kind: oxy_domain::AssetKind,
+    kind: crate::types::AssetKind,
     allow_interim: bool,
     cancellation: &CancellationToken,
 ) -> Result<AppPreview, MediaError> {

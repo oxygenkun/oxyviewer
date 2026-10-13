@@ -1,4 +1,6 @@
 use super::*;
+use crate::control::CancellationToken;
+use crate::types::{AssetKind, PreviewKind, PreviewPriority, PreviewResult, RenderLevel};
 #[cfg(target_os = "macos")]
 use crate::{
     backends::{apple_core_image, apple_image_io},
@@ -19,8 +21,6 @@ use crate::{
     },
 };
 use image::{DynamicImage, ImageDecoder, ImageFormat, ImageReader, Rgb, RgbImage};
-use oxy_domain::{AssetKind, PreviewKind, PreviewPriority, PreviewResult, RenderLevel};
-use oxy_runtime::CancellationToken;
 use std::{
     fs,
     io::Cursor,
@@ -50,7 +50,7 @@ fn raw_preview(
     path: &Path,
     cache_dir: &Path,
     max_size: u32,
-) -> Result<oxy_domain::PreviewResult, MediaError> {
+) -> Result<crate::types::PreviewResult, MediaError> {
     raw::preview_with_priority(
         path,
         cache_dir,
@@ -109,7 +109,7 @@ fn app_original_preview_uses_a_registered_direct_file_resource() {
     let resource = result.resource.expect("app preview resource");
     assert_eq!(
         result.persistence,
-        Some(oxy_domain::MediaPersistence::NotApplicable)
+        Some(crate::types::MediaPersistence::NotApplicable)
     );
     let resolved = shared_resource_registry()
         .resolve(&resource.resource_id)
@@ -138,11 +138,11 @@ fn app_embedded_jpeg_is_readable_while_cache_persistence_is_pending() {
     .unwrap();
     assert_eq!(
         result.satisfaction,
-        Some(oxy_domain::MediaSatisfaction::Interim)
+        Some(crate::types::MediaSatisfaction::Interim)
     );
     assert_eq!(
         result.persistence,
-        Some(oxy_domain::MediaPersistence::Pending)
+        Some(crate::types::MediaPersistence::Pending)
     );
     let resource = result.resource.expect("embedded resource");
     let resolved = shared_resource_registry()
@@ -173,7 +173,7 @@ fn app_interim_hif_can_upgrade_to_a_satisfied_preview() {
     .unwrap();
     assert_eq!(
         interim.satisfaction,
-        Some(oxy_domain::MediaSatisfaction::Interim)
+        Some(crate::types::MediaSatisfaction::Interim)
     );
 
     let upgrade = preview_for_app_upgrade(
@@ -187,7 +187,7 @@ fn app_interim_hif_can_upgrade_to_a_satisfied_preview() {
     .unwrap();
     assert_eq!(
         upgrade.result.satisfaction,
-        Some(oxy_domain::MediaSatisfaction::Satisfied)
+        Some(crate::types::MediaSatisfaction::Satisfied)
     );
     assert!(
         upgrade.result.width.max(upgrade.result.height) >= 4_095,
@@ -209,7 +209,7 @@ fn sony_hif_thumbnail_and_preview_levels_share_the_160_artifact() {
         cache.path(),
         RenderLevel::Thumbnail,
         PreviewPriority::Visible,
-        oxy_domain::AssetKind::Heif,
+        crate::types::AssetKind::Heif,
         &CancellationToken::default(),
     )
     .unwrap();
@@ -218,7 +218,7 @@ fn sony_hif_thumbnail_and_preview_levels_share_the_160_artifact() {
         cache.path(),
         RenderLevel::Preview,
         PreviewPriority::Loupe,
-        oxy_domain::AssetKind::Heif,
+        crate::types::AssetKind::Heif,
         &CancellationToken::default(),
     )
     .unwrap();
@@ -250,11 +250,11 @@ fn sony_hif_thumbnail_and_preview_levels_share_the_160_artifact() {
     assert_eq!(loupe_base.render_level, RenderLevel::Preview);
     assert_eq!(
         thumbnail.satisfaction,
-        Some(oxy_domain::MediaSatisfaction::Interim)
+        Some(crate::types::MediaSatisfaction::Interim)
     );
     assert_eq!(
         loupe_base.satisfaction,
-        Some(oxy_domain::MediaSatisfaction::Interim)
+        Some(crate::types::MediaSatisfaction::Interim)
     );
     assert_eq!(
         DiskMediaCache::new(cache.path(), 8)
@@ -285,7 +285,7 @@ fn heif_without_identified_fast_representation_uses_semantic_preview_size() {
         &cache,
         RenderLevel::Thumbnail,
         PreviewPriority::Visible,
-        oxy_domain::AssetKind::Heif,
+        crate::types::AssetKind::Heif,
         &CancellationToken::default(),
     )
     .unwrap();
@@ -294,7 +294,7 @@ fn heif_without_identified_fast_representation_uses_semantic_preview_size() {
         &cache,
         RenderLevel::Preview,
         PreviewPriority::Loupe,
-        oxy_domain::AssetKind::Heif,
+        crate::types::AssetKind::Heif,
         &CancellationToken::default(),
     )
     .unwrap();
@@ -322,11 +322,11 @@ fn heif_without_identified_fast_representation_uses_semantic_preview_size() {
         thumbnail_facts
             .processing
             .iter()
-            .any(|operation| matches!(operation, oxy_domain::ImageOperation::Decode { .. }))
+            .any(|operation| matches!(operation, crate::types::ImageOperation::Decode { .. }))
     );
     assert_eq!(
         fit.image_facts.as_ref().unwrap().source.origin,
-        oxy_domain::ImageOrigin::PrimaryImage
+        crate::types::ImageOrigin::PrimaryImage
     );
     assert!(thumbnail.width.max(thumbnail.height) > 160);
     assert!(
@@ -466,7 +466,7 @@ fn writes_raw_backend_comparison_artifacts() {
                     let decoded = libraw::developed(
                         &source,
                         max_size,
-                        &oxy_runtime::CancellationToken::default(),
+                        &crate::control::CancellationToken::default(),
                     )
                     .unwrap();
                     write_jpeg_atomically(&decoded.image, &destination, 90, RAW_DEVELOPED_JPEG)
@@ -512,7 +512,7 @@ fn extracts_preview_from_raw_fixture() {
     if preview_size.width.max(preview_size.height) < 512 {
         assert_eq!(
             preview.satisfaction,
-            Some(oxy_domain::MediaSatisfaction::Interim)
+            Some(crate::types::MediaSatisfaction::Interim)
         );
     }
     let reader = ImageReader::open(&preview.path)
@@ -604,7 +604,7 @@ fn resolves_full_detail_raw_fixture() {
     assert!(full.path.is_file());
     assert_eq!(
         full.satisfaction,
-        Some(oxy_domain::MediaSatisfaction::Satisfied)
+        Some(crate::types::MediaSatisfaction::Satisfied)
     );
     let warm_started = Instant::now();
     let warm = raw::full_with_interim(
@@ -623,7 +623,7 @@ fn resolves_full_detail_raw_fixture() {
             !facts
                 .processing
                 .iter()
-                .any(|step| matches!(step, oxy_domain::ImageOperation::Resize { .. }))
+                .any(|step| matches!(step, crate::types::ImageOperation::Resize { .. }))
         );
     }
     eprintln!(
@@ -638,7 +638,7 @@ fn resolves_full_detail_raw_fixture() {
 #[test]
 #[ignore = "requires OXY_RAW_FIXTURE with small and near-native embedded JPEGs"]
 fn raw_full_upgrades_thumbnail_to_largest_embedded_jpeg_fixture() {
-    use oxy_domain::MediaSatisfaction::Satisfied;
+    use crate::types::MediaSatisfaction::Satisfied;
     let path =
         fs::canonicalize(workspace_path(std::env::var_os("OXY_RAW_FIXTURE").unwrap())).unwrap();
     let cache = tempfile::tempdir().unwrap();
@@ -775,7 +775,7 @@ fn generates_large_image_io_fallback_for_heif_fixture() {
         original.width.max(original.height).min(8_192),
         RenderLevel::Full,
         true,
-        &oxy_runtime::CancellationToken::default(),
+        &crate::control::CancellationToken::default(),
     )
     .unwrap();
 
@@ -830,7 +830,7 @@ fn fixture_preview_performance_budgets() {
                     size,
                     level,
                     true,
-                    &oxy_runtime::CancellationToken::default(),
+                    &crate::control::CancellationToken::default(),
                 )
             }
         };

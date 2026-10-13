@@ -131,7 +131,7 @@ struct RegistryState {
     peak_entries: usize,
 }
 
-pub use oxy_domain::ResourceRegistryStats;
+pub use crate::types::ResourceRegistryStats;
 
 fn registry_stats(state: &RegistryState) -> ResourceRegistryStats {
     let now = Instant::now();
@@ -798,7 +798,7 @@ fn remove_entry(state: &mut RegistryState, id: &str) {
 pub struct ProducedArtifact {
     pub source_revision: SourceRevision,
     pub variant: VariantIdentity,
-    pub facts: oxy_domain::ArtifactFacts,
+    pub facts: crate::types::ArtifactFacts,
     pub cache_generation: u64,
     pub payload: ProducedPayload,
 }

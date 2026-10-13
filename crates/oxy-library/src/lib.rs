@@ -28,6 +28,7 @@ pub use cache::index::{IndexProgress, IndexStage, IndexStats};
 #[cfg(test)]
 mod audit;
 mod relocation;
+pub use relocation::reuse_root_artifacts;
 mod user;
 
 use oxy_store::Store;

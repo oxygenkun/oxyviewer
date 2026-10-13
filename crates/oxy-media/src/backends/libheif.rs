@@ -38,11 +38,11 @@ pub(crate) fn decode_frame(
             .filter_map(|id| handle.thumbnail(id).ok().map(|thumbnail| (id, thumbnail)))
             .filter(|(id, thumbnail)| {
                 let source =
-                    oxy_domain::DisplayDimensions((thumbnail.width(), thumbnail.height()).into());
+                    crate::types::DisplayDimensions((thumbnail.width(), thumbnail.height()).into());
                 let scale = (f64::from(max_size)
                     / f64::from(thumbnail.width().max(thumbnail.height())))
                 .min(1.0);
-                let output = oxy_domain::DisplayDimensions(
+                let output = crate::types::DisplayDimensions(
                     (
                         (f64::from(thumbnail.width()) * scale).round().max(1.0) as u32,
                         (f64::from(thumbnail.height()) * scale).round().max(1.0) as u32,
@@ -50,10 +50,10 @@ pub(crate) fn decode_frame(
                         .into(),
                 );
                 let facts = crate::media_source::decoded_facts(
-                    oxy_domain::ImageOrigin::EmbeddedPreview,
+                    crate::types::ImageOrigin::EmbeddedPreview,
                     format!("heif-thumbnail-item:{id}"),
                     source,
-                    oxy_domain::DisplayDimensions((handle.width(), handle.height()).into()),
+                    crate::types::DisplayDimensions((handle.width(), handle.height()).into()),
                     output,
                     "libheif",
                 );
@@ -75,11 +75,11 @@ pub(crate) fn decode_frame(
         {
             let output = image.thumbnail(max_size, max_size);
             let facts = crate::media_source::decoded_facts(
-                oxy_domain::ImageOrigin::EmbeddedPreview,
+                crate::types::ImageOrigin::EmbeddedPreview,
                 format!("heif-thumbnail-item:{id}"),
-                oxy_domain::DisplayDimensions((thumbnail.width(), thumbnail.height()).into()),
-                oxy_domain::DisplayDimensions((handle.width(), handle.height()).into()),
-                oxy_domain::DisplayDimensions((output.width(), output.height()).into()),
+                crate::types::DisplayDimensions((thumbnail.width(), thumbnail.height()).into()),
+                crate::types::DisplayDimensions((handle.width(), handle.height()).into()),
+                crate::types::DisplayDimensions((output.width(), output.height()).into()),
                 "libheif",
             );
             if request.accepts(&facts) {
@@ -122,13 +122,13 @@ pub(crate) fn decode_frame(
             message: "decoded image has no interleaved RGB plane".into(),
         })?;
     let image = image_from_rgb8_plane(plane.data, plane.width, plane.height, plane.stride)?;
-    let source = oxy_domain::DisplayDimensions((handle.width(), handle.height()).into());
+    let source = crate::types::DisplayDimensions((handle.width(), handle.height()).into());
     let facts = crate::media_source::decoded_facts(
-        oxy_domain::ImageOrigin::PrimaryImage,
+        crate::types::ImageOrigin::PrimaryImage,
         "primary".into(),
         source,
         source,
-        oxy_domain::DisplayDimensions((image.width(), image.height()).into()),
+        crate::types::DisplayDimensions((image.width(), image.height()).into()),
         "libheif",
     );
     Ok(crate::media_source::DecodedImage { image, facts })

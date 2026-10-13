@@ -40,7 +40,7 @@ impl<T: Seek> Seek for TrackedReader<T> {
 
 #[derive(Default, Debug)]
 pub(crate) struct Header {
-    pub encoded_dimensions: Option<oxy_domain::EncodedDimensions>,
+    pub encoded_dimensions: Option<crate::types::EncodedDimensions>,
     pub exif: ExifPresentation,
     pub previews: Vec<JpegRange>,
     pub has_icc: bool,
@@ -119,10 +119,11 @@ pub(crate) fn probe(
             let mut payload = vec![0; length];
             reader.read_exact(&mut payload)?;
             if sof && payload.len() >= 6 {
-                header.encoded_dimensions = Some(oxy_domain::EncodedDimensions(PixelDimensions {
-                    width: u32::from(u16::from_be_bytes([payload[3], payload[4]])),
-                    height: u32::from(u16::from_be_bytes([payload[1], payload[2]])),
-                }));
+                header.encoded_dimensions =
+                    Some(crate::types::EncodedDimensions(PixelDimensions {
+                        width: u32::from(u16::from_be_bytes([payload[3], payload[4]])),
+                        height: u32::from(u16::from_be_bytes([payload[1], payload[2]])),
+                    }));
             } else if marker == 0xe1 {
                 if let Some(tiff) = payload.strip_prefix(b"Exif\0\0") {
                     match jpeg_preview::exif_presentation(tiff, offset + 6) {
@@ -168,7 +169,7 @@ mod tests {
         assert!(header.complete && header.has_edit_metadata);
         assert_eq!(
             header.encoded_dimensions,
-            Some(oxy_domain::EncodedDimensions(PixelDimensions {
+            Some(crate::types::EncodedDimensions(PixelDimensions {
                 width: 1200,
                 height: 800
             }))

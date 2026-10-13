@@ -91,7 +91,7 @@ pub(crate) async fn relocate_library_root(
         library
             .relocate_root(&plan, &proofs)
             .map_err(|e| e.to_string())?;
-        let report = cache.reuse_root_relocation(&plan, &sources);
+        let report = oxy_library::reuse_root_artifacts(&cache, &plan, &sources);
         Ok::<_, String>(report)
     })
     .await

@@ -1,11 +1,11 @@
 //! RAW full frames, independently qualified from the HEIF WIC adapter.
 use super::{ComApartment, factory, native_error, wic_error, wic_stage_error, wide_path};
-use crate::{MediaError, media_source::DecodedImage};
-use image::{DynamicImage, RgbImage, metadata::Orientation};
-use oxy_domain::{
+use crate::control::CancellationToken;
+use crate::types::{
     DisplayDimensions, EncodedDimensions, ImageOperation, ImageOrigin, RawSystemCodec,
 };
-use oxy_runtime::CancellationToken;
+use crate::{MediaError, media_source::DecodedImage};
+use image::{DynamicImage, RgbImage, metadata::Orientation};
 use std::{path::Path, ptr};
 use windows::{
     Win32::{

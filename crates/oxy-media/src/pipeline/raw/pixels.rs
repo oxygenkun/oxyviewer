@@ -1,15 +1,15 @@
+use crate::control::CancellationToken;
 use crate::pipeline::{
     input::{MediaPixels, check_cancelled},
     pixels::{estimate, finish, fit, orient, pixel_bytes},
 };
+use crate::types::{DisplayDimensions, EncodedDimensions, ImageOperation, PixelDimensions};
 use crate::{
     CacheColorState, MediaError, MediaRequest, SourceRevision,
     backends::{libjpeg, libraw},
     decode_control,
 };
 use image::ImageDecoder;
-use oxy_domain::{DisplayDimensions, EncodedDimensions, ImageOperation, PixelDimensions};
-use oxy_runtime::CancellationToken;
 use std::{io::Cursor, path::Path};
 pub(crate) fn decode_pixels(
     path: &Path,

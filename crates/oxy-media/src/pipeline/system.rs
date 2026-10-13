@@ -1,4 +1,6 @@
 //! System image decoding with a portable raster fallback, shared by both deliveries.
+use crate::control::CancellationToken;
+use crate::types::{PreviewResult, RenderLevel};
 use crate::{
     MediaError, MediaRequest, SourceRevision,
     cache::{
@@ -14,8 +16,6 @@ use crate::{
     policy::SYSTEM_PREVIEW,
 };
 use image::{ImageEncoder, codecs::png::PngEncoder};
-use oxy_domain::{PreviewResult, RenderLevel};
-use oxy_runtime::CancellationToken;
 use std::path::Path;
 
 pub(crate) fn preview(
@@ -90,10 +90,10 @@ pub(crate) fn preview_with_size(
                 image::ExtendedColorType::Rgba8,
             )?;
             let mut facts = frame.facts;
-            facts.processing.push(oxy_domain::ImageOperation::Encode {
+            facts.processing.push(crate::types::ImageOperation::Encode {
                 format: "png".into(),
             });
-            facts.byte_integrity = oxy_domain::ByteIntegrity::Reencoded;
+            facts.byte_integrity = crate::types::ByteIntegrity::Reencoded;
             artifacts.publish_encoded(
                 bytes.into(),
                 facts,
@@ -113,7 +113,7 @@ pub(crate) fn preview_with_size(
     )
 }
 
-fn source_dimensions(path: &Path) -> Result<oxy_domain::PixelDimensions, MediaError> {
+fn source_dimensions(path: &Path) -> Result<crate::types::PixelDimensions, MediaError> {
     image::image_dimensions(path)
         .map(Into::into)
         .or_else(|_| crate::backends::libheif::dimensions(path))
@@ -140,7 +140,7 @@ fn decode_with_limit(
     super::input::check_cancelled(cancellation)?;
     #[cfg(target_os = "macos")]
     if let Ok(image) = crate::backends::apple_image_io::decode_rgba8(path, target) {
-        let encoded = oxy_domain::EncodedDimensions(source_dimensions(path)?);
+        let encoded = crate::types::EncodedDimensions(source_dimensions(path)?);
         use image::ImageDecoder;
         let orientation = image::ImageReader::open(path)
             .ok()
@@ -150,11 +150,11 @@ fn decode_with_limit(
             .map_or(1, image::metadata::Orientation::to_exif);
         let reference = encoded.to_display(orientation);
         let facts = crate::media_source::decoded_facts(
-            oxy_domain::ImageOrigin::PrimaryImage,
+            crate::types::ImageOrigin::PrimaryImage,
             "primary".into(),
             reference,
             reference,
-            oxy_domain::DisplayDimensions((image.width(), image.height()).into()),
+            crate::types::DisplayDimensions((image.width(), image.height()).into()),
             "Apple ImageIO",
         );
         return pixels::finish(

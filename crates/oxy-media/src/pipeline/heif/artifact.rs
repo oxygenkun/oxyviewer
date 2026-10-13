@@ -9,8 +9,10 @@ use super::{
 use crate::backends::apple_image_io;
 #[cfg(target_os = "windows")]
 use crate::backends::windows_wic;
+use crate::control::CancellationToken;
 #[cfg(target_os = "macos")]
 use crate::pipeline::artifact::applied_srgb;
+use crate::types::{PreviewDiagnostics, PreviewResult, RenderLevel};
 use crate::{
     MediaError,
     backends::{ffmpeg_heif, libheif},
@@ -26,8 +28,6 @@ use crate::{
     presentation::{HEIF_DECODED_JPEG, HEIF_UNCONVERTED_JPEG},
 };
 use image::DynamicImage;
-use oxy_domain::{PreviewDiagnostics, PreviewResult, RenderLevel};
-use oxy_runtime::CancellationToken;
 use std::{
     borrow::Cow,
     fs::OpenOptions,
@@ -229,16 +229,16 @@ pub(crate) fn preview(
             let encode_ms = duration_ms(encode_started);
             let dimensions = image::image_dimensions(&destination)?.into();
             let mut facts = decoded.facts;
-            facts.encoded_dimensions = oxy_domain::EncodedDimensions(dimensions);
+            facts.encoded_dimensions = crate::types::EncodedDimensions(dimensions);
             facts.exif_orientation = 1;
-            facts.byte_integrity = oxy_domain::ByteIntegrity::Reencoded;
-            facts.processing.push(oxy_domain::ImageOperation::Encode {
+            facts.byte_integrity = crate::types::ByteIntegrity::Reencoded;
+            facts.processing.push(crate::types::ImageOperation::Encode {
                 format: "jpeg".into(),
             });
             if decoded.presentation.color == CacheColorState::Srgb {
                 facts
                     .processing
-                    .push(oxy_domain::ImageOperation::ColorConvert {
+                    .push(crate::types::ImageOperation::ColorConvert {
                         target: "sRGB".into(),
                     });
             }
@@ -273,7 +273,7 @@ pub(crate) struct PreviewDecode {
     pub(crate) image: DynamicImage,
     backend: &'static str,
     fallback_reason: Option<String>,
-    pub(crate) facts: oxy_domain::ArtifactFacts,
+    pub(crate) facts: crate::types::ArtifactFacts,
     pub(crate) presentation: ArtifactPresentation,
 }
 
@@ -282,17 +282,17 @@ fn platform_preview(
     path: &Path,
     image: DynamicImage,
 ) -> Result<crate::media_source::DecodedImage, MediaError> {
-    let source = oxy_domain::DisplayDimensions(libheif::dimensions(path)?);
+    let source = crate::types::DisplayDimensions(libheif::dimensions(path)?);
     let mut facts = crate::media_source::decoded_facts(
         ImageOrigin::PrimaryImage,
         "primary".into(),
         source,
         source,
-        oxy_domain::DisplayDimensions((image.width(), image.height()).into()),
+        crate::types::DisplayDimensions((image.width(), image.height()).into()),
         "Apple ImageIO",
     );
     // Thumbnail API does not prove the primary has retained all native samples.
-    facts.detail.sampling = oxy_domain::Sampling::Reduced;
+    facts.detail.sampling = crate::types::Sampling::Reduced;
     Ok(crate::media_source::DecodedImage { image, facts })
 }
 
@@ -319,13 +319,13 @@ pub(crate) fn decode_frame(
                 PlannedHeifBackend::Platform(_) => windows_wic::decode_full_rgba8(path)
                     .map(|image| image.thumbnail(request.max_size, request.max_size))
                     .and_then(|image| {
-                        let source = oxy_domain::DisplayDimensions(libheif::dimensions(path)?);
+                        let source = crate::types::DisplayDimensions(libheif::dimensions(path)?);
                         let facts = crate::media_source::decoded_facts(
                             ImageOrigin::PrimaryImage,
                             "primary".into(),
                             source,
                             source,
-                            oxy_domain::DisplayDimensions((image.width(), image.height()).into()),
+                            crate::types::DisplayDimensions((image.width(), image.height()).into()),
                             "Windows WIC",
                         );
                         Ok(crate::media_source::DecodedImage { image, facts })
@@ -351,10 +351,10 @@ pub(crate) fn decode_frame(
     .map_err(BackendExecutionError::into_media_error)?;
     let backend = match result.backend {
         PlannedHeifBackend::CachedArtifact => "cached full JPEG",
-        PlannedHeifBackend::Platform(oxy_domain::HeifBackendKind::AppleImageIo) => {
+        PlannedHeifBackend::Platform(crate::types::HeifBackendKind::AppleImageIo) => {
             "Apple ImageIO thumbnail"
         }
-        PlannedHeifBackend::Platform(oxy_domain::HeifBackendKind::WindowsWic) => {
+        PlannedHeifBackend::Platform(crate::types::HeifBackendKind::WindowsWic) => {
             "Windows WIC thumbnail"
         }
         PlannedHeifBackend::Platform(_) => "platform HEIF thumbnail",
@@ -374,33 +374,33 @@ pub(crate) fn decode_frame(
 
 fn full_output_facts(
     path: &Path,
-    output: oxy_domain::PixelDimensions,
+    output: crate::types::PixelDimensions,
     backend: &str,
     presentation: ArtifactPresentation,
-) -> Result<oxy_domain::ArtifactFacts, MediaError> {
-    let source = oxy_domain::DisplayDimensions(libheif::dimensions(path)?);
+) -> Result<crate::types::ArtifactFacts, MediaError> {
+    let source = crate::types::DisplayDimensions(libheif::dimensions(path)?);
     let mut facts = crate::media_source::decoded_facts(
         ImageOrigin::PrimaryImage,
         "primary".into(),
         source,
         source,
-        oxy_domain::DisplayDimensions(output),
+        crate::types::DisplayDimensions(output),
         backend,
     );
     if presentation.color == CacheColorState::Srgb {
         facts
             .processing
-            .push(oxy_domain::ImageOperation::ColorConvert {
+            .push(crate::types::ImageOperation::ColorConvert {
                 target: "sRGB".into(),
             });
     }
     if presentation.sharpening == SharpeningState::Display {
-        facts.processing.push(oxy_domain::ImageOperation::Sharpen);
+        facts.processing.push(crate::types::ImageOperation::Sharpen);
     }
-    facts.processing.push(oxy_domain::ImageOperation::Encode {
+    facts.processing.push(crate::types::ImageOperation::Encode {
         format: "jpeg".into(),
     });
-    facts.byte_integrity = oxy_domain::ByteIntegrity::Reencoded;
+    facts.byte_integrity = crate::types::ByteIntegrity::Reencoded;
     Ok(facts)
 }
 
@@ -538,7 +538,7 @@ pub(crate) fn cache_full_image_from<'a>(
                 return Err(MediaError::Cancelled);
             }
             write_session_jpeg(&image, destination, presentation)?;
-            Ok(vec![oxy_domain::ImageOperation::Encode {
+            Ok(vec![crate::types::ImageOperation::Encode {
                 format: "jpeg".into(),
             }])
         },
@@ -569,7 +569,7 @@ pub(crate) fn cache_full_output(
     presentation: ArtifactPresentation,
     backend: &str,
     cancelled: impl Fn() -> bool,
-    write_output: impl FnOnce(&Path) -> Result<Vec<oxy_domain::ImageOperation>, MediaError>,
+    write_output: impl FnOnce(&Path) -> Result<Vec<crate::types::ImageOperation>, MediaError>,
 ) -> Result<PathBuf, MediaError> {
     let path = &source_revision.canonical_path;
     if cancelled() {
@@ -658,7 +658,9 @@ fn transcode_heif_source(
     .map_err(BackendExecutionError::into_media_error)?;
     let backend = match result.backend {
         PlannedHeifBackend::CachedArtifact => "cached full JPEG",
-        PlannedHeifBackend::Platform(oxy_domain::HeifBackendKind::AppleImageIo) => "Apple ImageIO",
+        PlannedHeifBackend::Platform(crate::types::HeifBackendKind::AppleImageIo) => {
+            "Apple ImageIO"
+        }
         PlannedHeifBackend::Platform(_) => "platform HEIF backend",
         PlannedHeifBackend::Ffmpeg | PlannedHeifBackend::FfmpegRgbaFallback => "FFmpeg",
         PlannedHeifBackend::Libheif => "libheif",
@@ -676,14 +678,14 @@ mod delivery_tests {
 
     #[test]
     fn embedded_or_resampled_pixels_do_not_establish_primary_native_detail() {
-        let source = oxy_domain::DisplayDimensions((6000, 4000).into());
+        let source = crate::types::DisplayDimensions((6000, 4000).into());
         for origin in [ImageOrigin::PrimaryImage, ImageOrigin::EmbeddedPreview] {
             let facts = crate::media_source::decoded_facts(
                 origin,
                 "item".into(),
                 source,
                 source,
-                oxy_domain::DisplayDimensions((511, 341).into()),
+                crate::types::DisplayDimensions((511, 341).into()),
                 "test-decoder",
             );
             assert!(!facts.native_detail());
@@ -708,7 +710,7 @@ mod delivery_tests {
         #[cfg(target_os = "macos")]
         assert_eq!(
             backend_presentation(PlannedHeifBackend::Platform(
-                oxy_domain::HeifBackendKind::AppleImageIo,
+                crate::types::HeifBackendKind::AppleImageIo,
             ))
             .color,
             CacheColorState::Srgb

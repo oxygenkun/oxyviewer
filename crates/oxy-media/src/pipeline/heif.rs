@@ -4,7 +4,7 @@ pub(crate) mod artifact;
 pub(crate) mod planner;
 
 use crate::MediaError;
-use oxy_domain::{AccelerationKind, HeifBackendKind, HeifCapabilities};
+use crate::types::{AccelerationKind, HeifBackendKind, HeifCapabilities};
 use planner::{
     AttemptDiagnostic, AttemptOutcome, BackendProbe, BackendProbes, Platform, ProbeState,
     plan_backends,
@@ -15,12 +15,12 @@ use std::path::Path;
 pub(crate) fn preview(
     path: &Path,
     cache_dir: &Path,
-    level: oxy_domain::RenderLevel,
+    level: crate::types::RenderLevel,
     priority: crate::decode_control::DecodePriority,
     allow_interim: bool,
-    cancellation: &oxy_runtime::CancellationToken,
-) -> Result<oxy_domain::PreviewResult, MediaError> {
-    use oxy_domain::RenderLevel;
+    cancellation: &crate::control::CancellationToken,
+) -> Result<crate::types::PreviewResult, MediaError> {
+    use crate::types::RenderLevel;
     if level == RenderLevel::Full {
         match artifact::full(path, cache_dir, cancellation) {
             Ok(result) => return Ok(result),
@@ -452,7 +452,7 @@ mod tests {
 
     #[test]
     fn semantic_levels_preserve_embedded_preview_and_native_full_fallback() {
-        use oxy_domain::RenderLevel;
+        use crate::types::RenderLevel;
         for (level, max_size, embedded, native_detail) in [
             (RenderLevel::Thumbnail, 512, true, false),
             (RenderLevel::Preview, 4_096, true, false),

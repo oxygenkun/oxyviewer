@@ -9,5 +9,6 @@ version.workspace = true
 workspace = true
 
 [dependencies]
+oxy-media = { path = "../oxy-media" }
 oxy-domain = { path = "../oxy-domain" }
 parking_lot.workspace = true

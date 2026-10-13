@@ -14,9 +14,9 @@ use std::{
 // RAW development additionally serializes its large native working set.
 static RAW_FULL_DECODE_LOCK: Mutex<()> = Mutex::new(());
 static THUMBNAIL_DECODE_GATE: LazyLock<DecodeGate> =
-    LazyLock::new(|| DecodeGate::with_capacity(oxy_runtime::image_worker_count()));
+    LazyLock::new(|| DecodeGate::with_capacity(crate::control::image_worker_count()));
 static FULL_DECODE_GATE: LazyLock<DecodeGate> =
-    LazyLock::new(|| DecodeGate::with_capacity(oxy_runtime::loupe_worker_count()));
+    LazyLock::new(|| DecodeGate::with_capacity(crate::control::loupe_worker_count()));
 const CONVERSION_BYTES: usize = 256 * 1024 * 1024;
 static CONVERSION_GATE: DecodeGate = DecodeGate::with_budget(2, CONVERSION_BYTES);
 // An explicit person-analysis job may read a 60 MP camera JPEG, whose
@@ -45,9 +45,9 @@ pub(crate) enum DecodePriority {
     Foreground,
 }
 
-impl From<oxy_domain::PreviewPriority> for DecodePriority {
-    fn from(priority: oxy_domain::PreviewPriority) -> Self {
-        use oxy_domain::PreviewPriority;
+impl From<crate::types::PreviewPriority> for DecodePriority {
+    fn from(priority: crate::types::PreviewPriority) -> Self {
+        use crate::types::PreviewPriority;
         match priority {
             PreviewPriority::Preload | PreviewPriority::Nearby => Self::Background,
             PreviewPriority::Visible => Self::Visible,
@@ -241,11 +241,11 @@ pub(crate) fn acquire_pixel_input(
 /// Acquire capacity within the requested render lane. Native decoders must
 /// observe the same cancellation signal during their work.
 pub(crate) fn acquire_decode<F: Fn() -> bool>(
-    level: oxy_domain::RenderLevel,
+    level: crate::types::RenderLevel,
     priority: DecodePriority,
     cancelled: &F,
 ) -> Result<DecodePermit<'static>, crate::MediaError> {
-    if level == oxy_domain::RenderLevel::Full {
+    if level == crate::types::RenderLevel::Full {
         FULL_DECODE_GATE.acquire(priority, cancelled)
     } else {
         THUMBNAIL_DECODE_GATE.acquire(priority, cancelled)
@@ -343,7 +343,7 @@ mod tests {
 
     #[test]
     fn maps_domain_priority_to_private_gate_priority() {
-        use oxy_domain::PreviewPriority;
+        use crate::types::PreviewPriority;
 
         assert_eq!(
             DecodePriority::from(PreviewPriority::Preload),

@@ -1,7 +1,7 @@
 //! System codec discovery and recent file-specific failures. All native work is
 //! outside the state mutex; callers run discovery and decoding on media workers.
 
-use oxy_domain::RawDecoderStatus;
+use crate::types::RawDecoderStatus;
 use std::path::Path;
 
 /// Does not decode the selected file; reports only a previously attempted decode.
@@ -13,7 +13,7 @@ pub fn raw_decoder_status(path: Option<&Path>, refresh: bool) -> RawDecoderStatu
         let _ = (path, refresh);
         RawDecoderStatus {
             install_available: false,
-            availability: oxy_domain::RawSystemAvailability::UnsupportedPlatform,
+            availability: crate::types::RawSystemAvailability::UnsupportedPlatform,
             codecs: Vec::new(),
             detail: None,
             attempt: None,
@@ -47,11 +47,11 @@ pub fn request_raw_retry(path: &Path) -> Result<(), crate::MediaError> {
 #[cfg(target_os = "windows")]
 mod windows {
     use super::*;
+    use crate::control::CancellationToken;
+    use crate::types::{RawSystemAttempt, RawSystemAttemptState, RawSystemAvailability};
     use crate::{
         MediaError, SourceRevision, backends::windows_wic::raw, media_source::DecodedImage,
     };
-    use oxy_domain::{RawSystemAttempt, RawSystemAttemptState, RawSystemAvailability};
-    use oxy_runtime::CancellationToken;
     use std::{
         collections::VecDeque,
         sync::{Mutex, OnceLock},

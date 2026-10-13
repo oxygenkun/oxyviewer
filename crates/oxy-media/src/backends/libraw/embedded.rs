@@ -190,13 +190,13 @@ mod tests {
             let full = crate::pipeline::raw::full(
                 Path::new(&path),
                 cache.path(),
-                &oxy_runtime::CancellationToken::default(),
+                &crate::control::CancellationToken::default(),
             )
             .unwrap();
-            assert_eq!(full.kind, oxy_domain::PreviewKind::Embedded);
+            assert_eq!(full.kind, crate::types::PreviewKind::Embedded);
             assert_eq!(
                 full.satisfaction,
-                Some(oxy_domain::MediaSatisfaction::Satisfied)
+                Some(crate::types::MediaSatisfaction::Satisfied)
             );
             assert_eq!((full.width, full.height), (4000, 6000));
             assert!(full.image_facts.unwrap().processing.is_empty());
@@ -206,19 +206,19 @@ mod tests {
                 let isolated = cache.path().join(Path::new(&path).file_name().unwrap());
                 std::fs::copy(&path, &isolated).unwrap();
                 crate::request_raw_retry(&isolated).unwrap();
-                let token = oxy_runtime::CancellationToken::default();
+                let token = crate::control::CancellationToken::default();
                 let interim = crate::preview_for_app(
                     &isolated,
                     cache.path(),
-                    oxy_domain::RenderLevel::Full,
-                    oxy_domain::PreviewPriority::Loupe,
-                    oxy_domain::AssetKind::Raw,
+                    crate::types::RenderLevel::Full,
+                    crate::types::PreviewPriority::Loupe,
+                    crate::types::AssetKind::Raw,
                     &token,
                 )
                 .unwrap();
                 assert_eq!(
                     interim.satisfaction,
-                    Some(oxy_domain::MediaSatisfaction::Interim)
+                    Some(crate::types::MediaSatisfaction::Interim)
                 );
                 assert_eq!((interim.width, interim.height), (4000, 6000));
                 assert!(interim.image_facts.as_ref().unwrap().processing.is_empty());
@@ -232,9 +232,9 @@ mod tests {
                     crate::preview_for_app_upgrade(
                         &isolated,
                         cache.path(),
-                        oxy_domain::RenderLevel::Full,
-                        oxy_domain::PreviewPriority::Loupe,
-                        oxy_domain::AssetKind::Raw,
+                        crate::types::RenderLevel::Full,
+                        crate::types::PreviewPriority::Loupe,
+                        crate::types::AssetKind::Raw,
                         &token,
                     ),
                     Err(crate::MediaError::Cancelled)

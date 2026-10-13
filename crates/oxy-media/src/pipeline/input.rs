@@ -1,12 +1,12 @@
 //! Pixel delivery through the format pipelines and the shared artifact lifecycle.
 
+use crate::control::CancellationToken;
+use crate::types::{ArtifactFacts, AssetKind, DisplayDimensions, EncodedDimensions};
 use crate::{
     ArtifactLocation, ArtifactRequirement, CacheColorState, CacheRequest, DiskMediaCache,
     MEDIA_CACHE_POLICY_REVISION, MediaCache, MediaError, SourceRevision,
 };
 use image::DynamicImage;
-use oxy_domain::{ArtifactFacts, AssetKind, DisplayDimensions, EncodedDimensions};
-use oxy_runtime::CancellationToken;
 use std::path::Path;
 
 #[derive(Debug)]
@@ -132,7 +132,7 @@ fn prepare(
 #[cfg(test)]
 pub(crate) fn qualified(
     facts: &ArtifactFacts,
-    source: oxy_domain::PixelDimensions,
+    source: crate::types::PixelDimensions,
     target: u32,
 ) -> bool {
     crate::request::MediaRequest::full_frame(source, target).accepts(facts)

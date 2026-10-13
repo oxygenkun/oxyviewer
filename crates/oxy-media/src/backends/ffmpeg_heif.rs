@@ -123,7 +123,7 @@ struct TileGrid {
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct PreviewStream {
     index: u64,
-    encoded_dimensions: oxy_domain::EncodedDimensions,
+    encoded_dimensions: crate::types::EncodedDimensions,
     exif_orientation: u8,
 }
 
@@ -566,9 +566,9 @@ pub(crate) fn decode_frame(
     decode_scaled_primary(path, &grid, request.max_size, cancelled)
 }
 
-fn preview_facts(grid: &TileGrid, stream: &PreviewStream) -> oxy_domain::ArtifactFacts {
+fn preview_facts(grid: &TileGrid, stream: &PreviewStream) -> crate::types::ArtifactFacts {
     crate::media_source::source_facts(
-        oxy_domain::ImageOrigin::EmbeddedPreview,
+        crate::types::ImageOrigin::EmbeddedPreview,
         format!("ffmpeg-stream:{}", stream.index),
         stream.encoded_dimensions,
         stream.exif_orientation,
@@ -576,8 +576,8 @@ fn preview_facts(grid: &TileGrid, stream: &PreviewStream) -> oxy_domain::Artifac
     )
 }
 
-fn grid_display_dimensions(grid: &TileGrid) -> oxy_domain::DisplayDimensions {
-    oxy_domain::EncodedDimensions((grid.width, grid.height).into()).to_display(
+fn grid_display_dimensions(grid: &TileGrid) -> crate::types::DisplayDimensions {
+    crate::types::EncodedDimensions((grid.width, grid.height).into()).to_display(
         if grid.rotation.rem_euclid(180) == 90 {
             6
         } else {
@@ -605,14 +605,14 @@ fn select_preview(
             let size = facts.display_dimensions.0;
             let scale = f64::from(request.max_size) / f64::from(size.width.max(size.height));
             // Conservative floor matches FFmpeg's aspect-preserving preview scale.
-            facts.resize(oxy_domain::DisplayDimensions(
+            facts.resize(crate::types::DisplayDimensions(
                 (
                     (f64::from(size.width) * scale).floor().max(1.0) as u32,
                     (f64::from(size.height) * scale).floor().max(1.0) as u32,
                 )
                     .into(),
             ));
-            facts.encoded_dimensions = oxy_domain::EncodedDimensions(facts.display_dimensions.0);
+            facts.encoded_dimensions = crate::types::EncodedDimensions(facts.display_dimensions.0);
             facts.exif_orientation = 1;
             request.accepts(&facts)
         })
@@ -677,11 +677,11 @@ fn decode_scaled_primary(
     let mut pixels = RgbaImage::new(width, height);
     copy_bmp_tile(&mut pixels, &bitmap, 0, 0, width, height)?;
     let facts = crate::media_source::decoded_facts(
-        oxy_domain::ImageOrigin::PrimaryImage,
+        crate::types::ImageOrigin::PrimaryImage,
         "primary".into(),
         reference,
         reference,
-        oxy_domain::DisplayDimensions((width, height).into()),
+        crate::types::DisplayDimensions((width, height).into()),
         "FFmpeg",
     );
     Ok(crate::media_source::DecodedImage {
@@ -731,26 +731,26 @@ fn decode_preview_stream(
     let image = image::load_from_memory(&output.stdout)
         .map_err(|error| native_error(format!("decode ffmpeg preview bitmap: {error}")))?;
     let mut facts = preview_facts(grid, stream);
-    facts.processing.push(oxy_domain::ImageOperation::Decode {
+    facts.processing.push(crate::types::ImageOperation::Decode {
         backend: "FFmpeg".into(),
     });
     if stream.exif_orientation != 1 {
-        facts.processing.push(oxy_domain::ImageOperation::Orient {
+        facts.processing.push(crate::types::ImageOperation::Orient {
             exif: stream.exif_orientation,
         });
     }
-    facts.resize(oxy_domain::DisplayDimensions(
+    facts.resize(crate::types::DisplayDimensions(
         (image.width(), image.height()).into(),
     ));
-    facts.encoded_dimensions = oxy_domain::EncodedDimensions(facts.display_dimensions.0);
+    facts.encoded_dimensions = crate::types::EncodedDimensions(facts.display_dimensions.0);
     facts.exif_orientation = 1;
-    facts.processing.push(oxy_domain::ImageOperation::Encode {
+    facts.processing.push(crate::types::ImageOperation::Encode {
         format: "jpeg".into(),
     });
-    facts.processing.push(oxy_domain::ImageOperation::Decode {
+    facts.processing.push(crate::types::ImageOperation::Decode {
         backend: "image".into(),
     });
-    facts.byte_integrity = oxy_domain::ByteIntegrity::Reencoded;
+    facts.byte_integrity = crate::types::ByteIntegrity::Reencoded;
     Ok(crate::media_source::DecodedImage { image, facts })
 }
 
@@ -974,7 +974,7 @@ fn parse_grid(json: &[u8]) -> Result<TileGrid, MediaError> {
             let height = stream["height"].as_u64()?.try_into().ok()?;
             (!tile_indices.contains(&index)).then_some(PreviewStream {
                 index,
-                encoded_dimensions: oxy_domain::EncodedDimensions((width, height).into()),
+                encoded_dimensions: crate::types::EncodedDimensions((width, height).into()),
                 exif_orientation: match rotation_from_side_data(stream).unwrap_or(0).rem_euclid(360)
                 {
                     0 => 1,
@@ -1325,7 +1325,7 @@ mod tests {
         };
         assert_eq!(select_preview(&grid, display).unwrap().index, 6);
         let mut grid = grid;
-        grid.previews[0].encoded_dimensions = oxy_domain::EncodedDimensions((1800, 1200).into());
+        grid.previews[0].encoded_dimensions = crate::types::EncodedDimensions((1800, 1200).into());
         assert_eq!(select_preview(&grid, request).unwrap().index, 6);
         let native = crate::request::MediaRequest {
             detail: crate::DetailRequirement::NativeDetail,
