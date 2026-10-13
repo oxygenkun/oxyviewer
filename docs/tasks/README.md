@@ -4,6 +4,10 @@ This directory contains work that is not complete. Current contracts live in
 the architecture, format, and performance documents; a task plan cannot
 override them.
 
+- [Four-package core layout refactor](core-layout-refactor.md): implements the
+  accepted 2026-10-13 organization report in an isolated worktree. Supersedes
+  the remaining E/P organization steps of the earlier split plan.
+
 - [HIF foreground and background acceleration](hif-performance-plan.md): active
   follow-up work for persistent decoding and broader qualification.
 - [Native image presentation](native-image-presentation-plan.md): deferred

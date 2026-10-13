@@ -4,6 +4,9 @@ This directory contains dated experiments, measurements, diagnoses, and local
 qualification evidence. Reports state their fixture, platform, cache, and
 measurement limits; they do not define current product behavior by themselves.
 
+- [2026-10-13: code organization and major refactoring proposal](2026-10-13-code-organization-report.md)
+  — bili-sync reference, current crate boundaries, and a four-package target architecture; proposal only.
+
 - [2026-10-02: global people browsing and in-photo review](2026-10-02-people-experience.md)
   — visual iterations, cross-folder history, independent multi-person review and Windows Release limits.
 
