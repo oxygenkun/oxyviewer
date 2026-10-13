@@ -1,7 +1,7 @@
 use super::{Library, LibraryError};
-use crate::browse::types::AssetSummary;
+use crate::browse::{repo, types::AssetSummary};
 use parking_lot::Mutex;
-use rusqlite::{Connection, OptionalExtension, params};
+use rusqlite::Connection;
 use std::{
     collections::HashMap,
     path::{Component, Path, PathBuf},
@@ -207,15 +207,7 @@ fn persist_pending_snapshots(connection: &Mutex<Connection>, slot: &Slot) {
                 continue;
             }
         }
-        let result = connection.lock().execute(
-            "INSERT INTO directory_snapshots(root_path,directory_path,assets_json) VALUES (?1,?2,?3)
-             ON CONFLICT(root_path,directory_path) DO UPDATE SET assets_json=excluded.assets_json",
-            params![
-                item.root.to_string_lossy(),
-                item.directory.to_string_lossy(),
-                json
-            ],
-        );
+        let result = repo::store_snapshot(&connection.lock(), &item.root, &item.directory, &json);
         let mut state = slot.state.lock();
         if state.epoch == item.epoch && state.revision == item.revision {
             match result {
@@ -306,17 +298,14 @@ impl Library {
                     .ok_or(LibraryError::StaleDirectorySnapshot);
             }
             if !state.loaded {
-                let json: Option<String> = self.read_connection().query_row(
-                    "SELECT assets_json FROM directory_snapshots WHERE root_path=?1 AND directory_path=?2",
-                    params![root.to_string_lossy(), directory.to_string_lossy()], |row| row.get("assets_json"),
-                ).optional()?;
+                let json = repo::load_snapshot(&self.read_connection(), root, directory)?;
                 let has_snapshot_record =
                     json.is_some() || self.has_ancestor_snapshot_tombstone(root, directory)?;
                 state.assets = json
                     .and_then(|json| serde_json::from_str(&json).ok())
                     .map(Arc::new);
-                // Upgrade existing completed indexes without forcing a NAS
-                // rescan on the first launch after this cache was introduced.
+                // Reuse a current completed index when no snapshot or explicit
+                // invalidation record exists; this keeps an offline open cheap.
                 if state.assets.is_none() && !has_snapshot_record {
                     let mut reader = self.read_connection();
                     let transaction = reader.transaction()?;
@@ -324,11 +313,11 @@ impl Library {
                         &transaction,
                         &root.to_string_lossy(),
                     )? {
-                        state.assets = Some(Arc::new(transaction.prepare(
-                            "SELECT id,path,name,extension,kind,size_bytes,modified_at_ms,has_sidecar
-                             FROM indexed_assets WHERE root_path=?1 AND parent_path=?2"
-                        )?.query_map(params![root.to_string_lossy(), directory.to_string_lossy()], crate::library::cache::index::asset_from_row)?
-                            .collect::<Result<Vec<_>, _>>()?));
+                        state.assets = Some(Arc::new(crate::library::repo::directory_assets(
+                            &transaction,
+                            root,
+                            directory,
+                        )?));
                     }
                 }
                 state.loaded = true;
@@ -520,9 +509,10 @@ impl Library {
         {
             return Ok(true);
         }
-        Ok(self.read_connection().query_row(
-            "SELECT EXISTS(SELECT 1 FROM directory_snapshots WHERE root_path=?1 AND directory_path=?2 AND assets_json!='') AS present",
-            params![root.to_string_lossy(), directory.to_string_lossy()], |row| row.get("present"),
+        Ok(repo::has_snapshot(
+            &self.read_connection(),
+            root,
+            directory,
         )?)
     }
 
@@ -551,10 +541,7 @@ impl Library {
             state.validating = false;
             state.error = None;
         }
-        self.write().execute(
-            "DELETE FROM directory_snapshots WHERE root_path=?1",
-            [root.to_string_lossy()],
-        )?;
+        repo::forget_root(&self.write(), root)?;
         Ok(())
     }
 
@@ -564,15 +551,7 @@ impl Library {
         directory: &Path,
     ) -> Result<bool, LibraryError> {
         let connection = self.read_connection();
-        let tombstones = connection
-            .prepare(
-                "SELECT directory_path FROM directory_snapshots
-                 WHERE root_path=?1 AND assets_json=''",
-            )?
-            .query_map([root.to_string_lossy()], |row| {
-                row.get::<_, String>("directory_path").map(PathBuf::from)
-            })?
-            .collect::<Result<Vec<_>, _>>()?;
+        let tombstones = repo::tombstones(&connection, root)?;
         Ok(tombstones
             .iter()
             .any(|tombstone| directory.starts_with(tombstone)))
@@ -609,23 +588,13 @@ impl Library {
             state.error = None;
         }
         let mut connection = self.write();
-        let mut paths = connection
-            .prepare("SELECT root_path,directory_path FROM directory_snapshots")?
-            .query_map([], |row| {
-                Ok((
-                    PathBuf::from(row.get::<_, String>("root_path")?),
-                    PathBuf::from(row.get::<_, String>("directory_path")?),
-                ))
-            })?
-            .collect::<Result<std::collections::HashSet<_>, _>>()?;
+        let mut paths = repo::paths(&connection)?;
         paths.extend(slots.keys().cloned());
-        let registered_roots = connection
-            .prepare("SELECT path FROM library_roots")?
-            .query_map([], |row| row.get::<_, String>("path").map(PathBuf::from))?
-            .collect::<Result<Vec<_>, _>>()?;
+        let registered_roots = crate::library::repo::list_roots(&connection)?
+            .into_iter()
+            .map(PathBuf::from);
         paths.extend(
             registered_roots
-                .into_iter()
                 .filter(|root| directory.starts_with(root))
                 .map(|root| (root, directory.clone())),
         );
@@ -634,9 +603,7 @@ impl Library {
             if path.starts_with(&directory) {
                 // A tombstone prevents a stale completed root index from
                 // reseeding this explicitly invalidated directory on restart.
-                transaction.execute("INSERT INTO directory_snapshots(root_path,directory_path,assets_json) VALUES (?1,?2,'')
-                    ON CONFLICT(root_path,directory_path) DO UPDATE SET assets_json=''",
-                    params![root.to_string_lossy(), path.to_string_lossy()])?;
+                repo::store_snapshot(&transaction, &root, &path, "")?;
             }
         }
         transaction.commit()?;
@@ -647,6 +614,21 @@ impl Library {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use rusqlite::params;
+
+    #[test]
+    fn snapshot_policy_delegates_statements_to_owning_repositories() {
+        let source = include_str!("browsing.rs")
+            .split("#[cfg(test)]")
+            .next()
+            .unwrap();
+        for verb in ["SELECT ", "INSERT INTO ", "UPDATE ", "DELETE FROM "] {
+            assert!(
+                !source.contains(verb),
+                "snapshot SQL belongs in a feature repository: {verb}"
+            );
+        }
+    }
     use std::{
         fs,
         sync::{

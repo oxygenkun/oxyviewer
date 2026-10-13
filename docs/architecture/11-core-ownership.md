@@ -71,6 +71,10 @@ OxyApp 为 metadata、preview 和 browse 装配一个共享投影句柄；Librar
 WAL projection reader 仍独立于浏览 reader 和 writer；源观察版本、validAt、
 stateRevision、清理后的顺序 fence、重启时移除旧进程 descriptor 的规则继续成立。
 
+目录快照的读取、持久化和 tombstone 语句已进入 `browse::repo`；当前索引的资产读取
+委托给 library repository。快照政策不再携带 SQL，持久化 fence、合并队列和事务
+仍由政策层持有。快照句柄及其失效入口目前仍需从 Library 完整移到 browse。
+
 默认数据和缓存路径使用 `core-v2` 子目录，custom cache 也有独立的版本子目录。
 Store 只接收本核心的 application ID/schema version，或尚未创建表的空文件。
 打开已有文件先做只读检查，未识别的旧库或未来版本不会被升级、重建或 checkpoint。

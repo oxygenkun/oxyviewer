@@ -1,3 +1,4 @@
+pub(crate) mod repo;
 pub(crate) mod schema;
 pub mod types;
 

@@ -74,3 +74,17 @@ pub fn replace_root(
     )?;
     Ok(())
 }
+
+pub(crate) fn directory_assets(
+    connection: &Connection,
+    root: &std::path::Path,
+    directory: &std::path::Path,
+) -> Result<Vec<crate::browse::types::AssetSummary>, StoreError> {
+    let mut statement = connection.prepare("SELECT id,path,name,extension,kind,size_bytes,modified_at_ms,has_sidecar FROM indexed_assets WHERE root_path=?1 AND parent_path=?2")?;
+    Ok(statement
+        .query_map(
+            params![root.to_string_lossy(), directory.to_string_lossy()],
+            super::cache::index::asset_from_row,
+        )?
+        .collect::<Result<_, _>>()?)
+}

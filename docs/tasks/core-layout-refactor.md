@@ -140,6 +140,11 @@ resource leases, cancellation and stale-publication semantics.
   independent-reader contention tests still drive browsing and indexing together.
   Core's 275 tests and desktop's 5 tests pass, followed by all 11 projection-owner
   tests including the added SQL ownership audit. Strict workspace Clippy passes.
+- Browsing snapshot statements now live in browse::repo. Current indexed-asset
+  reads and registered-root reads call the library repository; snapshot policy
+  carries no inline SQL. All 277 core tests, including snapshot regressions and
+  the added source ownership audit, and strict workspace Clippy pass. Snapshot
+  handle/lifecycle ownership is still the next step.
 - Next: distribute browsing SQL, move remaining desktop use-case coordination,
   remove legacy person identity paths and finish ownership/docs/tooling gates,
   then complete final release/performance qualification.
