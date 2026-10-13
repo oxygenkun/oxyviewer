@@ -204,102 +204,6 @@ mod tests {
     }
 
     #[test]
-    fn migrates_legacy_roots_and_persists_reordering() {
-        let directory = tempdir().unwrap();
-        let database = directory.path().join("library.sqlite");
-        let first = directory.path().join("first");
-        let second = directory.path().join("second");
-        std::fs::create_dir(&first).unwrap();
-        std::fs::create_dir(&second).unwrap();
-        {
-            let legacy = Connection::open(&database).unwrap();
-            legacy
-                .execute_batch(
-                    "CREATE TABLE library_roots (
-                       path TEXT PRIMARY KEY NOT NULL,
-                       added_at INTEGER NOT NULL DEFAULT (unixepoch())
-                     );",
-                )
-                .unwrap();
-            legacy
-                .execute(
-                    "INSERT INTO library_roots(path, added_at) VALUES (?1, 1)",
-                    params![first.to_string_lossy()],
-                )
-                .unwrap();
-            legacy
-                .execute(
-                    "INSERT INTO library_roots(path, added_at) VALUES (?1, 2)",
-                    params![second.to_string_lossy()],
-                )
-                .unwrap();
-        }
-
-        let library = Library::open(&database).unwrap();
-        assert_eq!(library.roots().unwrap(), [first.clone(), second.clone()]);
-        library
-            .reorder_roots(&[second.clone(), first.clone()])
-            .unwrap();
-        drop(library);
-
-        let reopened = Library::open(&database).unwrap();
-        assert_eq!(reopened.roots().unwrap(), [second, first]);
-    }
-
-    #[test]
-    fn migrates_resource_projection_state_revision_and_pick_labels() {
-        let directory = tempdir().unwrap();
-        let database = directory.path().join("library.sqlite");
-        {
-            let legacy = Connection::open(&database).unwrap();
-            legacy
-                .execute_batch(
-                    "CREATE TABLE resource_projections (
-                       path TEXT NOT NULL,
-                       parent_path TEXT NOT NULL,
-                       projection_kind TEXT NOT NULL,
-                       source_revision TEXT NOT NULL,
-                       valid_at INTEGER NOT NULL,
-                       projection_revision INTEGER NOT NULL,
-                       status TEXT NOT NULL,
-                       rating INTEGER,
-                       color_label TEXT,
-                       result_json TEXT,
-                       error TEXT,
-                       PRIMARY KEY(path, projection_kind)
-                     );
-                     INSERT INTO resource_projections(
-                       path, parent_path, projection_kind, source_revision, valid_at,
-                       projection_revision, status, rating, color_label, result_json, error
-                     ) VALUES (
-                       'legacy.jpg', '', 'metadata', 'legacy-source', 7,
-                       11, 'ready', 4, 'Red', NULL, NULL
-                     );",
-                )
-                .unwrap();
-        }
-
-        let library = Library::open(&database).unwrap();
-        let columns = library
-            .write()
-            .prepare("PRAGMA table_info(resource_projections)")
-            .unwrap()
-            .query_map([], |row| row.get::<_, String>("name"))
-            .unwrap()
-            .collect::<Result<Vec<_>, _>>()
-            .unwrap();
-        assert!(columns.iter().any(|column| column == "pick_label"));
-        assert!(columns.iter().any(|column| column == "state_revision"));
-        assert!(!columns.iter().any(|column| column == "projection_revision"));
-        let migrated = library
-            .metadata_projection(Path::new("legacy.jpg"), "legacy-source")
-            .unwrap()
-            .unwrap();
-        assert_eq!(migrated.state_revision, 11);
-        assert_eq!(migrated.rating, Some(4));
-    }
-
-    #[test]
     fn stores_parent_and_child_as_independent_roots_and_removes_one() {
         let library = Library::in_memory().unwrap();
         let parent = tempdir().unwrap();
@@ -618,7 +522,7 @@ mod tests {
     }
 
     #[test]
-    fn migrates_search_keys_and_replaces_changed_terms_without_duplicates() {
+    fn replaces_changed_search_terms_without_duplicates() {
         let state = tempdir().unwrap();
         let database = state.path().join("library.sqlite");
         let root = tempdir().unwrap();
@@ -627,12 +531,12 @@ mod tests {
         let library = Library::open(&database).unwrap();
         library.add_root(&root).unwrap();
         library.index_root(&root).unwrap();
-        // Simulate the pre-migration database, including a non-default FTS rowid.
+        // Exercise a valid current-format index with a non-default search rowid.
         library
             .write()
             .execute_batch(
                 "UPDATE indexed_asset_search SET rowid = 1234;
-             DROP TABLE indexed_asset_search_keys;",
+             UPDATE indexed_asset_search_keys SET search_rowid=1234;",
             )
             .unwrap();
         drop(library);
@@ -672,7 +576,7 @@ mod tests {
         assert_eq!((count, rowid), (1, 1234));
         drop(connection);
         drop(library);
-        // Reopening must preserve the migrated key and searchable result.
+        // Reopening must preserve the current key and searchable result.
         let library = Library::open(&database).unwrap();
         assert_eq!(
             library

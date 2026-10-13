@@ -884,39 +884,6 @@ mod tests {
     }
 
     #[test]
-    fn opening_previous_task_schema_adds_claim_token_without_losing_rows() {
-        let temporary = tempfile::tempdir().unwrap();
-        let database = temporary.path().join("library.sqlite");
-        // A stale schema can only be staged outside the store's own step, so
-        // this test writes the old table shape directly.
-        let connection = crate::storage::Connection::open(&database).unwrap();
-        connection
-            .execute_batch(
-                "CREATE TABLE person_analysis_tasks (
-                   run_id TEXT NOT NULL, asset_path TEXT NOT NULL,
-                   source_revision TEXT NOT NULL, stage_id TEXT NOT NULL,
-                   stage_fingerprint TEXT NOT NULL, stage_order INTEGER NOT NULL,
-                   state TEXT NOT NULL, error TEXT,
-                   PRIMARY KEY(run_id,asset_path,stage_id),
-                   UNIQUE(run_id,asset_path,stage_order));
-                 INSERT INTO person_analysis_tasks VALUES
-                   ('old-run','/photos/a.jpg','10:20','detect','old',0,'completed',NULL);",
-            )
-            .unwrap();
-        drop(connection);
-        let people = testing::open(&database);
-        let connection = people.store.write();
-        let found: (String, Option<String>) = connection
-            .query_row(
-                "SELECT state,claim_token FROM person_analysis_tasks WHERE run_id='old-run'",
-                [],
-                |row| Ok((row.get("state")?, row.get("claim_token")?)),
-            )
-            .unwrap();
-        assert_eq!(found, ("completed".into(), None));
-    }
-
-    #[test]
     fn public_commit_reobserves_real_source_and_rejects_changed_file() {
         let temporary = tempfile::tempdir().unwrap();
         let folder = temporary.path().canonicalize().unwrap();

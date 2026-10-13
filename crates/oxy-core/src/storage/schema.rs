@@ -68,35 +68,49 @@ pub fn preserved_on_clear() -> impl Iterator<Item = &'static str> {
     table::preserved(&cache::DEFS)
 }
 
-/// Creates or migrates every declared table.
-///
-/// User-owned tables come first. A cache migration must never be the first
-/// thing to define user storage, and the order is now readable in one place
-/// instead of inferred from directory layout.
-pub(crate) fn ensure(connection: &mut Connection) -> Result<(), rusqlite::Error> {
-    user::ensure_schema(connection)?;
-    cache::ensure_schema(connection)
+/// The first format of the reorganized core. Future upgrades must explicitly
+/// preserve user declarations; unrecognized files are never adopted or cleared.
+const APPLICATION_ID: i32 = 0x4f58_5943;
+const SCHEMA_VERSION: i32 = 1;
+
+pub(crate) fn validate(connection: &Connection) -> Result<(), crate::storage::StoreError> {
+    let application_id: i32 =
+        connection.pragma_query_value(None, "application_id", |row| row.get("application_id"))?;
+    let version: i32 =
+        connection.pragma_query_value(None, "user_version", |row| row.get("user_version"))?;
+    let recognized = application_id == APPLICATION_ID && version == SCHEMA_VERSION;
+    if !recognized {
+        let occupied: bool = connection.query_row(
+            "SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%') AS occupied",
+            [], |row| row.get("occupied"))?;
+        if application_id != 0 || version != 0 || occupied {
+            return Err(crate::storage::StoreError::UnsupportedSchema {
+                application_id,
+                version,
+            });
+        }
+    }
+    Ok(())
+}
+
+pub(crate) fn ensure(connection: &mut Connection) -> Result<(), crate::storage::StoreError> {
+    validate(connection)?;
+    let transaction = connection.transaction()?;
+    table::create_all(&transaction, definitions())?;
+    crate::library::schema::initialize(&transaction)?;
+    crate::tags::schema::initialize(&transaction)?;
+    crate::people::schema::initialize(&transaction)?;
+    crate::resources::schema::initialize(&transaction)?;
+    transaction.pragma_update(None, "application_id", APPLICATION_ID)?;
+    transaction.pragma_update(None, "user_version", SCHEMA_VERSION)?;
+    transaction.commit()?;
+    crate::people::schema::refresh_cache_format(connection)?;
+    Ok(())
 }
 
 /// Empties every rebuildable table. Never touches a user-owned one.
 pub(crate) fn clear_cache(connection: &mut Connection) -> Result<(), rusqlite::Error> {
     cache::clear(connection)
-}
-
-/// Whether `table` has `column`, for the migrations that add one.
-///
-/// A missing table answers `false`, so the same call covers "column absent"
-/// and "table not created yet".
-pub(crate) fn has_column(
-    connection: &Connection,
-    table: &str,
-    column: &str,
-) -> Result<bool, rusqlite::Error> {
-    connection.query_row(
-        "SELECT EXISTS(SELECT 1 FROM pragma_table_info(?1) WHERE name = ?2) AS present",
-        rusqlite::params![table, column],
-        |row| row.get("present"),
-    )
 }
 
 #[cfg(test)]

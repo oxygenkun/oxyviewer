@@ -32,6 +32,17 @@ pub struct AppPaths {
     pub preview_dir: PathBuf,
 }
 
+impl AppPaths {
+    pub fn from_roots(data_root: PathBuf, cache_root: PathBuf) -> Self {
+        Self {
+            data_dir: data_root.join(crate::settings::DATA_NAMESPACE),
+            preview_dir: cache_root
+                .join(crate::settings::DATA_NAMESPACE)
+                .join("previews"),
+        }
+    }
+}
+
 /// Every handle belongs to this application and shares one store and lifetime.
 pub struct OxyApp {
     pub runtime: CoreRuntime,
@@ -171,6 +182,32 @@ impl Drop for OxyApp {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn versioned_bootstrap_leaves_old_data_and_previews_untouched() {
+        let directory = tempfile::tempdir().unwrap();
+        let data = directory.path().join("data");
+        let cache = directory.path().join("cache");
+        std::fs::create_dir_all(&data).unwrap();
+        std::fs::create_dir_all(cache.join("previews")).unwrap();
+        let old_db = data.join("oxyviewer.sqlite");
+        std::fs::write(&old_db, b"old application data").unwrap();
+        let old_preview = cache.join("previews/old.jpg");
+        std::fs::write(&old_preview, b"old preview").unwrap();
+        let paths = AppPaths::from_roots(data, cache);
+        let current_db = paths.data_dir.join("oxyviewer.sqlite");
+        let (app, _) = OxyApp::open(paths).unwrap();
+        assert!(current_db.exists());
+        assert!(
+            app.cache
+                .preview_dir()
+                .components()
+                .any(|part| part.as_os_str() == crate::settings::DATA_NAMESPACE)
+        );
+        assert!(app.shutdown(Duration::from_secs(2)));
+        assert_eq!(std::fs::read(old_db).unwrap(), b"old application data");
+        assert_eq!(std::fs::read(old_preview).unwrap(), b"old preview");
+    }
 
     #[test]
     fn headless_host_assembles_and_stops_all_queue_workers() {

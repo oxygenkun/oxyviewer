@@ -25,6 +25,10 @@ pub use rusqlite::{Connection, Transaction};
 /// invalid root order — belong to the crate that owns the rule, not here.
 #[derive(Debug, Error)]
 pub enum StoreError {
+    #[error(
+        "unsupported SQLite schema (application {application_id:#x}, version {version}); use an isolated core data directory"
+    )]
+    UnsupportedSchema { application_id: i32, version: i32 },
     #[error(transparent)]
     Sqlite(#[from] rusqlite::Error),
     #[error(transparent)]
@@ -75,14 +79,23 @@ impl Store {
     /// user-owned tables first so a cache migration is never the first thing to
     /// define user storage.
     pub fn open(path: &Path) -> Result<Self, StoreError> {
+        // A read-only preflight observes WAL state without checkpointing or
+        // rewriting an unknown application's file on connection close.
+        if path.metadata().is_ok_and(|metadata| metadata.len() != 0) {
+            let existing = Connection::open_with_flags(
+                path,
+                OpenFlags::SQLITE_OPEN_READ_ONLY | OpenFlags::SQLITE_OPEN_NO_MUTEX,
+            )?;
+            schema::validate(&existing)?;
+        }
         let vector_registration = vector::register();
         if let Some(parent) = path.parent() {
             std::fs::create_dir_all(parent)?;
         }
         let mut connection = Connection::open(path)?;
-        connection.pragma_update(None, "journal_mode", "WAL")?;
         connection.pragma_update(None, "foreign_keys", "ON")?;
         schema::ensure(&mut connection)?;
+        connection.pragma_update(None, "journal_mode", "WAL")?;
         let open_reader = || -> Result<Mutex<Connection>, rusqlite::Error> {
             let reader = Connection::open_with_flags(
                 path,
@@ -182,6 +195,58 @@ impl Store {
 mod tests {
     use super::*;
     use tempfile::tempdir;
+
+    #[test]
+    fn refuses_an_unversioned_populated_file_without_rewriting_it() {
+        let directory = tempdir().unwrap();
+        let path = directory.path().join("old.sqlite");
+        {
+            let connection = Connection::open(&path).unwrap();
+            connection.execute_batch("CREATE TABLE user_facts(value TEXT NOT NULL); INSERT INTO user_facts VALUES('keep');").unwrap();
+        }
+        let before = std::fs::read(&path).unwrap();
+        assert!(matches!(
+            Store::open(&path),
+            Err(StoreError::UnsupportedSchema {
+                application_id: 0,
+                version: 0
+            })
+        ));
+        assert!(
+            std::fs::read(&path).unwrap() == before,
+            "rejection rewrote the file"
+        );
+        assert!(!path.with_extension("sqlite-wal").exists());
+    }
+
+    #[test]
+    fn refuses_a_future_format_without_resetting_its_user_facts() {
+        let directory = tempdir().unwrap();
+        let path = directory.path().join("future.sqlite");
+        {
+            let store = Store::open(&path).unwrap();
+            store
+                .write()
+                .execute(
+                    "INSERT INTO library_roots(path,sort_order) VALUES('keep',0)",
+                    [],
+                )
+                .unwrap();
+            store
+                .write()
+                .pragma_update(None, "user_version", 99)
+                .unwrap();
+        }
+        let before = std::fs::read(&path).unwrap();
+        assert!(matches!(
+            Store::open(&path),
+            Err(StoreError::UnsupportedSchema { version: 99, .. })
+        ));
+        assert!(
+            std::fs::read(&path).unwrap() == before,
+            "rejection checkpointed the future file"
+        );
+    }
 
     #[test]
     fn a_disk_store_keeps_separate_readers() {

@@ -45,6 +45,13 @@ BrowseService 负责打开、分页、条件组合、目录树、切目录取消
 类型化事件转发。TagXmpSync 用单个合并 worker 处理持久镜像队列，锁只保护 running/
 requested 状态，不包住文件或数据库 I/O。失败项留在队列里供后续重试，停止拒绝新调度。
 
+默认数据和缓存路径使用 `core-v2` 子目录，custom cache 也有独立的版本子目录。
+Store 只接收本核心的 application ID/schema version，或尚未创建表的空文件。
+打开已有文件先做只读检查，未识别的旧库或未来版本不会被升级、重建或 checkpoint。
+创建当前 schema 和版本标记在一个事务中完成；各功能负责自己的 indexes、FTS 和
+cache-format marker。缓存格式失配只重建该功能声明的派生表，保留用户事实。
+旧列迁移、旧标签来源回填和平铺缓存清理已移除。退出排空已接受的目录快照写入。
+
 重构仍在实施：部分用例协调留在 desktop commands，浏览和索引中的 SQL 仍待进一步
-收敛，schema 初始化与兼容代码尚未完全分配，旧入口与 schema 兼容路径尚未清除。详见
+收敛，旧人物入口与身份兼容路径尚未清除。详见
 [实施清单](../tasks/core-layout-refactor.md)；包数量收敛不代表该清单已经完成。

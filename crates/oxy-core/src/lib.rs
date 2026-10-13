@@ -14,3 +14,5 @@ pub mod resources;
 pub mod runtime;
 pub mod storage;
 pub mod tags;
+
+pub mod settings;

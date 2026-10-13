@@ -16,3 +16,8 @@ crate::storage::table::tables! {
         error TEXT,
         PRIMARY KEY(path, projection_kind)";
 }
+
+pub(crate) fn initialize(connection: &rusqlite::Connection) -> Result<(), rusqlite::Error> {
+    connection.execute_batch("INSERT OR IGNORE INTO resource_projection_sequence(id,next_revision) VALUES(1,1);
+        CREATE INDEX IF NOT EXISTS resource_projections_parent ON resource_projections(parent_path);")
+}

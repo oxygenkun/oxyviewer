@@ -23,5 +23,16 @@ crate::storage::table::tables! {
         requested_at INTEGER NOT NULL DEFAULT (unixepoch()),
         attempt_count INTEGER NOT NULL DEFAULT 0,
         last_error TEXT";
-    user external asset_tag_sources;
+    user create asset_tag_sources =
+        "asset_path TEXT NOT NULL, tag_id INTEGER NOT NULL REFERENCES custom_tags(id) ON DELETE CASCADE,
+         source_kind TEXT NOT NULL CHECK(source_kind IN ('manual','sidecar','person')),
+         source_id TEXT NOT NULL DEFAULT '', PRIMARY KEY(asset_path,tag_id,source_kind,source_id)";
+}
+
+pub(crate) fn initialize(connection: &rusqlite::Connection) -> Result<(), rusqlite::Error> {
+    connection.execute_batch("CREATE UNIQUE INDEX IF NOT EXISTS custom_tags_sibling_name
+        ON custom_tags(COALESCE(parent_id,0),name_key);
+        CREATE INDEX IF NOT EXISTS custom_tags_parent ON custom_tags(parent_id,sort_order,name);
+        CREATE INDEX IF NOT EXISTS asset_tags_tag ON asset_tags(tag_id,asset_path);
+        CREATE INDEX IF NOT EXISTS asset_tag_sources_tag ON asset_tag_sources(tag_id,source_kind,asset_path);")
 }

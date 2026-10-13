@@ -90,15 +90,20 @@ impl DirectorySnapshots {
         let runtime = crate::runtime::CoreRuntime::default();
         let stopping_sender = sender.clone();
         runtime.on_stop(move || {
-            // A full channel already wakes the consumer; it checks stop before
-            // processing another message, so shutdown never waits to enqueue.
+            // A full channel already wakes the consumer. Accepted cache writes
+            // drain before exit; shutdown never blocks to enqueue its sentinel.
             let _ = stopping_sender.try_send(PersistenceMessage::Shutdown);
         });
         let worker_runtime = runtime.clone();
         runtime
             .spawn_named("directory-snapshot-persistence".into(), move || {
-                while !worker_runtime.is_stopping() {
-                    let Ok(message) = receiver.recv() else {
+                loop {
+                    let message = if worker_runtime.is_stopping() {
+                        receiver.try_recv().ok()
+                    } else {
+                        receiver.recv().ok()
+                    };
+                    let Some(message) = message else {
                         break;
                     };
                     match message {

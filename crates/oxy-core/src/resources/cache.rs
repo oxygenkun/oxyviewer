@@ -69,10 +69,6 @@ impl CacheManager {
         let preview_dir =
             resolve_preview_dir(&default_preview_dir, config.custom_parent.as_deref());
         fs::create_dir_all(&preview_dir).map_err(|error| error.to_string())?;
-        remove_legacy_cache_files(&preview_dir)?;
-        if preview_dir != default_preview_dir {
-            remove_legacy_cache_files(&default_preview_dir)?;
-        }
         oxy_media::DiskMediaCache::new(&preview_dir, 256).map_err(|error| error.to_string())?;
         let manager = Self {
             runtime,
@@ -139,7 +135,6 @@ impl CacheManager {
         let preview_dir =
             resolve_preview_dir(&self.default_preview_dir, next.custom_parent.as_deref());
         fs::create_dir_all(&preview_dir).map_err(|error| error.to_string())?;
-        remove_legacy_cache_files(&preview_dir)?;
         self.persist(&next)?;
         *self
             .config
@@ -290,44 +285,17 @@ impl CacheManager {
 fn resolve_preview_dir(default: &Path, custom_parent: Option<&Path>) -> PathBuf {
     custom_parent.map_or_else(
         || default.to_owned(),
-        |parent| parent.join(CUSTOM_CACHE_FOLDER).join("previews"),
+        |parent| {
+            parent
+                .join(CUSTOM_CACHE_FOLDER)
+                .join(crate::settings::DATA_NAMESPACE)
+                .join("previews")
+        },
     )
 }
 
 fn valid_limit(value: u64) -> bool {
     (MIN_MAX_SIZE_BYTES..=MAX_MAX_SIZE_BYTES).contains(&value)
-}
-
-/// Removes the pre-v2 flat cache format without traversing directories or
-/// following links. The preview directory is application-owned even when its
-/// parent was selected by the user.
-fn remove_legacy_cache_files(cache_dir: &Path) -> Result<(), String> {
-    let entries = match fs::read_dir(cache_dir) {
-        Ok(entries) => entries,
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(()),
-        Err(error) => return Err(error.to_string()),
-    };
-    for entry in entries {
-        let entry = match entry {
-            Ok(entry) => entry,
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => continue,
-            Err(error) => return Err(error.to_string()),
-        };
-        let file_type = match entry.file_type() {
-            Ok(file_type) => file_type,
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => continue,
-            Err(error) => return Err(error.to_string()),
-        };
-        if !file_type.is_file() {
-            continue;
-        }
-        match fs::remove_file(entry.path()) {
-            Ok(()) => {}
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
-            Err(error) => return Err(error.to_string()),
-        }
-    }
-    Ok(())
 }
 
 #[cfg(test)]
@@ -363,62 +331,10 @@ mod tests {
                 .canonicalize()
                 .unwrap()
                 .join(CUSTOM_CACHE_FOLDER)
+                .join(crate::settings::DATA_NAMESPACE)
                 .join("previews")
         );
         assert!(settings.is_custom_location);
-    }
-
-    #[test]
-    fn startup_removes_flat_cache_files_and_preserves_owned_directories() {
-        let parent = tempfile::tempdir().unwrap();
-        let preview_dir = parent.path().join("previews");
-        std::fs::create_dir_all(&preview_dir).unwrap();
-        let legacy = preview_dir.join("legacy-preview.jpg");
-        std::fs::write(&legacy, b"legacy").unwrap();
-        let nested = preview_dir.join("unrelated");
-        std::fs::create_dir(&nested).unwrap();
-        std::fs::write(nested.join("keep.txt"), b"keep").unwrap();
-
-        CacheManager::load(
-            CoreRuntime::default(),
-            preview_dir.clone(),
-            parent.path().join("settings.json"),
-        )
-        .unwrap();
-
-        assert!(!legacy.exists());
-        assert_eq!(std::fs::read(nested.join("keep.txt")).unwrap(), b"keep");
-        assert!(preview_dir.join("media-cache-v3").is_dir());
-    }
-
-    #[test]
-    fn startup_cleans_configured_and_default_cache_locations() {
-        let parent = tempfile::tempdir().unwrap();
-        let default = parent.path().join("default/previews");
-        let custom_parent = parent.path().join("custom");
-        let custom = custom_parent.join(CUSTOM_CACHE_FOLDER).join("previews");
-        std::fs::create_dir_all(&default).unwrap();
-        std::fs::create_dir_all(&custom).unwrap();
-        let default_legacy = default.join("old-default.jpg");
-        let custom_legacy = custom.join("old-custom.jpg");
-        std::fs::write(&default_legacy, b"legacy").unwrap();
-        std::fs::write(&custom_legacy, b"legacy").unwrap();
-        let config_path = parent.path().join("settings.json");
-        std::fs::write(
-            &config_path,
-            serde_json::to_vec(&PersistedCacheConfig {
-                custom_parent: Some(custom_parent.canonicalize().unwrap()),
-                max_size_bytes: DEFAULT_MAX_SIZE_BYTES,
-            })
-            .unwrap(),
-        )
-        .unwrap();
-
-        let manager = CacheManager::load(CoreRuntime::default(), default, config_path).unwrap();
-
-        assert_eq!(manager.preview_dir(), custom.canonicalize().unwrap());
-        assert!(!default_legacy.exists());
-        assert!(!custom_legacy.exists());
     }
 
     #[test]

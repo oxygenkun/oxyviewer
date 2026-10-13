@@ -1125,8 +1125,8 @@ const demoAppInfo: AppInfo = {
 };
 
 let demoCacheSettings: CacheSettings = {
-  location: "/demo/OxyViewer Cache/previews",
-  defaultLocation: "/demo/OxyViewer Cache/previews",
+  location: "/demo/OxyViewer Cache/core-v2/previews",
+  defaultLocation: "/demo/OxyViewer Cache/core-v2/previews",
   customParent: null,
   isCustomLocation: false,
   maxSizeBytes: 10 * 1024 ** 3,
@@ -1156,7 +1156,7 @@ export async function updateCacheSettings(
     demoCacheSettings = {
       ...demoCacheSettings,
       location: customParent
-        ? `${customParent}/OxyViewer Cache/previews`
+        ? `${customParent}/OxyViewer Cache/core-v2/previews`
         : demoCacheSettings.defaultLocation,
       customParent,
       isCustomLocation: Boolean(customParent),

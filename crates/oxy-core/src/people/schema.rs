@@ -180,3 +180,82 @@ crate::storage::table::tables! {
         run_id TEXT NOT NULL,
         snapshot_json TEXT NOT NULL";
 }
+
+use crate::storage::table;
+use rusqlite::{Connection, OptionalExtension};
+const DETECTION_CACHE_SCHEMA_VERSION: i64 = 2;
+const FEATURE_CACHE_SCHEMA_VERSION: i64 = 3;
+
+fn cache_definitions() -> &'static [table::TableDef] {
+    static CACHE: std::sync::LazyLock<Vec<table::TableDef>> = std::sync::LazyLock::new(|| {
+        DEFS.iter()
+            .copied()
+            .filter(|def| def.class != table::DataClass::UserOwned)
+            .collect()
+    });
+    &CACHE
+}
+
+pub(crate) fn initialize(connection: &Connection) -> Result<(), rusqlite::Error> {
+    connection.execute_batch("CREATE INDEX IF NOT EXISTS folder_people_folder ON folder_people(folder_path);
+        CREATE INDEX IF NOT EXISTS person_manual_instances_asset ON person_manual_instances(folder_path,asset_path);
+        CREATE INDEX IF NOT EXISTS folder_historical_links_person ON folder_historical_links(historical_person_id);")
+}
+
+pub(crate) fn refresh_cache_format(connection: &mut Connection) -> Result<(), rusqlite::Error> {
+    reset_detection_cache_if_stale(connection)?;
+    reset_feature_cache_if_stale(connection)?;
+    connection.execute_batch("CREATE INDEX IF NOT EXISTS person_instances_cache_asset
+        ON person_instances_cache(folder_path,asset_path,source_revision,producer_fingerprint);
+        CREATE INDEX IF NOT EXISTS person_features_folder_space ON person_features_cache(folder_path,feature_space_id,asset_path,instance_id);
+        CREATE INDEX IF NOT EXISTS person_analysis_runs_folder ON person_analysis_runs(folder_path,generation DESC);
+        CREATE INDEX IF NOT EXISTS person_analysis_tasks_next ON person_analysis_tasks(run_id,state,asset_path,stage_order);")
+}
+fn reset_detection_cache_if_stale(connection: &mut Connection) -> Result<(), rusqlite::Error> {
+    let transaction = connection.transaction()?;
+    let version: Option<i64> = transaction
+        .query_row(
+            "SELECT schema_version FROM person_detection_cache_meta LIMIT 1",
+            [],
+            |row| row.get("schema_version"),
+        )
+        .optional()?;
+    if version != Some(DETECTION_CACHE_SCHEMA_VERSION) {
+        transaction.execute_batch(
+            "DROP TABLE IF EXISTS person_instances_cache;
+             DELETE FROM person_detection_cache_meta;",
+        )?;
+        transaction.execute(
+            "INSERT INTO person_detection_cache_meta(schema_version) VALUES (?1)",
+            [DETECTION_CACHE_SCHEMA_VERSION],
+        )?;
+        // Runs again because the drop above removed a declared table.
+        table::create_all(&transaction, cache_definitions())?;
+    }
+    transaction.commit()
+}
+
+fn reset_feature_cache_if_stale(connection: &mut Connection) -> Result<(), rusqlite::Error> {
+    let transaction = connection.transaction()?;
+    let current: Option<i64> = transaction
+        .query_row(
+            "SELECT schema_version FROM person_vector_cache_meta LIMIT 1",
+            [],
+            |row| row.get("schema_version"),
+        )
+        .optional()?;
+    if current != Some(FEATURE_CACHE_SCHEMA_VERSION) {
+        transaction.execute_batch(
+            "DROP TABLE IF EXISTS person_features_cache;
+             DROP TABLE IF EXISTS person_feature_spaces;
+             DELETE FROM person_vector_cache_meta;",
+        )?;
+        transaction.execute(
+            "INSERT INTO person_vector_cache_meta(schema_version) VALUES (?1)",
+            [FEATURE_CACHE_SCHEMA_VERSION],
+        )?;
+        // Runs again because the drops above removed declared tables.
+        table::create_all(&transaction, cache_definitions())?;
+    }
+    transaction.commit()
+}

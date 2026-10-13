@@ -103,9 +103,19 @@ resource leases, cancellation and stale-publication semantics.
   desktop tests passed (273 / 5), followed by the added worker-lifetime test.
   Headless tests prove nonrecursive paging and tag/metadata filter intersection.
   Strict workspace Clippy and frontend check pass for the migration.
-- Next: distribute remaining schema initialization and browsing SQL,
-  move remaining desktop use-case coordination, remove legacy paths, generate
-  frontend contracts and complete final release/performance qualification.
+- Default bootstrap and custom cache paths are isolated under core-v2. Current
+  schema creation is transactional and tagged with application ID/version;
+  existing files undergo read-only preflight so rejecting an old/future file
+  cannot checkpoint or rewrite it. Feature schemas own indexes, FTS and format
+  invalidation. Retired old column upgrades, root/tag backfills and flat-cache
+  deletion, together with seven compatibility-only tests. Three new tests prove
+  old/unknown files and old data/cache locations remain untouched. Core has
+  270 passing tests / 11 ignored; strict workspace Clippy, frontend check and
+  419 frontend tests pass. Snapshot
+  workers drain accepted writes before exit so cached empty directories survive.
+- Next: distribute browsing SQL, move remaining desktop use-case coordination,
+  remove legacy person identity paths and finish ownership/docs/tooling gates,
+  then complete final release/performance qualification.
 
 Keep this checklist current. A four-package manifest alone does not complete
 the refactor; every ownership and behavioral gate above must be verified.

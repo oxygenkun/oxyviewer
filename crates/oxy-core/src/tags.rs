@@ -240,8 +240,8 @@ impl Tags {
         }
         let path_strings = selection_paths(paths);
         for path in &path_strings {
-            // A hand assignment drops the legacy inference and records a manual
-            // source; removing it drops both. Either way the effective set is
+            // A hand assignment records a manual source; removing it drops that
+            // source. Either way the effective set is
             // then re-derived from the sources that remain.
             crate::tags::repo::replace_manual_source(&transaction, path, tag_id, assigned)?;
             crate::tags::repo::reconcile_effective(&transaction, path, tag_id)?;
@@ -793,40 +793,6 @@ mod tests {
             crate::tags::repo::source_kinds(&store.read(), &asset.to_string_lossy(), tag.id)
                 .unwrap();
         assert_eq!(sources, ["manual"]);
-    }
-
-    #[test]
-    fn reopening_migrates_unattributed_assignments_as_legacy() {
-        let temporary = tempfile::tempdir().unwrap();
-        let database = temporary.path().join("people.sqlite");
-        let path = PathBuf::from("/photos/legacy.jpg");
-        let store = Arc::new(Store::open(&database).unwrap());
-        let tags = Tags::new(Arc::clone(&store));
-        let tag = tags.create_custom_tag(None, "Legacy").unwrap();
-        // An assignment with no recorded reason: the shape a database written
-        // before the sources table existed is in.
-        crate::tags::repo::insert_effective_assignment(
-            &store.write(),
-            &path.to_string_lossy(),
-            tag.id,
-        )
-        .unwrap();
-        drop(tags);
-        drop(store);
-
-        let store = Arc::new(Store::open(&database).unwrap());
-        let reopened = Tags::new(Arc::clone(&store));
-        let sources =
-            crate::tags::repo::source_kinds(&store.read(), &path.to_string_lossy(), tag.id)
-                .unwrap();
-        assert_eq!(sources, ["legacy"]);
-        reopened
-            .set_asset_tag(std::slice::from_ref(&path), tag.id, false)
-            .unwrap();
-        assert_eq!(
-            reopened.asset_tag_assignments(&[path]).unwrap()[0].assigned_count,
-            0
-        );
     }
 
     /// The tag side of a person identity: what an identity claims lands as a

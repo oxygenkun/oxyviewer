@@ -1396,31 +1396,4 @@ mod tests {
             );
         }
     }
-
-    #[test]
-    fn older_manual_table_migrates_without_assigning_unproven_identity() {
-        let temporary = tempfile::tempdir().unwrap();
-        let database = temporary.path().join("library.sqlite");
-        let connection = crate::storage::Connection::open(&database).unwrap();
-        connection
-            .execute_batch(
-                "CREATE TABLE person_manual_instances (
-               id TEXT PRIMARY KEY,folder_path TEXT NOT NULL,asset_path TEXT NOT NULL,
-               source_revision TEXT NOT NULL,face_box TEXT,body_box TEXT,
-               needs_review INTEGER NOT NULL DEFAULT 0,revision INTEGER NOT NULL DEFAULT 1,
-               created_at INTEGER NOT NULL DEFAULT (unixepoch()),
-               updated_at INTEGER NOT NULL DEFAULT (unixepoch()));
-             INSERT INTO person_manual_instances(id,folder_path,asset_path,source_revision,face_box)
-               VALUES ('old','/photos','/photos/a.jpg','10:20','[0.1,0.1,0.2,0.2]');",
-            )
-            .unwrap();
-        drop(connection);
-        let library = testing::open(&database);
-        let anchors = library
-            .list_manual_person_anchors(Path::new("/photos"), Path::new("/photos/a.jpg"))
-            .unwrap();
-        assert_eq!(anchors.len(), 1);
-        assert_eq!(anchors[0].instance_id, "old");
-        assert_eq!(anchors[0].source_identity_revision, None);
-    }
 }

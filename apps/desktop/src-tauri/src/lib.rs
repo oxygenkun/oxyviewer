@@ -168,17 +168,14 @@ pub fn run() {
             } else {
                 app.path().app_data_dir()?
             };
-            let preview_dir = if perf_harness {
+            let cache_dir = if perf_harness {
                 std::env::var_os("OXY_PERF_CACHE_DIR")
                     .map(std::path::PathBuf::from)
-                    .unwrap_or(app.path().app_cache_dir()?.join("previews"))
+                    .unwrap_or(app.path().app_cache_dir()?)
             } else {
-                app.path().app_cache_dir()?.join("previews")
+                app.path().app_cache_dir()?
             };
-            let (core, core_events) = oxy_core::OxyApp::open(oxy_core::AppPaths {
-                data_dir,
-                preview_dir,
-            })?;
+            let (core, core_events) = oxy_core::OxyApp::open(oxy_core::AppPaths::from_roots(data_dir, cache_dir))?;
             events::forward(app.handle().clone(), core_events);
             app.manage(core);
 
