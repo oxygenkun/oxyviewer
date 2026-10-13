@@ -1,3 +1,6 @@
+pub(crate) mod repo;
+pub(crate) mod schema;
+mod service;
 pub mod types;
 use crate::browse::types::{
     AssetQuery, AssetSort, AssetSummary, DirectorySummary, DirectoryTreeNode,
@@ -6,6 +9,7 @@ use crate::browse::types::{
 use crate::files::types::{FileDeletionMode, FileOperation, FileOperationResult};
 use oxy_media::types::AssetKind;
 use parking_lot::{Mutex, RwLock};
+pub use service::FileService;
 use std::{
     cmp::Ordering,
     collections::{HashMap, HashSet, hash_map::DefaultHasher},
@@ -935,6 +939,7 @@ pub fn page_assets(
 }
 
 pub fn execute_file_operation(operation: &FileOperation) -> Result<FileOperationResult, FsError> {
+    validate_file_operation(operation)?;
     match operation {
         FileOperation::Rename { source, new_name } => rename_asset(source, new_name),
         FileOperation::Copy {
@@ -948,6 +953,62 @@ pub fn execute_file_operation(operation: &FileOperation) -> Result<FileOperation
         FileOperation::Trash { paths } => trash_assets(paths),
         FileOperation::DeletePermanently { paths } => delete_assets_permanently(paths),
     }
+}
+
+pub(crate) fn validate_file_operation(operation: &FileOperation) -> Result<(), FsError> {
+    match operation {
+        FileOperation::Rename { source, new_name } => {
+            let mut components = Path::new(new_name).components();
+            if new_name.is_empty()
+                || !matches!(components.next(), Some(std::path::Component::Normal(_)))
+                || components.next().is_some()
+            {
+                return Err(FsError::InvalidFileName);
+            }
+            fs::symlink_metadata(source)?;
+            let destination = source
+                .parent()
+                .ok_or(FsError::InvalidFileName)?
+                .join(new_name);
+            validate_destination(source, &destination)
+        }
+        FileOperation::Copy {
+            sources,
+            destination_dir,
+        }
+        | FileOperation::Move {
+            sources,
+            destination_dir,
+        } => {
+            for source in sources {
+                fs::symlink_metadata(source)?;
+                let name = source.file_name().ok_or(FsError::InvalidFileName)?;
+                validate_destination(source, &destination_dir.join(name))?;
+            }
+            Ok(())
+        }
+        FileOperation::Trash { paths } | FileOperation::DeletePermanently { paths } => {
+            for path in paths {
+                fs::symlink_metadata(path)?;
+            }
+            if let FileOperation::DeletePermanently { paths } = operation
+                && let Some(path) = paths
+                    .iter()
+                    .find(|path| deletion_mode_for_path(path) != FileDeletionMode::Permanent)
+            {
+                return Err(FsError::PermanentDeleteUnsupported(path.clone()));
+            }
+            Ok(())
+        }
+    }
+}
+
+fn validate_destination(source: &Path, destination: &Path) -> Result<(), FsError> {
+    ensure_available(destination)?;
+    if source.is_file() && sidecar_path(source).exists() {
+        ensure_available(&sidecar_path(destination))?;
+    }
+    Ok(())
 }
 
 pub fn deletion_mode_for_path(path: &Path) -> FileDeletionMode {
@@ -1257,10 +1318,10 @@ fn copy_sidecar(
 }
 
 fn ensure_available(path: &Path) -> Result<(), FsError> {
-    if path.exists() {
-        Err(FsError::DestinationExists(path.to_owned()))
-    } else {
-        Ok(())
+    match fs::symlink_metadata(path) {
+        Ok(_) => Err(FsError::DestinationExists(path.to_owned())),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(error) => Err(error.into()),
     }
 }
 

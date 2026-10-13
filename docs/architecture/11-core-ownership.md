@@ -32,7 +32,7 @@ SQLite admission 被阻塞时仍可观察队列并停止。
 
 应用类型已移到功能的 types 模块，contracts 只导出对外契约。repository 也跟随
 Library、Tags 和 People；跨功能资产移动、删除、人物标签贡献及根目录恢复进入具名
-workflow。48 个表声明在功能的 schema 模块中，storage 汇总它们的分类与创建/清理顺序。
+workflow。49 个表声明在功能的 schema 模块中，storage 汇总它们的分类与创建/清理顺序。
 
 序列化契约通过固定版本的 [ts-rs](https://docs.rs/ts-rs/12.0.1/ts_rs/) 生成
 `apps/desktop/src/generated/contracts.ts`，由 `pnpm contracts:check` 检查漂移。
@@ -54,6 +54,16 @@ MetadataService 负责详情、摘要请求和显式编辑。编辑 worker 由 C
 逐文件检查取消与停止状态，JobRegistry 条目在成功、失败、拒绝启动或展开时释放。
 批量编辑部分成功后仍刷新已写入的文件；后续文件失败不影响其缓存失效。
 embedded 写入继续跳过 RAW，用户明确请求的 embedded 写入才调用 ExifTool。
+
+FileService 把文件操作放入 core 的受控 worker。每个文件动作先检查路径和 sidecar
+冲突，再持久记录 `prepared`；文件动作完成后记录 `filesApplied` 和源/目标版本证明。
+资料更新与删除恢复记录属于 file_action workflow 的同一事务，文件系统不属于该事务。
+批量操作按文件提交，后续失败保留已完成项并说明完成数量。恢复记录是 user 表，
+cache clear 不会删除。`list_file_operation_recovery` 可检查待恢复动作；
+`recover_file_operation_state` 只重试 filesApplied 记录的资料提交，先重新验证文件证明。
+prepared 或已改变的记录要求检查文件与 sidecar，不会自动重做移动或删除。
+普通 transfer 针对资产文件；外部移动后的整个根目录使用已确认的 root recovery。
+删除目录后按路径边界清理已知资产的标签与派生特征，人工人物事实仍保留。
 
 默认数据和缓存路径使用 `core-v2` 子目录，custom cache 也有独立的版本子目录。
 Store 只接收本核心的 application ID/schema version，或尚未创建表的空文件。

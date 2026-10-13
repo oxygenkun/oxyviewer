@@ -405,53 +405,6 @@ impl Tags {
         drop(connection);
         self.complete_tag_xmp_sync(path, subjects, hierarchical)
     }
-
-    /// Carries this asset's tags to a new path after the file moved.
-    ///
-    /// A move inside one folder is still the same photo, so the person facts
-    /// and the cached features follow it; anywhere else is a different asset
-    /// and only the tags are the file's own. Either way the XMP mirror owes the
-    /// new path a write.
-    pub fn move_asset_state(&self, source: &Path, destination: &Path) -> Result<(), TagError> {
-        let same_folder = source.parent() == destination.parent();
-        let source = source.to_string_lossy();
-        let destination = destination.to_string_lossy();
-        let mut connection = self.store.write();
-        let transaction = connection.transaction().map_err(StoreError::from)?;
-        crate::app::workflows::asset_move::relocate_asset(
-            &transaction,
-            &source,
-            &destination,
-            same_folder,
-        )?;
-        transaction.commit().map_err(StoreError::from)?;
-        Ok(())
-    }
-
-    /// Gives a copy its own tag rows without handing it the person source.
-    ///
-    /// The copy is a different file at a path no identity has been reviewed
-    /// against, so the tags travel — they are what the user said about the
-    /// picture — while the person claim stays on the original.
-    pub fn copy_asset_state(&self, source: &Path, destination: &Path) -> Result<(), TagError> {
-        let source = source.to_string_lossy();
-        let destination = destination.to_string_lossy();
-        let mut connection = self.store.write();
-        let transaction = connection.transaction().map_err(StoreError::from)?;
-        crate::tags::repo::copy_source_rows(&transaction, &source, &destination, false)?;
-        crate::tags::repo::copy_effective_rows(&transaction, &source, &destination, false)?;
-        crate::tags::repo::enqueue_sync(&transaction, &[destination.into_owned()])?;
-        transaction.commit().map_err(StoreError::from)?;
-        Ok(())
-    }
-
-    pub fn remove_asset_state(&self, path: &Path) -> Result<(), TagError> {
-        let mut connection = self.store.write();
-        let transaction = connection.transaction().map_err(StoreError::from)?;
-        crate::app::workflows::asset_delete::forget_asset(&transaction, &path.to_string_lossy())?;
-        transaction.commit().map_err(StoreError::from)?;
-        Ok(())
-    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -492,6 +445,19 @@ fn selection_paths(paths: &[PathBuf]) -> Vec<String> {
 
 #[cfg(test)]
 mod tests {
+    fn relocate_state(tags: &Tags, source: &Path, destination: &Path) -> Result<(), StoreError> {
+        let mut connection = tags.store.write();
+        let transaction = connection.transaction()?;
+        crate::app::workflows::asset_move::relocate_asset(
+            &transaction,
+            &source.to_string_lossy(),
+            &destination.to_string_lossy(),
+            source.parent() == destination.parent(),
+        )?;
+        transaction.commit()?;
+        Ok(())
+    }
+
     use super::*;
     use oxy_media::types::{AssetKind, PickLabel};
 
@@ -646,7 +612,7 @@ mod tests {
         let destination = PathBuf::from("/photos/b.jpg");
         tags.set_asset_tag(std::slice::from_ref(&source), child.id, true)
             .unwrap();
-        tags.move_asset_state(&source, &destination).unwrap();
+        relocate_state(&tags, &source, &destination).unwrap();
         let assignment = tags.asset_tag_assignments(&[source, destination]).unwrap();
         assert_eq!(
             assignment
@@ -1022,7 +988,7 @@ mod tests {
                 request_id: "bind".into(),
             })
             .unwrap();
-        tags.move_asset_state(&source, &destination).unwrap();
+        relocate_state(&tags, &source, &destination).unwrap();
         assert!(
             people
                 .list_person_instances(&folder, &source)
@@ -1047,7 +1013,7 @@ mod tests {
             destination
         );
         let elsewhere = PathBuf::from("/other/after.jpg");
-        tags.move_asset_state(&destination, &elsewhere).unwrap();
+        relocate_state(&tags, &destination, &elsewhere).unwrap();
         assert!(
             tags.asset_tag_source_kinds(&elsewhere, tag.id)
                 .unwrap()

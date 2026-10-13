@@ -108,7 +108,8 @@ export type ExternalAppSettings = { apps: Array<ExternalApplication>, defaultApp
 export type ExternalApplication = { id: string, name: string, executablePath: string, };
 export type ExternalOpenResult = "launched" | "cancelled";
 export type FileDeletionMode = "trash" | "permanent";
-export type FileOperation = { "type": "rename", source: string, new_name: string, } | { "type": "copy", sources: Array<string>, destination_dir: string, } | { "type": "move", sources: Array<string>, destination_dir: string, } | { "type": "trash", paths: Array<string>, } | { "type": "deletePermanently", paths: Array<string>, };
+export type FileOperation = { "type": "rename", source: string, newName: string, } | { "type": "copy", sources: Array<string>, destinationDir: string, } | { "type": "move", sources: Array<string>, destinationDir: string, } | { "type": "trash", paths: Array<string>, } | { "type": "deletePermanently", paths: Array<string>, };
+export type FileOperationRecovery = { id: number, operation: FileOperation, phase: string, detail: string | null, };
 export type FileOperationResult = { affectedPaths: Array<string>, };
 export type FocusInfo = {
 /**

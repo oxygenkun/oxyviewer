@@ -741,6 +741,15 @@ export async function deletePaths(paths: string[], mode: FileDeletionMode): Prom
   });
 }
 
+export async function listFileOperationRecovery(): Promise<import("../generated/contracts").FileOperationRecovery[]> {
+  return isTauri() ? invoke("list_file_operation_recovery") : [];
+}
+
+export async function recoverFileOperationState(id: number): Promise<void> {
+  if (!isTauri()) throw new Error("请在桌面应用中恢复文件操作的资料记录");
+  await invoke("recover_file_operation_state", { id });
+}
+
 export async function copyText(text: string): Promise<void> {
   if (navigator.clipboard?.writeText) {
     await navigator.clipboard.writeText(text);

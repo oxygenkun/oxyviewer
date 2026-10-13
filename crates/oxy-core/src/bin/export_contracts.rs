@@ -56,6 +56,7 @@ fn main() -> Result<(), Box<dyn Error>> {
     register::<oxy_core::contracts::FileDeletionMode>(&mut types, &cfg);
     register::<oxy_core::contracts::FileOperation>(&mut types, &cfg);
     register::<oxy_core::contracts::FileOperationResult>(&mut types, &cfg);
+    register::<oxy_core::contracts::FileOperationRecovery>(&mut types, &cfg);
     register::<oxy_media::types::FocusInfo>(&mut types, &cfg);
     register::<oxy_media::types::FocusRegion>(&mut types, &cfg);
     register::<oxy_core::contracts::FolderPeopleWorkspace>(&mut types, &cfg);

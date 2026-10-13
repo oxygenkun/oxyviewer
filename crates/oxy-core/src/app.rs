@@ -8,7 +8,7 @@ pub use external_apps::ExternalAppManager;
 use crate::{
     browse::BrowseService,
     events::CoreEvent,
-    files::FsCatalog,
+    files::{FileService, FsCatalog},
     jobs::JobRegistry,
     library::{Library, LibraryService},
     metadata::{BurstScanner, MetadataFacade, MetadataService, provider::ProviderManager},
@@ -48,6 +48,7 @@ pub struct OxyApp {
     pub runtime: CoreRuntime,
     pub external_apps: Arc<ExternalAppManager>,
     pub files: Arc<FsCatalog>,
+    pub file_service: Arc<FileService>,
     pub jobs: Arc<JobRegistry>,
     pub library: Arc<Library>,
     pub library_service: Arc<LibraryService>,
@@ -81,7 +82,7 @@ impl OxyApp {
         );
         let library = Arc::new(Library::with_store(store.clone()));
         let tags = Arc::new(Tags::new(store.clone()));
-        let people = Arc::new(People::new(store));
+        let people = Arc::new(People::new(store.clone()));
         let person_model_dir = paths.data_dir.join("person-models");
         let external_apps = Arc::new(ExternalAppManager::load(
             paths.data_dir.join("external-apps.json"),
@@ -132,6 +133,16 @@ impl OxyApp {
             files.clone(),
             metadata.clone(),
         ));
+        let file_service = Arc::new(FileService {
+            store,
+            library: library.clone(),
+            files: files.clone(),
+            metadata: metadata_queue.clone(),
+            preview: preview_queue.clone(),
+            tag_sync: tag_sync.clone(),
+            runtime: runtime.clone(),
+            gate: Default::default(),
+        });
         let browse = Arc::new(BrowseService {
             files: files.clone(),
             library: library.clone(),
@@ -151,6 +162,7 @@ impl OxyApp {
                 runtime,
                 external_apps,
                 files,
+                file_service,
                 jobs,
                 library,
                 library_service,

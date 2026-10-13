@@ -142,6 +142,18 @@ impl CoreRuntime {
         self.spawn_named("oxy-application-work".into(), work)
     }
 
+    pub fn submit<T: Send + 'static>(
+        &self,
+        name: &str,
+        work: impl FnOnce() -> T + Send + 'static,
+    ) -> io::Result<Receiver<T>> {
+        let (sender, receiver) = mpsc::channel();
+        self.spawn_named(name.into(), move || {
+            let _ = sender.send(work());
+        })?;
+        Ok(receiver)
+    }
+
     pub fn stop(&self) {
         let wakeups = {
             let mut state = self

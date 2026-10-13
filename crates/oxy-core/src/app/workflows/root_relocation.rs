@@ -3,7 +3,7 @@
 use crate::library::types::{RelocationEntry, RelocationMatch, RootRelocationPlan};
 use crate::library::{Library, LibraryError, forget_root};
 use crate::storage::Connection;
-mod queries;
+pub(crate) mod queries;
 use std::{
     collections::{BTreeSet, HashSet},
     path::{Path, PathBuf},

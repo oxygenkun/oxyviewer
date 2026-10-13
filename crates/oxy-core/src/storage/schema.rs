@@ -20,6 +20,7 @@ pub(super) fn definitions() -> &'static [table::TableDef] {
             crate::people::schema::DEFS,
             crate::browse::schema::DEFS,
             crate::resources::schema::DEFS,
+            crate::files::schema::DEFS,
         ]
         .into_iter()
         .flat_map(|defs| defs.iter().copied())
@@ -206,6 +207,7 @@ mod tests {
             .write()
             .execute_batch(
                 "INSERT INTO library_roots(path, sort_order) VALUES ('/photos', 0);
+                 INSERT INTO file_operation_recovery(operation_json,phase) VALUES ('{}','prepared');
                  INSERT INTO custom_tags(id, name, name_key, sort_order) VALUES (1, 'People', 'people', 0);
                  INSERT INTO asset_tags(asset_path, tag_id) VALUES ('/photo.jpg', 1);
                  INSERT INTO asset_tag_sources(asset_path, tag_id, source_kind, source_id)

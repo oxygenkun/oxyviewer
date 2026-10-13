@@ -124,6 +124,15 @@ resource leases, cancellation and stale-publication semantics.
   batch failure, and stopping the host rejects further edits without changing
   sidecars. Desktop only waits for and adapts the core result. Core's 272 tests,
   desktop's 5 tests and strict workspace Clippy pass.
+- FileService now records each explicit action before filesystem mutation and
+  tracks workers through shutdown. File_action owns cross-feature transaction
+  policy; Tags' move/copy/delete forwarding APIs are gone. File completion and
+  application commit are separate stages, with durable user-class recovery
+  records, proof-checked DB-only retry and manual inspection for interrupted
+  filesystem work. Tests cover restart/cache-clear survival, changed proofs,
+  preflight sidecar collisions and retained earlier batch commits. Core's 275
+  tests, desktop's 5 tests, contracts-feature strict Clippy, contract drift,
+  frontend check, 419 frontend tests and production frontend build pass.
 - Next: distribute browsing SQL, move remaining desktop use-case coordination,
   remove legacy person identity paths and finish ownership/docs/tooling gates,
   then complete final release/performance qualification.

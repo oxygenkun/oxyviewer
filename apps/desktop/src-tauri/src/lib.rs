@@ -218,6 +218,8 @@ pub fn run() {
             configure_exiftool,
             install_exiftool,
             execute_file_operation,
+            list_file_operation_recovery,
+            recover_file_operation_state,
             open_in_file_manager,
             add_library_root,
             remove_library_root,

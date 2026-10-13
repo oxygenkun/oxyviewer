@@ -15,7 +15,11 @@ pub enum FileDeletionMode {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[cfg_attr(feature = "contracts", derive(ts_rs::TS))]
-#[serde(tag = "type", rename_all = "camelCase")]
+#[serde(
+    tag = "type",
+    rename_all = "camelCase",
+    rename_all_fields = "camelCase"
+)]
 pub enum FileOperation {
     Rename {
         source: PathBuf,
@@ -42,4 +46,14 @@ pub enum FileOperation {
 #[serde(rename_all = "camelCase")]
 pub struct FileOperationResult {
     pub affected_paths: Vec<PathBuf>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[cfg_attr(feature = "contracts", derive(ts_rs::TS))]
+#[serde(rename_all = "camelCase")]
+pub struct FileOperationRecovery {
+    pub id: i64,
+    pub operation: FileOperation,
+    pub phase: String,
+    pub detail: Option<String>,
 }

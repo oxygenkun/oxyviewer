@@ -112,70 +112,32 @@ pub(crate) async fn execute_file_operation(
     operation: FileOperation,
     state: State<'_, AppState>,
 ) -> Result<FileOperationResult, String> {
-    let library = state.library.clone();
-    let tags = state.tags.clone();
+    let receiver = state.file_service.execute(operation)?;
     tauri::async_runtime::spawn_blocking(move || {
-        let result = oxy_core::files::execute_file_operation(&operation)
-            .map_err(|error| error.to_string())?;
-        match &operation {
-            FileOperation::Rename { source, new_name } => {
-                let destination = source
-                    .parent()
-                    .unwrap_or_else(|| std::path::Path::new(""))
-                    .join(new_name);
-                tags.move_asset_state(source, &destination)
-                    .map_err(|error| error.to_string())?;
-            }
-            FileOperation::Copy {
-                sources,
-                destination_dir,
-            } => {
-                for source in sources {
-                    if let Some(name) = source.file_name() {
-                        tags.copy_asset_state(source, &destination_dir.join(name))
-                            .map_err(|error| error.to_string())?;
-                    }
-                }
-            }
-            FileOperation::Move {
-                sources,
-                destination_dir,
-            } => {
-                for source in sources {
-                    if let Some(name) = source.file_name() {
-                        tags.move_asset_state(source, &destination_dir.join(name))
-                            .map_err(|error| error.to_string())?;
-                    }
-                }
-            }
-            FileOperation::Trash { paths } | FileOperation::DeletePermanently { paths } => {
-                for path in paths {
-                    tags.remove_asset_state(path)
-                        .map_err(|error| error.to_string())?;
-                }
-            }
-        }
-        for path in &result.affected_paths {
-            let directory = path.parent().unwrap_or(path);
-            library
-                .invalidate_directory_snapshots(directory)
-                .map_err(|error| error.to_string())?;
-        }
-        let sources = match &operation {
-            FileOperation::Rename { source, .. } => std::slice::from_ref(source),
-            FileOperation::Copy { sources, .. } | FileOperation::Move { sources, .. } => {
-                sources.as_slice()
-            }
-            FileOperation::Trash { paths } | FileOperation::DeletePermanently { paths } => {
-                paths.as_slice()
-            }
-        };
-        for path in sources {
-            library
-                .invalidate_directory_snapshots(path.parent().unwrap_or(path))
-                .map_err(|error| error.to_string())?;
-        }
-        Ok(result)
+        receiver.recv().map_err(|error| error.to_string())?
+    })
+    .await
+    .map_err(|error| error.to_string())?
+}
+
+#[tauri::command]
+pub(crate) async fn list_file_operation_recovery(
+    state: State<'_, AppState>,
+) -> Result<Vec<oxy_core::contracts::FileOperationRecovery>, String> {
+    let service = state.file_service.clone();
+    tauri::async_runtime::spawn_blocking(move || service.pending_recovery())
+        .await
+        .map_err(|error| error.to_string())?
+}
+
+#[tauri::command]
+pub(crate) async fn recover_file_operation_state(
+    id: i64,
+    state: State<'_, AppState>,
+) -> Result<(), String> {
+    let receiver = state.file_service.recover(id)?;
+    tauri::async_runtime::spawn_blocking(move || {
+        receiver.recv().map_err(|error| error.to_string())?
     })
     .await
     .map_err(|error| error.to_string())?
