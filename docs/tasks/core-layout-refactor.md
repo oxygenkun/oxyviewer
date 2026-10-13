@@ -113,6 +113,11 @@ resource leases, cancellation and stale-publication semantics.
   270 passing tests / 11 ignored; strict workspace Clippy, frontend check and
   419 frontend tests pass. Snapshot
   workers drain accepted writes before exit so cached empty directories survive.
+- LibraryService owns root configuration, cache proof gathering, confirmed
+  recovery, artifact reuse and deferred indexing. Root recovery transactions
+  now belong to workflow functions rather than methods forwarded by Library.
+  Desktop commands only offload and adapt results. Existing rollback/stale-plan
+  tests and a headless service regression pass (271 core / 5 desktop tests).
 - Next: distribute browsing SQL, move remaining desktop use-case coordination,
   remove legacy person identity paths and finish ownership/docs/tooling gates,
   then complete final release/performance qualification.

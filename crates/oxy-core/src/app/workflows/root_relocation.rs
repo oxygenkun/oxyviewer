@@ -13,114 +13,111 @@ fn invalid(message: &str) -> LibraryError {
     LibraryError::InvalidRelocation(message.into())
 }
 
-impl Library {
-    pub fn plan_root_relocation(
-        &self,
-        old: &Path,
-        new: &Path,
-        cached: &[(PathBuf, String)],
-    ) -> Result<RootRelocationPlan, LibraryError> {
-        plan(&self.read_connection(), old, new, cached)
-    }
-
-    pub fn relocate_root(
-        &self,
-        expected: &RootRelocationPlan,
-        cached: &[(PathBuf, String)],
-    ) -> Result<(), LibraryError> {
-        let _index = self.index_gate.lock();
-        self.invalidate_snapshot_root(&expected.old_root)?;
-        self.invalidate_snapshot_root(&expected.new_root)?;
-        let mut connection = self.write();
-        let transaction = connection.transaction()?;
-        let current = plan(&transaction, &expected.old_root, &expected.new_root, cached)?;
-        if current != *expected {
-            return Err(invalid("files changed since preview; inspect the new plan"));
-        }
-        let folders = crate::people::repo::relocation::folder_paths(&transaction)?;
-        for entry in &current.entries {
-            let source = entry.old_path.to_string_lossy();
-            let destination = entry.new_path.to_string_lossy();
-            crate::tags::repo::move_asset(&transaction, &source, &destination)?;
-            crate::people::repo::relocation::move_asset(&transaction, &source, &destination)?;
-            let verified = entry.status == RelocationMatch::Verified;
-            crate::people::repo::relocation::rebind_instances(
-                &transaction,
-                &destination,
-                entry.old_identity_revision.as_deref(),
-                entry.new_identity_revision.as_deref(),
-                verified,
-            )?;
-            if let (true, Some(old), Some(new)) = (
-                verified,
-                &entry.old_identity_revision,
-                &entry.new_identity_revision,
-            ) {
-                let folder = entry
-                    .new_path
-                    .parent()
-                    .ok_or_else(|| invalid("invalid asset path"))?
-                    .to_string_lossy();
-                crate::people::repo::relocation::rebind_features(
-                    &transaction,
-                    &source,
-                    &destination,
-                    &folder,
-                    old,
-                    new,
-                )?;
-                crate::people::repo::relocation::rebind_detections(
-                    &transaction,
-                    &source,
-                    &destination,
-                    &folder,
-                    old,
-                    new,
-                )?;
-            }
-        }
-        for folder in folders {
-            if let Ok(relative) = Path::new(&folder).strip_prefix(&current.old_root) {
-                let destination = current.new_root.join(relative);
-                crate::people::repo::relocation::move_folder(
-                    &transaction,
-                    &folder,
-                    &destination.to_string_lossy(),
-                )?;
-                for subject in crate::people::repo::relocation::subjects(
-                    &transaction,
-                    &destination.to_string_lossy(),
-                )? {
-                    crate::app::workflows::person_tags::reconcile_person_sources_for_subject(
-                        &transaction,
-                        &subject,
-                    )?;
-                }
-            }
-        }
-        crate::library::repo::replace_root(
-            &transaction,
-            &current.old_root.to_string_lossy(),
-            &current.new_root.to_string_lossy(),
-        )?;
-        forget_root(&transaction, &current.old_root.to_string_lossy())?;
-        // Filesystem state is not covered by SQLite's transaction. Recheck at
-        // publication so edits during the mapping loop abort every user write.
-        for entry in &current.entries {
-            let observed = match crate::files::observe_file(&entry.new_path) {
-                Ok(source) => Some(source.revision_id()),
-                Err(error) if error.kind() == std::io::ErrorKind::NotFound => None,
-                Err(error) => return Err(error.into()),
-            };
-            if observed != entry.new_identity_revision {
-                return Err(invalid("files changed while relocating; retry the preview"));
-            }
-        }
-        transaction.commit()?;
-        Ok(())
-    }
+pub(crate) fn preview(
+    library: &Library,
+    old: &Path,
+    new: &Path,
+    cached: &[(PathBuf, String)],
+) -> Result<RootRelocationPlan, LibraryError> {
+    plan(&library.read_connection(), old, new, cached)
 }
 
+pub(crate) fn commit(
+    library: &Library,
+    expected: &RootRelocationPlan,
+    cached: &[(PathBuf, String)],
+) -> Result<(), LibraryError> {
+    let _index = library.index_gate.lock();
+    library.invalidate_snapshot_root(&expected.old_root)?;
+    library.invalidate_snapshot_root(&expected.new_root)?;
+    let mut connection = library.write();
+    let transaction = connection.transaction()?;
+    let current = plan(&transaction, &expected.old_root, &expected.new_root, cached)?;
+    if current != *expected {
+        return Err(invalid("files changed since preview; inspect the new plan"));
+    }
+    let folders = crate::people::repo::relocation::folder_paths(&transaction)?;
+    for entry in &current.entries {
+        let source = entry.old_path.to_string_lossy();
+        let destination = entry.new_path.to_string_lossy();
+        crate::tags::repo::move_asset(&transaction, &source, &destination)?;
+        crate::people::repo::relocation::move_asset(&transaction, &source, &destination)?;
+        let verified = entry.status == RelocationMatch::Verified;
+        crate::people::repo::relocation::rebind_instances(
+            &transaction,
+            &destination,
+            entry.old_identity_revision.as_deref(),
+            entry.new_identity_revision.as_deref(),
+            verified,
+        )?;
+        if let (true, Some(old), Some(new)) = (
+            verified,
+            &entry.old_identity_revision,
+            &entry.new_identity_revision,
+        ) {
+            let folder = entry
+                .new_path
+                .parent()
+                .ok_or_else(|| invalid("invalid asset path"))?
+                .to_string_lossy();
+            crate::people::repo::relocation::rebind_features(
+                &transaction,
+                &source,
+                &destination,
+                &folder,
+                old,
+                new,
+            )?;
+            crate::people::repo::relocation::rebind_detections(
+                &transaction,
+                &source,
+                &destination,
+                &folder,
+                old,
+                new,
+            )?;
+        }
+    }
+    for folder in folders {
+        if let Ok(relative) = Path::new(&folder).strip_prefix(&current.old_root) {
+            let destination = current.new_root.join(relative);
+            crate::people::repo::relocation::move_folder(
+                &transaction,
+                &folder,
+                &destination.to_string_lossy(),
+            )?;
+            for subject in crate::people::repo::relocation::subjects(
+                &transaction,
+                &destination.to_string_lossy(),
+            )? {
+                crate::app::workflows::person_tags::reconcile_person_sources_for_subject(
+                    &transaction,
+                    &subject,
+                )?;
+            }
+        }
+    }
+    crate::library::repo::replace_root(
+        &transaction,
+        &current.old_root.to_string_lossy(),
+        &current.new_root.to_string_lossy(),
+    )?;
+    forget_root(&transaction, &current.old_root.to_string_lossy())?;
+    // Filesystem state is not covered by SQLite's transaction. Recheck at
+    // publication so edits during the mapping loop abort every user write.
+    for entry in &current.entries {
+        let observed = match crate::files::observe_file(&entry.new_path) {
+            Ok(source) => Some(source.revision_id()),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => None,
+            Err(error) => return Err(error.into()),
+        };
+        if observed != entry.new_identity_revision {
+            return Err(invalid("files changed while relocating; retry the preview"));
+        }
+    }
+    transaction.commit()?;
+    Ok(())
+}
 fn plan(
     connection: &Connection,
     old: &Path,
@@ -215,7 +212,7 @@ fn plan(
 }
 
 /// Reuse verified artifacts after user-record recovery has committed.
-pub fn reuse_root_artifacts(
+pub(crate) fn reuse_root_artifacts(
     cache: &oxy_media::DiskMediaCache,
     plan: &crate::library::types::RootRelocationPlan,
     sources: &[oxy_media::SourceRevision],
@@ -350,7 +347,7 @@ mod tests {
     #[test]
     fn relocation_preserves_annotations_marks_uncertainty_and_survives_restart() {
         let (dir, library, old, new, proofs) = fixture();
-        let plan = library.plan_root_relocation(&old, &new, &proofs).unwrap();
+        let plan = preview(&library, &old, &new, &proofs).unwrap();
         for (name, status) in [
             ("same", RelocationMatch::Verified),
             ("changed", RelocationMatch::Unverified),
@@ -365,7 +362,7 @@ mod tests {
                 status
             );
         }
-        library.relocate_root(&plan, &proofs).unwrap();
+        commit(&library, &plan, &proofs).unwrap();
         drop(library);
         let library = Library::open(&dir.path().join("library.db")).unwrap();
         assert_eq!(library.roots().unwrap(), std::slice::from_ref(&new));
@@ -411,9 +408,9 @@ mod tests {
     #[test]
     fn relocation_rolls_back_all_records_on_a_mid_transaction_error() {
         let (_dir, library, old, new, proofs) = fixture();
-        let plan = library.plan_root_relocation(&old, &new, &proofs).unwrap();
+        let plan = preview(&library, &old, &new, &proofs).unwrap();
         library.write().execute_batch("CREATE TRIGGER test_abort_relocation BEFORE UPDATE OF asset_path ON person_manual_instances WHEN OLD.id='same' BEGIN SELECT RAISE(ABORT,'test failure'); END;").unwrap();
-        assert!(library.relocate_root(&plan, &proofs).is_err());
+        assert!(commit(&library, &plan, &proofs).is_err());
         assert_eq!(library.roots().unwrap(), std::slice::from_ref(&old));
         let paths = queries::asset_paths(&library.read_connection()).unwrap();
         assert!(paths.iter().all(|path| Path::new(path).starts_with(&old)));
@@ -432,8 +429,8 @@ mod tests {
                 db.execute("INSERT INTO person_features_cache(folder_path,asset_path,instance_id,source_revision,feature_space_id,pipeline_fingerprint,vector) VALUES(?1,?2,'instance',?3,'space','fingerprint',X'0000803F')",rusqlite::params![old.to_string_lossy(),path.to_string_lossy(),revision]).unwrap();
             }
         }
-        let plan = library.plan_root_relocation(&old, &new, &proofs).unwrap();
-        library.relocate_root(&plan, &proofs).unwrap();
+        let plan = preview(&library, &old, &new, &proofs).unwrap();
+        commit(&library, &plan, &proofs).unwrap();
         let db = library.read_connection();
         for table in ["person_instances_cache", "person_features_cache"] {
             let (path, revision): (String, String) = db
@@ -465,13 +462,13 @@ mod tests {
     #[test]
     fn relocation_rejects_stale_preview_and_conflicting_destination_without_writes() {
         let (_dir, library, old, new, proofs) = fixture();
-        let plan = library.plan_root_relocation(&old, &new, &proofs).unwrap();
+        let plan = preview(&library, &old, &new, &proofs).unwrap();
         fs::write(new.join("same.jpg"), "modified after preview").unwrap();
-        assert!(library.relocate_root(&plan, &proofs).is_err());
+        assert!(commit(&library, &plan, &proofs).is_err());
         assert_eq!(library.roots().unwrap(), std::slice::from_ref(&old));
-        let current = library.plan_root_relocation(&old, &new, &proofs).unwrap();
+        let current = preview(&library, &old, &new, &proofs).unwrap();
         library.add_root(&new).unwrap();
-        assert!(library.relocate_root(&current, &proofs).is_err());
+        assert!(commit(&library, &current, &proofs).is_err());
         let path: String = library
             .read_connection()
             .query_row(

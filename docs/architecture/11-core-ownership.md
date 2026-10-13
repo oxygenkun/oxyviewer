@@ -45,6 +45,11 @@ BrowseService 负责打开、分页、条件组合、目录树、切目录取消
 类型化事件转发。TagXmpSync 用单个合并 worker 处理持久镜像队列，锁只保护 running/
 requested 状态，不包住文件或数据库 I/O。失败项留在队列里供后续重试，停止拒绝新调度。
 
+LibraryService 负责根目录配置、恢复预览、cache proof 收集、产物复用和延后索引。
+根目录恢复 workflow 自己持有事务，提交前重新观察文件版本；验证失败时用户记录
+全部回滚。产物复用在提交之后进行，失败单独计数。desktop 命令只适配参数、结果
+和 blocking executor，Library 不再公开转发恢复入口。
+
 默认数据和缓存路径使用 `core-v2` 子目录，custom cache 也有独立的版本子目录。
 Store 只接收本核心的 application ID/schema version，或尚未创建表的空文件。
 打开已有文件先做只读检查，未识别的旧库或未来版本不会被升级、重建或 checkpoint。

@@ -4,7 +4,9 @@
 
 pub(crate) mod repo;
 pub(crate) mod schema;
+mod service;
 pub mod types;
+pub use service::LibraryService;
 
 mod cache;
 pub use cache::browsing::DirectoryRead;
@@ -12,7 +14,6 @@ pub(crate) use cache::index::forget_root;
 pub use cache::index::{IndexProgress, IndexStage, IndexStats};
 #[cfg(test)]
 mod audit;
-pub use crate::app::workflows::root_relocation::reuse_root_artifacts;
 mod user;
 
 use crate::storage::Store;

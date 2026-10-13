@@ -10,7 +10,7 @@ use crate::{
     events::CoreEvent,
     files::FsCatalog,
     jobs::JobRegistry,
-    library::Library,
+    library::{Library, LibraryService},
     metadata::{BurstScanner, MetadataFacade, provider::ProviderManager},
     people::{People, execution::operations::PersonOperations},
     resources::{
@@ -50,6 +50,7 @@ pub struct OxyApp {
     pub files: Arc<FsCatalog>,
     pub jobs: JobRegistry,
     pub library: Arc<Library>,
+    pub library_service: Arc<LibraryService>,
     pub tags: Arc<Tags>,
     pub tag_sync: Arc<TagXmpSync>,
     pub browse: Arc<BrowseService>,
@@ -110,6 +111,12 @@ impl OxyApp {
         );
         let preview_queue = PreviewQueue::new(runtime.clone(), library.clone(), cache.clone());
         let library_index_queue = LibraryIndexQueue::new(library.clone(), files.clone());
+        let library_service = Arc::new(LibraryService {
+            library: library.clone(),
+            cache: cache.clone(),
+            index: library_index_queue.clone(),
+            runtime: runtime.clone(),
+        });
         let tag_sync = Arc::new(TagXmpSync::new(
             runtime.clone(),
             tags.clone(),
@@ -137,6 +144,7 @@ impl OxyApp {
                 files,
                 jobs: JobRegistry::default(),
                 library,
+                library_service,
                 tags,
                 tag_sync,
                 browse,
