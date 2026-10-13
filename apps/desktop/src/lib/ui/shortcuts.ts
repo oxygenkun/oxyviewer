@@ -29,6 +29,7 @@ export const SHORTCUT_ACTIONS = [
   "marking.colorYellow",
   "marking.colorGreen",
   "marking.colorBlue",
+  "marking.repeatLastTag",
 ] as const;
 
 export type ShortcutAction = (typeof SHORTCUT_ACTIONS)[number];
@@ -63,6 +64,7 @@ export const DEFAULT_SHORTCUTS: ShortcutBindings = {
   "marking.colorYellow": slots(plain("7")),
   "marking.colorGreen": slots(plain("8")),
   "marking.colorBlue": slots(plain("9")),
+  "marking.repeatLastTag": slots({ ...plain("t"), ctrl: true }),
 };
 
 export type ShortcutScope = "loupe" | "grid" | "marking";
@@ -87,6 +89,7 @@ export const SHORTCUT_SCOPES: Record<ShortcutAction, ShortcutScope> = {
   "marking.colorYellow": "marking",
   "marking.colorGreen": "marking",
   "marking.colorBlue": "marking",
+  "marking.repeatLastTag": "marking",
 };
 
 // Grid and loupe are never active at the same time, so their bindings may

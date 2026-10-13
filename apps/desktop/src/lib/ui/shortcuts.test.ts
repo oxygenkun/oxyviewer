@@ -90,6 +90,16 @@ describe("loadShortcuts", () => {
     expect(loadShortcuts(storage)["loupe.previousAsset"]).toEqual([plain("h"), null]);
   });
 
+  it("adds the repeat-tag default while preserving older customized bindings", () => {
+    const storage = memoryStorage({
+      "oxyviewer.shortcuts.v2": JSON.stringify({ "loupe.previousAsset": [plain("h"), null] }),
+    });
+    const loaded = loadShortcuts(storage);
+    expect(loaded["loupe.previousAsset"]).toEqual([plain("h"), null]);
+    expect(matchesAction(keyEvent("t", { ctrlKey: true }), loaded, "marking.repeatLastTag")).toBe(true);
+    expect(matchesAction(keyEvent("t"), loaded, "marking.repeatLastTag")).toBe(false);
+  });
+
   it("falls back to defaults for malformed entries", () => {
     const storage = memoryStorage({
       "oxyviewer.shortcuts.v2": JSON.stringify({

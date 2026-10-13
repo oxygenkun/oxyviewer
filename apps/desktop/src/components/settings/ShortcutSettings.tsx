@@ -33,6 +33,7 @@ const ACTION_LABELS: Record<ShortcutAction, MessageKey> = {
   "marking.colorYellow": "shortcutColorYellow",
   "marking.colorGreen": "shortcutColorGreen",
   "marking.colorBlue": "shortcutColorBlue",
+  "marking.repeatLastTag": "shortcutRepeatLastTag",
 };
 
 const ACTION_GROUPS: Array<{ labelKey: MessageKey; actions: ShortcutAction[] }> = [
@@ -44,6 +45,7 @@ const ACTION_GROUPS: Array<{ labelKey: MessageKey; actions: ShortcutAction[] }> 
       "marking.rating1", "marking.rating2", "marking.rating3", "marking.rating4", "marking.rating5",
       "marking.clearRating",
       "marking.colorRed", "marking.colorYellow", "marking.colorGreen", "marking.colorBlue",
+      "marking.repeatLastTag",
     ],
   },
 ];

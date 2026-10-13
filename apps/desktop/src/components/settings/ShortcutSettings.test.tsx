@@ -62,6 +62,7 @@ it("lists the default bindings grouped by view", () => {
   expect(text).toContain("切换蓝色标签");
   expect(slotText("上一张", 0)).toBe("←");
   expect(slotText("切换对焦区域", 0)).toBe("f");
+  expect(slotText("重复上次标签（添加 / 取消）", 0)).toBe("Ctrl+t");
   expect(host.textContent).not.toContain("重新绑定");
 });
 
@@ -84,6 +85,17 @@ it("rebinds the first slot without touching the second", async () => {
   await clickSlot("清除评分", 0);
   await pressKey("j");
   expect(useWorkspaceStore.getState().shortcuts["marking.clearRating"]).toEqual([plain("j"), plain("`")]);
+});
+
+it("rebinds the repeat-tag shortcut and prevents conflicts in both views", async () => {
+  await clickSlot("重复上次标签（添加 / 取消）", 0);
+  await pressKey("y", { altKey: true });
+  expect(useWorkspaceStore.getState().shortcuts["marking.repeatLastTag"][0]).toEqual({
+    ...plain("y"), alt: true,
+  });
+  await clickSlot("选区左移", 0);
+  await pressKey("y", { altKey: true });
+  expect(host.querySelector("[role=alert]")?.textContent).toContain("重复上次标签");
 });
 
 it("clears a slot with Backspace", async () => {

@@ -10,6 +10,8 @@ import {
 } from "@/lib/api";
 import type { MessageKey } from "@/lib/i18n";
 import { descendantIds, embeddedOnlyTagPaths, ensureTagPath, parseTagPath } from "@/lib/assets/tagTree";
+import { refreshTagQueries, TAG_MUTATION_SCOPE } from "@/lib/assets/tagActions";
+import { useWorkspaceStore } from "@/store";
 import type { CustomTag, TagDeleteImpact } from "@/types";
 
 interface TagEditorProps {
@@ -40,6 +42,7 @@ export function TagEditor({
   t,
 }: TagEditorProps) {
   const queryClient = useQueryClient();
+  const setLastTagId = useWorkspaceStore((state) => state.setLastTagId);
   const quickAddButtonRef = useRef<HTMLButtonElement>(null);
   const chipsRef = useRef<HTMLDivElement>(null);
   const pickerRef = useRef<HTMLDivElement>(null);
@@ -80,36 +83,35 @@ export function TagEditor({
       .sort((left, right) => left.tag.path.localeCompare(right.tag.path));
   }, [assignments, search]);
 
-  const refresh = async () => {
-    await Promise.all([
-      queryClient.invalidateQueries({ queryKey: ["custom-tags"] }),
-      queryClient.invalidateQueries({ queryKey: ["asset-tag-assignments"] }),
-      queryClient.invalidateQueries({ queryKey: ["asset-tag-source-kinds"] }),
-      queryClient.invalidateQueries({ queryKey: ["tag-sync-status"] }),
-      queryClient.invalidateQueries({ queryKey: ["asset-details"] }),
-      queryClient.invalidateQueries({ queryKey: ["assets"] }),
-    ]);
-  };
+  const refresh = () => refreshTagQueries(queryClient);
   const assignmentMutation = useMutation({
-    mutationFn: ({ tagId, value }: { tagId: number; value: boolean }) =>
-      setAssetCustomTag(paths, tagId, value),
-    onSuccess: refresh,
+    scope: TAG_MUTATION_SCOPE,
+    mutationFn: ({ paths: targets, tagId, value }: { paths: string[]; tagId: number; value: boolean }) =>
+      setAssetCustomTag(targets, tagId, value),
+    onSuccess: async (_data, { tagId }) => {
+      setLastTagId(tagId);
+      await refresh();
+    },
   });
   const removeAssignmentMutation = useMutation({
-    mutationFn: (tagId: number) => setAssetCustomTag([currentPath], tagId, false),
-    onSuccess: async () => {
+    scope: TAG_MUTATION_SCOPE,
+    mutationFn: ({ path, tagId }: { path: string; tagId: number }) => setAssetCustomTag([path], tagId, false),
+    onSuccess: async (_data, { tagId }) => {
+      setLastTagId(tagId);
       setRemoveTarget(undefined);
       await refresh();
     },
   });
   const createPathMutation = useMutation({
-    mutationFn: async (value: string) => {
+    scope: TAG_MUTATION_SCOPE,
+    mutationFn: async ({ value, paths: targets }: { value: string; paths: string[] }) => {
       const availableTags = await listCustomTags();
       const tag = await ensureTagPath(value, availableTags, createCustomTag);
-      await setAssetCustomTag(paths, tag.id, true);
+      await setAssetCustomTag(targets, tag.id, true);
       return tag;
     },
-    onSuccess: async () => {
+    onSuccess: async (tag) => {
+      setLastTagId(tag.id);
       setCreating(false);
       setNewPath("");
       setSearch("");
@@ -143,8 +145,13 @@ export function TagEditor({
     enabled: Boolean(removeTarget),
   });
   const deleteMutation = useMutation({
+    scope: TAG_MUTATION_SCOPE,
     mutationFn: (id: number) => deleteCustomTag(id),
-    onSuccess: async () => {
+    onSuccess: async (_data, id) => {
+      const lastTagId = useWorkspaceStore.getState().lastTagId;
+      if (lastTagId !== undefined && descendantIds(tagsQuery.data ?? [], id).has(lastTagId)) {
+        setLastTagId(undefined);
+      }
       setDeleteTarget(undefined);
       setMenuTagId(undefined);
       await refresh();
@@ -273,7 +280,7 @@ export function TagEditor({
                 <div className="tag-candidate" key={tag.id}>
                   <button
                     className={`tag-candidate__check${complete ? " is-checked" : mixed ? " is-mixed" : ""}`}
-                    onClick={() => assignmentMutation.mutate({ tagId: tag.id, value: !complete })}
+                    onClick={() => assignmentMutation.mutate({ paths, tagId: tag.id, value: !complete })}
                     disabled={busy}
                     role="checkbox"
                     aria-checked={mixed ? "mixed" : complete}
@@ -281,7 +288,7 @@ export function TagEditor({
                   >{complete ? <Check /> : mixed ? <Minus /> : null}</button>
                   <button
                     className="tag-candidate__name"
-                    onClick={() => assignmentMutation.mutate({ tagId: tag.id, value: !complete })}
+                    onClick={() => assignmentMutation.mutate({ paths, tagId: tag.id, value: !complete })}
                     disabled={busy}
                     title={displayTagPath(tag.path)}
                   >{displayTagPath(tag.path)}</button>
@@ -310,7 +317,7 @@ export function TagEditor({
               error={createPathMutation.error}
               onChange={setNewPath}
               onCancel={() => setCreating(false)}
-              onSave={() => createPathMutation.mutate(newPath)}
+              onSave={() => createPathMutation.mutate({ value: newPath, paths })}
             />
           ) : (
             <button className="tag-picker__create" onClick={startCreating}>
@@ -352,7 +359,7 @@ export function TagEditor({
               </button>
               <button
                 className="is-danger"
-                onClick={() => removeAssignmentMutation.mutate(removeTarget.id)}
+                onClick={() => removeAssignmentMutation.mutate({ path: currentPath, tagId: removeTarget.id })}
                 disabled={removeAssignmentMutation.isPending || sourceQuery.isLoading || !sourceQuery.data?.some(kind => kind === "manual" || kind === "legacy")}
               >{t("removeManualTag")}</button>
             </div>

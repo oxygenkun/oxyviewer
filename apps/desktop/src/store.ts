@@ -80,6 +80,8 @@ interface WorkspaceState {
   sort: AssetSort;
   direction: SortDirection;
   shortcuts: ShortcutBindings;
+  lastTagId?: number;
+  setLastTagId: (tagId?: number) => void;
   setShortcut: (action: ShortcutAction, slot: ShortcutSlot, binding: ShortcutBinding | null) => void;
   resetShortcut: (action: ShortcutAction) => void;
   resetShortcuts: () => void;
@@ -160,6 +162,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set) => ({
   sort: "name",
   direction: "ascending",
   shortcuts: loadShortcuts(),
+  setLastTagId: (lastTagId) => set({ lastTagId }),
   setShortcut: (action, slot, binding) =>
     set((state) => {
       const slots: ShortcutSlots = [...state.shortcuts[action]];
