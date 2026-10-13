@@ -1,5 +1,10 @@
 # OxyViewer 架构设计
 
+本分支正在实施四个 package 的组织重构。已实现的装配、读取边界和队列生命周期以
+[应用核心归属](architecture/11-core-ownership.md) 为准；下文尚待更新的旧 crate 名称
+对应 core 内的功能模块，不再代表独立 package。剩余迁移见
+[实施清单](tasks/core-layout-refactor.md)。
+
 资源加载与状态归属遵循
 [ADR 0008](adr/0008-rust-owned-resource-projections.md)：Rust 持有带版本的权威资源投影和
 优先级队列，React 只镜像已提交 revision。该规则同时适用于 metadata 与 image，目录首屏
@@ -19,7 +24,8 @@ OxyViewer 是一个“React 界面 + Rust 本地能力”的桌面照片浏览�
 - React 负责界面、交互、可见区域判断，以及同步显示 Rust 发布的权威状态；
 - Tauri 把 Web 界面装进原生桌面窗口，并提供 JavaScript 调用 Rust 的桥梁；
 - Rust 负责文件系统访问、图片解码、缓存、元数据和 SQLite；
-- 原始照片始终留在本机，SQLite 和预览图都只是可删除、可重建的缓存。
+- 原始照片始终留在本机；预览与派生索引可重建，SQLite 中的身份、审阅、标签和根目录等
+  用户事实必须保留，不能通过缓存清理删除。
 
 最重要的产品约束是：**打开文件夹不能等待递归导入、全量索引或图片解码。**
 打开后先返回便宜的文件摘要，缩略图、详情和索引按需延后。这一决策记录在

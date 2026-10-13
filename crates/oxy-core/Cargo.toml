@@ -14,9 +14,9 @@ winml-backup = []
 
 [dependencies]
 oxy-media = { path = "../oxy-media" }
-oxy-metadata-parser = { path = "../oxy-metadata-parser" }
 image.workspace = true
-libheif-rs.workspace = true
+flate2 = "1.1"
+tar = "0.4"
 parking_lot.workspace = true
 rusqlite.workspace = true
 serde.workspace = true

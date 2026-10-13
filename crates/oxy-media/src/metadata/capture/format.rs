@@ -1,5 +1,5 @@
 use super::TagLookup;
-use crate::contracts::CaptureMetadata;
+use crate::types::CaptureMetadata;
 use std::path::Path;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

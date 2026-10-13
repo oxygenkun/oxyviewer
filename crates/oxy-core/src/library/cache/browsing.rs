@@ -9,8 +9,7 @@ use std::{
         Arc,
         mpsc::{self, SyncSender},
     },
-    thread::{self, JoinHandle},
-    time::Instant,
+    time::{Duration, Instant},
 };
 
 type DirectoryKey = (PathBuf, PathBuf);
@@ -25,7 +24,7 @@ pub(crate) struct DirectorySnapshots {
 
 struct SnapshotPersistence {
     sender: SyncSender<PersistenceMessage>,
-    worker: Mutex<Option<JoinHandle<()>>>,
+    runtime: crate::runtime::CoreRuntime,
 }
 
 enum PersistenceMessage {
@@ -88,10 +87,20 @@ struct SnapshotPublish {
 impl DirectorySnapshots {
     pub(crate) fn new(connection: Arc<Mutex<Connection>>) -> Self {
         let (sender, receiver) = mpsc::sync_channel(SNAPSHOT_PERSIST_QUEUE_CAPACITY);
-        let worker = thread::Builder::new()
-            .name("directory-snapshot-persistence".into())
-            .spawn(move || {
-                while let Ok(message) = receiver.recv() {
+        let runtime = crate::runtime::CoreRuntime::default();
+        let stopping_sender = sender.clone();
+        runtime.on_stop(move || {
+            // A full channel already wakes the consumer; it checks stop before
+            // processing another message, so shutdown never waits to enqueue.
+            let _ = stopping_sender.try_send(PersistenceMessage::Shutdown);
+        });
+        let worker_runtime = runtime.clone();
+        runtime
+            .spawn_named("directory-snapshot-persistence".into(), move || {
+                while !worker_runtime.is_stopping() {
+                    let Ok(message) = receiver.recv() else {
+                        break;
+                    };
                     match message {
                         PersistenceMessage::Persist(slot) => {
                             persist_pending_snapshots(&connection, &slot);
@@ -104,10 +113,7 @@ impl DirectorySnapshots {
         Self {
             slots: Mutex::new(HashMap::new()),
             background_scan: Mutex::new(()),
-            persistence: SnapshotPersistence {
-                sender,
-                worker: Mutex::new(Some(worker)),
-            },
+            persistence: SnapshotPersistence { sender, runtime },
         }
     }
 
@@ -117,7 +123,18 @@ impl DirectorySnapshots {
         self.slots.lock().clear();
     }
 
+    pub(crate) fn shutdown(&self, timeout: Duration) -> bool {
+        self.persistence.runtime.shutdown(timeout)
+    }
+
+    pub(crate) fn stop(&self) {
+        self.persistence.runtime.stop();
+    }
+
     fn enqueue(&self, slot: Arc<Slot>, item: PersistenceItem) -> Result<(), String> {
+        if self.persistence.runtime.is_stopping() {
+            return Err("application is shutting down".into());
+        }
         let mut pending = slot.persistence.lock();
         pending.latest = Some(item);
         if pending.queued {
@@ -151,10 +168,7 @@ impl DirectorySnapshots {
 
 impl Drop for DirectorySnapshots {
     fn drop(&mut self) {
-        let _ = self.persistence.sender.send(PersistenceMessage::Shutdown);
-        if let Some(worker) = self.persistence.worker.lock().take() {
-            let _ = worker.join();
-        }
+        self.shutdown(Duration::from_secs(2));
     }
 }
 

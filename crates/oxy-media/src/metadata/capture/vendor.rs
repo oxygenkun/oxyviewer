@@ -1,5 +1,5 @@
 use super::{TagLookup, format::ImageType};
-use crate::contracts::CaptureMetadata;
+use crate::types::CaptureMetadata;
 
 mod canon;
 mod sony;

@@ -1,20 +1,21 @@
-use crate::{providers::exiftool::ExiftoolStatus, state::AppState};
+use crate::state::AppState;
 use oxy_core::contracts::{
     AssetDetailsResult, AssetKind, JobId, JobPriority, MetadataPatch, MetadataProjection,
     MetadataRequestPriority,
 };
+use oxy_core::metadata::provider::ExiftoolStatus;
 use std::path::PathBuf;
 use tauri::State;
 
 #[tauri::command]
 pub(crate) async fn get_asset_details(
     path: PathBuf,
-    app: tauri::AppHandle,
     state: State<'_, AppState>,
 ) -> Result<AssetDetailsResult, String> {
+    let runtime = state.runtime.clone();
     let queue = state.metadata_queue.clone();
     tauri::async_runtime::spawn_blocking(move || {
-        let receiver = queue.request_details(&app, path)?;
+        let receiver = queue.request_details(&runtime, path)?;
         receiver
             .recv()
             .map_err(|error| format!("metadata queue stopped: {error}"))
@@ -27,11 +28,11 @@ pub(crate) async fn get_asset_details(
 pub(crate) async fn request_metadata(
     paths: Vec<PathBuf>,
     priority: MetadataRequestPriority,
-    app: tauri::AppHandle,
     state: State<'_, AppState>,
 ) -> Result<Vec<MetadataProjection>, String> {
+    let runtime = state.runtime.clone();
     let queue = state.metadata_queue.clone();
-    tauri::async_runtime::spawn_blocking(move || queue.request_summaries(&app, paths, priority))
+    tauri::async_runtime::spawn_blocking(move || queue.request_summaries(&runtime, paths, priority))
         .await
         .map_err(|error| error.to_string())?
 }
@@ -40,7 +41,6 @@ pub(crate) async fn request_metadata(
 pub(crate) async fn patch_metadata(
     paths: Vec<PathBuf>,
     patch: MetadataPatch,
-    app: tauri::AppHandle,
     state: State<'_, AppState>,
 ) -> Result<JobId, String> {
     let ticket = state.jobs.register(JobPriority::SelectedMetadata);
@@ -64,9 +64,10 @@ pub(crate) async fn patch_metadata(
     .map_err(|error| error.to_string());
     state.jobs.finish(&job_id);
     result??;
+    let runtime = state.runtime.clone();
     let queue = state.metadata_queue.clone();
     tauri::async_runtime::spawn_blocking(move || {
-        queue.request_summaries(&app, requested_paths, MetadataRequestPriority::Selected)
+        queue.request_summaries(&runtime, requested_paths, MetadataRequestPriority::Selected)
     })
     .await
     .map_err(|error| error.to_string())??;
@@ -76,7 +77,6 @@ pub(crate) async fn patch_metadata(
 #[tauri::command]
 pub(crate) async fn sync_metadata_to_embedded(
     paths: Vec<PathBuf>,
-    app: tauri::AppHandle,
     state: State<'_, AppState>,
 ) -> Result<JobId, String> {
     let ticket = state.jobs.register(JobPriority::SelectedMetadata);
@@ -103,9 +103,10 @@ pub(crate) async fn sync_metadata_to_embedded(
     .map_err(|error| error.to_string());
     state.jobs.finish(&job_id);
     result??;
+    let runtime = state.runtime.clone();
     let queue = state.metadata_queue.clone();
     tauri::async_runtime::spawn_blocking(move || {
-        queue.request_summaries(&app, requested_paths, MetadataRequestPriority::Selected)
+        queue.request_summaries(&runtime, requested_paths, MetadataRequestPriority::Selected)
     })
     .await
     .map_err(|error| error.to_string())??;

@@ -61,10 +61,25 @@ resource leases, cancellation and stale-publication semantics.
   formatting and 763 tests passed, with 28 ignored. The count reflects one
   added recovery regression and retirement of four obsolete package-boundary
   source audits; data-class and cache/user behavior audits remain.
-- Next: move reader-only metadata into media, distribute contracts/repos/schema
-  by feature, introduce named workflows and OxyApp lifecycle, and move desktop
-  queues/use-case coordination into core. Package convergence does not yet
-  satisfy those ownership and lifecycle gates.
+- Reader-only metadata now lives in media. Core has no direct parser or
+  libheif dependency; sidecar precedence and capture/focus regressions pass.
+- OxyApp now assembles services and one shared store without Tauri. Core owns
+  resource queues, maintenance and person worker admission. Typed events are
+  forwarded by a joined desktop adapter. Shutdown rejects admission/events,
+  cancels decode/session work and person operations, releases waiters, wakes
+  foreground gates and stops snapshot persistence. Native work that cannot
+  unwind within the deadline reports a timeout rather than fake completion.
+- Metadata admission serializes only the same request; SQLite work is outside
+  the queue lock, with directory/generation/stop checks before insertion.
+  A blocked-writer regression verifies diagnostics and stop remain available.
+- Validation: full workspace tests passed (769 tests / 28 ignored), followed
+  by core's two added lifecycle/admission regressions (270 passed / 11 ignored).
+  Strict workspace Clippy and frontend check pass; frontend tests remain
+  73 files / 419 passing. A media handoff test's fixed sleep was replaced by
+  waiting for the actual subscriber after its parallel-run failure reproduced.
+- Next: distribute contracts/repos/schema by feature, introduce named workflows,
+  move remaining desktop use-case coordination, remove legacy paths, generate
+  frontend contracts and complete final release/performance qualification.
 
 Keep this checklist current. A four-package manifest alone does not complete
 the refactor; every ownership and behavioral gate above must be verified.

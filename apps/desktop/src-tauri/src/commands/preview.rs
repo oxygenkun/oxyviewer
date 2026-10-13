@@ -26,6 +26,7 @@ pub(crate) async fn get_preview(
     app: tauri::AppHandle,
     state: State<'_, AppState>,
 ) -> Result<oxy_core::contracts::ImageProjection, String> {
+    let runtime = state.runtime.clone();
     let preview_queue = state.preview_queue.clone();
     let selection = (level == RenderLevel::Full).then(|| preview_queue.select_full(&path));
     let preview_dir = state.cache.preview_dir();
@@ -40,12 +41,12 @@ pub(crate) async fn get_preview(
             rank: rank.unwrap_or_default(),
         };
         let (projection, receiver) = if cross_folder.unwrap_or(false) {
-            preview_queue.request_history(&app, request)
+            preview_queue.request_history(&runtime, request)
         } else {
-            preview_queue.request(&app, request)
+            preview_queue.request(&runtime, request)
         }?;
         let _ = app.emit(
-            crate::jobs::preview::IMAGE_PROJECTION_UPDATED_EVENT,
+            oxy_core::resources::preview::IMAGE_PROJECTION_UPDATED_EVENT,
             projection,
         );
         receiver
@@ -116,7 +117,7 @@ pub(crate) async fn upsert_preview_schedule(
         preview_queue.upsert_schedule(
             scope_id,
             epoch,
-            crate::jobs::preview::PreviewScheduleKey { path, level },
+            oxy_core::resources::preview::PreviewScheduleKey { path, level },
             priority,
             placement,
         )
@@ -138,7 +139,7 @@ pub(crate) async fn release_preview_schedule(
         preview_queue.release_schedule(
             &scope_id,
             epoch,
-            &crate::jobs::preview::PreviewScheduleKey { path, level },
+            &oxy_core::resources::preview::PreviewScheduleKey { path, level },
         )
     })
     .await
@@ -233,10 +234,11 @@ pub(crate) async fn start_heif_full(
         });
     }
     if use_artifact {
+        let runtime = state.runtime.clone();
         let preview_queue = state.preview_queue.clone();
         let projection = tauri::async_runtime::spawn_blocking(move || {
             let projection = resolve_heif_full_projection(
-                &app,
+                &runtime,
                 &preview_queue,
                 asset,
                 preview_dir,
@@ -379,15 +381,15 @@ fn heif_status_event(
 }
 
 fn resolve_heif_full_projection(
-    app: &tauri::AppHandle,
-    preview_queue: &crate::jobs::preview::PreviewQueue,
+    runtime: &oxy_core::runtime::CoreRuntime,
+    preview_queue: &oxy_core::resources::preview::PreviewQueue,
     asset: AssetSummary,
     preview_dir: PathBuf,
     request_id: String,
     selection: u64,
 ) -> Result<ImageProjection, String> {
     let (loading, receiver) = preview_queue.request(
-        app,
+        runtime,
         PreviewRequest {
             selection: Some(selection),
             request_id,
@@ -398,10 +400,9 @@ fn resolve_heif_full_projection(
             rank: 0,
         },
     )?;
-    let _ = app.emit(
-        crate::jobs::preview::IMAGE_PROJECTION_UPDATED_EVENT,
-        loading,
-    );
+    let _ = runtime.publish(oxy_core::events::CoreEvent::ImageProjectionUpdated(
+        Box::new(loading),
+    ));
     receiver
         .recv()
         .map_err(|error| format!("preview queue stopped: {error}"))?

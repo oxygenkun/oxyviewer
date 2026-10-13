@@ -2550,19 +2550,19 @@ checksum = "cf211e3776eea6aec988552fa118dd746d70e1b1e5e244058d1c98015f3e5872"
 name = "oxy-core"
 version = "0.1.5"
 dependencies = [
+ "flate2",
  "image",
  "libc",
- "libheif-rs",
  "libloading 0.8.9",
  "ort",
  "oxy-media",
- "oxy-metadata-parser",
  "parking_lot",
  "rusqlite",
  "serde",
  "serde_json",
  "sha2",
  "sqlite-vec",
+ "tar",
  "tempfile",
  "thiserror 2.0.20",
  "trash",
@@ -2605,14 +2605,11 @@ dependencies = [
 name = "oxyviewer"
 version = "0.1.5"
 dependencies = [
- "flate2",
  "oxy-core",
  "oxy-media",
  "semver",
  "serde",
  "serde_json",
- "sha2",
- "tar",
  "tauri",
  "tauri-build",
  "tauri-plugin-dialog",
@@ -2620,7 +2617,6 @@ dependencies = [
  "tempfile",
  "ureq",
  "windows 0.61.3",
- "zip",
 ]
 
 [[package]]

@@ -1,6 +1,7 @@
+pub mod provider;
 use crate::contracts::{
-    AssetKind, CaptureMetadata, EditableMetadata, FocusInfo, FocusRegion, MetadataProjection,
-    PickLabel, ResourceLoadStatus,
+    AssetKind, CaptureMetadata, EditableMetadata, FocusInfo, MetadataProjection, PickLabel,
+    ResourceLoadStatus,
 };
 use crate::files::sidecar_path;
 use serde_json::Value;
@@ -24,13 +25,21 @@ use thiserror::Error;
 
 mod burst;
 pub use burst::*;
-mod capture;
-mod engine;
 
-pub use engine::{MetadataDocument, MetadataReader, NativeMetadataReader, RawMetadataTag};
+use oxy_media::metadata::heif_metadata_digest;
+#[cfg(test)]
+use oxy_media::metadata::xmp::xmp_array_values;
+use oxy_media::metadata::xmp::{
+    editable_from_sidecar_xml, normalize_color_label, parse_pick_label,
+};
+pub use oxy_media::metadata::{
+    MetadataDocument, MetadataReader, NativeMetadataReader, RawMetadataTag,
+};
 
 #[derive(Debug, Error)]
 pub enum MetadataError {
+    #[error(transparent)]
+    Native(#[from] oxy_media::metadata::MetadataReadError),
     #[error("ExifTool was not found; install it or set OXY_EXIFTOOL_PATH")]
     EmbeddedWorkerUnavailable,
     #[error("invalid rating {0}; expected 0 through 5")]
@@ -128,10 +137,7 @@ impl MetadataFacade {
         let mut document = NativeMetadataReader.read(path, display_dimensions)?;
         if sidecar_path(path).is_file() {
             let xml = fs::read_to_string(sidecar_path(path))?;
-            document.editable = editable_from_sidecar_xml(&xml);
-            let tags = oxy_metadata_parser::xmp_tags(&xml)
-                .map_err(|error| MetadataError::Read(error.to_string()))?;
-            capture::overlay_xmp(&mut document.capture, &tags);
+            document.apply_sidecar(&xml)?;
         }
         Ok(document)
     }
@@ -472,7 +478,7 @@ fn summary_metadata_fingerprint(
             .ok()
             .map(|bytes| stable_bytes_digest(&bytes))
     } else if is_sony_hif(&asset.path) {
-        engine::heif_metadata_digest(&asset.path)
+        heif_metadata_digest(&asset.path)
     } else {
         None
     };
@@ -623,55 +629,6 @@ fn read_sidecar(asset_path: &Path) -> Result<EditableMetadata, MetadataError> {
     Ok(editable_from_sidecar_xml(&xml))
 }
 
-fn editable_from_sidecar_xml(xml: &str) -> EditableMetadata {
-    let rating_value = xmp_value(xml, "Rating");
-    let pick_label = xmp_prefixed_value(xml, "digiKam", "PickLabel")
-        .as_deref()
-        .and_then(parse_pick_label)
-        .or_else(|| {
-            rating_value
-                .as_deref()
-                .filter(|value| is_rejected_xmp_rating(value))
-                .map(|_| PickLabel::Rejected)
-        });
-    EditableMetadata {
-        rating: rating_value.as_deref().and_then(parse_xmp_rating),
-        color_label: xmp_value(xml, "Label").and_then(normalize_color_label),
-        pick_label,
-        keywords: xmp_array_values(xml, "dc", "subject"),
-        hierarchical_keywords: xmp_array_values(xml, "lr", "hierarchicalSubject"),
-        ..EditableMetadata::default()
-    }
-}
-
-pub(crate) fn xmp_value(xml: &str, name: &str) -> Option<String> {
-    xmp_prefixed_value(xml, "xmp", name)
-}
-
-fn xmp_prefixed_value(xml: &str, prefix: &str, name: &str) -> Option<String> {
-    for quote in ['"', '\''] {
-        let attribute = format!("{prefix}:{name}={quote}");
-        if let Some(start) = xml.find(&attribute) {
-            let value = &xml[start + attribute.len()..];
-            return value.find(quote).map(|end| unescape_xml(&value[..end]));
-        }
-    }
-    let open = format!("<{prefix}:{name}>");
-    let close = format!("</{prefix}:{name}>");
-    let start = xml.find(&open)? + open.len();
-    let end = xml[start..].find(&close)? + start;
-    Some(unescape_xml(xml[start..end].trim()))
-}
-
-fn unescape_xml(value: &str) -> String {
-    value
-        .replace("&quot;", "\"")
-        .replace("&apos;", "'")
-        .replace("&lt;", "<")
-        .replace("&gt;", ">")
-        .replace("&amp;", "&")
-}
-
 fn read_embedded_batch(
     paths: &[PathBuf],
     exiftool: Option<&Path>,
@@ -773,39 +730,6 @@ fn metadata_from_json(row: &Value) -> EditableMetadata {
             value => string_value(value).into_iter().collect(),
         },
     }
-}
-
-pub(crate) fn normalize_color_label(value: String) -> Option<String> {
-    let value = value.trim();
-    if value.is_empty() || value.eq_ignore_ascii_case("none") {
-        return None;
-    }
-    ["Red", "Yellow", "Green", "Blue", "Purple"]
-        .into_iter()
-        .find(|label| label.eq_ignore_ascii_case(value))
-        .map(str::to_owned)
-        .or_else(|| Some(value.to_owned()))
-}
-
-pub(crate) fn parse_pick_label(value: &str) -> Option<PickLabel> {
-    match value.trim().to_ascii_lowercase().as_str() {
-        "1" | "rejected" => Some(PickLabel::Rejected),
-        "2" | "pending" => Some(PickLabel::Pending),
-        "3" | "accepted" | "picked" => Some(PickLabel::Accepted),
-        _ => None,
-    }
-}
-
-pub(crate) fn parse_xmp_rating(value: &str) -> Option<u8> {
-    value
-        .trim()
-        .parse::<u8>()
-        .ok()
-        .filter(|rating| *rating <= 5)
-}
-
-pub(crate) fn is_rejected_xmp_rating(value: &str) -> bool {
-    value.trim() == "-1"
 }
 
 fn pick_label_xmp_value(value: PickLabel) -> &'static str {
@@ -1096,44 +1020,6 @@ fn insert_description_attribute(opening: &mut String, prefix: &str, name: &str, 
     opening.insert_str(insertion, &attribute);
 }
 
-fn xmp_array_values(xml: &str, prefix: &str, name: &str) -> Vec<String> {
-    let element_open = format!("<{prefix}:{name}");
-    let element_close = format!("</{prefix}:{name}>");
-    let Some(element_start) = xml.find(&element_open) else {
-        return Vec::new();
-    };
-    let Some(content_start) = xml[element_start..]
-        .find('>')
-        .map(|offset| element_start + offset + 1)
-    else {
-        return Vec::new();
-    };
-    let Some(content_end) = xml[content_start..]
-        .find(&element_close)
-        .map(|offset| content_start + offset)
-    else {
-        return Vec::new();
-    };
-    let mut values = Vec::new();
-    let mut remaining = &xml[content_start..content_end];
-    while let Some(item_start) = remaining.find("<rdf:li") {
-        let Some(value_start) = remaining[item_start..]
-            .find('>')
-            .map(|offset| item_start + offset + 1)
-        else {
-            break;
-        };
-        let Some(value_end) = remaining[value_start..].find("</rdf:li>") else {
-            break;
-        };
-        values.push(unescape_xml(
-            remaining[value_start..value_start + value_end].trim(),
-        ));
-        remaining = &remaining[value_start + value_end + "</rdf:li>".len()..];
-    }
-    values
-}
-
 fn set_xmp_array(
     xml: &str,
     prefix: &str,
@@ -1208,66 +1094,6 @@ pub fn read_capture_details(
 ) -> Result<(CaptureMetadata, Option<FocusInfo>), MetadataError> {
     let document = NativeMetadataReader.read(path, display_dimensions)?;
     Ok((document.capture, document.focus))
-}
-
-pub(crate) fn format_number(value: f64) -> String {
-    if (value - value.round()).abs() < 0.005 {
-        format!("{value:.0}")
-    } else {
-        format!("{value:.2}").trim_end_matches('0').to_owned()
-    }
-}
-
-pub(crate) fn orient_focus_info(
-    width: u32,
-    height: u32,
-    x: u32,
-    y: u32,
-    frame_size: Option<(u32, u32)>,
-    orientation: u16,
-) -> FocusInfo {
-    let (coordinate_width, coordinate_height, center_x, center_y, swap_frame_axes) =
-        match orientation {
-            2 => (width, height, width.saturating_sub(x), y, false),
-            3 => (
-                width,
-                height,
-                width.saturating_sub(x),
-                height.saturating_sub(y),
-                false,
-            ),
-            4 => (width, height, x, height.saturating_sub(y), false),
-            5 => (height, width, y, x, true),
-            6 => (height, width, height.saturating_sub(y), x, true),
-            7 => (
-                height,
-                width,
-                height.saturating_sub(y),
-                width.saturating_sub(x),
-                true,
-            ),
-            8 => (height, width, y, width.saturating_sub(x), true),
-            _ => (width, height, x, y, false),
-        };
-    let (frame_width, frame_height) = frame_size
-        .map(|(frame_width, frame_height)| {
-            if swap_frame_axes {
-                (frame_height, frame_width)
-            } else {
-                (frame_width, frame_height)
-            }
-        })
-        .unzip();
-    FocusInfo {
-        coordinate_width,
-        coordinate_height,
-        regions: vec![FocusRegion {
-            center_x,
-            center_y,
-            width: frame_width,
-            height: frame_height,
-        }],
-    }
 }
 
 pub fn write_metadata(
@@ -1360,6 +1186,25 @@ pub(crate) fn sony_hif_fixture() -> Option<std::path::PathBuf> {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn heif_container_xmp_capture_values_are_overlaid_before_sidecar_values() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("photo.HIF");
+        fs::write(&path, br#"....ftypSHIF....application/rdf+xml....<x:xmpmeta xmlns:x="adobe:ns:meta/"><rdf:RDF xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#"><rdf:Description xmlns:crs="http://ns.adobe.com/camera-raw-settings/1.0/" crs:Temperature="5600" crs:Tint="8" /></rdf:RDF></x:xmpmeta>"#).unwrap();
+        let embedded = NativeMetadataReader.read(&path, None).unwrap();
+        assert_eq!(
+            embedded.capture.color_temperature.as_deref(),
+            Some("5600 K")
+        );
+        assert_eq!(embedded.capture.tint.as_deref(), Some("8"));
+
+        fs::write(crate::metadata::sidecar_path(&path), r#"<x:xmpmeta xmlns:x="adobe:ns:meta/"><rdf:RDF xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#"><rdf:Description xmlns:crs="http://ns.adobe.com/camera-raw-settings/1.0/" crs:Temperature="7000" /></rdf:RDF></x:xmpmeta>"#).unwrap();
+        let merged = crate::metadata::MetadataFacade::default()
+            .read_document(&path, crate::contracts::AssetKind::Heif, None)
+            .unwrap();
+        assert_eq!(merged.capture.color_temperature.as_deref(), Some("7000 K"));
+        assert_eq!(merged.capture.tint.as_deref(), Some("8"));
+    }
     use super::*;
     use tempfile::tempdir;
 
@@ -1913,17 +1758,6 @@ mod tests {
             .collect::<Vec<_>>();
 
         assert_eq!(clear_args, ["-XMP:Label=None"]);
-    }
-
-    #[test]
-    fn rotates_focus_location_and_exact_frame_size() {
-        let info = orient_focus_info(7_008, 4_672, 1_204, 2_277, Some((219, 217)), 6);
-        assert_eq!(info.coordinate_width, 4_672);
-        assert_eq!(info.coordinate_height, 7_008);
-        assert_eq!(info.regions[0].center_x, 2_395);
-        assert_eq!(info.regions[0].center_y, 1_204);
-        assert_eq!(info.regions[0].width, Some(217));
-        assert_eq!(info.regions[0].height, Some(219));
     }
 
     #[test]

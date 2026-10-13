@@ -1700,10 +1700,33 @@ mod tests {
             DetailRequirement::Display { min_long_edge: 8 },
             RenderLevel::Preview,
         );
-        thread::sleep(Duration::from_millis(25));
+        // Scheduling a thread does not prove it subscribed to the running
+        // producer. Hold publication until that handoff is actually waiting.
+        let cache_root = DiskMediaCache::new(directory.path(), 8)
+            .unwrap()
+            .root()
+            .to_owned();
+        let deadline = Instant::now() + Duration::from_secs(3);
+        let subscribed = loop {
+            let subscribed = RUNNING_WORK
+                .get()
+                .unwrap()
+                .lock()
+                .unwrap()
+                .iter()
+                .any(|work| work.cache_root == cache_root && Arc::strong_count(work) >= 3);
+            if subscribed || Instant::now() >= deadline {
+                break subscribed;
+            }
+            thread::sleep(Duration::from_millis(1));
+        };
         let (release_lock, notify) = &*release;
         *release_lock.lock().unwrap() = true;
         notify.notify_all();
+        assert!(
+            subscribed,
+            "preview did not subscribe to the running producer"
+        );
         assert_eq!(
             join_with_timeout(full).persistence,
             Some(crate::types::MediaPersistence::Skipped)

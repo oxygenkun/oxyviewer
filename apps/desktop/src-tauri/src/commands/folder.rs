@@ -15,7 +15,6 @@ use tauri::{Emitter, State};
 #[tauri::command]
 pub(crate) async fn open_folder(
     path: PathBuf,
-    app: tauri::AppHandle,
     state: State<'_, AppState>,
 ) -> Result<FolderSession, String> {
     let files = state.files.clone();
@@ -41,7 +40,7 @@ pub(crate) async fn open_folder(
     if should_index {
         state
             .library_index_queue
-            .schedule(app, session.root_path.clone());
+            .schedule(state.runtime.clone(), session.root_path.clone());
     }
     schedule_tag_xmp_sync(
         state.tags.clone(),
@@ -344,7 +343,6 @@ pub(crate) async fn search_directories(
 pub(crate) async fn refresh_directory(
     session_id: String,
     directory: Option<PathBuf>,
-    app: tauri::AppHandle,
     state: State<'_, AppState>,
 ) -> Result<DirectoryTreeSnapshot, String> {
     let files = state.files.clone();
@@ -380,7 +378,9 @@ pub(crate) async fn refresh_directory(
         .library
         .invalidate_index(&root)
         .map_err(|error| error.to_string())?;
-    state.library_index_queue.schedule(app, root.clone());
+    state
+        .library_index_queue
+        .schedule(state.runtime.clone(), root.clone());
     state
         .directory_tree_queue
         .enqueue(tree.session_id.clone(), root);

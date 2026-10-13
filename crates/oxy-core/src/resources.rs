@@ -1,30 +1,28 @@
-pub(crate) mod directory_tree;
-pub(crate) mod metadata;
-pub(crate) mod preview;
+pub mod cache;
+pub mod directory_tree;
+pub mod metadata;
+pub mod preview;
 
-use oxy_core::contracts::{DebugQueueItem, DebugQueueState, LibraryIndexUpdate};
-use oxy_core::files::FsCatalog;
-use oxy_core::library::{IndexProgress, IndexStage, Library};
+use crate::contracts::{DebugQueueItem, DebugQueueState, LibraryIndexUpdate};
+use crate::files::FsCatalog;
+use crate::library::{IndexProgress, IndexStage, Library};
+use crate::{events::CoreEvent, runtime::CoreRuntime};
 use std::{
     collections::HashMap,
     path::{Path, PathBuf},
     sync::{Arc, Mutex},
 };
-use tauri::Emitter;
-
-const LIBRARY_INDEX_UPDATED_EVENT: &str = "library-index-updated";
-const LIBRARY_DIRECTORY_INDEX_UPDATED_EVENT: &str = "library-directory-index-updated";
 
 /// Retain the last successful sample when a worker owns a queue lock.
 /// This lock only copies diagnostics; no filesystem, database or queue work
 /// runs while it is held.
 #[derive(Default)]
-pub(crate) struct DebugSnapshotCache {
+pub struct DebugSnapshotCache {
     queues: Mutex<HashMap<String, DebugQueueState>>,
 }
 
 impl DebugSnapshotCache {
-    pub(crate) fn remember(
+    pub fn remember(
         &self,
         observations: [(&str, Option<DebugQueueState>); 5],
     ) -> (Vec<DebugQueueState>, Vec<String>) {
@@ -46,7 +44,7 @@ impl DebugSnapshotCache {
 }
 
 #[derive(Clone)]
-pub(crate) struct LibraryIndexQueue {
+pub struct LibraryIndexQueue {
     library: Arc<Library>,
     files: Arc<FsCatalog>,
     work: Arc<Mutex<LibraryIndexWork>>,
@@ -59,7 +57,7 @@ struct LibraryIndexWork {
 }
 
 impl LibraryIndexQueue {
-    pub(crate) fn new(library: Arc<Library>, files: Arc<FsCatalog>) -> Self {
+    pub fn new(library: Arc<Library>, files: Arc<FsCatalog>) -> Self {
         Self {
             library,
             files,
@@ -67,12 +65,12 @@ impl LibraryIndexQueue {
         }
     }
 
-    pub(crate) fn schedule(&self, app: tauri::AppHandle, root: PathBuf) {
-        // Callers supply registered canonical paths. Do not stat a NAS on the
-        // command/UI thread just to enqueue background work.
-        if !self.library.root_needs_index(&root).unwrap_or(false) {
+    pub fn schedule(&self, app: CoreRuntime, root: PathBuf) {
+        if app.is_stopping() {
             return;
         }
+        // Callers supply registered canonical paths. Do not stat a NAS on the
+        // command/UI thread just to enqueue background work.
         {
             let mut work = self.work.lock().expect("library index queue poisoned");
             if work.pending.contains(&root)
@@ -87,8 +85,16 @@ impl LibraryIndexQueue {
         }
 
         let queue = self.clone();
-        tauri::async_runtime::spawn_blocking(move || {
+        let _ = app.clone().spawn_blocking(move || {
+            if !queue.library.root_needs_index(&root).unwrap_or(false) {
+                queue.finish(&root);
+                return;
+            }
             queue.library.foreground.wait_for_background();
+            if app.is_stopping() {
+                queue.finish(&root);
+                return;
+            }
             let directory_event_app = app.clone();
             let mut directory_event_sent = false;
             let result = queue.library.index_root_with_progress_and_directory_scan(
@@ -96,14 +102,13 @@ impl LibraryIndexQueue {
                 |progress| {
                     if progress.stage == IndexStage::Assets && !directory_event_sent {
                         directory_event_sent = true;
-                        let _ = directory_event_app.emit(
-                            LIBRARY_DIRECTORY_INDEX_UPDATED_EVENT,
+                        let _ = directory_event_app.publish(CoreEvent::LibraryDirectoriesIndexed(
                             LibraryIndexUpdate {
                                 root_path: progress.root_path.clone(),
                                 asset_count: progress.asset_count,
                                 directory_count: progress.directory_count,
                             },
-                        );
+                        ));
                     }
                     queue.update_progress(progress);
                 },
@@ -116,14 +121,11 @@ impl LibraryIndexQueue {
             queue.finish(&root);
             match result {
                 Ok(Some(stats)) => {
-                    let _ = app.emit(
-                        LIBRARY_INDEX_UPDATED_EVENT,
-                        LibraryIndexUpdate {
-                            root_path: root,
-                            asset_count: stats.asset_count,
-                            directory_count: stats.directory_count,
-                        },
-                    );
+                    let _ = app.publish(CoreEvent::LibraryIndexed(LibraryIndexUpdate {
+                        root_path: root,
+                        asset_count: stats.asset_count,
+                        directory_count: stats.directory_count,
+                    }));
                 }
                 Ok(None) => {}
                 Err(error) => {
@@ -133,7 +135,7 @@ impl LibraryIndexQueue {
         });
     }
 
-    pub(crate) fn debug_snapshot(&self) -> Option<DebugQueueState> {
+    pub fn debug_snapshot(&self) -> Option<DebugQueueState> {
         let work = self.work.try_lock().ok()?;
         Some(DebugQueueState {
             name: "libraryIndex".into(),

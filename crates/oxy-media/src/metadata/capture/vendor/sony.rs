@@ -1,5 +1,5 @@
 use super::super::{TagLookup, format::ImageType};
-use crate::contracts::CaptureMetadata;
+use crate::types::CaptureMetadata;
 
 pub(super) fn apply(_image_type: ImageType, values: &TagLookup<'_>, capture: &mut CaptureMetadata) {
     capture.color_temperature = values

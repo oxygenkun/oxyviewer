@@ -1,23 +1,15 @@
 mod commands;
-mod jobs;
+mod events;
+use oxy_core::resources as jobs;
 mod providers;
 mod state;
 
 use commands::*;
-use jobs::directory_tree::DirectoryTreeQueue;
-use oxy_core::files::FsCatalog;
-use oxy_core::jobs::JobRegistry;
-use oxy_core::library::Library;
-use providers::exiftool::ProviderManager;
-use state::{AppState, cache::CacheManager};
-use std::sync::Arc;
+use state::AppState;
 use tauri::{Emitter, Manager, http};
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    let heif = Arc::new(oxy_media::HeifDecodeService::default());
-    let protocol_heif = heif.clone();
-    let media_resources = oxy_media::shared_resource_registry();
     let measure_media_protocol = std::env::var_os("OXY_PERF_SCENARIO").is_some();
     tauri::Builder::default()
         .register_asynchronous_uri_scheme_protocol(
@@ -29,7 +21,7 @@ pub fn run() {
                     .state::<AppState>()
                     .media_resources
                     .clone();
-                let protocol_heif = Arc::clone(&protocol_heif);
+                let protocol_heif = context.app_handle().state::<AppState>().heif.clone();
                 tauri::async_runtime::spawn_blocking(move || {
                     let started = dispatched.map(|_| std::time::Instant::now());
                     // File-backed originals may live on a slow volume. Hold the read
@@ -183,58 +175,12 @@ pub fn run() {
             } else {
                 app.path().app_cache_dir()?.join("previews")
             };
-            let cache = Arc::new(CacheManager::load(
+            let (core, core_events) = oxy_core::OxyApp::open(oxy_core::AppPaths {
+                data_dir,
                 preview_dir,
-                data_dir.join("cache-settings.json"),
-            )?);
-            cache.schedule_prune(None);
-            let library = Arc::new(Library::open(&data_dir.join("oxyviewer.sqlite"))?);
-            // One store, one handle per domain crate. Nothing here wraps
-            // anything else: the application is the composition root.
-            let tags = Arc::new(oxy_core::tags::Tags::new(library.store()));
-            let people = Arc::new(oxy_core::people::People::new(library.store()));
-            let person_model_dir = data_dir.join("person-models");
-            let external_apps = Arc::new(state::external_apps::ExternalAppManager::load(data_dir.join("external-apps.json")));
-            let metadata_provider = Arc::new(ProviderManager::load(data_dir));
-            let files = Arc::new(FsCatalog::default());
-            let directory_tree_queue =
-                DirectoryTreeQueue::new(app.handle().clone(), files.clone(), library.clone());
-            let metadata = metadata_provider.facade();
-            let metadata_queue = jobs::metadata::MetadataQueue::new(
-                app.handle().clone(),
-                files.clone(),
-                metadata.clone(),
-                library.clone(),
-                tags.clone(),
-            );
-            let preview_queue = jobs::preview::PreviewQueue::new(
-                app.handle().clone(),
-                library.clone(),
-                cache.clone(),
-            );
-            let library_index_queue =
-                jobs::LibraryIndexQueue::new(library.clone(), files.clone());
-            app.manage(AppState {
-                external_apps,
-                files,
-                jobs: JobRegistry::default(),
-                library,
-                tags,
-                people,
-                person_operations: Arc::new(oxy_core::people::execution::operations::PersonOperations::default()),
-                person_model_dir,
-                cache,
-                heif,
-                media_resources,
-                metadata,
-                metadata_queue,
-                preview_queue,
-                debug_snapshots: Default::default(),
-                directory_tree_queue,
-                library_index_queue,
-                metadata_provider,
-                burst_scan: Default::default(),
-            });
+            })?;
+            events::forward(app.handle().clone(), core_events);
+            app.manage(core);
 
             create_debug_queue_window(app.handle())?;
 
@@ -350,6 +296,15 @@ pub fn run() {
             close_debug_queue_window,
             write_perf_report
         ])
-        .run(tauri::generate_context!())
-        .expect("error while running OxyViewer");
+        .build(tauri::generate_context!())
+        .expect("error while building OxyViewer")
+        .run(|app, event| {
+            if matches!(event, tauri::RunEvent::ExitRequested { .. }) {
+                let core = app.state::<AppState>();
+                if !core.shutdown(std::time::Duration::from_secs(5)) {
+                    eprintln!("native work did not unwind before the shutdown deadline");
+                }
+                app.state::<events::EventAdapter>().join();
+            }
+        });
 }

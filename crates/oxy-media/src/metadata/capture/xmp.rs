@@ -1,7 +1,7 @@
 use super::{
     TagLookup, normalize_exposure_compensation, normalize_focal_length, trim_fraction, trim_seconds,
 };
-use crate::contracts::CaptureMetadata;
+use crate::types::CaptureMetadata;
 use oxy_metadata_parser::Tag;
 
 /// Overlay only corresponding, present XMP values. Camera-only fields retain

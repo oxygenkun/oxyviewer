@@ -196,7 +196,7 @@ pub(crate) fn start_people_grouping(
     let work = Arc::clone(&operation);
     let root = state.person_model_dir.clone();
     let preview_dir = state.cache.preview_dir();
-    super::people_analysis::launch(operation, move || {
+    super::people_analysis::launch(&state.runtime, operation, move || {
         let folder = files
             .session_directory(&session_id, Some(&input.folder_path))
             .map_err(|e| e.to_string())?;
@@ -285,6 +285,6 @@ pub(crate) fn start_people_grouping(
             );
         });
         Ok(())
-    });
+    })?;
     Ok(())
 }

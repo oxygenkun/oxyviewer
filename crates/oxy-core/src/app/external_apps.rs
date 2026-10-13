@@ -1,4 +1,4 @@
-use oxy_core::contracts::{ExternalAppSettings, ExternalApplication};
+use crate::contracts::{ExternalAppSettings, ExternalApplication};
 use serde::{Deserialize, Serialize};
 use std::{
     collections::HashSet,
@@ -16,7 +16,7 @@ struct PersistedSettings {
     settings: ExternalAppSettings,
 }
 
-pub(crate) struct ExternalAppManager {
+pub struct ExternalAppManager {
     path: PathBuf,
     settings: RwLock<Result<ExternalAppSettings, String>>,
     // Serialize writes without holding the read lock during file I/O.
@@ -24,7 +24,7 @@ pub(crate) struct ExternalAppManager {
 }
 
 impl ExternalAppManager {
-    pub(crate) fn load(path: PathBuf) -> Self {
+    pub fn load(path: PathBuf) -> Self {
         let settings = (|| {
             let bytes = match fs::read(&path) {
                 Ok(bytes) => bytes,
@@ -47,14 +47,14 @@ impl ExternalAppManager {
         }
     }
 
-    pub(crate) fn get(&self) -> Result<ExternalAppSettings, String> {
+    pub fn get(&self) -> Result<ExternalAppSettings, String> {
         self.settings
             .read()
             .map_err(|error| error.to_string())?
             .clone()
     }
 
-    pub(crate) fn application(&self, id: &str) -> Result<ExternalApplication, String> {
+    pub fn application(&self, id: &str) -> Result<ExternalApplication, String> {
         self.get()?
             .apps
             .into_iter()
@@ -62,10 +62,7 @@ impl ExternalAppManager {
             .ok_or_else(|| "Application is no longer configured".into())
     }
 
-    pub(crate) fn update(
-        &self,
-        settings: ExternalAppSettings,
-    ) -> Result<ExternalAppSettings, String> {
+    pub fn update(&self, settings: ExternalAppSettings) -> Result<ExternalAppSettings, String> {
         let _save = self.save_gate.lock().map_err(|error| error.to_string())?;
         let settings = normalize(settings)?;
         let previous = self.get().unwrap_or_default();
@@ -76,7 +73,7 @@ impl ExternalAppManager {
                 .iter()
                 .any(|old| old.id == app.id && old.executable_path == app.executable_path)
             {
-                oxy_core::files::external_apps::validate_application(&app.executable_path)
+                crate::files::external_apps::validate_application(&app.executable_path)
                     .map_err(|error| error.to_string())?;
             }
         }

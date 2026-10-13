@@ -1,4 +1,5 @@
-use oxy_core::contracts::{CacheSettings, CacheSettingsUpdate};
+use crate::contracts::{CacheSettings, CacheSettingsUpdate};
+use crate::runtime::CoreRuntime;
 use oxy_media::MediaCache;
 use serde::{Deserialize, Serialize};
 use std::{
@@ -34,6 +35,7 @@ fn default_max_size_bytes() -> u64 {
 }
 
 pub struct CacheManager {
+    runtime: CoreRuntime,
     default_preview_dir: PathBuf,
     config_path: PathBuf,
     config: RwLock<PersistedCacheConfig>,
@@ -41,7 +43,11 @@ pub struct CacheManager {
 }
 
 impl CacheManager {
-    pub fn load(default_preview_dir: PathBuf, config_path: PathBuf) -> Result<Self, String> {
+    pub fn load(
+        runtime: CoreRuntime,
+        default_preview_dir: PathBuf,
+        config_path: PathBuf,
+    ) -> Result<Self, String> {
         let mut config = fs::read(&config_path)
             .ok()
             .and_then(|bytes| serde_json::from_slice::<PersistedCacheConfig>(&bytes).ok())
@@ -69,6 +75,7 @@ impl CacheManager {
         }
         oxy_media::DiskMediaCache::new(&preview_dir, 256).map_err(|error| error.to_string())?;
         let manager = Self {
+            runtime,
             default_preview_dir,
             config_path,
             config: RwLock::new(config),
@@ -156,15 +163,18 @@ impl CacheManager {
     /// Coalesces publication bursts into one maintenance worker. Maintenance
     /// is never part of a thumbnail reply or run once per cache hit.
     pub fn schedule_prune(self: &Arc<Self>, protected_path: Option<PathBuf>) {
-        if !self.try_start_prune() {
+        if self.runtime.is_stopping() || !self.try_start_prune() {
             return;
         }
         let cache = Arc::clone(self);
-        std::thread::Builder::new()
-            .name("oxy-cache-maintenance".into())
-            .spawn(move || {
+        let result = self
+            .runtime
+            .spawn_named("oxy-cache-maintenance".into(), move || {
                 loop {
-                    std::thread::sleep(PRUNE_INTERVAL);
+                    if cache.runtime.wait_for_stop(PRUNE_INTERVAL) {
+                        cache.prune_state.store(PRUNE_IDLE, Ordering::Release);
+                        return;
+                    }
                     if let Err(error) = cache.prune_after_write(protected_path.as_deref()) {
                         eprintln!("preview cache pruning failed: {error}");
                     }
@@ -172,8 +182,10 @@ impl CacheManager {
                         break;
                     }
                 }
-            })
-            .expect("failed to start cache maintenance worker");
+            });
+        if result.is_err() {
+            self.prune_state.store(PRUNE_IDLE, Ordering::Release);
+        }
     }
 
     fn try_start_prune(&self) -> bool {
@@ -330,7 +342,12 @@ mod tests {
     fn custom_cache_is_always_scoped_to_an_app_owned_child() {
         let parent = tempfile::tempdir().unwrap();
         let default = parent.path().join("default/previews");
-        let manager = CacheManager::load(default, parent.path().join("settings.json")).unwrap();
+        let manager = CacheManager::load(
+            CoreRuntime::default(),
+            default,
+            parent.path().join("settings.json"),
+        )
+        .unwrap();
 
         let settings = manager
             .update(CacheSettingsUpdate {
@@ -362,7 +379,12 @@ mod tests {
         std::fs::create_dir(&nested).unwrap();
         std::fs::write(nested.join("keep.txt"), b"keep").unwrap();
 
-        CacheManager::load(preview_dir.clone(), parent.path().join("settings.json")).unwrap();
+        CacheManager::load(
+            CoreRuntime::default(),
+            preview_dir.clone(),
+            parent.path().join("settings.json"),
+        )
+        .unwrap();
 
         assert!(!legacy.exists());
         assert_eq!(std::fs::read(nested.join("keep.txt")).unwrap(), b"keep");
@@ -392,7 +414,7 @@ mod tests {
         )
         .unwrap();
 
-        let manager = CacheManager::load(default, config_path).unwrap();
+        let manager = CacheManager::load(CoreRuntime::default(), default, config_path).unwrap();
 
         assert_eq!(manager.preview_dir(), custom.canonicalize().unwrap());
         assert!(!default_legacy.exists());
@@ -403,6 +425,7 @@ mod tests {
     fn completion_prune_latches_an_overlapping_follow_up() {
         let parent = tempfile::tempdir().unwrap();
         let manager = CacheManager::load(
+            CoreRuntime::default(),
             parent.path().join("default/previews"),
             parent.path().join("settings.json"),
         )
@@ -421,6 +444,7 @@ mod tests {
         let parent = tempfile::tempdir().unwrap();
         let manager = Arc::new(
             CacheManager::load(
+                CoreRuntime::default(),
                 parent.path().join("default/previews"),
                 parent.path().join("settings.json"),
             )
@@ -446,6 +470,7 @@ mod tests {
     fn invalid_capacity_is_rejected() {
         let parent = tempfile::tempdir().unwrap();
         let manager = CacheManager::load(
+            CoreRuntime::default(),
             parent.path().join("default/previews"),
             parent.path().join("settings.json"),
         )

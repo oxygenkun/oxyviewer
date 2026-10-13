@@ -88,6 +88,16 @@ pub struct Library {
 }
 
 impl Library {
+    pub(crate) fn stop_background(&self) {
+        self.foreground.stop();
+        self.directory_snapshots.stop();
+    }
+
+    pub(crate) fn shutdown_background(&self, timeout: Duration) -> bool {
+        self.foreground.stop();
+        self.directory_snapshots.shutdown(timeout)
+    }
+
     /// The write connection. Domain modules hold it for the duration of a write.
     fn write(&self) -> MutexGuard<'_, Connection> {
         self.store.write()

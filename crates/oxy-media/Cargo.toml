@@ -44,7 +44,7 @@ image = { workspace = true, features = ["tiff"] }
 lcms2.workspace = true
 libc.workspace = true
 libheif-rs.workspace = true
-oxy-metadata-parser = { path = "../oxy-metadata-parser", default-features = false, features = ["jpeg", "tiff", "xmp"] }
+oxy-metadata-parser = { path = "../oxy-metadata-parser" }
 serde.workspace = true
 serde_json.workspace = true
 sha2.workspace = true

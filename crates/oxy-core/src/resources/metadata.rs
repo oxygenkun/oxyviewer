@@ -1,15 +1,16 @@
-use oxy_core::contracts::{
+use crate::contracts::{
     AssetDetails, AssetDetailsResult, AssetKind, AssetSummary, DebugQueueItem, DebugQueueState,
     EditableMetadata, MetadataCapability, MetadataProjection, MetadataProvider,
     MetadataRequestPriority, ResourceLoadStatus,
 };
-use oxy_core::files::FsCatalog;
-use oxy_core::jobs::CoalescingPriorityQueue;
-use oxy_core::library::Library;
-use oxy_core::metadata::{
+use crate::files::FsCatalog;
+use crate::jobs::CoalescingPriorityQueue;
+use crate::library::Library;
+use crate::metadata::{
     MetadataDocument, MetadataFacade, MetadataObservation, metadata_source_revision,
 };
-use oxy_core::tags::Tags;
+use crate::tags::Tags;
+use crate::{events::CoreEvent, runtime::CoreRuntime};
 use std::{
     collections::HashMap,
     path::PathBuf,
@@ -19,7 +20,6 @@ use std::{
         mpsc::{self, Receiver, Sender},
     },
 };
-use tauri::{AppHandle, Emitter};
 
 pub const METADATA_PROJECTION_UPDATED_EVENT: &str = "metadata-projection-updated";
 
@@ -39,6 +39,8 @@ struct Request {
 
 #[derive(Default)]
 struct WorkState {
+    stopping: bool,
+    admission_locks: HashMap<RequestKey, Arc<Mutex<()>>>,
     pending: CoalescingPriorityQueue<RequestKey, Request, MetadataRequestPriority>,
     active: HashMap<RequestKey, Arc<Mutex<Request>>>,
     active_directory: Option<PathBuf>,
@@ -59,7 +61,7 @@ pub struct MetadataQueue {
 
 impl MetadataQueue {
     pub fn new(
-        app: AppHandle,
+        app: CoreRuntime,
         files: Arc<FsCatalog>,
         metadata: MetadataFacade,
         library: Arc<Library>,
@@ -74,16 +76,36 @@ impl MetadataQueue {
             details: Arc::new(RwLock::new(HashMap::new())),
             request_generation: Arc::new(AtomicU64::new(0)),
         };
+        let stop_work = Arc::clone(&queue.work);
+        app.on_stop(move || {
+            let mut work = stop_work
+                .0
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            work.stopping = true;
+            work.pending.remove_if(|_, _| true);
+            for request in work.active.values() {
+                request
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner)
+                    .detail_waiters
+                    .clear();
+            }
+            stop_work.1.notify_all();
+        });
         queue.spawn_worker(app);
         queue
     }
 
     pub fn request_summaries(
         &self,
-        app: &AppHandle,
+        app: &CoreRuntime,
         paths: Vec<PathBuf>,
         priority: MetadataRequestPriority,
     ) -> Result<Vec<MetadataProjection>, String> {
+        if app.is_stopping() {
+            return Err("application is shutting down".into());
+        }
         let mut snapshots = Vec::with_capacity(paths.len());
         for path in paths {
             let asset = self
@@ -95,7 +117,7 @@ impl MetadataQueue {
                 .metadata_projection_for_asset(&asset)
                 .map_err(|error| error.to_string())?;
             if let Some(projection) = &optimistic {
-                let _ = app.emit(METADATA_PROJECTION_UPDATED_EVENT, projection.clone());
+                let _ = app.publish(CoreEvent::MetadataProjectionUpdated(projection.clone()));
             }
             let source_revision = metadata_source_revision(&asset);
             if let Some(cached) = self
@@ -107,7 +129,7 @@ impl MetadataQueue {
                 if optimistic.as_ref().map(|value| value.state_revision)
                     != Some(cached.state_revision)
                 {
-                    let _ = app.emit(METADATA_PROJECTION_UPDATED_EVENT, cached.clone());
+                    let _ = app.publish(CoreEvent::MetadataProjectionUpdated(cached.clone()));
                 }
                 snapshots.push(cached);
                 continue;
@@ -162,9 +184,12 @@ impl MetadataQueue {
 
     pub fn request_details(
         &self,
-        app: &AppHandle,
+        app: &CoreRuntime,
         path: PathBuf,
     ) -> Result<Receiver<AssetDetailsResult>, String> {
+        if app.is_stopping() {
+            return Err("application is shutting down".into());
+        }
         let asset = self
             .files
             .get_asset(&path)
@@ -198,7 +223,7 @@ impl MetadataQueue {
 
     fn enqueue(
         &self,
-        app: &AppHandle,
+        app: &CoreRuntime,
         asset: AssetSummary,
         source_revision: String,
         priority: MetadataRequestPriority,
@@ -209,7 +234,35 @@ impl MetadataQueue {
             source_revision,
             generation: self.request_generation.load(Ordering::Relaxed),
         };
+        let gate = {
+            let mut work = self.work.0.lock().expect("metadata queue lock poisoned");
+            if work.stopping {
+                return Err("application is shutting down".into());
+            }
+            Arc::clone(work.admission_locks.entry(key.clone()).or_default())
+        };
+        let admission = gate.lock().expect("metadata admission lock poisoned");
+        let result = self.enqueue_admitted(app, asset, key.clone(), priority, detail_waiter);
+        drop(admission);
         let mut work = self.work.0.lock().expect("metadata queue lock poisoned");
+        if Arc::strong_count(&gate) == 2 {
+            work.admission_locks.remove(&key);
+        }
+        result
+    }
+
+    fn enqueue_admitted(
+        &self,
+        app: &CoreRuntime,
+        asset: AssetSummary,
+        key: RequestKey,
+        priority: MetadataRequestPriority,
+        detail_waiter: Option<Sender<AssetDetailsResult>>,
+    ) -> Result<MetadataProjection, String> {
+        let mut work = self.work.0.lock().expect("metadata queue lock poisoned");
+        if work.stopping {
+            return Err("application is shutting down".into());
+        }
         if work
             .active_directory
             .as_deref()
@@ -241,6 +294,7 @@ impl MetadataQueue {
                 .cached_projection(&asset)
                 .ok_or_else(|| "pending metadata request has no projection".to_owned());
         }
+        drop(work);
 
         let valid_at = self
             .library
@@ -270,29 +324,41 @@ impl MetadataQueue {
             detail_waiters: detail_waiter.into_iter().collect(),
             priority,
         };
+        let mut work = self.work.0.lock().expect("metadata queue lock poisoned");
+        if work.stopping
+            || key.generation != self.request_generation.load(Ordering::Relaxed)
+            || work
+                .active_directory
+                .as_deref()
+                .is_some_and(|directory| key.path.parent() != Some(directory))
+        {
+            return Err("metadata request invalidated during admission".into());
+        }
         work.pending
             .push_or_merge(key, request, priority, |_, _| unreachable!());
         drop(work);
         self.work.1.notify_one();
-        let _ = app.emit(METADATA_PROJECTION_UPDATED_EVENT, loading.clone());
+        let _ = app.publish(CoreEvent::MetadataProjectionUpdated(loading.clone()));
         Ok(loading)
     }
 
-    fn spawn_worker(&self, app: AppHandle) {
+    fn spawn_worker(&self, app: CoreRuntime) {
         let queue = self.clone();
-        std::thread::Builder::new()
-            .name("oxy-metadata-projection".into())
-            .spawn(move || {
+        app.clone()
+            .spawn_named("oxy-metadata-projection".into(), move || {
                 loop {
                     let request = {
                         let mut pending =
                             queue.work.0.lock().expect("metadata queue lock poisoned");
-                        while pending.pending.is_empty() {
+                        while pending.pending.is_empty() && !app.is_stopping() {
                             pending = queue
                                 .work
                                 .1
                                 .wait(pending)
                                 .expect("metadata queue lock poisoned");
+                        }
+                        if app.is_stopping() {
+                            return;
                         }
                         pending.pending.pop().map(|(key, mut request, priority)| {
                             request.priority = priority;
@@ -322,6 +388,9 @@ impl MetadataQueue {
                                 .metadata
                                 .fail_observation(&observation, error.to_string()),
                         };
+                        if app.is_stopping() {
+                            return;
+                        }
                         let projection = match queue.library.accept_metadata_projection(candidate) {
                             Ok(projection) => projection,
                             Err(error) => {
@@ -332,7 +401,7 @@ impl MetadataQueue {
                             }
                         };
                         if projection.error.as_deref() != Some("invalidated") {
-                            let _ = app.emit(METADATA_PROJECTION_UPDATED_EVENT, projection);
+                            let _ = app.publish(CoreEvent::MetadataProjectionUpdated(projection));
                         }
                         let should_upgrade = {
                             let mut work =
@@ -357,6 +426,9 @@ impl MetadataQueue {
                     let document = queue
                         .metadata
                         .read_document_observation(&observation, display_dimensions);
+                    if app.is_stopping() {
+                        return;
+                    }
                     if asset.has_sidecar
                         && let Ok((document, _)) = &document
                         && let Err(error) = queue.tags.import_sidecar_tags(
@@ -396,7 +468,7 @@ impl MetadataQueue {
                         .expect("metadata details lock poisoned")
                         .insert(key.clone(), result.clone());
                     if projection.error.as_deref() != Some("invalidated") {
-                        let _ = app.emit(METADATA_PROJECTION_UPDATED_EVENT, projection);
+                        let _ = app.publish(CoreEvent::MetadataProjectionUpdated(projection));
                     }
                     let waiters = {
                         let mut work = queue.work.0.lock().expect("metadata queue lock poisoned");
@@ -444,11 +516,11 @@ fn metadata_debug_item(
 fn build_asset_details(
     mut asset: AssetSummary,
     dimensions: Option<oxy_media::ImageDimensions>,
-    document: Result<MetadataDocument, oxy_core::metadata::MetadataError>,
+    document: Result<MetadataDocument, crate::metadata::MetadataError>,
 ) -> AssetDetails {
     let sidecar_path = asset
         .has_sidecar
-        .then(|| oxy_core::files::sidecar_path(&asset.path));
+        .then(|| crate::files::sidecar_path(&asset.path));
     let (capture_metadata, focus_info, embedded_keywords, embedded_hierarchical_keywords) =
         document
             .as_ref()
@@ -488,7 +560,7 @@ fn build_asset_details(
 fn metadata_for_details(
     _kind: AssetKind,
     has_sidecar: bool,
-    result: Result<EditableMetadata, oxy_core::metadata::MetadataError>,
+    result: Result<EditableMetadata, crate::metadata::MetadataError>,
 ) -> (EditableMetadata, MetadataCapability) {
     let provider = if has_sidecar {
         MetadataProvider::Sidecar
@@ -522,11 +594,82 @@ mod tests {
     use super::*;
 
     #[test]
+    fn blocked_admission_does_not_hold_the_queue_or_delay_stop() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("waiting.jpg");
+        std::fs::write(&path, b"source").unwrap();
+        let runtime = CoreRuntime::default();
+        let files = Arc::new(FsCatalog::default());
+        let asset = files.get_asset(&path).unwrap();
+        let library = Arc::new(Library::in_memory().unwrap());
+        let queue = MetadataQueue::new(
+            runtime.clone(),
+            files,
+            MetadataFacade::new(None),
+            library.clone(),
+            Arc::new(Tags::new(library.store())),
+        );
+        let store = library.store();
+        let writer = store.write();
+        let admission_queue = queue.clone();
+        let admission_runtime = runtime.clone();
+        let (finished, result) = mpsc::channel();
+        let worker = std::thread::spawn(move || {
+            let revision = metadata_source_revision(&asset);
+            finished
+                .send(admission_queue.enqueue(
+                    &admission_runtime,
+                    asset,
+                    revision,
+                    MetadataRequestPriority::Selected,
+                    None,
+                ))
+                .unwrap();
+        });
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
+        loop {
+            if queue
+                .work
+                .0
+                .try_lock()
+                .is_ok_and(|work| !work.admission_locks.is_empty())
+            {
+                break;
+            }
+            assert!(
+                std::time::Instant::now() < deadline,
+                "admission did not start"
+            );
+            std::thread::yield_now();
+        }
+        assert!(queue.debug_snapshot().is_some());
+        let stopping_runtime = runtime.clone();
+        let (stopped, stop_complete) = mpsc::channel();
+        let stopper = std::thread::spawn(move || {
+            stopping_runtime.stop();
+            stopped.send(()).unwrap();
+        });
+        stop_complete
+            .recv_timeout(std::time::Duration::from_secs(2))
+            .unwrap();
+        drop(writer);
+        assert!(
+            result
+                .recv_timeout(std::time::Duration::from_secs(2))
+                .unwrap()
+                .is_err()
+        );
+        worker.join().unwrap();
+        stopper.join().unwrap();
+        assert!(runtime.shutdown(std::time::Duration::from_secs(2)));
+    }
+
+    #[test]
     fn asset_details_do_not_require_the_optional_exiftool_worker() {
         let (metadata, capability) = metadata_for_details(
             AssetKind::Heif,
             false,
-            Err(oxy_core::metadata::MetadataError::EmbeddedWorkerUnavailable),
+            Err(crate::metadata::MetadataError::EmbeddedWorkerUnavailable),
         );
 
         assert_eq!(metadata, EditableMetadata::default());
@@ -541,9 +684,7 @@ mod tests {
         let (_, capability) = metadata_for_details(
             AssetKind::Heif,
             false,
-            Err(oxy_core::metadata::MetadataError::Read(
-                "invalid XMP".into(),
-            )),
+            Err(crate::metadata::MetadataError::Read("invalid XMP".into())),
         );
 
         assert!(!capability.readable);

@@ -543,6 +543,12 @@ impl JobRegistry {
         true
     }
 
+    pub fn cancel_all(&self) {
+        for flag in self.jobs.read().values() {
+            flag.store(true, Ordering::Release);
+        }
+    }
+
     pub fn finish(&self, id: &str) {
         self.jobs.write().remove(id);
     }

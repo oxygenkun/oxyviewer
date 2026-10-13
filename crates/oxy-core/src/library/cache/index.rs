@@ -459,7 +459,7 @@ impl Library {
                 directory_count,
                 stage: IndexStage::Directories,
             });
-            if !self.contains_root(root)? {
+            if self.foreground.is_stopped() || !self.contains_root(root)? {
                 return Ok(IndexStats {
                     asset_count,
                     directory_count,
@@ -500,7 +500,7 @@ impl Library {
                 directory_count,
                 stage: IndexStage::Assets,
             });
-            if !self.contains_root(root)? {
+            if self.foreground.is_stopped() || !self.contains_root(root)? {
                 return Ok(IndexStats {
                     asset_count,
                     directory_count,
@@ -527,7 +527,9 @@ impl Library {
                 stage: IndexStage::Assets,
             });
         }
-        self.finish_index(root, scan_id, asset_count, directory_count)?;
+        if !self.foreground.is_stopped() {
+            self.finish_index(root, scan_id, asset_count, directory_count)?;
+        }
         Ok(IndexStats {
             asset_count,
             directory_count,

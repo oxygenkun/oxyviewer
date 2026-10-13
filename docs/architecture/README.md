@@ -5,6 +5,9 @@
 
 ## 专题
 
+- [应用核心的装配、媒体读取与 worker 生命周期](11-core-ownership.md)：四个 package
+  重构中已实现的当前边界，以及尚未完成的迁移范围。
+
 1. [Rust 与 Tauri 运行时](01-rust-tauri-runtime.md)
    - Rust crate、所有权、`Arc`、锁、异步与阻塞任务
    - Tauri command、state、event 和自定义协议

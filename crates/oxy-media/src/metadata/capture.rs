@@ -1,6 +1,6 @@
 //! Normalized capture metadata, routed independently by container and camera vendor.
 
-use crate::contracts::CaptureMetadata;
+use crate::types::CaptureMetadata;
 use oxy_metadata_parser::Tag;
 use std::path::Path;
 

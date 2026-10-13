@@ -5,7 +5,6 @@ use tauri::State;
 #[tauri::command]
 pub(crate) fn add_library_root(
     path: PathBuf,
-    app: tauri::AppHandle,
     state: State<'_, AppState>,
 ) -> Result<Vec<PathBuf>, String> {
     let root = path.canonicalize().map_err(|error| error.to_string())?;
@@ -13,7 +12,9 @@ pub(crate) fn add_library_root(
         .library
         .add_root(&root)
         .map_err(|error| error.to_string())?;
-    state.library_index_queue.schedule(app, root);
+    state
+        .library_index_queue
+        .schedule(state.runtime.clone(), root);
     state.library.roots().map_err(|error| error.to_string())
 }
 
@@ -74,7 +75,6 @@ pub(crate) async fn plan_root_relocation(
 #[tauri::command]
 pub(crate) async fn relocate_library_root(
     plan: oxy_core::contracts::RootRelocationPlan,
-    app: tauri::AppHandle,
     state: State<'_, AppState>,
 ) -> Result<oxy_core::contracts::RootRelocationResult, String> {
     let library = std::sync::Arc::clone(&state.library);
@@ -98,7 +98,7 @@ pub(crate) async fn relocate_library_root(
     .map_err(|e| e.to_string())??;
     state
         .library_index_queue
-        .schedule(app, result.root_path.clone());
+        .schedule(state.runtime.clone(), result.root_path.clone());
     Ok(result)
 }
 

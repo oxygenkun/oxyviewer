@@ -19,6 +19,24 @@ pub struct PersonOperation {
 }
 
 impl PersonOperations {
+    pub fn launch(
+        runtime: &crate::runtime::CoreRuntime,
+        operation: Arc<PersonOperation>,
+        action: impl FnOnce() -> Result<(), String> + Send + 'static,
+    ) -> Result<(), String> {
+        let completion = Arc::clone(&operation);
+        let result = runtime.spawn_named("oxy-person-operation".into(), move || {
+            let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(action))
+                .unwrap_or_else(|_| Err("person worker panicked".into()));
+            completion.finish(result);
+        });
+        if let Err(error) = result {
+            operation.finish(Err(error.to_string()));
+            return Err(error.to_string());
+        }
+        Ok(())
+    }
+
     pub fn reserve(&self, status: PersonOperationStatus) -> Result<Arc<PersonOperation>, String> {
         let mut current = self.current.lock().map_err(|error| error.to_string())?;
         if current
@@ -34,6 +52,17 @@ impl PersonOperations {
         });
         *current = Some(Arc::clone(&operation));
         Ok(operation)
+    }
+
+    pub fn cancel_current(&self) {
+        if let Some(operation) = self
+            .current
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .as_ref()
+        {
+            operation.cancelled.cancel();
+        }
     }
 
     pub fn snapshot(&self) -> Result<Option<PersonOperationStatus>, String> {

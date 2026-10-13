@@ -1,5 +1,5 @@
 //! Camera AF coordinates, normalized before the display-space EXIF transform.
-use crate::contracts::FocusInfo;
+use crate::types::FocusInfo;
 use oxy_metadata_parser::Tag;
 
 pub(super) fn from_tags(tags: &[Tag], display: Option<(u32, u32)>) -> Option<FocusInfo> {

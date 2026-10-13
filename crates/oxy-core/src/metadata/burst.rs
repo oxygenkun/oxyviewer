@@ -61,9 +61,7 @@ impl BurstScanner {
             // Burst grouping needs three capture fields. Avoid the full
             // MetadataDocument path, which also builds raw-tag/focus results
             // and opens HEIF through libheif for XMP and chroma inspection.
-            let capture = oxy_metadata_parser::tags(&path)
-                .map(|tags| crate::metadata::capture::from_tags(&tags, &path))
-                .unwrap_or_default();
+            let capture = oxy_media::metadata::read_capture_summary(&path).unwrap_or_default();
             parsed.insert(
                 path.clone(),
                 BurstFrame {

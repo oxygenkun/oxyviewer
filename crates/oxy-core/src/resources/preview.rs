@@ -1,15 +1,16 @@
-use crate::state::cache::CacheManager;
-use oxy_core::contracts::{
+use crate::contracts::{
     AssetKind, DebugQueueItem, DebugQueueState, ImageProjection, MediaPersistence,
     MediaResourceDescriptor, MediaSatisfaction, OmittedScheduleAction, PreviewOmittedPolicy,
     PreviewPriority, PreviewResult, PreviewScheduleIntent, RenderLevel, ResourceLoadStatus,
     SchedulePlacement,
 };
-use oxy_core::jobs::{
+use crate::jobs::{
     CancellationToken, CoalescingPriorityQueue, EffectiveScheduleChange, OmittedIntentPolicy,
     QueuePlacement, SchedulePosition, ScopedIntentScheduler,
 };
-use oxy_core::library::Library;
+use crate::library::Library;
+use crate::resources::cache::CacheManager;
+use crate::{events::CoreEvent, runtime::CoreRuntime};
 use sha2::{Digest, Sha256};
 use std::{
     collections::{HashMap, HashSet, VecDeque},
@@ -21,7 +22,6 @@ use std::{
     },
     time::{Duration, Instant},
 };
-use tauri::{AppHandle, Emitter};
 
 pub const IMAGE_PROJECTION_UPDATED_EVENT: &str = "image-projection-updated";
 const PROJECTION_SOURCE_REVISION_VERSION: &str = "projection-source-v1";
@@ -178,6 +178,7 @@ struct ProjectionUpdate {
 
 #[derive(Default)]
 struct WorkState {
+    stopping: bool,
     admission_locks: HashMap<(PathBuf, RenderLevel), Arc<Mutex<()>>>,
     admitting: HashSet<String>,
     selection: Option<(PathBuf, u64)>,
@@ -192,6 +193,37 @@ struct WorkState {
 }
 
 impl WorkState {
+    fn stop(&mut self) {
+        self.stopping = true;
+        for session in self.sessions.drain(..) {
+            session.cancellation.cancel();
+        }
+        for (_, cancellation) in self.active_sessions.values() {
+            cancellation.cancel();
+        }
+        for (_, mut request, _) in self.pending.remove_if(|_, _| true) {
+            request.cancellation.cancel();
+            for waiter in request.waiters.drain(..) {
+                let _ = waiter
+                    .sender
+                    .send(Err("application is shutting down".into()));
+            }
+        }
+        self.pending_keys.clear();
+        for request in self.active.values() {
+            let mut request = request
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            request.cancellation.cancel();
+            for waiter in request.waiters.drain(..) {
+                let _ = waiter
+                    .sender
+                    .send(Err("application is shutting down".into()));
+            }
+        }
+        self.schedule = ScopedIntentScheduler::default();
+    }
+
     fn accepts_directory(&self, path: &std::path::Path, cross_folder: bool) -> bool {
         cross_folder
             || self
@@ -240,6 +272,9 @@ impl WorkState {
     }
 
     fn check_selection(&self, selection: Option<u64>) -> Result<(), String> {
+        if self.stopping {
+            return Err("application is shutting down".into());
+        }
         if let Some(epoch) = selection
             && self.selection.as_ref().map(|(_, current)| *current) != Some(epoch)
         {
@@ -411,7 +446,7 @@ impl PreviewQueue {
         Ok(())
     }
 
-    pub fn new(app: AppHandle, library: Arc<Library>, cache: Arc<CacheManager>) -> Self {
+    pub fn new(app: CoreRuntime, library: Arc<Library>, cache: Arc<CacheManager>) -> Self {
         Self {
             thumbnail: RenderQueue::new(
                 app.clone(),
@@ -433,7 +468,7 @@ impl PreviewQueue {
 
     pub fn request(
         &self,
-        app: &AppHandle,
+        app: &CoreRuntime,
         request: PreviewRequest,
     ) -> Result<(ImageProjection, Receiver<Result<ImageProjection, String>>), String> {
         self.queue(request.level).request(app, request)
@@ -443,7 +478,7 @@ impl PreviewQueue {
     /// source validation, generations, leases and per-consumer cancellation.
     pub fn request_history(
         &self,
-        app: &AppHandle,
+        app: &CoreRuntime,
         request: PreviewRequest,
     ) -> Result<(ImageProjection, Receiver<Result<ImageProjection, String>>), String> {
         self.queue(request.level).request_scoped(app, request, true)
@@ -566,7 +601,7 @@ struct RenderQueue {
 
 impl RenderQueue {
     fn new(
-        app: AppHandle,
+        app: CoreRuntime,
         library: Arc<Library>,
         cache: Arc<CacheManager>,
         lane: RenderLevel,
@@ -579,6 +614,15 @@ impl RenderQueue {
             cache,
             request_generation: Arc::new(AtomicU64::new(0)),
         };
+        let stop_work = Arc::clone(&queue.work);
+        app.on_stop(move || {
+            let mut work = stop_work
+                .0
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            work.stop();
+            stop_work.1.notify_all();
+        });
         for worker_index in 0..queue.worker_count() {
             queue.spawn_worker(app.clone(), worker_index);
         }
@@ -687,7 +731,7 @@ impl RenderQueue {
 
     pub fn request(
         &self,
-        app: &AppHandle,
+        app: &CoreRuntime,
         request: PreviewRequest,
     ) -> Result<(ImageProjection, Receiver<Result<ImageProjection, String>>), String> {
         self.request_scoped(app, request, false)
@@ -695,10 +739,13 @@ impl RenderQueue {
 
     fn request_scoped(
         &self,
-        app: &AppHandle,
+        app: &CoreRuntime,
         request: PreviewRequest,
         cross_folder: bool,
     ) -> Result<(ImageProjection, Receiver<Result<ImageProjection, String>>), String> {
+        if app.is_stopping() {
+            return Err("application is shutting down".into());
+        }
         let request_id = request.request_id.clone();
         let selection = request.selection;
         let generation = self.request_generation.load(Ordering::Relaxed);
@@ -743,7 +790,7 @@ impl RenderQueue {
 
     fn request_inner(
         &self,
-        app: &AppHandle,
+        app: &CoreRuntime,
         request: PreviewRequest,
         generation: u64,
         source_revision: ProjectionSourceRevision,
@@ -987,7 +1034,7 @@ impl RenderQueue {
             .or_default()
             .insert(key);
         drop(work);
-        let _ = app.emit(IMAGE_PROJECTION_UPDATED_EVENT, loading.clone());
+        let _ = app.publish(CoreEvent::ImageProjectionUpdated(Box::new(loading.clone())));
         self.work.1.notify_one();
         Ok((loading, receiver))
     }
@@ -1314,7 +1361,7 @@ impl RenderQueue {
 
     fn run_interim_upgrade(
         &self,
-        app: &AppHandle,
+        app: &CoreRuntime,
         source_revision: &ProjectionSourceRevision,
         valid_at: u64,
         priority: PreviewPriority,
@@ -1342,7 +1389,7 @@ impl RenderQueue {
                     valid_at,
                     message.clone(),
                 )?;
-                let _ = app.emit(IMAGE_PROJECTION_UPDATED_EVENT, projection);
+                let _ = app.publish(CoreEvent::ImageProjectionUpdated(Box::new(projection)));
                 return Err(message);
             }
         };
@@ -1353,7 +1400,7 @@ impl RenderQueue {
             let message = "preview upgrade did not produce a satisfied artifact".to_owned();
             let projection =
                 self.transition_interim_upgrade_error(source_revision, valid_at, message.clone())?;
-            let _ = app.emit(IMAGE_PROJECTION_UPDATED_EVENT, projection);
+            let _ = app.publish(CoreEvent::ImageProjectionUpdated(Box::new(projection)));
             return Err(message);
         }
         let resource_id = upgrade
@@ -1369,7 +1416,9 @@ impl RenderQueue {
             error: None,
         });
         let projection = projection?;
-        let _ = app.emit(IMAGE_PROJECTION_UPDATED_EVENT, projection.clone());
+        let _ = app.publish(CoreEvent::ImageProjectionUpdated(Box::new(
+            projection.clone(),
+        )));
         for completion in upgrade.completions {
             if resource_id.is_some() {
                 self.spawn_persistence_completion(
@@ -1400,13 +1449,13 @@ impl RenderQueue {
 
     fn spawn_persistence_completion(
         &self,
-        app: AppHandle,
+        app: CoreRuntime,
         source_revision: ProjectionSourceRevision,
         valid_at: u64,
         completion: Receiver<oxy_media::PersistenceCompletion>,
     ) {
         let queue = self.clone();
-        std::thread::spawn(move || {
+        let _ = app.clone().spawn_blocking(move || {
             let Ok(completion) = completion.recv() else {
                 return;
             };
@@ -1452,33 +1501,38 @@ impl RenderQueue {
                 result: Some(result),
                 error: None,
             }) {
-                let _ = app.emit(IMAGE_PROJECTION_UPDATED_EVENT, projection);
+                let _ = app.publish(CoreEvent::ImageProjectionUpdated(Box::new(projection)));
             }
         });
     }
 
     fn worker_count(&self) -> usize {
         if self.lane == RenderLevel::Full {
-            oxy_core::jobs::loupe_worker_count()
+            crate::jobs::loupe_worker_count()
         } else {
-            oxy_core::jobs::image_worker_count()
+            crate::jobs::image_worker_count()
         }
     }
 
-    fn spawn_worker(&self, app: AppHandle, worker_index: usize) {
+    fn spawn_worker(&self, app: CoreRuntime, worker_index: usize) {
         let queue = self.clone();
-        std::thread::Builder::new()
-            .name(format!("oxy-{:?}-{worker_index}", self.lane))
-            .spawn(move || {
+        app.clone()
+            .spawn_named(format!("oxy-{:?}-{worker_index}", self.lane), move || {
                 loop {
                     let request = {
                         let mut pending = queue.work.0.lock().expect("preview queue lock poisoned");
-                        while pending.pending.is_empty() && pending.sessions.is_empty() {
+                        while pending.pending.is_empty()
+                            && pending.sessions.is_empty()
+                            && !app.is_stopping()
+                        {
                             pending = queue
                                 .work
                                 .1
                                 .wait(pending)
                                 .expect("preview queue lock poisoned");
+                        }
+                        if app.is_stopping() {
+                            return;
                         }
                         if let Some(session) = pending.sessions.pop_front() {
                             pending.active_sessions.insert(
@@ -1597,7 +1651,8 @@ impl RenderQueue {
                     if let Some(projection) = projection
                         .filter(|projection| projection.error.as_deref() != Some("invalidated"))
                     {
-                        let _ = app.emit(IMAGE_PROJECTION_UPDATED_EVENT, projection);
+                        let _ =
+                            app.publish(CoreEvent::ImageProjectionUpdated(Box::new(projection)));
                     }
                     for completion in completions {
                         queue.spawn_persistence_completion(
@@ -1784,7 +1839,7 @@ fn restore_projection_resource(
     if lease.is_some() {
         // This request restored a validated disk artifact, not the decoder
         // invocation whose historical timings may be stored in the projection.
-        result.diagnostics = Some(oxy_core::contracts::PreviewDiagnostics {
+        result.diagnostics = Some(crate::contracts::PreviewDiagnostics {
             backend: Some("cached artifact".into()),
             ..Default::default()
         });
@@ -1891,7 +1946,58 @@ fn priority_from_position(position: SchedulePosition) -> PreviewPriority {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use oxy_core::contracts::PreviewKind;
+    use crate::contracts::PreviewKind;
+
+    #[test]
+    fn stopping_cancels_pending_active_and_session_work_and_releases_waiters() {
+        let directory = tempfile::tempdir().unwrap();
+        let mut state = WorkState::default();
+        let mut receivers = Vec::new();
+        let mut tokens = Vec::new();
+        for (index, name) in ["pending.hif", "active.hif"].into_iter().enumerate() {
+            let (key, mut request) =
+                thumbnail_work(directory.path(), name, PreviewPriority::Visible);
+            let (sender, receiver) = mpsc::channel();
+            request.waiters[0].sender = sender;
+            receivers.push(receiver);
+            tokens.push(request.cancellation.clone());
+            if index == 0 {
+                state
+                    .pending
+                    .push(key, request, schedule_position(PreviewPriority::Visible, 0));
+            } else {
+                state.active.insert(key, Arc::new(Mutex::new(request)));
+            }
+        }
+        let session_token = CancellationToken::default();
+        state.active_sessions.insert(
+            "session".into(),
+            (directory.path().join("session.hif"), session_token.clone()),
+        );
+        let pending_session = CancellationToken::default();
+        state.sessions.push_back(SessionWork {
+            id: "pending-session".into(),
+            path: directory.path().join("pending-session.hif"),
+            cancellation: pending_session.clone(),
+            run: Box::new(|_| panic!("stopped session must never start")),
+        });
+        state.stop();
+        assert!(tokens.iter().all(CancellationToken::is_cancelled));
+        assert!(session_token.is_cancelled());
+        assert!(pending_session.is_cancelled());
+        assert!(state.pending.is_empty());
+        assert!(state.sessions.is_empty());
+        for receiver in receivers {
+            assert_eq!(
+                receiver
+                    .recv_timeout(Duration::from_secs(1))
+                    .unwrap()
+                    .unwrap_err(),
+                "application is shutting down"
+            );
+        }
+        assert!(state.check_selection(None).is_err());
+    }
 
     fn thumbnail_work(
         directory: &std::path::Path,
@@ -1943,8 +2049,12 @@ mod tests {
             projections: Arc::new(RwLock::new(HashMap::new())),
             library: Arc::new(Library::in_memory().unwrap()),
             cache: Arc::new(
-                CacheManager::load(directory.join("previews"), directory.join("config.json"))
-                    .unwrap(),
+                CacheManager::load(
+                    CoreRuntime::default(),
+                    directory.join("previews"),
+                    directory.join("config.json"),
+                )
+                .unwrap(),
             ),
             request_generation: Arc::new(AtomicU64::new(0)),
         }
@@ -2265,6 +2375,7 @@ mod tests {
         let library = Arc::new(Library::in_memory().unwrap());
         let cache = Arc::new(
             CacheManager::load(
+                CoreRuntime::default(),
                 directory.path().join("previews"),
                 directory.path().join("config.json"),
             )
@@ -2285,7 +2396,7 @@ mod tests {
         assert_eq!(queues.queue(RenderLevel::Full).worker_count(), 2);
         assert_eq!(
             queues.queue(RenderLevel::Thumbnail).worker_count(),
-            oxy_core::jobs::image_worker_count()
+            crate::jobs::image_worker_count()
         );
         assert!(!Arc::ptr_eq(
             &queues.queue(RenderLevel::Thumbnail).work,
@@ -2429,6 +2540,7 @@ mod tests {
         let library = Arc::new(Library::in_memory().unwrap());
         let cache = Arc::new(
             CacheManager::load(
+                CoreRuntime::default(),
                 state.path().join("previews"),
                 state.path().join("cache-config.json"),
             )
@@ -2558,7 +2670,7 @@ mod tests {
                 resource: None,
                 satisfaction: Some(MediaSatisfaction::Interim),
                 persistence: Some(MediaPersistence::Persisted),
-                diagnostics: Some(oxy_core::contracts::PreviewDiagnostics {
+                diagnostics: Some(crate::contracts::PreviewDiagnostics {
                     backend: Some("old decoder".into()),
                     decode_ms: Some(3000),
                     ..Default::default()
@@ -2594,33 +2706,33 @@ mod tests {
             status: ResourceLoadStatus::Ready,
             level: RenderLevel::Thumbnail,
             result: Some(PreviewResult {
-                image_facts: Some(oxy_core::contracts::ArtifactFacts {
+                image_facts: Some(crate::contracts::ArtifactFacts {
                     exif_orientation: 1,
-                    source: oxy_core::contracts::SourceImage {
+                    source: crate::contracts::SourceImage {
                         exif_orientation: 1,
                         revision_id: source_revision.media_revision.revision_id.clone(),
                         candidate_id: "primary".into(),
-                        origin: oxy_core::contracts::ImageOrigin::PrimaryImage,
-                        encoded_dimensions: Some(oxy_core::contracts::EncodedDimensions(
+                        origin: crate::contracts::ImageOrigin::PrimaryImage,
+                        encoded_dimensions: Some(crate::contracts::EncodedDimensions(
                             (8, 4).into(),
                         )),
-                        display_dimensions: oxy_core::contracts::DisplayDimensions((8, 4).into()),
+                        display_dimensions: crate::contracts::DisplayDimensions((8, 4).into()),
                     },
-                    encoded_dimensions: oxy_core::contracts::EncodedDimensions((8, 4).into()),
-                    display_dimensions: oxy_core::contracts::DisplayDimensions((8, 4).into()),
-                    detail: oxy_core::contracts::DetailCoverage {
-                        reference_dimensions: oxy_core::contracts::DisplayDimensions((8, 4).into()),
-                        region: oxy_core::contracts::PreviewContentRect {
+                    encoded_dimensions: crate::contracts::EncodedDimensions((8, 4).into()),
+                    display_dimensions: crate::contracts::DisplayDimensions((8, 4).into()),
+                    detail: crate::contracts::DetailCoverage {
+                        reference_dimensions: crate::contracts::DisplayDimensions((8, 4).into()),
+                        region: crate::contracts::PreviewContentRect {
                             x: 0,
                             y: 0,
                             width: 8,
                             height: 4,
                         },
-                        sampled_dimensions: oxy_core::contracts::DisplayDimensions((8, 4).into()),
-                        sampling: oxy_core::contracts::Sampling::Native,
+                        sampled_dimensions: crate::contracts::DisplayDimensions((8, 4).into()),
+                        sampling: crate::contracts::Sampling::Native,
                     },
                     processing: Vec::new(),
-                    byte_integrity: oxy_core::contracts::ByteIntegrity::SourceFile,
+                    byte_integrity: crate::contracts::ByteIntegrity::SourceFile,
                 }),
                 geometry: None,
                 path,
@@ -2656,6 +2768,7 @@ mod tests {
             library,
             cache: Arc::new(
                 CacheManager::load(
+                    CoreRuntime::default(),
                     directory.path().join("previews"),
                     directory.path().join("settings.json"),
                 )
@@ -2729,15 +2842,15 @@ mod tests {
             path: directory.path().join("pending.jpg"),
             width: 8,
             height: 4,
-            kind: oxy_core::contracts::PreviewKind::Original,
+            kind: crate::contracts::PreviewKind::Original,
             render_level: RenderLevel::Thumbnail,
-            resource: Some(oxy_core::contracts::MediaResourceDescriptor {
+            resource: Some(crate::contracts::MediaResourceDescriptor {
                 resource_id: handle.descriptor.resource_id,
                 url: handle.descriptor.url,
                 media_type: "image/jpeg".into(),
             }),
-            satisfaction: Some(oxy_core::contracts::MediaSatisfaction::Satisfied),
-            persistence: Some(oxy_core::contracts::MediaPersistence::Pending),
+            satisfaction: Some(crate::contracts::MediaSatisfaction::Satisfied),
+            persistence: Some(crate::contracts::MediaPersistence::Pending),
             diagnostics: None,
         };
         assert!(preview_result_is_live(&result));

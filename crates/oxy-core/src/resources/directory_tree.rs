@@ -1,13 +1,13 @@
-use oxy_core::contracts::{DebugQueueItem, DebugQueueState, DirectoryTreeSnapshot};
-use oxy_core::files::FsCatalog;
-use oxy_core::jobs::CoalescingPriorityQueue;
+use crate::contracts::{DebugQueueItem, DebugQueueState, DirectoryTreeSnapshot};
+use crate::files::FsCatalog;
+use crate::jobs::CoalescingPriorityQueue;
+use crate::{events::CoreEvent, runtime::CoreRuntime};
 use std::{
     collections::{HashMap, HashSet},
     path::PathBuf,
     sync::{Arc, Condvar, Mutex},
     time::{Duration, Instant},
 };
-use tauri::{AppHandle, Emitter};
 
 pub const DIRECTORY_TREE_UPDATED_EVENT: &str = "directory-tree-updated";
 
@@ -90,17 +90,17 @@ impl WorkState {
 
 #[derive(Clone)]
 pub struct DirectoryTreeQueue {
-    app: AppHandle,
+    app: CoreRuntime,
     files: Arc<FsCatalog>,
-    library: Arc<oxy_core::library::Library>,
+    library: Arc<crate::library::Library>,
     work: Arc<(Mutex<WorkState>, Condvar)>,
 }
 
 impl DirectoryTreeQueue {
     pub fn new(
-        app: AppHandle,
+        app: CoreRuntime,
         files: Arc<FsCatalog>,
-        library: Arc<oxy_core::library::Library>,
+        library: Arc<crate::library::Library>,
     ) -> Self {
         let queue = Self {
             app: app.clone(),
@@ -108,26 +108,43 @@ impl DirectoryTreeQueue {
             library,
             work: Arc::new((Mutex::new(WorkState::default()), Condvar::new())),
         };
+        let stop_work = Arc::clone(&queue.work);
+        app.on_stop(move || {
+            let mut work = stop_work
+                .0
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            work.pending.remove_if(|_, _| true);
+            work.pending_order.clear();
+            work.rerun.clear();
+            stop_work.1.notify_all();
+        });
         queue.spawn_worker(app);
         queue
     }
 
     pub fn enqueue(&self, session_id: String, directory: PathBuf) {
+        if self.app.is_stopping() {
+            return;
+        }
         let key = RequestKey {
             session_id,
             directory,
         };
         {
             let mut work = self.work.0.lock().expect("directory tree queue poisoned");
-            if !work.begin_foreground(&key) {
+            if self.app.is_stopping() || !work.begin_foreground(&key) {
                 return;
             }
         }
         // Each distinct UI request starts independently: a blocked filesystem
         // read for an old selection must not occupy the new selection's lane.
         let queue = self.clone();
-        tauri::async_runtime::spawn_blocking(move || {
+        let _ = self.app.spawn_blocking(move || {
             loop {
+                if queue.app.is_stopping() {
+                    return;
+                }
                 match queue
                     .files
                     .load_directory_children(&key.session_id, &key.directory)
@@ -144,6 +161,9 @@ impl DirectoryTreeQueue {
                     }
                 }
                 let mut work = queue.work.0.lock().expect("directory tree queue poisoned");
+                if queue.app.is_stopping() {
+                    return;
+                }
                 if !work.finish_foreground(&key) {
                     continue;
                 }
@@ -193,21 +213,23 @@ impl DirectoryTreeQueue {
         })
     }
 
-    fn spawn_worker(&self, app: AppHandle) {
+    fn spawn_worker(&self, app: CoreRuntime) {
         let queue = self.clone();
-        std::thread::Builder::new()
-            .name("oxy-directory-tree".into())
-            .spawn(move || {
+        app.clone()
+            .spawn_named("oxy-directory-tree".into(), move || {
                 let mut last_publish = Instant::now();
                 loop {
                     let key = {
                         let mut work = queue.work.0.lock().expect("directory tree queue poisoned");
-                        while work.pending.is_empty() {
+                        while work.pending.is_empty() && !app.is_stopping() {
                             work = queue
                                 .work
                                 .1
                                 .wait(work)
                                 .expect("directory tree queue poisoned");
+                        }
+                        if app.is_stopping() {
+                            return;
                         }
                         let request = work.pop();
                         work.loading.clone_from(&request);
@@ -217,6 +239,9 @@ impl DirectoryTreeQueue {
                         continue;
                     };
                     queue.library.foreground.wait_for_background();
+                    if app.is_stopping() {
+                        return;
+                    }
                     match queue
                         .files
                         .prefetch_directory_children(&key.session_id, &key.directory)
@@ -291,8 +316,8 @@ fn directory_debug_item(key: &RequestKey, score: i64) -> DebugQueueItem {
     }
 }
 
-fn publish(app: &AppHandle, snapshot: DirectoryTreeSnapshot) {
-    let _ = app.emit(DIRECTORY_TREE_UPDATED_EVENT, snapshot);
+fn publish(app: &CoreRuntime, snapshot: DirectoryTreeSnapshot) {
+    let _ = app.publish(CoreEvent::DirectoryTreeUpdated(snapshot));
 }
 
 fn priority_score(active: Option<&ActiveDirectory>, key: &RequestKey, order: u64) -> i64 {

@@ -1,8 +1,8 @@
-use crate::contracts::{CaptureMetadata, EditableMetadata, FocusInfo};
 use crate::metadata::{
-    MetadataError, is_rejected_xmp_rating, normalize_color_label, parse_pick_label,
+    MetadataReadError, is_rejected_xmp_rating, normalize_color_label, parse_pick_label,
     parse_xmp_rating, xmp_value,
 };
+use crate::types::{CaptureMetadata, EditableMetadata, FocusInfo};
 use libheif_rs::{Chroma, ColorSpace, HeifContext};
 use oxy_metadata_parser::{Tag, core::TagValue};
 use sha2::{Digest, Sha256};
@@ -36,7 +36,7 @@ pub trait MetadataReader: Send + Sync {
         &self,
         path: &Path,
         display_dimensions: Option<(u32, u32)>,
-    ) -> Result<MetadataDocument, MetadataError>;
+    ) -> Result<MetadataDocument, MetadataReadError>;
 }
 
 /// OxyViewer's in-process reader. The vendored parser handles the common
@@ -50,9 +50,9 @@ impl MetadataReader for NativeMetadataReader {
         &self,
         path: &Path,
         display_dimensions: Option<(u32, u32)>,
-    ) -> Result<MetadataDocument, MetadataError> {
+    ) -> Result<MetadataDocument, MetadataReadError> {
         let tags = oxy_metadata_parser::tags(path)
-            .map_err(|error| MetadataError::Read(error.to_string()))?;
+            .map_err(|error| MetadataReadError::Read(error.to_string()))?;
         let mut document = document_from_tags(&tags, path, display_dimensions);
 
         if crate::metadata::capture::is_heif_path(path) {
@@ -101,7 +101,7 @@ fn document_from_tags(
             .or_else(|| {
                 rating_value
                     .filter(|value| is_rejected_xmp_rating(value))
-                    .map(|_| crate::contracts::PickLabel::Rejected)
+                    .map(|_| crate::types::PickLabel::Rejected)
             }),
         title: value("XMP", "Title").map(str::to_owned),
         description: value("XMP", "Description").map(str::to_owned),
@@ -226,18 +226,18 @@ fn parse_frame_size(tag: &Tag) -> Option<(u32, u32)> {
     }
 }
 
-fn read_heif_xmp(path: &Path) -> Result<Option<String>, MetadataError> {
+fn read_heif_xmp(path: &Path) -> Result<Option<String>, MetadataReadError> {
     read_heif_container_metadata(path).map(|(xmp, _)| xmp)
 }
 
 fn read_heif_container_metadata(
     path: &Path,
-) -> Result<(Option<String>, Option<String>), MetadataError> {
+) -> Result<(Option<String>, Option<String>), MetadataReadError> {
     let context = HeifContext::read_from_file(&path.to_string_lossy())
-        .map_err(|error| MetadataError::Read(error.to_string()))?;
+        .map_err(|error| MetadataReadError::Read(error.to_string()))?;
     let handle = context
         .primary_image_handle()
-        .map_err(|error| MetadataError::Read(error.to_string()))?;
+        .map_err(|error| MetadataReadError::Read(error.to_string()))?;
     let chroma_subsampling = handle
         .preferred_decoding_colorspace()
         .ok()
@@ -252,13 +252,13 @@ fn read_heif_container_metadata(
         if item.content_type == "application/rdf+xml" {
             return String::from_utf8(item.raw_data)
                 .map(|xmp| (Some(xmp), chroma_subsampling))
-                .map_err(|error| MetadataError::Read(format!("invalid HEIF XMP: {error}")));
+                .map_err(|error| MetadataReadError::Read(format!("invalid HEIF XMP: {error}")));
         }
     }
     Ok((None, chroma_subsampling))
 }
 
-pub(crate) fn heif_metadata_digest(path: &Path) -> Option<u64> {
+pub fn heif_metadata_digest(path: &Path) -> Option<u64> {
     let xmp = read_heif_xmp(path)
         .ok()
         .flatten()
@@ -269,7 +269,7 @@ pub(crate) fn heif_metadata_digest(path: &Path) -> Option<u64> {
 
 /// Compatibility path for damaged and synthetic BMFF files that libheif
 /// refuses to open. Valid HEIF/HIF files always take the item-table path.
-fn read_bounded_xmp_fallback(path: &Path) -> Result<Option<String>, MetadataError> {
+fn read_bounded_xmp_fallback(path: &Path) -> Result<Option<String>, MetadataReadError> {
     const LIMIT: u64 = 1024 * 1024;
     let mut bytes = Vec::new();
     fs::File::open(path)?.take(LIMIT).read_to_end(&mut bytes)?;
@@ -289,7 +289,7 @@ fn read_bounded_xmp_fallback(path: &Path) -> Result<Option<String>, MetadataErro
     let end = start + relative_end + close.len();
     std::str::from_utf8(&bytes[start..end])
         .map(|xml| Some(xml.to_owned()))
-        .map_err(|error| MetadataError::Read(format!("invalid embedded XMP: {error}")))
+        .map_err(|error| MetadataReadError::Read(format!("invalid embedded XMP: {error}")))
 }
 
 fn overlay_document_xmp(document: &mut MetadataDocument, xml: &str) {
@@ -318,7 +318,7 @@ fn overlay_xmp(metadata: &mut EditableMetadata, xml: &str) {
             rating_value
                 .as_deref()
                 .filter(|value| is_rejected_xmp_rating(value))
-                .map(|_| crate::contracts::PickLabel::Rejected)
+                .map(|_| crate::types::PickLabel::Rejected)
         })
         .or(metadata.pick_label);
     let keywords = crate::metadata::xmp_array_values(xml, "dc", "subject");
@@ -378,26 +378,6 @@ mod tests {
     use super::*;
 
     #[test]
-    fn heif_container_xmp_capture_values_are_overlaid_before_sidecar_values() {
-        let directory = tempfile::tempdir().unwrap();
-        let path = directory.path().join("photo.HIF");
-        fs::write(&path, br#"....ftypSHIF....application/rdf+xml....<x:xmpmeta xmlns:x="adobe:ns:meta/"><rdf:RDF xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#"><rdf:Description xmlns:crs="http://ns.adobe.com/camera-raw-settings/1.0/" crs:Temperature="5600" crs:Tint="8" /></rdf:RDF></x:xmpmeta>"#).unwrap();
-        let embedded = NativeMetadataReader.read(&path, None).unwrap();
-        assert_eq!(
-            embedded.capture.color_temperature.as_deref(),
-            Some("5600 K")
-        );
-        assert_eq!(embedded.capture.tint.as_deref(), Some("8"));
-
-        fs::write(crate::metadata::sidecar_path(&path), r#"<x:xmpmeta xmlns:x="adobe:ns:meta/"><rdf:RDF xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#"><rdf:Description xmlns:crs="http://ns.adobe.com/camera-raw-settings/1.0/" crs:Temperature="7000" /></rdf:RDF></x:xmpmeta>"#).unwrap();
-        let merged = crate::metadata::MetadataFacade::default()
-            .read_document(&path, crate::contracts::AssetKind::Heif, None)
-            .unwrap();
-        assert_eq!(merged.capture.color_temperature.as_deref(), Some("7000 K"));
-        assert_eq!(merged.capture.tint.as_deref(), Some("8"));
-    }
-
-    #[test]
     fn heif_counter_clockwise_rotation_orients_focus_coordinates() {
         let tags = [
             Tag::new("MakerNotes", "FocusLocation", "7008 4672 1204 2277"),
@@ -432,7 +412,7 @@ mod tests {
         assert_eq!(document.editable.color_label.as_deref(), Some("Red"));
         assert_eq!(
             document.editable.pick_label,
-            Some(crate::contracts::PickLabel::Accepted)
+            Some(crate::types::PickLabel::Accepted)
         );
         assert_eq!(document.raw.len(), 5);
     }

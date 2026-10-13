@@ -153,7 +153,7 @@ pub(crate) fn start_person_clustering(
     let people = Arc::clone(&state.people);
     let files = Arc::clone(&state.files);
     let work = Arc::clone(&operation);
-    launch(operation, move || {
+    launch(&state.runtime, operation, move || {
         let folder = files
             .session_directory(&session_id, Some(&folder_path))
             .map_err(|e| e.to_string())?;
@@ -169,7 +169,7 @@ pub(crate) fn start_person_clustering(
             );
         });
         Ok(())
-    });
+    })?;
     Ok(())
 }
 
@@ -189,13 +189,11 @@ pub(crate) async fn adopt_person_cluster(
 }
 
 pub(super) fn launch(
+    runtime: &oxy_core::runtime::CoreRuntime,
     operation: Arc<PersonOperation>,
     action: impl FnOnce() -> Result<(), String> + Send + 'static,
-) {
-    tauri::async_runtime::spawn(async move {
-        let result = tauri::async_runtime::spawn_blocking(action).await;
-        operation.finish(result.unwrap_or_else(|error| Err(error.to_string())));
-    });
+) -> Result<(), String> {
+    oxy_core::people::execution::operations::PersonOperations::launch(runtime, operation, action)
 }
 
 #[tauri::command]
@@ -263,7 +261,7 @@ pub(crate) fn start_person_model_download(
     let operation = reserve(&state, request_id, None, PersonOperationState::Downloading)?;
     let root = state.person_model_dir.clone();
     let work = Arc::clone(&operation);
-    launch(operation, move || {
+    launch(&state.runtime, operation, move || {
         let mut progress = |completed, total| {
             work.update(|status| {
                 status.completed = completed;
@@ -288,7 +286,7 @@ pub(crate) fn start_person_model_download(
         }
         work.update(|status| status.detail = "下载完成，文件校验通过。".into());
         Ok(())
-    });
+    })?;
     Ok(())
 }
 
@@ -305,7 +303,7 @@ pub(crate) fn import_person_model(
     let operation = reserve(&state, request_id, None, PersonOperationState::Preparing)?;
     let root = state.person_model_dir.clone();
     let work = Arc::clone(&operation);
-    launch(operation, move || {
+    launch(&state.runtime, operation, move || {
         let input = std::fs::File::open(path).map_err(|error| error.to_string())?;
         oxy_core::people::environment::artifacts::install_artifact_reader(
             &model_catalog::manifest(),
@@ -324,7 +322,7 @@ pub(crate) fn import_person_model(
         .map_err(|error| error.to_string())?;
         work.update(|status| status.detail = "模型导入成功。".into());
         Ok(())
-    });
+    })?;
     Ok(())
 }
 
