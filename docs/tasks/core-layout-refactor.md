@@ -11,7 +11,7 @@ resource leases, cancellation and stale-publication semantics.
 
 ## Required end state
 
-- [ ] Workspace contains desktop, oxy-core, oxy-media and oxy-metadata-parser.
+- [x] Workspace contains desktop, oxy-core, oxy-media and oxy-metadata-parser.
 - [x] Media owns its types and decode controls, and depends only on the parser
       among workspace packages; parser remains independent.
 - [ ] Core owns application services, filesystem safety, browsing/query
@@ -55,6 +55,16 @@ resource leases, cancellation and stale-publication semantics.
   cold preview (3 runs), 1,100-path thumbnail retention (1 run), and 80-path
   filmstrip scroll (3 runs). The fixture is one real HIF under repeated paths;
   this does not establish different-photo/NAS throughput or clear OS caches.
+- Application package convergence is implemented: eight old packages were
+  removed and their behavior moved into core modules; desktop call sites and
+  the library benchmark now use core paths. Workspace check, strict Clippy,
+  formatting and 763 tests passed, with 28 ignored. The count reflects one
+  added recovery regression and retirement of four obsolete package-boundary
+  source audits; data-class and cache/user behavior audits remain.
+- Next: move reader-only metadata into media, distribute contracts/repos/schema
+  by feature, introduce named workflows and OxyApp lifecycle, and move desktop
+  queues/use-case coordination into core. Package convergence does not yet
+  satisfy those ownership and lifecycle gates.
 
 Keep this checklist current. A four-package manifest alone does not complete
 the refactor; every ownership and behavioral gate above must be verified.

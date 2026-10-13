@@ -2,16 +2,9 @@
 resolver = "2"
 members = [
   "apps/desktop/src-tauri",
-  "crates/oxy-domain",
-  "crates/oxy-fs",
-  "crates/oxy-library",
+  "crates/oxy-core",
   "crates/oxy-media",
-  "crates/oxy-metadata",
   "crates/oxy-metadata-parser",
-  "crates/oxy-people",
-  "crates/oxy-runtime",
-  "crates/oxy-store",
-  "crates/oxy-tags",
 ]
 
 [workspace.package]

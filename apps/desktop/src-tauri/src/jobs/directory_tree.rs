@@ -1,6 +1,6 @@
-use oxy_domain::{DebugQueueItem, DebugQueueState, DirectoryTreeSnapshot};
-use oxy_fs::FsCatalog;
-use oxy_runtime::CoalescingPriorityQueue;
+use oxy_core::contracts::{DebugQueueItem, DebugQueueState, DirectoryTreeSnapshot};
+use oxy_core::files::FsCatalog;
+use oxy_core::jobs::CoalescingPriorityQueue;
 use std::{
     collections::{HashMap, HashSet},
     path::PathBuf,
@@ -92,12 +92,16 @@ impl WorkState {
 pub struct DirectoryTreeQueue {
     app: AppHandle,
     files: Arc<FsCatalog>,
-    library: Arc<oxy_library::Library>,
+    library: Arc<oxy_core::library::Library>,
     work: Arc<(Mutex<WorkState>, Condvar)>,
 }
 
 impl DirectoryTreeQueue {
-    pub fn new(app: AppHandle, files: Arc<FsCatalog>, library: Arc<oxy_library::Library>) -> Self {
+    pub fn new(
+        app: AppHandle,
+        files: Arc<FsCatalog>,
+        library: Arc<oxy_core::library::Library>,
+    ) -> Self {
         let queue = Self {
             app: app.clone(),
             files,

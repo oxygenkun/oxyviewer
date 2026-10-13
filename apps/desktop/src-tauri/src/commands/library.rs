@@ -51,7 +51,7 @@ pub(crate) async fn plan_root_relocation(
     old_root: PathBuf,
     new_root: PathBuf,
     state: State<'_, AppState>,
-) -> Result<oxy_domain::RootRelocationPlan, String> {
+) -> Result<oxy_core::contracts::RootRelocationPlan, String> {
     let library = std::sync::Arc::clone(&state.library);
     let cache_dir = state.cache.preview_dir();
     tauri::async_runtime::spawn_blocking(move || {
@@ -73,10 +73,10 @@ pub(crate) async fn plan_root_relocation(
 
 #[tauri::command]
 pub(crate) async fn relocate_library_root(
-    plan: oxy_domain::RootRelocationPlan,
+    plan: oxy_core::contracts::RootRelocationPlan,
     app: tauri::AppHandle,
     state: State<'_, AppState>,
-) -> Result<oxy_domain::RootRelocationResult, String> {
+) -> Result<oxy_core::contracts::RootRelocationResult, String> {
     let library = std::sync::Arc::clone(&state.library);
     let cache_dir = state.cache.preview_dir();
     let result = tauri::async_runtime::spawn_blocking(move || {
@@ -91,7 +91,7 @@ pub(crate) async fn relocate_library_root(
         library
             .relocate_root(&plan, &proofs)
             .map_err(|e| e.to_string())?;
-        let report = oxy_library::reuse_root_artifacts(&cache, &plan, &sources);
+        let report = oxy_core::library::reuse_root_artifacts(&cache, &plan, &sources);
         Ok::<_, String>(report)
     })
     .await
@@ -105,7 +105,7 @@ pub(crate) async fn relocate_library_root(
 #[tauri::command]
 pub(crate) async fn check_library_root(path: PathBuf) -> Result<(), String> {
     tauri::async_runtime::spawn_blocking(move || {
-        oxy_fs::relocation_directory(&path)
+        oxy_core::files::relocation_directory(&path)
             .map(|_| ())
             .map_err(|e| e.to_string())
     })

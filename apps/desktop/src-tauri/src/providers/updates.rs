@@ -9,7 +9,7 @@
 //! from the GitHub Releases API, so the About panel cannot be used to open an
 //! arbitrary URL.
 
-use oxy_domain::{AboutLink, UpdateStatus};
+use oxy_core::contracts::{AboutLink, UpdateStatus};
 use semver::Version;
 use serde::Deserialize;
 use std::{io::Read, time::Duration};

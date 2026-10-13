@@ -1,10 +1,10 @@
 use crate::state::AppState;
-use oxy_domain::{
+use oxy_core::contracts::{
     AssetSummary, ConfirmFolderPerson, CreatePersonInstance, FolderPerson, HistoricalPerson,
     LinkHistoricalPerson, PersonInstance, PersonReview, PersonTagLink, PersonTagOverride,
     SetPersonReview, SetPersonTagLink, SetPersonTagOverride, UnlinkHistoricalPerson,
 };
-use oxy_fs::FsCatalog;
+use oxy_core::files::FsCatalog;
 use std::path::{Path, PathBuf};
 use tauri::State;
 
@@ -40,7 +40,7 @@ fn stable_source_identity(
     asset: &Path,
     expected_cheap_revision: &str,
 ) -> Result<String, String> {
-    let observation = oxy_fs::observe_file(asset).map_err(|error| error.to_string())?;
+    let observation = oxy_core::files::observe_file(asset).map_err(|error| error.to_string())?;
     if observation.canonical_path != asset {
         return Err("asset path changed during review".into());
     }
@@ -449,7 +449,7 @@ pub(crate) async fn set_person_review(
 
 #[tauri::command]
 pub(crate) async fn update_person_instance(
-    input: oxy_domain::UpdatePersonInstance,
+    input: oxy_core::contracts::UpdatePersonInstance,
     state: State<'_, AppState>,
 ) -> Result<PersonInstance, String> {
     let people = state.people.clone();
@@ -467,7 +467,7 @@ pub(crate) async fn update_person_instance(
             stable_source_identity(&files, &folder, &instance.asset_path, &revision)?;
         people
             .update_person_instance_with_source_identity(
-                &oxy_domain::UpdatePersonInstance {
+                &oxy_core::contracts::UpdatePersonInstance {
                     folder_path: folder,
                     ..input
                 },
@@ -481,14 +481,14 @@ pub(crate) async fn update_person_instance(
 
 #[tauri::command]
 pub(crate) async fn reset_folder_person(
-    input: oxy_domain::ResetFolderPerson,
+    input: oxy_core::contracts::ResetFolderPerson,
     state: State<'_, AppState>,
 ) -> Result<(), String> {
     let people = state.people.clone();
     tauri::async_runtime::spawn_blocking(move || {
         let folder = canonical_folder(&input.folder_path)?;
         people
-            .reset_folder_person(&oxy_domain::ResetFolderPerson {
+            .reset_folder_person(&oxy_core::contracts::ResetFolderPerson {
                 folder_path: folder,
                 ..input
             })

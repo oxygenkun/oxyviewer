@@ -1,5 +1,5 @@
 use crate::state::AppState;
-use oxy_domain::{ExternalAppSettings, ExternalOpenResult};
+use oxy_core::contracts::{ExternalAppSettings, ExternalOpenResult};
 use std::{path::PathBuf, sync::Arc};
 use tauri::State;
 
@@ -29,7 +29,7 @@ pub(crate) async fn open_asset_with_application(
 ) -> Result<ExternalOpenResult, String> {
     let app = state.external_apps.application(&app_id)?;
     tauri::async_runtime::spawn_blocking(move || {
-        oxy_fs::external_apps::open_with_application(&app.executable_path, &path)
+        oxy_core::files::external_apps::open_with_application(&app.executable_path, &path)
             .map_err(|error| error.to_string())
     })
     .await
@@ -41,7 +41,8 @@ pub(crate) async fn open_asset_with_system_dialog(
     path: PathBuf,
 ) -> Result<ExternalOpenResult, String> {
     tauri::async_runtime::spawn_blocking(move || {
-        oxy_fs::external_apps::open_with_system_dialog(&path).map_err(|error| error.to_string())
+        oxy_core::files::external_apps::open_with_system_dialog(&path)
+            .map_err(|error| error.to_string())
     })
     .await
     .map_err(|error| error.to_string())?

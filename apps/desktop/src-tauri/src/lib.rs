@@ -5,9 +5,9 @@ mod state;
 
 use commands::*;
 use jobs::directory_tree::DirectoryTreeQueue;
-use oxy_fs::FsCatalog;
-use oxy_library::Library;
-use oxy_runtime::JobRegistry;
+use oxy_core::files::FsCatalog;
+use oxy_core::jobs::JobRegistry;
+use oxy_core::library::Library;
 use providers::exiftool::ProviderManager;
 use state::{AppState, cache::CacheManager};
 use std::sync::Arc;
@@ -191,8 +191,8 @@ pub fn run() {
             let library = Arc::new(Library::open(&data_dir.join("oxyviewer.sqlite"))?);
             // One store, one handle per domain crate. Nothing here wraps
             // anything else: the application is the composition root.
-            let tags = Arc::new(oxy_tags::Tags::new(library.store()));
-            let people = Arc::new(oxy_people::People::new(library.store()));
+            let tags = Arc::new(oxy_core::tags::Tags::new(library.store()));
+            let people = Arc::new(oxy_core::people::People::new(library.store()));
             let person_model_dir = data_dir.join("person-models");
             let external_apps = Arc::new(state::external_apps::ExternalAppManager::load(data_dir.join("external-apps.json")));
             let metadata_provider = Arc::new(ProviderManager::load(data_dir));
@@ -221,7 +221,7 @@ pub fn run() {
                 library,
                 tags,
                 people,
-                person_operations: Arc::new(oxy_people::execution::operations::PersonOperations::default()),
+                person_operations: Arc::new(oxy_core::people::execution::operations::PersonOperations::default()),
                 person_model_dir,
                 cache,
                 heif,

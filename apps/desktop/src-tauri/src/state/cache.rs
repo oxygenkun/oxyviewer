@@ -1,4 +1,4 @@
-use oxy_domain::{CacheSettings, CacheSettingsUpdate};
+use oxy_core::contracts::{CacheSettings, CacheSettingsUpdate};
 use oxy_media::MediaCache;
 use serde::{Deserialize, Serialize};
 use std::{

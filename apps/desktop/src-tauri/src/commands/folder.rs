@@ -2,7 +2,7 @@ use crate::{
     commands::schedule_tag_xmp_sync, jobs::directory_tree::DIRECTORY_TREE_UPDATED_EVENT,
     state::AppState,
 };
-use oxy_domain::{
+use oxy_core::contracts::{
     AssetQuery, BrowsePage, DirectoryBrowseProgress, DirectorySearchMatch, DirectoryTreeSnapshot,
     FileOperation, FileOperationResult, FolderSession,
 };
@@ -176,9 +176,9 @@ pub(crate) async fn list_assets(
             metadata
                 .enrich_summaries(&mut assets)
                 .map_err(|error| error.to_string())?;
-            oxy_fs::page_assets(&assets, &query, cursor.unwrap_or(0))
+            oxy_core::files::page_assets(&assets, &query, cursor.unwrap_or(0))
         } else {
-            oxy_fs::page_assets(candidates, &query, cursor.unwrap_or(0))
+            oxy_core::files::page_assets(candidates, &query, cursor.unwrap_or(0))
         };
         progress.sort_ms = sort_started.elapsed().as_millis() as u64;
         progress.discovered_count = read.assets.len();
@@ -300,7 +300,9 @@ pub(crate) async fn set_active_directory(
             Ok(directory) => Ok((session_id, directory)),
             // An unreachable NAS is not evidence that the saved directory was
             // deleted. Keep selection and let the browse request show its error.
-            Err(oxy_fs::FsError::Io(error)) if error.kind() != std::io::ErrorKind::NotFound => {
+            Err(oxy_core::files::FsError::Io(error))
+                if error.kind() != std::io::ErrorKind::NotFound =>
+            {
                 Ok((session_id, directory))
             }
             Err(error) => Err(error.to_string()),
@@ -393,8 +395,8 @@ pub(crate) async fn execute_file_operation(
     let library = state.library.clone();
     let tags = state.tags.clone();
     tauri::async_runtime::spawn_blocking(move || {
-        let result =
-            oxy_fs::execute_file_operation(&operation).map_err(|error| error.to_string())?;
+        let result = oxy_core::files::execute_file_operation(&operation)
+            .map_err(|error| error.to_string())?;
         match &operation {
             FileOperation::Rename { source, new_name } => {
                 let destination = source
@@ -462,7 +464,7 @@ pub(crate) async fn execute_file_operation(
 #[tauri::command]
 pub(crate) async fn open_in_file_manager(path: PathBuf) -> Result<(), String> {
     tauri::async_runtime::spawn_blocking(move || {
-        oxy_fs::open_in_file_manager(&path).map_err(|error| error.to_string())
+        oxy_core::files::open_in_file_manager(&path).map_err(|error| error.to_string())
     })
     .await
     .map_err(|error| error.to_string())?

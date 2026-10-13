@@ -2,9 +2,9 @@ pub(crate) mod cache;
 pub(crate) mod external_apps;
 
 use crate::{jobs, providers};
-use oxy_fs::FsCatalog;
-use oxy_library::Library;
-use oxy_runtime::JobRegistry;
+use oxy_core::files::FsCatalog;
+use oxy_core::jobs::JobRegistry;
+use oxy_core::library::Library;
 use std::sync::Arc;
 
 pub(crate) struct AppState {
@@ -17,19 +17,19 @@ pub(crate) struct AppState {
     /// It is a sibling rather than a method on the library: tag rules and
     /// person rules must not be able to name each other, and the domain crates
     /// are independent over one file.
-    pub(crate) tags: Arc<oxy_tags::Tags>,
+    pub(crate) tags: Arc<oxy_core::tags::Tags>,
     /// The person domain, over the same store the library reads.
     ///
     /// A sibling for the same reason the tags are: a person rule and a tag rule
     /// must not be able to name each other, so neither crate depends on the
     /// other and the application is what hands them the same file.
-    pub(crate) people: Arc<oxy_people::People>,
-    pub(crate) person_operations: Arc<oxy_people::execution::operations::PersonOperations>,
+    pub(crate) people: Arc<oxy_core::people::People>,
+    pub(crate) person_operations: Arc<oxy_core::people::execution::operations::PersonOperations>,
     pub(crate) person_model_dir: std::path::PathBuf,
     pub(crate) cache: Arc<cache::CacheManager>,
     pub(crate) heif: Arc<oxy_media::HeifDecodeService>,
     pub(crate) media_resources: oxy_media::ResourceRegistry,
-    pub(crate) metadata: oxy_metadata::MetadataFacade,
+    pub(crate) metadata: oxy_core::metadata::MetadataFacade,
     pub(crate) metadata_queue: jobs::metadata::MetadataQueue,
     pub(crate) preview_queue: jobs::preview::PreviewQueue,
     pub(crate) debug_snapshots: Arc<jobs::DebugSnapshotCache>,
@@ -37,5 +37,5 @@ pub(crate) struct AppState {
     pub(crate) library_index_queue: jobs::LibraryIndexQueue,
     pub(crate) metadata_provider: Arc<providers::exiftool::ProviderManager>,
     /// Caches burst values so growing listings are grouped without re-reading files.
-    pub(crate) burst_scan: Arc<oxy_metadata::BurstScanner>,
+    pub(crate) burst_scan: Arc<oxy_core::metadata::BurstScanner>,
 }

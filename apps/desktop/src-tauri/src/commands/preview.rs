@@ -2,7 +2,7 @@ use crate::{
     jobs::preview::{PreviewIdentity, PreviewRequest},
     state::AppState,
 };
-use oxy_domain::{
+use oxy_core::contracts::{
     AssetKind, AssetSummary, CacheSettings, CacheSettingsUpdate, HeifCapabilities,
     HeifDecodeSession, HeifDecodeStatus, HeifDiagnostics, HeifFullPresentation, HeifStatusEvent,
     HeifTileReady, ImageProjection, PreviewOmittedPolicy, PreviewPriority, PreviewScheduleIntent,
@@ -25,7 +25,7 @@ pub(crate) async fn get_preview(
     cross_folder: Option<bool>,
     app: tauri::AppHandle,
     state: State<'_, AppState>,
-) -> Result<oxy_domain::ImageProjection, String> {
+) -> Result<oxy_core::contracts::ImageProjection, String> {
     let preview_queue = state.preview_queue.clone();
     let selection = (level == RenderLevel::Full).then(|| preview_queue.select_full(&path));
     let preview_dir = state.cache.preview_dir();

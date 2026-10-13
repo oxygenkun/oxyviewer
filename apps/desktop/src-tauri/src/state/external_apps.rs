@@ -1,4 +1,4 @@
-use oxy_domain::{ExternalAppSettings, ExternalApplication};
+use oxy_core::contracts::{ExternalAppSettings, ExternalApplication};
 use serde::{Deserialize, Serialize};
 use std::{
     collections::HashSet,
@@ -76,7 +76,7 @@ impl ExternalAppManager {
                 .iter()
                 .any(|old| old.id == app.id && old.executable_path == app.executable_path)
             {
-                oxy_fs::external_apps::validate_application(&app.executable_path)
+                oxy_core::files::external_apps::validate_application(&app.executable_path)
                     .map_err(|error| error.to_string())?;
             }
         }

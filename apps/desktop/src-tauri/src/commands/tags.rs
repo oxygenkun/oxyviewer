@@ -1,11 +1,11 @@
 use crate::state::AppState;
-use oxy_domain::{
+use oxy_core::contracts::{
     AssetTagAssignment, AssetTagAssignmentsByPath, CustomTag, CustomTagId, MetadataPatch,
     TagDeleteImpact, TagSyncStatus,
 };
-use oxy_fs::FsCatalog;
-use oxy_metadata::MetadataFacade;
-use oxy_tags::Tags;
+use oxy_core::files::FsCatalog;
+use oxy_core::metadata::MetadataFacade;
+use oxy_core::tags::Tags;
 use std::{collections::HashSet, path::PathBuf, sync::Arc};
 use tauri::State;
 

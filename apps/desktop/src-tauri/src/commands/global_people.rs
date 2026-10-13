@@ -1,5 +1,5 @@
 use crate::state::AppState;
-use oxy_domain::*;
+use oxy_core::contracts::*;
 use std::{path::PathBuf, sync::Arc};
 use tauri::State;
 
@@ -78,14 +78,15 @@ pub(crate) async fn save_person_tuple_geometry(
             .folder_path
             .canonicalize()
             .map_err(|e| e.to_string())?;
-        let observation = oxy_fs::observe_file(&input.asset_path).map_err(|e| e.to_string())?;
+        let observation =
+            oxy_core::files::observe_file(&input.asset_path).map_err(|e| e.to_string())?;
         let asset = files
             .get_asset(&observation.canonical_path)
             .map_err(|e| e.to_string())?;
         if input.source_revision != format!("{}:{}", asset.size_bytes, asset.modified_at_ms) {
             return Err("源图已变化，请重新打开照片".into());
         }
-        if oxy_fs::observe_file(&asset.path).map_err(|e| e.to_string())? != observation {
+        if oxy_core::files::observe_file(&asset.path).map_err(|e| e.to_string())? != observation {
             return Err("源图已变化".into());
         }
         people
@@ -206,7 +207,7 @@ pub(crate) fn start_people_grouping(
         {
             #[cfg(all(windows, target_arch = "x86_64"))]
             {
-                use oxy_people::environment::catalog;
+                use oxy_core::people::environment::catalog;
                 let manifest = catalog::manifest();
                 work.update(|s| {
                     s.state = PersonOperationState::Preparing;
@@ -214,15 +215,16 @@ pub(crate) fn start_people_grouping(
                 });
                 let media = oxy_media::AnalysisInputService::new(&preview_dir)
                     .map_err(|e| e.to_string())?;
-                let mut models = oxy_people::environment::directml::load_models(&root, &work)?;
-                oxy_people::execution::folder::analyse_folder(
+                let mut models =
+                    oxy_core::people::environment::directml::load_models(&root, &work)?;
+                oxy_core::people::execution::folder::analyse_folder(
                     &people,
                     &files,
                     &session_id,
                     &BeginPersonAnalysis {
                         folder_path: folder.clone(),
                         pipeline_id: manifest.pipeline_id.clone(),
-                        pipeline_fingerprint: oxy_people::pipeline_fingerprint(&manifest)
+                        pipeline_fingerprint: oxy_core::people::pipeline_fingerprint(&manifest)
                             .map_err(|e| e.to_string())?,
                         request_id: format!("{}:features", input.request_id),
                     },

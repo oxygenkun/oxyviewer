@@ -1,15 +1,15 @@
-use oxy_domain::{
+use oxy_core::contracts::{
     AssetDetails, AssetDetailsResult, AssetKind, AssetSummary, DebugQueueItem, DebugQueueState,
     EditableMetadata, MetadataCapability, MetadataProjection, MetadataProvider,
     MetadataRequestPriority, ResourceLoadStatus,
 };
-use oxy_fs::FsCatalog;
-use oxy_library::Library;
-use oxy_metadata::{
+use oxy_core::files::FsCatalog;
+use oxy_core::jobs::CoalescingPriorityQueue;
+use oxy_core::library::Library;
+use oxy_core::metadata::{
     MetadataDocument, MetadataFacade, MetadataObservation, metadata_source_revision,
 };
-use oxy_runtime::CoalescingPriorityQueue;
-use oxy_tags::Tags;
+use oxy_core::tags::Tags;
 use std::{
     collections::HashMap,
     path::PathBuf,
@@ -444,9 +444,11 @@ fn metadata_debug_item(
 fn build_asset_details(
     mut asset: AssetSummary,
     dimensions: Option<oxy_media::ImageDimensions>,
-    document: Result<MetadataDocument, oxy_metadata::MetadataError>,
+    document: Result<MetadataDocument, oxy_core::metadata::MetadataError>,
 ) -> AssetDetails {
-    let sidecar_path = asset.has_sidecar.then(|| oxy_fs::sidecar_path(&asset.path));
+    let sidecar_path = asset
+        .has_sidecar
+        .then(|| oxy_core::files::sidecar_path(&asset.path));
     let (capture_metadata, focus_info, embedded_keywords, embedded_hierarchical_keywords) =
         document
             .as_ref()
@@ -486,7 +488,7 @@ fn build_asset_details(
 fn metadata_for_details(
     _kind: AssetKind,
     has_sidecar: bool,
-    result: Result<EditableMetadata, oxy_metadata::MetadataError>,
+    result: Result<EditableMetadata, oxy_core::metadata::MetadataError>,
 ) -> (EditableMetadata, MetadataCapability) {
     let provider = if has_sidecar {
         MetadataProvider::Sidecar
@@ -524,7 +526,7 @@ mod tests {
         let (metadata, capability) = metadata_for_details(
             AssetKind::Heif,
             false,
-            Err(oxy_metadata::MetadataError::EmbeddedWorkerUnavailable),
+            Err(oxy_core::metadata::MetadataError::EmbeddedWorkerUnavailable),
         );
 
         assert_eq!(metadata, EditableMetadata::default());
@@ -539,7 +541,9 @@ mod tests {
         let (_, capability) = metadata_for_details(
             AssetKind::Heif,
             false,
-            Err(oxy_metadata::MetadataError::Read("invalid XMP".into())),
+            Err(oxy_core::metadata::MetadataError::Read(
+                "invalid XMP".into(),
+            )),
         );
 
         assert!(!capability.readable);

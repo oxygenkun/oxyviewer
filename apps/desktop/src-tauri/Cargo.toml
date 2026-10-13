@@ -17,15 +17,9 @@ serde_json.workspace = true
 tauri-build = { version = "2", features = [] }
 
 [dependencies]
+oxy-core = { path = "../../../crates/oxy-core" }
 tempfile.workspace = true
-oxy-domain = { path = "../../../crates/oxy-domain" }
-oxy-fs = { path = "../../../crates/oxy-fs" }
-oxy-library = { path = "../../../crates/oxy-library" }
 oxy-media = { path = "../../../crates/oxy-media" }
-oxy-metadata = { path = "../../../crates/oxy-metadata" }
-oxy-people = { path = "../../../crates/oxy-people" }
-oxy-runtime = { path = "../../../crates/oxy-runtime" }
-oxy-tags = { path = "../../../crates/oxy-tags" }
 flate2 = "1.1"
 semver.workspace = true
 serde.workspace = true

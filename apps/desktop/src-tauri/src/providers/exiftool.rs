@@ -37,7 +37,7 @@ pub struct ExiftoolStatus {
 
 pub struct ProviderManager {
     data_dir: PathBuf,
-    facade: oxy_metadata::MetadataFacade,
+    facade: oxy_core::metadata::MetadataFacade,
 }
 
 impl ProviderManager {
@@ -47,11 +47,11 @@ impl ProviderManager {
         let configured = user.filter(|path| path.is_file()).or(managed);
         Self {
             data_dir,
-            facade: oxy_metadata::MetadataFacade::new(configured),
+            facade: oxy_core::metadata::MetadataFacade::new(configured),
         }
     }
 
-    pub fn facade(&self) -> oxy_metadata::MetadataFacade {
+    pub fn facade(&self) -> oxy_core::metadata::MetadataFacade {
         self.facade.clone()
     }
 
@@ -81,7 +81,7 @@ impl ProviderManager {
 
     pub fn set_user_executable(&self, path: PathBuf) -> Result<ExiftoolStatus, String> {
         let version =
-            oxy_metadata::probe_exiftool(Some(&path)).map_err(|error| error.to_string())?;
+            oxy_core::metadata::probe_exiftool(Some(&path)).map_err(|error| error.to_string())?;
         write_config(
             &self.data_dir,
             &ProviderConfig {
@@ -104,7 +104,7 @@ impl ProviderManager {
         if !executable.is_file() {
             download_and_extract(&self.data_dir)?;
         }
-        let version = oxy_metadata::probe_exiftool(Some(&executable))
+        let version = oxy_core::metadata::probe_exiftool(Some(&executable))
             .map_err(|error| format!("downloaded ExifTool failed validation: {error}"))?;
         self.facade.set_exiftool(Some(executable.clone()));
         Ok(ExiftoolStatus {
@@ -331,18 +331,18 @@ mod tests {
         facade
             .patch_metadata(
                 &hif,
-                oxy_domain::AssetKind::Heif,
-                &oxy_domain::MetadataPatch {
+                oxy_core::contracts::AssetKind::Heif,
+                &oxy_core::contracts::MetadataPatch {
                     rating: Some(Some(4)),
                     color_label: Some(Some("Blue".into())),
-                    ..oxy_domain::MetadataPatch::default()
+                    ..oxy_core::contracts::MetadataPatch::default()
                 },
             )
             .unwrap();
         facade.sync_metadata_to_embedded(&hif).unwrap();
-        fs::remove_file(oxy_fs::sidecar_path(&hif)).unwrap();
+        fs::remove_file(oxy_core::files::sidecar_path(&hif)).unwrap();
         let embedded = facade
-            .read_metadata(&hif, oxy_domain::AssetKind::Heif)
+            .read_metadata(&hif, oxy_core::contracts::AssetKind::Heif)
             .unwrap();
         assert_eq!(embedded.rating, Some(4));
         assert_eq!(embedded.color_label.as_deref(), Some("Blue"));

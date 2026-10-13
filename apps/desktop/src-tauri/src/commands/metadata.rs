@@ -1,5 +1,5 @@
 use crate::{providers::exiftool::ExiftoolStatus, state::AppState};
-use oxy_domain::{
+use oxy_core::contracts::{
     AssetDetailsResult, AssetKind, JobId, JobPriority, MetadataPatch, MetadataProjection,
     MetadataRequestPriority,
 };

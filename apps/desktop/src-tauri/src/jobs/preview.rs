@@ -1,15 +1,15 @@
 use crate::state::cache::CacheManager;
-use oxy_domain::{
+use oxy_core::contracts::{
     AssetKind, DebugQueueItem, DebugQueueState, ImageProjection, MediaPersistence,
     MediaResourceDescriptor, MediaSatisfaction, OmittedScheduleAction, PreviewOmittedPolicy,
     PreviewPriority, PreviewResult, PreviewScheduleIntent, RenderLevel, ResourceLoadStatus,
     SchedulePlacement,
 };
-use oxy_library::Library;
-use oxy_runtime::{
+use oxy_core::jobs::{
     CancellationToken, CoalescingPriorityQueue, EffectiveScheduleChange, OmittedIntentPolicy,
     QueuePlacement, SchedulePosition, ScopedIntentScheduler,
 };
+use oxy_core::library::Library;
 use sha2::{Digest, Sha256};
 use std::{
     collections::{HashMap, HashSet, VecDeque},
@@ -1459,9 +1459,9 @@ impl RenderQueue {
 
     fn worker_count(&self) -> usize {
         if self.lane == RenderLevel::Full {
-            oxy_runtime::loupe_worker_count()
+            oxy_core::jobs::loupe_worker_count()
         } else {
-            oxy_runtime::image_worker_count()
+            oxy_core::jobs::image_worker_count()
         }
     }
 
@@ -1784,7 +1784,7 @@ fn restore_projection_resource(
     if lease.is_some() {
         // This request restored a validated disk artifact, not the decoder
         // invocation whose historical timings may be stored in the projection.
-        result.diagnostics = Some(oxy_domain::PreviewDiagnostics {
+        result.diagnostics = Some(oxy_core::contracts::PreviewDiagnostics {
             backend: Some("cached artifact".into()),
             ..Default::default()
         });
@@ -1891,7 +1891,7 @@ fn priority_from_position(position: SchedulePosition) -> PreviewPriority {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use oxy_domain::PreviewKind;
+    use oxy_core::contracts::PreviewKind;
 
     fn thumbnail_work(
         directory: &std::path::Path,
@@ -2285,7 +2285,7 @@ mod tests {
         assert_eq!(queues.queue(RenderLevel::Full).worker_count(), 2);
         assert_eq!(
             queues.queue(RenderLevel::Thumbnail).worker_count(),
-            oxy_runtime::image_worker_count()
+            oxy_core::jobs::image_worker_count()
         );
         assert!(!Arc::ptr_eq(
             &queues.queue(RenderLevel::Thumbnail).work,
@@ -2558,7 +2558,7 @@ mod tests {
                 resource: None,
                 satisfaction: Some(MediaSatisfaction::Interim),
                 persistence: Some(MediaPersistence::Persisted),
-                diagnostics: Some(oxy_domain::PreviewDiagnostics {
+                diagnostics: Some(oxy_core::contracts::PreviewDiagnostics {
                     backend: Some("old decoder".into()),
                     decode_ms: Some(3000),
                     ..Default::default()
@@ -2594,31 +2594,33 @@ mod tests {
             status: ResourceLoadStatus::Ready,
             level: RenderLevel::Thumbnail,
             result: Some(PreviewResult {
-                image_facts: Some(oxy_domain::ArtifactFacts {
+                image_facts: Some(oxy_core::contracts::ArtifactFacts {
                     exif_orientation: 1,
-                    source: oxy_domain::SourceImage {
+                    source: oxy_core::contracts::SourceImage {
                         exif_orientation: 1,
                         revision_id: source_revision.media_revision.revision_id.clone(),
                         candidate_id: "primary".into(),
-                        origin: oxy_domain::ImageOrigin::PrimaryImage,
-                        encoded_dimensions: Some(oxy_domain::EncodedDimensions((8, 4).into())),
-                        display_dimensions: oxy_domain::DisplayDimensions((8, 4).into()),
+                        origin: oxy_core::contracts::ImageOrigin::PrimaryImage,
+                        encoded_dimensions: Some(oxy_core::contracts::EncodedDimensions(
+                            (8, 4).into(),
+                        )),
+                        display_dimensions: oxy_core::contracts::DisplayDimensions((8, 4).into()),
                     },
-                    encoded_dimensions: oxy_domain::EncodedDimensions((8, 4).into()),
-                    display_dimensions: oxy_domain::DisplayDimensions((8, 4).into()),
-                    detail: oxy_domain::DetailCoverage {
-                        reference_dimensions: oxy_domain::DisplayDimensions((8, 4).into()),
-                        region: oxy_domain::PreviewContentRect {
+                    encoded_dimensions: oxy_core::contracts::EncodedDimensions((8, 4).into()),
+                    display_dimensions: oxy_core::contracts::DisplayDimensions((8, 4).into()),
+                    detail: oxy_core::contracts::DetailCoverage {
+                        reference_dimensions: oxy_core::contracts::DisplayDimensions((8, 4).into()),
+                        region: oxy_core::contracts::PreviewContentRect {
                             x: 0,
                             y: 0,
                             width: 8,
                             height: 4,
                         },
-                        sampled_dimensions: oxy_domain::DisplayDimensions((8, 4).into()),
-                        sampling: oxy_domain::Sampling::Native,
+                        sampled_dimensions: oxy_core::contracts::DisplayDimensions((8, 4).into()),
+                        sampling: oxy_core::contracts::Sampling::Native,
                     },
                     processing: Vec::new(),
-                    byte_integrity: oxy_domain::ByteIntegrity::SourceFile,
+                    byte_integrity: oxy_core::contracts::ByteIntegrity::SourceFile,
                 }),
                 geometry: None,
                 path,
@@ -2727,15 +2729,15 @@ mod tests {
             path: directory.path().join("pending.jpg"),
             width: 8,
             height: 4,
-            kind: oxy_domain::PreviewKind::Original,
+            kind: oxy_core::contracts::PreviewKind::Original,
             render_level: RenderLevel::Thumbnail,
-            resource: Some(oxy_domain::MediaResourceDescriptor {
+            resource: Some(oxy_core::contracts::MediaResourceDescriptor {
                 resource_id: handle.descriptor.resource_id,
                 url: handle.descriptor.url,
                 media_type: "image/jpeg".into(),
             }),
-            satisfaction: Some(oxy_domain::MediaSatisfaction::Satisfied),
-            persistence: Some(oxy_domain::MediaPersistence::Pending),
+            satisfaction: Some(oxy_core::contracts::MediaSatisfaction::Satisfied),
+            persistence: Some(oxy_core::contracts::MediaPersistence::Pending),
             diagnostics: None,
         };
         assert!(preview_result_is_live(&result));

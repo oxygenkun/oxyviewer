@@ -1,5 +1,5 @@
 use crate::state::AppState;
-use oxy_domain::{AssetKind, RawDecoderStatus};
+use oxy_core::contracts::{AssetKind, RawDecoderStatus};
 use std::path::PathBuf;
 use tauri::State;
 
@@ -26,7 +26,7 @@ pub(crate) async fn retry_raw_full(
             return Err("expected a RAW file".into());
         }
         oxy_media::request_raw_retry(&path).map_err(|error| error.to_string())?;
-        queue.invalidate_preview(&path, oxy_domain::RenderLevel::Full);
+        queue.invalidate_preview(&path, oxy_core::contracts::RenderLevel::Full);
         Ok(())
     })
     .await

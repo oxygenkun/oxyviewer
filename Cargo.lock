@@ -2547,43 +2547,28 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "cf211e3776eea6aec988552fa118dd746d70e1b1e5e244058d1c98015f3e5872"
 
 [[package]]
-name = "oxy-domain"
+name = "oxy-core"
 version = "0.1.5"
 dependencies = [
+ "image",
+ "libc",
+ "libheif-rs",
+ "libloading 0.8.9",
+ "ort",
  "oxy-media",
+ "oxy-metadata-parser",
+ "parking_lot",
+ "rusqlite",
  "serde",
  "serde_json",
-]
-
-[[package]]
-name = "oxy-fs"
-version = "0.1.5"
-dependencies = [
- "libc",
- "oxy-domain",
- "oxy-media",
- "parking_lot",
  "sha2",
+ "sqlite-vec",
  "tempfile",
  "thiserror 2.0.20",
  "trash",
+ "ureq",
  "windows 0.61.3",
-]
-
-[[package]]
-name = "oxy-library"
-version = "0.1.5"
-dependencies = [
- "oxy-domain",
- "oxy-fs",
- "oxy-media",
- "oxy-runtime",
- "oxy-store",
- "parking_lot",
- "rusqlite",
- "serde_json",
- "tempfile",
- "thiserror 2.0.20",
+ "zip",
 ]
 
 [[package]]
@@ -2608,20 +2593,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "oxy-metadata"
-version = "0.1.5"
-dependencies = [
- "libheif-rs",
- "oxy-domain",
- "oxy-fs",
- "oxy-metadata-parser",
- "serde_json",
- "sha2",
- "tempfile",
- "thiserror 2.0.20",
-]
-
-[[package]]
 name = "oxy-metadata-parser"
 version = "0.1.5"
 dependencies = [
@@ -2631,74 +2602,12 @@ dependencies = [
 ]
 
 [[package]]
-name = "oxy-people"
-version = "0.1.5"
-dependencies = [
- "image",
- "libloading 0.8.9",
- "ort",
- "oxy-domain",
- "oxy-fs",
- "oxy-runtime",
- "oxy-store",
- "serde",
- "serde_json",
- "sha2",
- "tempfile",
- "thiserror 2.0.20",
- "ureq",
- "zip",
-]
-
-[[package]]
-name = "oxy-runtime"
-version = "0.1.5"
-dependencies = [
- "oxy-domain",
- "oxy-media",
- "parking_lot",
-]
-
-[[package]]
-name = "oxy-store"
-version = "0.1.5"
-dependencies = [
- "oxy-domain",
- "parking_lot",
- "rusqlite",
- "serde",
- "serde_json",
- "sqlite-vec",
- "tempfile",
- "thiserror 2.0.20",
-]
-
-[[package]]
-name = "oxy-tags"
-version = "0.1.5"
-dependencies = [
- "oxy-domain",
- "oxy-fs",
- "oxy-people",
- "oxy-store",
- "serde_json",
- "tempfile",
- "thiserror 2.0.20",
-]
-
-[[package]]
 name = "oxyviewer"
 version = "0.1.5"
 dependencies = [
  "flate2",
- "oxy-domain",
- "oxy-fs",
- "oxy-library",
+ "oxy-core",
  "oxy-media",
- "oxy-metadata",
- "oxy-people",
- "oxy-runtime",
- "oxy-tags",
  "semver",
  "serde",
  "serde_json",

@@ -1,4 +1,4 @@
-use oxy_domain::BurstGroup;
+use oxy_core::contracts::BurstGroup;
 use std::path::PathBuf;
 use tauri::State;
 

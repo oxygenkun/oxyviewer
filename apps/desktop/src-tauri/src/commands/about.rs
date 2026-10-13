@@ -2,7 +2,7 @@
 //! external destinations that panel may open.
 
 use crate::providers::updates;
-use oxy_domain::{AboutLink, AppInfo, UpdateStatus};
+use oxy_core::contracts::{AboutLink, AppInfo, UpdateStatus};
 #[cfg(unix)]
 use std::process::Command;
 use tauri::AppHandle;

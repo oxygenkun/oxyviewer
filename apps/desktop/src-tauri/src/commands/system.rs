@@ -1,5 +1,5 @@
 use crate::state::AppState;
-use oxy_domain::{DebugQueueSnapshot, PerfScenario};
+use oxy_core::contracts::{DebugQueueSnapshot, PerfScenario};
 use std::{
     path::PathBuf,
     time::{Instant, SystemTime, UNIX_EPOCH},
@@ -21,7 +21,8 @@ pub(crate) fn get_perf_scenario() -> Option<PerfScenario> {
 
 /// Explicit diagnostics, available to debug builds and isolated perf runs.
 #[tauri::command]
-pub(crate) fn get_media_resource_stats() -> Result<oxy_domain::ResourceRegistryStats, String> {
+pub(crate) fn get_media_resource_stats()
+-> Result<oxy_core::contracts::ResourceRegistryStats, String> {
     if !cfg!(debug_assertions) && get_perf_scenario().is_none() {
         return Err("resource diagnostics require an explicit performance scenario".into());
     }

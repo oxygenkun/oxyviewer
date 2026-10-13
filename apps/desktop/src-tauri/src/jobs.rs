@@ -2,9 +2,9 @@ pub(crate) mod directory_tree;
 pub(crate) mod metadata;
 pub(crate) mod preview;
 
-use oxy_domain::{DebugQueueItem, DebugQueueState, LibraryIndexUpdate};
-use oxy_fs::FsCatalog;
-use oxy_library::{IndexProgress, IndexStage, Library};
+use oxy_core::contracts::{DebugQueueItem, DebugQueueState, LibraryIndexUpdate};
+use oxy_core::files::FsCatalog;
+use oxy_core::library::{IndexProgress, IndexStage, Library};
 use std::{
     collections::HashMap,
     path::{Path, PathBuf},

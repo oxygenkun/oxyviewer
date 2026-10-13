@@ -1,6 +1,8 @@
 use crate::state::AppState;
-use oxy_domain::{PersonModelStatus, PersonOperationState, PersonOperationStatus};
-use oxy_people::{environment::catalog as model_catalog, execution::operations::PersonOperation};
+use oxy_core::contracts::{PersonModelStatus, PersonOperationState, PersonOperationStatus};
+use oxy_core::people::{
+    environment::catalog as model_catalog, execution::operations::PersonOperation,
+};
 use std::{path::PathBuf, sync::Arc};
 use tauri::State;
 
@@ -12,21 +14,24 @@ pub(crate) async fn get_person_detections(
     folder_path: PathBuf,
     asset_path: PathBuf,
     state: State<'_, AppState>,
-) -> Result<oxy_domain::PersonDetectionSnapshot, String> {
+) -> Result<oxy_core::contracts::PersonDetectionSnapshot, String> {
     let people = Arc::clone(&state.people);
     tauri::async_runtime::spawn_blocking(move || {
         let folder = folder_path
             .canonicalize()
             .map_err(|error| error.to_string())?;
-        let observation = oxy_fs::observe_file(&asset_path).map_err(|error| error.to_string())?;
+        let observation =
+            oxy_core::files::observe_file(&asset_path).map_err(|error| error.to_string())?;
         let revision = observation.revision_id();
-        let producer =
-            oxy_people::stage_fingerprint(&model_catalog::manifest(), model_catalog::DETECTOR)
-                .map_err(|error| error.to_string())?;
+        let producer = oxy_core::people::stage_fingerprint(
+            &model_catalog::manifest(),
+            model_catalog::DETECTOR,
+        )
+        .map_err(|error| error.to_string())?;
         let instances = people
             .list_person_detections(&folder, &observation.canonical_path, &revision, &producer)
             .map_err(|error| error.to_string())?;
-        Ok(oxy_domain::PersonDetectionSnapshot {
+        Ok(oxy_core::contracts::PersonDetectionSnapshot {
             source_revision: revision,
             instances,
         })
@@ -42,20 +47,23 @@ pub(crate) async fn adopt_person_detection(
     source_revision: String,
     instance_id: String,
     state: State<'_, AppState>,
-) -> Result<oxy_domain::PersonInstance, String> {
+) -> Result<oxy_core::contracts::PersonInstance, String> {
     let people = Arc::clone(&state.people);
     let files = Arc::clone(&state.files);
     tauri::async_runtime::spawn_blocking(move || {
         let folder = folder_path
             .canonicalize()
             .map_err(|error| error.to_string())?;
-        let before = oxy_fs::observe_file(&asset_path).map_err(|error| error.to_string())?;
+        let before =
+            oxy_core::files::observe_file(&asset_path).map_err(|error| error.to_string())?;
         if before.revision_id() != source_revision {
             return Err("源图已变化，请重新识别".into());
         }
-        let producer =
-            oxy_people::stage_fingerprint(&model_catalog::manifest(), model_catalog::DETECTOR)
-                .map_err(|error| error.to_string())?;
+        let producer = oxy_core::people::stage_fingerprint(
+            &model_catalog::manifest(),
+            model_catalog::DETECTOR,
+        )
+        .map_err(|error| error.to_string())?;
         let instance = people
             .list_person_detections(&folder, &before.canonical_path, &source_revision, &producer)
             .map_err(|error| error.to_string())?
@@ -65,7 +73,7 @@ pub(crate) async fn adopt_person_detection(
         let asset = files
             .get_asset(&before.canonical_path)
             .map_err(|error| error.to_string())?;
-        if oxy_fs::observe_file(&asset.path)
+        if oxy_core::files::observe_file(&asset.path)
             .map_err(|error| error.to_string())?
             .revision_id()
             != source_revision
@@ -74,7 +82,7 @@ pub(crate) async fn adopt_person_detection(
         }
         people
             .create_person_instance_with_source_identity(
-                &oxy_domain::CreatePersonInstance {
+                &oxy_core::contracts::CreatePersonInstance {
                     folder_path: folder.clone(),
                     asset_path: asset.path.clone(),
                     source_revision: format!("{}:{}", asset.size_bytes, asset.modified_at_ms),
@@ -119,7 +127,7 @@ pub(super) fn reserve(
 pub(crate) async fn get_person_clusters(
     folder_path: PathBuf,
     state: State<'_, AppState>,
-) -> Result<Option<oxy_domain::PersonClusterSnapshot>, String> {
+) -> Result<Option<oxy_core::contracts::PersonClusterSnapshot>, String> {
     let people = Arc::clone(&state.people);
     tauri::async_runtime::spawn_blocking(move || {
         let folder = folder_path.canonicalize().map_err(|e| e.to_string())?;
@@ -167,9 +175,9 @@ pub(crate) fn start_person_clustering(
 
 #[tauri::command]
 pub(crate) async fn adopt_person_cluster(
-    input: oxy_domain::AdoptPersonCluster,
+    input: oxy_core::contracts::AdoptPersonCluster,
     state: State<'_, AppState>,
-) -> Result<oxy_domain::AdoptPersonClusterResult, String> {
+) -> Result<oxy_core::contracts::AdoptPersonClusterResult, String> {
     let people = Arc::clone(&state.people);
     tauri::async_runtime::spawn_blocking(move || {
         people
@@ -199,14 +207,14 @@ pub(crate) async fn get_person_models(
         let mut models = model_catalog::model_status(&root);
         #[cfg(all(windows, target_arch = "x86_64"))]
         {
-            let installed = oxy_people::environment::ort::installed(&root);
+            let installed = oxy_core::people::environment::ort::installed(&root);
             models.push(PersonModelStatus {
                 id: "runtime".into(),
                 name: "ORT DirectML 运行时".into(),
-                size_bytes: oxy_people::environment::ort::SIZE,
+                size_bytes: oxy_core::people::environment::ort::SIZE,
                 installed: matches!(installed, Ok(Some(_))),
                 download_available: true,
-                source_url: oxy_people::environment::ort::SOURCE_URL.into(),
+                source_url: oxy_core::people::environment::ort::SOURCE_URL.into(),
                 usage: "微软官方 ONNX Runtime，使用 DirectML GPU 推理。".into(),
                 error: installed.err(),
             });
@@ -266,11 +274,11 @@ pub(crate) fn start_person_model_download(
         };
         if model_id == "runtime" {
             #[cfg(all(windows, target_arch = "x86_64"))]
-            oxy_people::environment::ort::download(&root, &mut progress)?;
+            oxy_core::people::environment::ort::download(&root, &mut progress)?;
             #[cfg(not(all(windows, target_arch = "x86_64")))]
             return Err("此平台尚未提供运行时安装".into());
         } else {
-            oxy_people::environment::artifacts::download_artifact(
+            oxy_core::people::environment::artifacts::download_artifact(
                 &model_catalog::manifest(),
                 &model_id,
                 &root,
@@ -299,7 +307,7 @@ pub(crate) fn import_person_model(
     let work = Arc::clone(&operation);
     launch(operation, move || {
         let input = std::fs::File::open(path).map_err(|error| error.to_string())?;
-        oxy_people::environment::artifacts::install_artifact_reader(
+        oxy_core::people::environment::artifacts::install_artifact_reader(
             &model_catalog::manifest(),
             &model_id,
             input,
@@ -329,7 +337,7 @@ pub(crate) fn start_folder_person_analysis(
 ) -> Result<(), String> {
     super::global_people::start_people_grouping(
         session_id,
-        oxy_domain::RunPeopleGrouping {
+        oxy_core::contracts::RunPeopleGrouping {
             folder_path,
             person_ids: None,
             similarity: 0.4,
