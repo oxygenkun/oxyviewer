@@ -50,6 +50,11 @@ LibraryService 负责根目录配置、恢复预览、cache proof 收集、产�
 全部回滚。产物复用在提交之后进行，失败单独计数。desktop 命令只适配参数、结果
 和 blocking executor，Library 不再公开转发恢复入口。
 
+MetadataService 负责详情、摘要请求和显式编辑。编辑 worker 由 CoreRuntime 登记，
+逐文件检查取消与停止状态，JobRegistry 条目在成功、失败、拒绝启动或展开时释放。
+批量编辑部分成功后仍刷新已写入的文件；后续文件失败不影响其缓存失效。
+embedded 写入继续跳过 RAW，用户明确请求的 embedded 写入才调用 ExifTool。
+
 默认数据和缓存路径使用 `core-v2` 子目录，custom cache 也有独立的版本子目录。
 Store 只接收本核心的 application ID/schema version，或尚未创建表的空文件。
 打开已有文件先做只读检查，未识别的旧库或未来版本不会被升级、重建或 checkpoint。

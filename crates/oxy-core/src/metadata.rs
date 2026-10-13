@@ -1,9 +1,11 @@
 pub mod provider;
+mod service;
 pub mod types;
 use crate::files::sidecar_path;
 use crate::resources::types::{MetadataProjection, ResourceLoadStatus};
 use oxy_media::types::{AssetKind, CaptureMetadata, EditableMetadata, FocusInfo, PickLabel};
 use serde_json::Value;
+pub use service::MetadataService;
 #[cfg(unix)]
 use std::os::unix::fs::PermissionsExt;
 #[cfg(target_os = "windows")]

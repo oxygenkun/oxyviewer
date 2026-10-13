@@ -11,7 +11,7 @@ use crate::{
     files::FsCatalog,
     jobs::JobRegistry,
     library::{Library, LibraryService},
-    metadata::{BurstScanner, MetadataFacade, provider::ProviderManager},
+    metadata::{BurstScanner, MetadataFacade, MetadataService, provider::ProviderManager},
     people::{People, execution::operations::PersonOperations},
     resources::{
         DebugSnapshotCache, LibraryIndexQueue, cache::CacheManager,
@@ -48,7 +48,7 @@ pub struct OxyApp {
     pub runtime: CoreRuntime,
     pub external_apps: Arc<ExternalAppManager>,
     pub files: Arc<FsCatalog>,
-    pub jobs: JobRegistry,
+    pub jobs: Arc<JobRegistry>,
     pub library: Arc<Library>,
     pub library_service: Arc<LibraryService>,
     pub tags: Arc<Tags>,
@@ -61,6 +61,7 @@ pub struct OxyApp {
     pub heif: Arc<oxy_media::HeifDecodeService>,
     pub media_resources: oxy_media::ResourceRegistry,
     pub metadata: MetadataFacade,
+    pub metadata_service: Arc<MetadataService>,
     pub metadata_queue: MetadataQueue,
     pub preview_queue: PreviewQueue,
     pub debug_snapshots: Arc<DebugSnapshotCache>,
@@ -110,6 +111,14 @@ impl OxyApp {
             tags.clone(),
         );
         let preview_queue = PreviewQueue::new(runtime.clone(), library.clone(), cache.clone());
+        let jobs = Arc::new(JobRegistry::default());
+        let metadata_service = Arc::new(MetadataService {
+            runtime: runtime.clone(),
+            files: files.clone(),
+            metadata: metadata.clone(),
+            queue: metadata_queue.clone(),
+            jobs: jobs.clone(),
+        });
         let library_index_queue = LibraryIndexQueue::new(library.clone(), files.clone());
         let library_service = Arc::new(LibraryService {
             library: library.clone(),
@@ -142,7 +151,7 @@ impl OxyApp {
                 runtime,
                 external_apps,
                 files,
-                jobs: JobRegistry::default(),
+                jobs,
                 library,
                 library_service,
                 tags,
@@ -155,6 +164,7 @@ impl OxyApp {
                 heif: Arc::new(oxy_media::HeifDecodeService::default()),
                 media_resources: oxy_media::shared_resource_registry(),
                 metadata,
+                metadata_service,
                 metadata_queue,
                 preview_queue,
                 debug_snapshots: Default::default(),

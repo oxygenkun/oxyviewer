@@ -118,6 +118,12 @@ resource leases, cancellation and stale-publication semantics.
   now belong to workflow functions rather than methods forwarded by Library.
   Desktop commands only offload and adapt results. Existing rollback/stale-plan
   tests and a headless service regression pass (271 core / 5 desktop tests).
+- MetadataService now owns read/edit use cases. CoreRuntime tracks write workers,
+  checks cancellation between files and releases job registration on every exit.
+  A headless regression proves a successful early write refreshes after a later
+  batch failure, and stopping the host rejects further edits without changing
+  sidecars. Desktop only waits for and adapts the core result. Core's 272 tests,
+  desktop's 5 tests and strict workspace Clippy pass.
 - Next: distribute browsing SQL, move remaining desktop use-case coordination,
   remove legacy person identity paths and finish ownership/docs/tooling gates,
   then complete final release/performance qualification.

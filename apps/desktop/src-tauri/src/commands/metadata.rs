@@ -1,7 +1,6 @@
 use crate::state::AppState;
 use oxy_core::contracts::{
-    AssetDetailsResult, AssetKind, JobId, JobPriority, MetadataPatch, MetadataProjection,
-    MetadataRequestPriority,
+    AssetDetailsResult, JobId, MetadataPatch, MetadataProjection, MetadataRequestPriority,
 };
 use oxy_core::metadata::provider::ExiftoolStatus;
 use std::path::PathBuf;
@@ -12,16 +11,10 @@ pub(crate) async fn get_asset_details(
     path: PathBuf,
     state: State<'_, AppState>,
 ) -> Result<AssetDetailsResult, String> {
-    let runtime = state.runtime.clone();
-    let queue = state.metadata_queue.clone();
-    tauri::async_runtime::spawn_blocking(move || {
-        let receiver = queue.request_details(&runtime, path)?;
-        receiver
-            .recv()
-            .map_err(|error| format!("metadata queue stopped: {error}"))
-    })
-    .await
-    .map_err(|error| error.to_string())?
+    let service = state.metadata_service.clone();
+    tauri::async_runtime::spawn_blocking(move || service.details(path))
+        .await
+        .map_err(|error| error.to_string())?
 }
 
 #[tauri::command]
@@ -30,9 +23,8 @@ pub(crate) async fn request_metadata(
     priority: MetadataRequestPriority,
     state: State<'_, AppState>,
 ) -> Result<Vec<MetadataProjection>, String> {
-    let runtime = state.runtime.clone();
-    let queue = state.metadata_queue.clone();
-    tauri::async_runtime::spawn_blocking(move || queue.request_summaries(&runtime, paths, priority))
+    let service = state.metadata_service.clone();
+    tauri::async_runtime::spawn_blocking(move || service.request(paths, priority))
         .await
         .map_err(|error| error.to_string())?
 }
@@ -43,35 +35,12 @@ pub(crate) async fn patch_metadata(
     patch: MetadataPatch,
     state: State<'_, AppState>,
 ) -> Result<JobId, String> {
-    let ticket = state.jobs.register(JobPriority::SelectedMetadata);
-    let job_id = ticket.id.clone();
-    let files = state.files.clone();
-    let metadata = state.metadata.clone();
-    let requested_paths = paths.clone();
-    let result = tauri::async_runtime::spawn_blocking(move || {
-        for path in paths {
-            let asset = files.get_asset(&path).map_err(|error| error.to_string())?;
-            metadata
-                .patch_metadata(&path, asset.kind, &patch)
-                .map_err(|error| error.to_string())?;
-            if let Some(parent) = path.parent() {
-                files.invalidate_directory(parent);
-            }
-        }
-        Ok::<_, String>(())
-    })
-    .await
-    .map_err(|error| error.to_string());
-    state.jobs.finish(&job_id);
-    result??;
-    let runtime = state.runtime.clone();
-    let queue = state.metadata_queue.clone();
+    let receiver = state.metadata_service.patch(paths, patch)?;
     tauri::async_runtime::spawn_blocking(move || {
-        queue.request_summaries(&runtime, requested_paths, MetadataRequestPriority::Selected)
+        receiver.recv().map_err(|error| error.to_string())?
     })
     .await
-    .map_err(|error| error.to_string())??;
-    Ok(job_id)
+    .map_err(|error| error.to_string())?
 }
 
 #[tauri::command]
@@ -79,38 +48,12 @@ pub(crate) async fn sync_metadata_to_embedded(
     paths: Vec<PathBuf>,
     state: State<'_, AppState>,
 ) -> Result<JobId, String> {
-    let ticket = state.jobs.register(JobPriority::SelectedMetadata);
-    let job_id = ticket.id.clone();
-    let files = state.files.clone();
-    let metadata = state.metadata.clone();
-    let requested_paths = paths.clone();
-    let result = tauri::async_runtime::spawn_blocking(move || {
-        for path in paths {
-            let asset = files.get_asset(&path).map_err(|error| error.to_string())?;
-            if asset.kind == AssetKind::Raw {
-                continue;
-            }
-            metadata
-                .sync_metadata_to_embedded(&path)
-                .map_err(|error| error.to_string())?;
-            if let Some(parent) = path.parent() {
-                files.invalidate_directory(parent);
-            }
-        }
-        Ok::<_, String>(())
-    })
-    .await
-    .map_err(|error| error.to_string());
-    state.jobs.finish(&job_id);
-    result??;
-    let runtime = state.runtime.clone();
-    let queue = state.metadata_queue.clone();
+    let receiver = state.metadata_service.sync_to_embedded(paths)?;
     tauri::async_runtime::spawn_blocking(move || {
-        queue.request_summaries(&runtime, requested_paths, MetadataRequestPriority::Selected)
+        receiver.recv().map_err(|error| error.to_string())?
     })
     .await
-    .map_err(|error| error.to_string())??;
-    Ok(job_id)
+    .map_err(|error| error.to_string())?
 }
 
 #[tauri::command]
