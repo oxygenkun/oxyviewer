@@ -93,7 +93,7 @@ pub(super) fn scan(
                 return Err(FsError::Cancelled);
             }
             let length = u32_at(remaining, 0)? as usize;
-            if length < HEADER_SIZE || length % 8 != 0 || length > remaining.len() {
+            if length < HEADER_SIZE || !length.is_multiple_of(8) || length > remaining.len() {
                 return Err(invalid_record().into());
             }
             let (record, rest) = remaining.split_at(length);
