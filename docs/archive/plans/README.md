@@ -3,6 +3,11 @@
 These plans are retained as historical implementation or superseded design records. Use the linked
 current design or research report for present behavior.
 
+- [Four-package core layout refactor](core-layout-refactor.md): completed on
+  2026-10-14; [final qualification and build costs](../../research/2026-10-14-core-layout-refactor-validation.md).
+- [Global identity schema retirement](core-schema-retirement.md): approved
+  schema-2 boundary, read-only rejection and current user-fact preservation.
+
 - [JPEG quality and scroll performance](jpg-quality-and-scroll-performance.md):
   S0-S6 completed; current design is in
   [representation planning](../../architecture/08-representation-planning.md).

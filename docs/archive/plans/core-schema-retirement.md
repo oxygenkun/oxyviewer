@@ -1,13 +1,14 @@
 # Global identity schema retirement
 
-Status: implemented with explicit user approval; 284 core tests and strict workspace Clippy pass.
+Status: completed with explicit user approval on 2026-10-14.
 
 The accepted refactor removes old folder/historical identities. Their product
 APIs and Rust implementations are retired in `996cfd8`; current global behavior
 is covered by cache rebuilding, root recovery, rename, reference, independent
-review, idempotency and tag-source regressions. Source table declarations remain.
+review, idempotency and tag-source regressions. The retired table declarations
+were removed in `de8e54d` after the approval recorded below.
 
-## Proposed concrete change
+## Approved change
 
 Remove these declarations from `people/schema.rs` for newly created databases:
 
@@ -43,7 +44,7 @@ removal or automatic migration is proposed. Anyone who already used this branch
 with schema 1 must retain that database separately and use a fresh test directory
 for schema 2. Import or migration of those interim facts is outside this change.
 
-## Verification required
+## Verification
 
 - Every created table has one declared class; no old identity table is created.
 - Cache clearing preserves rows in every current user table and marker.
@@ -54,3 +55,12 @@ for schema 2. Import or migration of those interim facts is outside this change.
 Automatic review rejected the combined source/schema script and later the
 schema-only script because table retirement and version incompatibility were
 considered high impact. Neither rejected script executed.
+
+The user then explicitly approved: “批准移除旧表声明并升级 schema 2，保留旧库且用新目录验收”.
+The schema change was implemented and tested after that approval. Final restored
+workspace checks pass: 786 Rust tests / 29 ignored and strict all-targets Clippy;
+contract drift, frontend type check and 415 frontend tests also pass. The
+absence, byte-preserving rejection and all-current-user-table retention tests
+cover the approved boundary. Qualification used isolated fresh directories and
+did not change an existing user database. See the
+[final report](../../research/2026-10-14-core-layout-refactor-validation.md).

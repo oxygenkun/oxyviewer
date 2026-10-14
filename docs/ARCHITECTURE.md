@@ -2,7 +2,7 @@
 
 OxyViewer 按一个应用核心和少数独立技术库组织。当前 Rust workspace 有四个 package；
 应用功能在 `oxy-core` 内按状态、规则和用例归属划分模块。媒体和解析器保留独立构建边界。
-最后核对：2026-10-14。重构实现与验收状态见[实施清单](tasks/core-layout-refactor.md)。
+最后核对：2026-10-14。重构实现与验收见[完成报告](research/2026-10-14-core-layout-refactor-validation.md)。
 
 ## 依赖和运行边界
 
@@ -65,7 +65,7 @@ CoreRuntime 登记分析、文件、编辑、提供者和队列 worker。停止�
 
 数据与缓存隔离在 `core-v2`，当前 SQLite schema 为 2。旧/未知/未来的非空库在 writer
 打开前只读拒绝，不升级、不删库、不 checkpoint。当前格式的未来升级必须明确保护用户
-声明。[schema 切换记录](tasks/core-schema-retirement.md)说明这次不兼容边界。
+声明。[schema 切换记录](archive/plans/core-schema-retirement.md)说明这次不兼容边界。
 
 文件系统和 SQLite 无法共同原子提交。FileService 先检查路径/sidecar，再逐文件记录
 prepared/filesApplied 与版本证明；资料提交失败保留恢复记录，证明不匹配要求检查，

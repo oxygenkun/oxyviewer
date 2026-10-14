@@ -1,8 +1,9 @@
 # Four-package core layout refactor
 
-Status: active. Branch: `codex/core-layout-refactor`.
+Status: completed on 2026-10-14. Branch: `codex/core-layout-refactor`.
 
-Implement the [2026-10-13 report](../research/2026-10-13-code-organization-report.md).
+Implements the [2026-10-13 report](../../research/2026-10-13-code-organization-report.md).
+Final evidence: [implementation and qualification](../../research/2026-10-14-core-layout-refactor-validation.md).
 The work runs in an isolated managed worktree. The functional baseline is
 `595a46b` (repeat-last-tag shortcut); unrelated edits remain in the original
 checkout. Old package/API/schema compatibility is not a target. Preserve user
@@ -25,10 +26,10 @@ resource leases, cancellation and stale-publication semantics.
       paths are removed; new data uses an isolated versioned directory.
 - [x] Frontend IPC types are generated from the explicit Rust contracts and
       checked for drift; demo behavior follows the final commands.
-- [ ] Build tooling, CI, benchmarks and authoritative architecture documents
+- [x] Build tooling, CI, benchmarks and authoritative architecture documents
       reflect the final ownership rules.
 - [x] Focused behavior/integration tests, Rust checks and frontend checks pass.
-- [ ] Release WebView and real media performance are compared with the baseline;
+- [x] Release WebView and real media performance are compared with the baseline;
       incremental build costs are measured for feature/type/media edits.
 
 ## Evidence and progress
@@ -312,9 +313,24 @@ resource leases, cancellation and stale-publication semantics.
   legacy layout. HIF completion accepts artifact or visible successful native
   frame; two focused regressions reject other photos, thumbnails, hidden and
   failed tile frames. Real warm-artifact and native-full rechecks pass.
-- Next: finish current documentation/tooling review, then run the final native
-  release comparison, real RAW/JPEG/HIF and analysis qualification, and measure
-  incremental check/build costs against the original baseline.
+- Final qualification completed with production WebView builds: baseline and
+  core each pass 12 media scenarios / 34 measured runs, using real HIF and 16
+  copied RAW files from the user's supplied folder plus their camera JPEGs.
+  Measured indicators stay within the 20% regression guardrail; warm RAW's
+  149.5 ms median is close to the unchanged 150 ms budget. This does not qualify
+  p95, NAS, different-camera or cross-platform behavior.
+- Explicit release DirectML analysis runs agree on every face count and persist
+  every stage; serial and pipeline medians show no throughput regression.
+  Independent warmed targets measured person-type, tag-rule and media-algorithm
+  check/build edits. Every temporary edit was restored and hash-checked; the
+  report records improved type costs and the media-cost tradeoff.
+- Authoritative architecture, contribution rules, tooling and CI now reflect
+  four packages and feature ownership. Final restored-source checks pass:
+  formatting, contracts-feature strict all-targets Clippy, 786 Rust tests /
+  29 ignored, contract drift, frontend type check, 415 tests / 71 files and
+  production build. Native release qualification is Windows-only; other
+  platform CI execution remains outside this local verification.
 
-Keep this checklist current. A four-package manifest alone does not complete
-the refactor; every ownership and behavioral gate above must be verified.
+This archived checklist records the completed refactor. Current contracts live
+in the architecture and performance documents; qualification limits remain in
+the dated report.

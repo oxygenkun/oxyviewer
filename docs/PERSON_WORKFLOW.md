@@ -85,7 +85,7 @@ PersonService 负责完整用例和成功提交后的镜像调度。Tauri 只适
 
 旧 folder/historical 身份 API、映射、adoption、过滤和表声明已经退役。新状态隔离在
 core-v2，当前 schema 2；旧/未知/未来非空库只读拒绝，不迁移、不删除。不存在旧入口
-兼容或按同名合并。[切换记录](tasks/core-schema-retirement.md)说明中间版本的边界。
+兼容或按同名合并。[切换记录](archive/plans/core-schema-retirement.md)说明中间版本的边界。
 
 人物绑定 tag 后，同一照片至少有一个有效已确认实例才贡献一次 person 来源。关闭映射、
 修框或撤销最后一个确认只撤下人物贡献，手工/sidecar 来源保持独立。有效标签变化记录

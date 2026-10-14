@@ -2,7 +2,7 @@
 
 当前 package 图为 desktop → core → media → parser；desktop 还直接使用 media 的
 协议与媒体类型。应用功能以模块组织，旧 application package 和 forwarding API 已退役。
-架构总览见[ARCHITECTURE](../ARCHITECTURE.md)，验收状态见[实施清单](../tasks/core-layout-refactor.md)。
+架构总览见[ARCHITECTURE](../ARCHITECTURE.md)，验收见[完成报告](../research/2026-10-14-core-layout-refactor-validation.md)。
 
 ## 装配和接口
 

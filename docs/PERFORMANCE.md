@@ -16,6 +16,16 @@ end-to-end regression harness that enforces these budgets is described in
 
 Refactoring guardrails and regression checks: [Performance invariants](PERFORMANCE_INVARIANTS.md).
 
+The [2026-10-14 core refactor qualification](research/2026-10-14-core-layout-refactor-validation.md)
+compares the original and four-package Windows Release WebView builds. Both pass
+12 media scenarios / 34 measured runs with real HIF and 16 distinct RAW files plus
+their camera JPEGs; no measured indicator exceeds the 20% regression guardrail.
+Warm RAW first-preview median is 149.5 ms, close to the unchanged 150 ms budget.
+Release DirectML analysis has matching per-photo counts and no measured throughput
+regression. These local samples do not qualify p95, NAS, different-camera or
+cross-platform performance; OS file caches were not forcibly cleared. The report
+also records incremental build costs and their tradeoffs.
+
 人物全局历史是显式跨目录的预览使用方：`get_preview` 的可选
 `crossFolder` 仅由人物历史／参考视图开启，普通目录浏览维持原有目录准入。
 历史视图按页返回实例，仅可见卡片请求预览，不扫描源目录。它复用有界队列、
