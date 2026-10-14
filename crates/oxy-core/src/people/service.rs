@@ -18,20 +18,77 @@ pub struct PersonService {
     pub(crate) runtime: CoreRuntime,
     pub(crate) person_model_dir: PathBuf,
     pub(crate) cache: Arc<CacheManager>,
+    pub(crate) tag_sync: Arc<crate::tags::xmp_sync::TagXmpSync>,
 }
 
 #[cfg(all(test, windows, target_arch = "x86_64"))]
 mod analysis_verification;
 
 impl PersonService {
-    pub fn review_tuples(&self, input: ReviewPersonTuples) -> Result<usize, String> {
-        crate::app::workflows::person_review::review_person_tuples(&self.people.store, &input)
-            .map_err(|error| error.to_string())
+    fn admit_mutation(&self) -> Result<(), String> {
+        if self.runtime.is_stopping() {
+            Err("application is shutting down".into())
+        } else {
+            Ok(())
+        }
     }
 
-    pub fn set_global_person_tag(&self, input: SetGlobalPersonTag) -> Result<(), String> {
-        crate::app::workflows::person_tags::set_global_person_tag(&self.people.store, &input)
+    pub fn catalog(&self) -> Result<Vec<GlobalPerson>, String> {
+        self.people
+            .global_people()
             .map_err(|error| error.to_string())
+    }
+    pub fn folders(
+        &self,
+        person: String,
+        offset: u32,
+        limit: u32,
+    ) -> Result<GlobalPersonFolders, String> {
+        self.people
+            .global_person_folders(&person, offset, limit)
+            .map_err(|error| error.to_string())
+    }
+    pub fn gallery(
+        &self,
+        person: String,
+        offset: u32,
+        limit: u32,
+    ) -> Result<GlobalPersonGallery, String> {
+        self.people
+            .global_person_gallery(&person, offset, limit)
+            .map_err(|error| error.to_string())
+    }
+    pub fn references(&self, person: String) -> Result<Vec<PersonTuple>, String> {
+        self.people
+            .global_person_reference_tuples(&person)
+            .map_err(|error| error.to_string())
+    }
+    pub fn save_person(&self, input: SaveGlobalPerson) -> Result<GlobalPerson, String> {
+        self.admit_mutation()?;
+        self.people
+            .save_global_person(&input)
+            .map_err(|error| error.to_string())
+    }
+    pub fn set_reference(&self, input: SetGlobalPersonReference) -> Result<(), String> {
+        self.admit_mutation()?;
+        self.people
+            .set_global_person_reference(&input)
+            .map_err(|error| error.to_string())
+    }
+    pub fn review_tuples(&self, input: ReviewPersonTuples) -> Result<usize, String> {
+        self.admit_mutation()?;
+        let result =
+            crate::app::workflows::person_review::review_person_tuples(&self.people.store, &input)
+                .map_err(|error| error.to_string())?;
+        self.tag_sync.schedule();
+        Ok(result)
+    }
+    pub fn set_global_person_tag(&self, input: SetGlobalPersonTag) -> Result<(), String> {
+        self.admit_mutation()?;
+        crate::app::workflows::person_tags::set_global_person_tag(&self.people.store, &input)
+            .map_err(|error| error.to_string())?;
+        self.tag_sync.schedule();
+        Ok(())
     }
 
     pub fn workspace(&self, folder_path: PathBuf) -> Result<FolderPeopleWorkspace, String> {
@@ -49,9 +106,7 @@ impl PersonService {
         &self,
         input: SavePersonTupleGeometry,
     ) -> Result<PersonTuple, String> {
-        if self.runtime.is_stopping() {
-            return Err("application is shutting down".into());
-        }
+        self.admit_mutation()?;
         let folder = input
             .folder_path
             .canonicalize()
@@ -65,7 +120,7 @@ impl PersonService {
         if crate::files::observe_file(&asset.path).map_err(|e| e.to_string())? != observation {
             return Err("源图已变化".into());
         }
-        crate::app::workflows::person_geometry::save_person_tuple_geometry(
+        let result = crate::app::workflows::person_geometry::save_person_tuple_geometry(
             &self.people.store,
             &SavePersonTupleGeometry {
                 folder_path: folder,
@@ -74,7 +129,9 @@ impl PersonService {
             },
             &observation.revision_id(),
         )
-        .map_err(|e| e.to_string())
+        .map_err(|e| e.to_string())?;
+        self.tag_sync.schedule();
+        Ok(result)
     }
 
     fn reserve(
@@ -405,7 +462,7 @@ mod tests {
                 .is_err()
         );
         assert_eq!(
-            crate::people::repo::global::tuples(&app.people.store.read(), None)
+            crate::people::repo::global::tuples(&app.person_service.people.store.read(), None)
                 .unwrap()
                 .len(),
             1
@@ -449,6 +506,94 @@ mod tests {
     }
 
     #[test]
+    fn committed_person_review_wakes_the_owned_xmp_mirror_and_stop_rejects_mutations() {
+        let directory = tempfile::tempdir().unwrap();
+        let root = directory.path().canonicalize().unwrap();
+        let photo = root.join("photo.jpg");
+        image::RgbImage::new(8, 8).save(&photo).unwrap();
+        let app = host(&root);
+        let person = app
+            .person_service
+            .save_person(SaveGlobalPerson {
+                id: None,
+                display_name: "Ada".into(),
+                expected_revision: 0,
+                request_id: "person".into(),
+            })
+            .unwrap();
+        let tag = app.tags.create_custom_tag(None, "Ada").unwrap();
+        app.person_service
+            .set_global_person_tag(SetGlobalPersonTag {
+                person_id: person.id.clone(),
+                tag_id: Some(tag.id),
+                expected_revision: person.revision,
+                request_id: "tag".into(),
+            })
+            .unwrap();
+        let asset = app.person_service.tuple_asset(photo.clone()).unwrap();
+        let tuple = app
+            .person_service
+            .save_tuple_geometry(SavePersonTupleGeometry {
+                folder_path: root.clone(),
+                asset_path: photo.clone(),
+                instance_id: None,
+                expected_revision: 0,
+                source_revision: format!("{}:{}", asset.size_bytes, asset.modified_at_ms),
+                face_box: Some([0.1, 0.1, 0.2, 0.2]),
+                body_box: None,
+                request_id: "geometry".into(),
+            })
+            .unwrap();
+        let workspace = app.person_service.workspace(root.clone()).unwrap();
+        let review = ReviewPersonTuples {
+            folder_path: root,
+            workspace_revision: workspace.revision,
+            tuples: vec![tuple],
+            person_id: person.id,
+            decision: PersonReviewDecision::Belongs,
+            replace_confirmed: false,
+            request_id: "review".into(),
+        };
+        app.person_service.review_tuples(review.clone()).unwrap();
+        let deadline = std::time::Instant::now() + Duration::from_secs(5);
+        loop {
+            if app
+                .metadata_service
+                .metadata
+                .read_metadata(&photo, oxy_media::types::AssetKind::Jpeg)
+                .unwrap()
+                .keywords
+                == ["Ada"]
+            {
+                break;
+            }
+            assert!(
+                std::time::Instant::now() < deadline,
+                "committed review did not reach its XMP mirror"
+            );
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        assert!(app.shutdown(Duration::from_secs(3)));
+        assert!(
+            app.person_service
+                .review_tuples(review)
+                .unwrap_err()
+                .contains("shutting down")
+        );
+        assert!(
+            app.person_service
+                .save_person(SaveGlobalPerson {
+                    id: None,
+                    display_name: "After stop".into(),
+                    expected_revision: 0,
+                    request_id: "stopped".into(),
+                })
+                .is_err()
+        );
+        assert_eq!(app.person_service.catalog().unwrap().len(), 1);
+    }
+
+    #[test]
     fn headless_review_commits_identity_and_tag_contribution_together() {
         let directory = tempfile::tempdir().unwrap();
         let root = directory.path().canonicalize().unwrap();
@@ -470,6 +615,7 @@ mod tests {
             })
             .unwrap();
         let person = app
+            .person_service
             .people
             .save_global_person(&SaveGlobalPerson {
                 id: None,
@@ -497,7 +643,8 @@ mod tests {
             replace_confirmed: false,
             request_id: "review".into(),
         };
-        app.people
+        app.person_service
+            .people
             .store
             .write()
             .execute_batch(
@@ -517,7 +664,8 @@ mod tests {
                 .assigned_count,
             0
         );
-        app.people
+        app.person_service
+            .people
             .store
             .write()
             .execute_batch("DROP TRIGGER reject_review_event;")
@@ -600,6 +748,7 @@ mod tests {
         let root = directory.path().canonicalize().unwrap();
         let app = host(&root);
         let person = app
+            .person_service
             .people
             .save_global_person(&SaveGlobalPerson {
                 id: None,
@@ -608,8 +757,9 @@ mod tests {
                 request_id: "person".into(),
             })
             .unwrap();
-        crate::people::clusters::tests::analyzed_fixture(&app.people, &root);
+        crate::people::clusters::tests::analyzed_fixture(&app.person_service.people, &root);
         let workspace = app
+            .person_service
             .people
             .run_people_grouping(
                 &RunPeopleGrouping {
@@ -637,12 +787,12 @@ mod tests {
                 .is_err()
         );
         assert!(
-            crate::people::repo::global::tuples(&app.people.store.read(), None)
+            crate::people::repo::global::tuples(&app.person_service.people.store.read(), None)
                 .unwrap()
                 .is_empty()
         );
         assert!(
-            crate::people::repo::global::reviews(&app.people.store.read(), None)
+            crate::people::repo::global::reviews(&app.person_service.people.store.read(), None)
                 .unwrap()
                 .is_empty()
         );

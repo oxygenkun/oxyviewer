@@ -10,14 +10,10 @@ pub(crate) async fn get_global_person_folders(
     limit: u32,
     state: State<'_, AppState>,
 ) -> Result<GlobalPersonFolders, String> {
-    let people = Arc::clone(&state.people);
-    tauri::async_runtime::spawn_blocking(move || {
-        people
-            .global_person_folders(&person_id, offset, limit)
-            .map_err(|e| e.to_string())
-    })
-    .await
-    .map_err(|e| e.to_string())?
+    let service = Arc::clone(&state.person_service);
+    tauri::async_runtime::spawn_blocking(move || service.folders(person_id, offset, limit))
+        .await
+        .map_err(|e| e.to_string())?
 }
 
 #[tauri::command]
@@ -27,14 +23,10 @@ pub(crate) async fn get_global_person_gallery(
     limit: u32,
     state: State<'_, AppState>,
 ) -> Result<GlobalPersonGallery, String> {
-    let people = Arc::clone(&state.people);
-    tauri::async_runtime::spawn_blocking(move || {
-        people
-            .global_person_gallery(&person_id, offset, limit)
-            .map_err(|e| e.to_string())
-    })
-    .await
-    .map_err(|e| e.to_string())?
+    let service = Arc::clone(&state.person_service);
+    tauri::async_runtime::spawn_blocking(move || service.gallery(person_id, offset, limit))
+        .await
+        .map_err(|e| e.to_string())?
 }
 
 #[tauri::command]
@@ -52,14 +44,10 @@ pub(crate) async fn get_global_person_references(
     person_id: String,
     state: State<'_, AppState>,
 ) -> Result<Vec<PersonTuple>, String> {
-    let people = Arc::clone(&state.people);
-    tauri::async_runtime::spawn_blocking(move || {
-        people
-            .global_person_reference_tuples(&person_id)
-            .map_err(|e| e.to_string())
-    })
-    .await
-    .map_err(|e| e.to_string())?
+    let service = Arc::clone(&state.person_service);
+    tauri::async_runtime::spawn_blocking(move || service.references(person_id))
+        .await
+        .map_err(|e| e.to_string())?
 }
 
 #[tauri::command]
@@ -77,8 +65,8 @@ pub(crate) async fn save_person_tuple_geometry(
 pub(crate) async fn list_global_people(
     state: State<'_, AppState>,
 ) -> Result<Vec<GlobalPerson>, String> {
-    let people = Arc::clone(&state.people);
-    tauri::async_runtime::spawn_blocking(move || people.global_people().map_err(|e| e.to_string()))
+    let service = Arc::clone(&state.person_service);
+    tauri::async_runtime::spawn_blocking(move || service.catalog())
         .await
         .map_err(|e| e.to_string())?
 }
@@ -97,12 +85,10 @@ pub(crate) async fn save_global_person(
     input: SaveGlobalPerson,
     state: State<'_, AppState>,
 ) -> Result<GlobalPerson, String> {
-    let people = Arc::clone(&state.people);
-    tauri::async_runtime::spawn_blocking(move || {
-        people.save_global_person(&input).map_err(|e| e.to_string())
-    })
-    .await
-    .map_err(|e| e.to_string())?
+    let service = Arc::clone(&state.person_service);
+    tauri::async_runtime::spawn_blocking(move || service.save_person(input))
+        .await
+        .map_err(|e| e.to_string())?
 }
 #[tauri::command]
 pub(crate) async fn review_person_tuples(
@@ -119,14 +105,10 @@ pub(crate) async fn set_global_person_reference(
     input: SetGlobalPersonReference,
     state: State<'_, AppState>,
 ) -> Result<(), String> {
-    let people = Arc::clone(&state.people);
-    tauri::async_runtime::spawn_blocking(move || {
-        people
-            .set_global_person_reference(&input)
-            .map_err(|e| e.to_string())
-    })
-    .await
-    .map_err(|e| e.to_string())?
+    let service = Arc::clone(&state.person_service);
+    tauri::async_runtime::spawn_blocking(move || service.set_reference(input))
+        .await
+        .map_err(|e| e.to_string())?
 }
 #[tauri::command]
 pub(crate) async fn get_person_tuple_asset(

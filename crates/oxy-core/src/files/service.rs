@@ -358,6 +358,7 @@ mod tests {
             })
             .unwrap();
         let person = app
+            .person_service
             .people
             .save_global_person(&SaveGlobalPerson {
                 id: None,
@@ -388,13 +389,15 @@ mod tests {
             })
             .unwrap();
         let person = app
+            .person_service
             .people
             .global_people()
             .unwrap()
             .into_iter()
             .next()
             .unwrap();
-        app.people
+        app.person_service
+            .people
             .set_global_person_reference(&SetGlobalPersonReference {
                 person_id: person.id.clone(),
                 instance_id: tuple.id.clone(),
@@ -433,13 +436,15 @@ mod tests {
         );
         assert_eq!(moved.decision, Some(PersonReviewDecision::Belongs));
         assert_eq!(
-            app.people
+            app.person_service
+                .people
                 .global_person_reference_tuples(&person.id)
                 .unwrap()[0]
                 .id,
             tuple.id
         );
-        app.people
+        app.person_service
+            .people
             .set_global_person_reference(&SetGlobalPersonReference {
                 person_id: person.id,
                 instance_id: tuple.id.clone(),
@@ -472,6 +477,7 @@ mod tests {
             .unwrap()
             .unwrap();
         let changed = app
+            .person_service
             .people
             .folder_people_workspace(changed_destination.parent().unwrap())
             .unwrap();

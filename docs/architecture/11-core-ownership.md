@@ -168,3 +168,8 @@ repository 保留几何写入，文件/根恢复语句集中于 people::repo::re
 移除。保留人工 tuple 和所有全局用户事实；缓存清理测试覆盖每个当前 user 声明。
 中间版本 1 的数据库在 writer 打开前只读拒绝，不迁移、不删除、不 checkpoint。
 回归验证其文件字节和用户记录保持不变。验收使用新的隔离目录。
+
+全局人物目录、历史、参考、命名、确认和标框统一经过 PersonService。OxyApp 不再
+向桌面公开原始 People/Library、person operation/model 目录或 metadata facade。
+人物写入拒绝停止后的准入，确认、标签关联和标框的成功提交唤醒已有 coalescing
+TagXmpSync worker；失败不触发镜像。真实 JPEG 回归覆盖确认标签进入 XMP。

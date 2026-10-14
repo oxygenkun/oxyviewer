@@ -287,6 +287,12 @@ resource leases, cancellation and stale-publication semantics.
   absence and byte-preserving rejection tests; the all-user-table preservation
   test seeds every current declaration. All 284 core tests / 13 ignored and
   strict workspace Clippy pass. No existing user database was changed.
+- All desktop global-person commands now call PersonService; OxyApp no longer
+  exposes raw People/Library, person operation/model-directory or metadata
+  facade handles. Mutations reject stopped admission. Successful review/tag/
+  geometry commits wake the existing coalescing mirror worker; failure does not.
+  A real-JPEG regression proves the confirmed tag reaches XMP and stopped writes
+  are rejected. Existing core tests, that regression and workspace Clippy pass.
 - Next: move remaining desktop use-case coordination and person transactions,
   remove legacy person identity paths and finish ownership/docs/tooling gates,
   then complete final release/performance qualification.

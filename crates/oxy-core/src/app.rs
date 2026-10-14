@@ -11,7 +11,7 @@ use crate::{
     files::{FileService, FsCatalog},
     jobs::JobRegistry,
     library::{Library, LibraryService},
-    metadata::{BurstScanner, MetadataFacade, MetadataService, provider::ProviderManager},
+    metadata::{BurstScanner, MetadataService, provider::ProviderManager},
     people::{People, PersonService, execution::operations::PersonOperations},
     resources::{
         DebugSnapshotCache, LibraryIndexQueue, cache::CacheManager, diagnostics::QueueDiagnostics,
@@ -51,19 +51,14 @@ pub struct OxyApp {
     pub files: Arc<FsCatalog>,
     pub file_service: Arc<FileService>,
     pub jobs: Arc<JobRegistry>,
-    pub library: Arc<Library>,
     pub library_service: Arc<LibraryService>,
     pub tags: Arc<Tags>,
     pub tag_sync: Arc<TagXmpSync>,
     pub browse: Arc<BrowseService>,
-    pub people: Arc<People>,
     pub person_service: Arc<PersonService>,
-    pub person_operations: Arc<PersonOperations>,
-    pub person_model_dir: PathBuf,
     pub cache: Arc<CacheManager>,
     pub heif: Arc<oxy_media::HeifDecodeService>,
     pub media_resources: oxy_media::ResourceRegistry,
-    pub metadata: MetadataFacade,
     pub metadata_service: Arc<MetadataService>,
     pub resource_service: Arc<ResourceService>,
     pub queue_diagnostics: Arc<QueueDiagnostics>,
@@ -107,14 +102,6 @@ impl OxyApp {
         )?);
         let files = Arc::new(FsCatalog::default());
         let person_operations = Arc::new(PersonOperations::default());
-        let person_service = Arc::new(PersonService {
-            people: people.clone(),
-            files: files.clone(),
-            person_operations: person_operations.clone(),
-            runtime: runtime.clone(),
-            person_model_dir: person_model_dir.clone(),
-            cache: cache.clone(),
-        });
         let stopping_foreground = library.foreground.clone();
         let stopping_snapshots = snapshots.clone();
         let stopping_people = person_operations.clone();
@@ -175,6 +162,15 @@ impl OxyApp {
             files.clone(),
             metadata.clone(),
         ));
+        let person_service = Arc::new(PersonService {
+            people: people.clone(),
+            files: files.clone(),
+            person_operations,
+            runtime: runtime.clone(),
+            person_model_dir,
+            cache: cache.clone(),
+            tag_sync: tag_sync.clone(),
+        });
         let file_service = Arc::new(FileService {
             store,
             snapshots: snapshots.clone(),
@@ -189,10 +185,10 @@ impl OxyApp {
             snapshots,
             projections,
             files: files.clone(),
-            library: library.clone(),
-            metadata: metadata.clone(),
+            library,
+            metadata,
             tags: tags.clone(),
-            people: people.clone(),
+            people,
             metadata_queue,
             preview_queue,
             directory_tree_queue,
@@ -208,19 +204,14 @@ impl OxyApp {
                 files,
                 file_service,
                 jobs,
-                library,
                 library_service,
                 tags,
                 tag_sync,
                 browse,
-                people,
                 person_service,
-                person_operations,
-                person_model_dir,
                 cache,
                 heif,
                 media_resources: oxy_media::shared_resource_registry(),
-                metadata,
                 metadata_service,
                 resource_service,
                 queue_diagnostics,
@@ -315,6 +306,7 @@ mod tests {
         })
         .unwrap();
         let operation = app
+            .person_service
             .person_operations
             .reserve(crate::people::types::PersonOperationStatus {
                 operation_id: "owned-worker".into(),

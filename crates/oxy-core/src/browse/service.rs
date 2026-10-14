@@ -454,7 +454,8 @@ mod tests {
         app.tags
             .set_asset_tag(std::slice::from_ref(&selected), tag.id, true)
             .unwrap();
-        app.metadata
+        app.metadata_service
+            .metadata
             .patch_metadata(
                 &selected,
                 oxy_media::types::AssetKind::Jpeg,
@@ -494,6 +495,7 @@ mod tests {
         let folder = folder.canonicalize().unwrap();
         let app = host(directory.path());
         let person = app
+            .person_service
             .people
             .save_global_person(&SaveGlobalPerson {
                 id: None,
