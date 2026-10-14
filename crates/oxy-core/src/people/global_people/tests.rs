@@ -1,4 +1,5 @@
 use super::*;
+use crate::app::workflows::person_review::review_person_tuples;
 use crate::jobs::CancellationToken;
 
 #[test]
@@ -63,16 +64,18 @@ fn persisted_edge_faces_can_be_loaded_confirmed_and_edited() {
     assert_eq!(loaded.unknown_count, initial.unknown_count);
     let tuple = &loaded.groups[0].members[0];
     let identity = person(&people, "Edge face");
-    people
-        .review_person_tuples(&request(
+    review_person_tuples(
+        &people.store,
+        &request(
             &people,
             &folder,
             &tuple.id,
             &identity,
             PersonReviewDecision::Belongs,
             "confirm-edge",
-        ))
-        .unwrap();
+        ),
+    )
+    .unwrap();
     let confirmed = people.folder_people_workspace(&folder).unwrap();
     let tuple = confirmed
         .groups
@@ -180,36 +183,42 @@ fn identities_are_global_and_two_people_in_one_photo_remain_independent() {
     let left = manual(&people, &first, "left", face, body);
     let right = manual(&people, &first, "right", None, Some([0.5, 0.1, 0.3, 0.8]));
     let other = manual(&people, &second, "other", face, None);
-    people
-        .review_person_tuples(&request(
+    review_person_tuples(
+        &people.store,
+        &request(
             &people,
             &first,
             &left.id,
             &a,
             PersonReviewDecision::Belongs,
             "left-a",
-        ))
-        .unwrap();
-    people
-        .review_person_tuples(&request(
+        ),
+    )
+    .unwrap();
+    review_person_tuples(
+        &people.store,
+        &request(
             &people,
             &first,
             &right.id,
             &b,
             PersonReviewDecision::Pending,
             "right-b",
-        ))
-        .unwrap();
-    people
-        .review_person_tuples(&request(
+        ),
+    )
+    .unwrap();
+    review_person_tuples(
+        &people.store,
+        &request(
             &people,
             &second,
             &other.id,
             &a,
             PersonReviewDecision::Pending,
             "other-a",
-        ))
-        .unwrap();
+        ),
+    )
+    .unwrap();
     let w = people.folder_people_workspace(&first).unwrap();
     assert_eq!(w.known_count, 2);
     assert_eq!(w.unknown_count, 0);
@@ -276,16 +285,18 @@ fn batch_is_atomic_preserves_negatives_and_requires_explicit_reassignment() {
     let b = person(&people, "乙");
     let one = manual(&people, &folder, "one", Some([0.1, 0.1, 0.2, 0.2]), None);
     let two = manual(&people, &folder, "two", None, Some([0.5, 0.1, 0.2, 0.8]));
-    people
-        .review_person_tuples(&request(
+    review_person_tuples(
+        &people.store,
+        &request(
             &people,
             &folder,
             &one.id,
             &a,
             PersonReviewDecision::Belongs,
             "belongs",
-        ))
-        .unwrap();
+        ),
+    )
+    .unwrap();
     let w = people.folder_people_workspace(&folder).unwrap();
     let mut batch = request(
         &people,
@@ -303,7 +314,7 @@ fn batch_is_atomic_preserves_negatives_and_requires_explicit_reassignment() {
             .unwrap()
             .clone(),
     );
-    assert!(people.review_person_tuples(&batch).is_err());
+    assert!(review_person_tuples(&people.store, &batch).is_err());
     assert!(
         !db::reviews(&people.store.read(), None)
             .unwrap()
@@ -311,8 +322,8 @@ fn batch_is_atomic_preserves_negatives_and_requires_explicit_reassignment() {
             .any(|r| r.person_id == b.id)
     );
     batch.replace_confirmed = true;
-    assert_eq!(people.review_person_tuples(&batch).unwrap(), 2);
-    assert_eq!(people.review_person_tuples(&batch).unwrap(), 2);
+    assert_eq!(review_person_tuples(&people.store, &batch).unwrap(), 2);
+    assert_eq!(review_person_tuples(&people.store, &batch).unwrap(), 2);
     let rejected = request(
         &people,
         &folder,
@@ -321,7 +332,7 @@ fn batch_is_atomic_preserves_negatives_and_requires_explicit_reassignment() {
         PersonReviewDecision::Pending,
         "preserve-negative",
     );
-    assert_eq!(people.review_person_tuples(&rejected).unwrap(), 0);
+    assert_eq!(review_person_tuples(&people.store, &rejected).unwrap(), 0);
     assert!(
         db::reviews(&people.store.read(), None)
             .unwrap()
@@ -339,7 +350,7 @@ fn batch_is_atomic_preserves_negatives_and_requires_explicit_reassignment() {
         "stale",
     );
     std::fs::write(&two.asset_path, b"changed source content").unwrap();
-    assert!(people.review_person_tuples(&stale).is_err());
+    assert!(review_person_tuples(&people.store, &stale).is_err());
 }
 
 #[test]
@@ -373,16 +384,18 @@ fn retrieval_uses_only_confirmed_explicit_references_and_preserves_rejections() 
         .unwrap();
     assert_eq!(first.unknown_count, 1);
     let id = first.groups[0].members[0].id.clone();
-    people
-        .review_person_tuples(&request(
+    review_person_tuples(
+        &people.store,
+        &request(
             &people,
             &one,
             &id,
             &a,
             PersonReviewDecision::Belongs,
             "confirm-ref",
-        ))
-        .unwrap();
+        ),
+    )
+    .unwrap();
     let a = people
         .global_people()
         .unwrap()
@@ -434,16 +447,18 @@ fn retrieval_uses_only_confirmed_explicit_references_and_preserves_rejections() 
             .is_empty()
     );
     let rejected = found.groups[0].members[0].id.clone();
-    people
-        .review_person_tuples(&request(
+    review_person_tuples(
+        &people.store,
+        &request(
             &people,
             &two,
             &rejected,
             &a,
             PersonReviewDecision::DoesNotBelong,
             "reject",
-        ))
-        .unwrap();
+        ),
+    )
+    .unwrap();
     let repeated = people
         .run_people_grouping(
             &run(&two, Some(vec![a.id.clone()])),
@@ -511,16 +526,18 @@ fn geometry_change_withdraws_reference_and_person_tag_but_preserves_manual_tag()
         },
     )
     .unwrap();
-    people
-        .review_person_tuples(&request(
+    review_person_tuples(
+        &people.store,
+        &request(
             &people,
             &folder,
             &t.id,
             &a,
             PersonReviewDecision::Belongs,
             "confirm",
-        ))
-        .unwrap();
+        ),
+    )
+    .unwrap();
     let a = people
         .global_people()
         .unwrap()
@@ -619,16 +636,18 @@ fn global_gallery_pages_confirmed_history_across_folders_and_preserves_offline_r
             None,
             Some([0.1, 0.1, 0.4, 0.8]),
         );
-        people
-            .review_person_tuples(&request(
+        review_person_tuples(
+            &people.store,
+            &request(
                 &people,
                 &folder,
                 &tuple.id,
                 &a,
                 decision,
                 &format!("review-{index}"),
-            ))
-            .unwrap();
+            ),
+        )
+        .unwrap();
         if decision == PersonReviewDecision::Belongs {
             confirmed_ids.push(tuple.id);
         }
@@ -661,16 +680,18 @@ fn global_gallery_pages_confirmed_history_across_folders_and_preserves_offline_r
         Some([0.6, 0.1, 0.2, 0.2]),
         None,
     );
-    people
-        .review_person_tuples(&request(
+    review_person_tuples(
+        &people.store,
+        &request(
             &people,
             &folder,
             &extra.id,
             &a,
             PersonReviewDecision::Belongs,
             "extra-confirm",
-        ))
-        .unwrap();
+        ),
+    )
+    .unwrap();
     std::fs::remove_file(&extra.asset_path).unwrap();
     let folders = people.global_person_folders(&a.id, 0, 1).unwrap();
     assert_eq!(folders.total, 2);

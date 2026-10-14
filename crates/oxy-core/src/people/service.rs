@@ -24,6 +24,11 @@ pub struct PersonService {
 mod analysis_verification;
 
 impl PersonService {
+    pub fn review_tuples(&self, input: ReviewPersonTuples) -> Result<usize, String> {
+        crate::app::workflows::person_review::review_person_tuples(&self.people.store, &input)
+            .map_err(|error| error.to_string())
+    }
+
     pub fn set_global_person_tag(&self, input: SetGlobalPersonTag) -> Result<(), String> {
         crate::app::workflows::person_tags::set_global_person_tag(&self.people.store, &input)
             .map_err(|error| error.to_string())
@@ -573,6 +578,103 @@ mod tests {
                 .is_err()
         );
         assert!(app.person_service.operation().unwrap().is_none());
+    }
+
+    #[test]
+    fn headless_review_commits_identity_and_tag_contribution_together() {
+        let directory = tempfile::tempdir().unwrap();
+        let root = directory.path().canonicalize().unwrap();
+        let photo = root.join("photo.jpg");
+        std::fs::write(&photo, b"source").unwrap();
+        let app = host(&root);
+        let asset = app.person_service.tuple_asset(photo.clone()).unwrap();
+        let tuple = app
+            .person_service
+            .save_tuple_geometry(SavePersonTupleGeometry {
+                folder_path: root.clone(),
+                asset_path: photo.clone(),
+                instance_id: None,
+                expected_revision: 0,
+                source_revision: format!("{}:{}", asset.size_bytes, asset.modified_at_ms),
+                face_box: Some([0.1, 0.1, 0.2, 0.2]),
+                body_box: None,
+                request_id: "geometry".into(),
+            })
+            .unwrap();
+        let person = app
+            .people
+            .save_global_person(&SaveGlobalPerson {
+                id: None,
+                display_name: "Ada".into(),
+                expected_revision: 0,
+                request_id: "person".into(),
+            })
+            .unwrap();
+        let tag = app.tags.create_custom_tag(None, "Ada").unwrap();
+        app.person_service
+            .set_global_person_tag(SetGlobalPersonTag {
+                person_id: person.id.clone(),
+                tag_id: Some(tag.id),
+                expected_revision: person.revision,
+                request_id: "tag".into(),
+            })
+            .unwrap();
+        let workspace = app.person_service.workspace(root.clone()).unwrap();
+        let input = ReviewPersonTuples {
+            folder_path: root.clone(),
+            workspace_revision: workspace.revision.clone(),
+            tuples: vec![tuple],
+            person_id: person.id.clone(),
+            decision: PersonReviewDecision::Belongs,
+            replace_confirmed: false,
+            request_id: "review".into(),
+        };
+        app.people
+            .store
+            .write()
+            .execute_batch(
+                "CREATE TRIGGER reject_review_event BEFORE INSERT ON global_person_events
+             BEGIN SELECT RAISE(ABORT, 'event write failed'); END;",
+            )
+            .unwrap();
+        assert!(app.person_service.review_tuples(input.clone()).is_err());
+        assert_eq!(
+            app.person_service.workspace(root.clone()).unwrap(),
+            workspace
+        );
+        assert_eq!(
+            app.tags
+                .asset_tag_assignments(std::slice::from_ref(&photo))
+                .unwrap()[0]
+                .assigned_count,
+            0
+        );
+        app.people
+            .store
+            .write()
+            .execute_batch("DROP TRIGGER reject_review_event;")
+            .unwrap();
+        assert_eq!(app.person_service.review_tuples(input.clone()).unwrap(), 1);
+        assert_eq!(app.person_service.review_tuples(input).unwrap(), 1);
+        assert_eq!(
+            app.tags
+                .asset_tag_assignments(std::slice::from_ref(&photo))
+                .unwrap()[0]
+                .assigned_count,
+            1
+        );
+        let confirmed = app.person_service.workspace(root).unwrap();
+        assert!(
+            confirmed
+                .groups
+                .iter()
+                .flat_map(|group| &group.members)
+                .any(|tuple| {
+                    tuple.person_id.as_deref() == Some(&person.id)
+                        && tuple.decision == Some(PersonReviewDecision::Belongs)
+                })
+        );
+        assert!(app.shutdown(Duration::from_secs(3)));
     }
 
     #[test]

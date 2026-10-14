@@ -14,6 +14,7 @@ use std::{
 mod grouping;
 mod mutations;
 pub(crate) mod requests;
+pub(crate) mod review;
 #[cfg(test)]
 mod tests;
 

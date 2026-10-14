@@ -105,6 +105,11 @@ PersonService 拥有模型状态、下载与导入、operation 预留/取消、�
 功能，SQL 仍在功能 repository。旧 subject 来源路径也由人物和标签 repository 分别
 读取，再在既有事务内合并为有序去重集合，workflow 不再携带该查询。
 
+人物确认使用 person_review workflow。人物功能负责源图与实例校验、已有决定保护、
+明确替换已确认归属、参考撤回和身份版本规则；workflow 开启事务，应用人物变更，
+更新受影响人物的标签贡献并记录请求结果后提交。PersonService 提供完整 headless
+用例，桌面只适配。故障注入覆盖最后写入失败时审阅与标签共同回滚，以及成功重试。
+
 当前前端只挂载 GlobalPeopleContext：旧人物标框、检测框、文件夹审阅/聚类组件、
 Sidebar 后备分支及其专用测试已移除。模型控件只负责安装与任务状态，分组仍由全局
 人物面板发起。旧 demo 过滤与来源状态、剩余旧 IPC/schema 尚在清理范围内。

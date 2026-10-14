@@ -206,6 +206,14 @@ resource leases, cancellation and stale-publication semantics.
   transaction. All 282 core tests / 12 ignored and strict workspace Clippy pass.
   Source inspection confirms the analysis ledger already delegates its SQL to
   person repositories; its transaction fences remain feature policy.
+- Person tuple review policy remains in people::global_people::review; the
+  person_review workflow owns its transaction with tag contributions and request
+  result. PersonService supplies the complete review use case and desktop only
+  adapts it. Existing review scenarios now call the workflow directly; a real-file
+  headless integration test injects final-event failure, proves review/tag rollback
+  and verifies one-time successful replay. All 283 core tests / 12 ignored and
+  strict workspace Clippy pass. The user has now explicitly approved both pending
+  legacy identity cleanup and preview migration with final qualification gates.
 - Next: move remaining desktop use-case coordination and person transactions,
   remove legacy person identity paths and finish ownership/docs/tooling gates,
   then complete final release/performance qualification.
