@@ -238,6 +238,14 @@ resource leases, cancellation and stale-publication semantics.
   explicitly run with the repository fixture and passed: tile/status publication
   and subsequent cached full-artifact reuse. This headless native check does not
   establish release WebView performance; final comparison remains required.
+- The complete contracts-feature workspace run passes: 784 tests, no failures,
+  29 ignored; strict all-targets Clippy with that feature also passes. Both
+  formerly pending approvals are resolved by explicit user consent. Remaining
+  identity retirement includes core APIs, query fields, table declarations and
+  file/root relocation policies. Same-folder movement needs a real-file current
+  global-identity regression: current row relocation repoints the path without
+  rebinding its path-dependent source identity; legacy mocked tests do not prove
+  the required identity-retention behavior.
 - Next: move remaining desktop use-case coordination and person transactions,
   remove legacy person identity paths and finish ownership/docs/tooling gates,
   then complete final release/performance qualification.
