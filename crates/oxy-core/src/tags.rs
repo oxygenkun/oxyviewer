@@ -334,15 +334,16 @@ impl Tags {
     /// introduce tags the vocabulary does not have yet. A pending mirror write
     /// for this asset wins: the database is the newer statement, and importing
     /// over it would undo an edit the user just made.
+    /// Returns whether the asset's sidecar assignment sources changed.
     pub fn import_sidecar_tags(
         &self,
         path: &Path,
         subjects: &[String],
         hierarchical: &[String],
-    ) -> Result<(), TagError> {
+    ) -> Result<bool, TagError> {
         let asset_path = path.to_string_lossy();
         if crate::tags::repo::has_pending_sync(&self.store.write(), &asset_path)? {
-            return Ok(());
+            return Ok(false);
         }
 
         let mut desired_tag_ids = std::collections::HashSet::new();
@@ -381,9 +382,17 @@ impl Tags {
 
         let mut connection = self.store.write();
         let transaction = connection.transaction().map_err(StoreError::from)?;
-        for tag_id in
+        // An edit may have committed while the vocabulary was being resolved.
+        // Recheck under the write transaction before replacing sidecar sources.
+        if crate::tags::repo::has_pending_sync(&transaction, &asset_path)? {
+            return Ok(false);
+        }
+        let previous_tag_ids =
             crate::tags::repo::source_tag_ids_for_kind(&transaction, &asset_path, "sidecar")?
-        {
+                .into_iter()
+                .collect::<std::collections::HashSet<_>>();
+        let changed = previous_tag_ids != desired_tag_ids;
+        for tag_id in previous_tag_ids {
             if !desired_tag_ids.contains(&tag_id) {
                 crate::tags::repo::delete_source_of_kind(
                     &transaction,
@@ -403,7 +412,8 @@ impl Tags {
         }
         transaction.commit().map_err(StoreError::from)?;
         drop(connection);
-        self.complete_tag_xmp_sync(path, subjects, hierarchical)
+        self.complete_tag_xmp_sync(path, subjects, hierarchical)?;
+        Ok(changed)
     }
 }
 

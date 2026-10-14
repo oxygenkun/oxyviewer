@@ -32,7 +32,11 @@ coverage](research/2026-09-28-analysis-media-input.md); implementation is not a
 claim that every RAW camera or HEIF codec has been qualified on every platform.
 
 All formats write rating/color/flag to adjacent XMP sidecars by default. A sidecar
-overrides embedded XMP when both exist. Embedded reads use the in-process
+overrides embedded XMP when both exist. Grid/filmstrip summaries read an existing
+sidecar directly without waiting for native image metadata. Inspector/loupe reads
+retain sidecar markings and keywords even when the embedded metadata reader fails;
+the document retains that failure as a diagnostic and leaves capture fields absent.
+Embedded reads use the in-process
 `oxy-metadata-parser` crate. A configured ExifTool can serve as a background
 compatibility fallback after a native parse error; installation is prompted
 only when the user explicitly synchronizes into JPEG/HEIF/HIF. The desktop then
@@ -76,7 +80,11 @@ frame with a `×N` badge; clicking the badge expands it in place.
 Custom hierarchical tags use the Lightroom-compatible
 `lr:hierarchicalSubject` path syntax (`parent|child`) together with leaf values
 in `dc:subject`. Adjacent XMP sidecar keywords and hierarchical paths reconcile
-into SQLite when an asset is inspected. Embedded image keywords remain read-only:
+into SQLite during background summary reads as well as inspection. Discovered
+sidecars are admitted in batches after folder pages render, with lower priority
+than visible and selected metadata. Changed imports notify the UI to refresh tag
+vocabulary, affected assignments and active tag filters; unchanged imports emit
+no tag-change event. Embedded image keywords remain read-only:
 the UI deduplicates values also present in the sidecar and renders embedded-only
 values as muted tags. A pending database-to-sidecar write temporarily blocks the
 reverse import so stale XML cannot restore a just-deleted tag. Sidecars remain the

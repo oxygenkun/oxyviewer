@@ -127,6 +127,13 @@ impl MetadataQueue {
                 .map_err(|error| error.to_string())?
                 && cached.status == ResourceLoadStatus::Ready
             {
+                // Projections written before keyword reconciliation was enabled
+                // still need their sidecar imported on a cache hit.
+                if asset.has_sidecar {
+                    let editable = crate::metadata::read_sidecar(&asset.path)
+                        .map_err(|error| error.to_string())?;
+                    self.import_sidecar_tags(app, &asset, &editable);
+                }
                 if optimistic.as_ref().map(|value| value.state_revision)
                     != Some(cached.state_revision)
                 {
@@ -138,6 +145,28 @@ impl MetadataQueue {
             snapshots.push(self.enqueue(app, asset, source_revision, priority, None)?);
         }
         Ok(snapshots)
+    }
+
+    fn import_sidecar_tags(
+        &self,
+        app: &CoreRuntime,
+        asset: &AssetSummary,
+        editable: &EditableMetadata,
+    ) {
+        if !asset.has_sidecar || app.is_stopping() {
+            return;
+        }
+        match self.tags.import_sidecar_tags(
+            &asset.path,
+            &editable.keywords,
+            &editable.hierarchical_keywords,
+        ) {
+            Ok(true) => {
+                let _ = app.publish(CoreEvent::AssetTagsUpdated(asset.path.clone()));
+            }
+            Ok(false) => {}
+            Err(error) => eprintln!("failed to import hierarchical tags: {error}"),
+        }
     }
 
     pub fn invalidate_directory(&self, directory: &std::path::Path) {
@@ -382,9 +411,12 @@ impl MetadataQueue {
                         )
                     };
                     if !needs_details {
-                        let candidate = match queue.metadata.read_summary_observation(&observation)
+                        let candidate = match queue.metadata.read_editable_observation(&observation)
                         {
-                            Ok(projection) => projection,
+                            Ok((editable, projection)) => {
+                                queue.import_sidecar_tags(&app, &asset, &editable);
+                                projection
+                            }
                             Err(error) => queue
                                 .metadata
                                 .fail_observation(&observation, error.to_string()),
@@ -431,15 +463,8 @@ impl MetadataQueue {
                     if app.is_stopping() {
                         return;
                     }
-                    if asset.has_sidecar
-                        && let Ok((document, _)) = &document
-                        && let Err(error) = queue.tags.import_sidecar_tags(
-                            &asset.path,
-                            &document.editable.keywords,
-                            &document.editable.hierarchical_keywords,
-                        )
-                    {
-                        eprintln!("failed to import hierarchical tags: {error}");
+                    if let Ok((document, _)) = &document {
+                        queue.import_sidecar_tags(&app, &asset, &document.editable);
                     }
                     let (document, candidate) = match document {
                         Ok((document, projection)) => (Ok(document), projection),
@@ -594,6 +619,140 @@ fn metadata_for_details(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn summaries_import_sidecar_markings_and_tags_without_native_image_metadata() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("rated.HIF");
+        std::fs::write(&path, b"unreadable image metadata").unwrap();
+        let sidecar = directory.path().join("rated.xmp");
+        let xml = r#"<x:xmpmeta xmlns:x="adobe:ns:meta/">
+          <rdf:RDF xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#">
+            <rdf:Description xmlns:xmp="http://ns.adobe.com/xap/1.0/"
+              xmlns:dc="http://purl.org/dc/elements/1.1/"
+              xmlns:lr="http://ns.adobe.com/lightroom/1.0/" xmp:Rating="3">
+              <dc:subject><rdf:Bag><rdf:li>腋</rdf:li></rdf:Bag></dc:subject>
+              <lr:hierarchicalSubject><rdf:Bag><rdf:li>xp|腋</rdf:li></rdf:Bag></lr:hierarchicalSubject>
+            </rdf:Description>
+          </rdf:RDF>
+        </x:xmpmeta>"#;
+        std::fs::write(&sidecar, xml).unwrap();
+        let (runtime, events) = CoreRuntime::channel();
+        let store = Arc::new(crate::storage::Store::in_memory().unwrap());
+        let tags = Arc::new(Tags::new(store.clone()));
+        let projections = Arc::new(ResourceProjections::new(store));
+        let queue = MetadataQueue::new(
+            runtime.clone(),
+            Arc::new(FsCatalog::default()),
+            MetadataFacade::default(),
+            projections,
+            tags.clone(),
+        );
+        queue
+            .request_summaries(
+                &runtime,
+                vec![path.clone()],
+                MetadataRequestPriority::Visible,
+            )
+            .unwrap();
+        let mut imported = false;
+        loop {
+            match events
+                .recv_timeout(std::time::Duration::from_secs(3))
+                .unwrap()
+            {
+                CoreEvent::AssetTagsUpdated(updated) => {
+                    assert_eq!(updated, path);
+                    imported = true;
+                }
+                CoreEvent::MetadataProjectionUpdated(projection)
+                    if projection.status != ResourceLoadStatus::Loading =>
+                {
+                    assert_eq!(projection.status, ResourceLoadStatus::Ready);
+                    assert_eq!(projection.rating, Some(3));
+                    break;
+                }
+                _ => {}
+            }
+        }
+        assert!(imported);
+        let assignments = tags
+            .asset_tag_assignments(std::slice::from_ref(&path))
+            .unwrap();
+        let assigned = assignments
+            .iter()
+            .filter(|item| item.assigned_count > 0)
+            .collect::<Vec<_>>();
+        assert_eq!(assigned.len(), 1);
+        assert_eq!(assigned[0].tag.path, "xp|腋");
+        let cached = queue
+            .request_summaries(
+                &runtime,
+                vec![path.clone()],
+                MetadataRequestPriority::Visible,
+            )
+            .unwrap();
+        assert_eq!(cached[0].rating, Some(3));
+        assert!(
+            !events
+                .try_iter()
+                .any(|event| matches!(event, CoreEvent::AssetTagsUpdated(_)))
+        );
+
+        // Selecting the same file must retain its sidecar markings even when
+        // the embedded capture metadata cannot be read.
+        let details = queue
+            .request_details(&runtime, path.clone())
+            .unwrap()
+            .recv_timeout(std::time::Duration::from_secs(3))
+            .unwrap();
+        assert_eq!(details.metadata_projection.rating, Some(3));
+        assert_eq!(details.details.metadata.rating, Some(3));
+        assert!(details.details.metadata_capability.readable);
+        assert_eq!(std::fs::read_to_string(sidecar).unwrap(), xml);
+        assert_eq!(std::fs::read(path).unwrap(), b"unreadable image metadata");
+        assert!(runtime.shutdown(std::time::Duration::from_secs(3)));
+    }
+
+    #[test]
+    fn cached_summary_still_imports_sidecar_tags() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("cached.HIF");
+        std::fs::write(&path, b"source").unwrap();
+        std::fs::write(directory.path().join("cached.xmp"),
+            r#"<rdf:Description xmp:Rating="5"><dc:subject><rdf:Bag><rdf:li>cached tag</rdf:li></rdf:Bag></dc:subject></rdf:Description>"#).unwrap();
+        let (runtime, events) = CoreRuntime::channel();
+        let files = Arc::new(FsCatalog::default());
+        let store = Arc::new(crate::storage::Store::in_memory().unwrap());
+        let tags = Arc::new(Tags::new(store.clone()));
+        let projections = Arc::new(ResourceProjections::new(store));
+        let metadata = MetadataFacade::default();
+        let observation = metadata.observe_asset(&files.get_asset(&path).unwrap());
+        projections
+            .accept_metadata_projection(metadata.read_summary_observation(&observation).unwrap())
+            .unwrap();
+        let queue = MetadataQueue::new(runtime.clone(), files, metadata, projections, tags.clone());
+        let snapshots = queue
+            .request_summaries(
+                &runtime,
+                vec![path.clone()],
+                MetadataRequestPriority::Visible,
+            )
+            .unwrap();
+        assert_eq!(snapshots[0].rating, Some(5));
+        assert!(
+            events
+                .try_iter()
+                .any(|event| matches!(event, CoreEvent::AssetTagsUpdated(_)))
+        );
+        assert!(
+            tags.asset_tag_assignments(&[path])
+                .unwrap()
+                .iter()
+                .any(|item| item.tag.name == "cached tag" && item.assigned_count == 1)
+        );
+        assert!(runtime.shutdown(std::time::Duration::from_secs(3)));
+    }
 
     #[test]
     fn blocked_admission_does_not_hold_the_queue_or_delay_stop() {

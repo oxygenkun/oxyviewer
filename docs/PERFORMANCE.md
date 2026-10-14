@@ -16,6 +16,17 @@ end-to-end regression harness that enforces these budgets is described in
 
 Refactoring guardrails and regression checks: [Performance invariants](PERFORMANCE_INVARIANTS.md).
 
+Sidecar markings and keywords are read directly by the metadata summary worker.
+After directory pages render, the frontend admits discovered sidecars in batches
+of at most 32, yielding 200 ms between batches at background priority. Visible,
+filter and selected requests retain their higher priorities. This pass does not
+read native metadata for photos with sidecars or add work to folder enumeration.
+Changed tag imports coalesce UI invalidation and refresh only affected assignment
+queries and active tag-filter results.
+The [2026-10-15 sidecar validation](research/2026-10-15-sidecar-markings-validation.md)
+records exact XMP parity and local release component timings; it does not qualify
+cold NAS or first-paint budgets.
+
 The [2026-10-14 core refactor qualification](research/2026-10-14-core-layout-refactor-validation.md)
 compares the original and four-package Windows Release WebView builds. Both pass
 12 media scenarios / 34 measured runs with real HIF and 16 distinct RAW files plus

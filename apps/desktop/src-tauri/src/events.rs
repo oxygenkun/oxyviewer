@@ -32,6 +32,9 @@ pub(crate) fn forward(app: AppHandle, events: Receiver<CoreEvent>) {
                     CoreEvent::MetadataProjectionUpdated(value) => {
                         let _ = app.emit("metadata-projection-updated", value);
                     }
+                    CoreEvent::AssetTagsUpdated(path) => {
+                        let _ = app.emit("asset-tags-updated", path);
+                    }
                     CoreEvent::HeifTilePublished(tile) => {
                         let _ = app.emit("heif-tile-ready", heif_tile_event(*tile));
                     }

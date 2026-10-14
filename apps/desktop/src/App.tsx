@@ -35,6 +35,7 @@ import {
   onLibraryIndexUpdated,
   onImageProjectionUpdated,
   onMetadataProjectionUpdated,
+  onAssetTagsUpdated,
   refreshDirectory,
   requestMetadata,
   removeLibraryRoot,
@@ -47,6 +48,8 @@ import { recordBrowseTiming } from "@/lib/diagnostics/browseDiagnostics";
 import { firstBrowseCursor, nextBrowseCursor } from "@/lib/browse/browsePagination";
 import { removeAssetFromInfiniteData } from "@/lib/browse/assetQueryCache";
 import { useBackgroundAssetPagination } from "@/lib/hooks/useBackgroundAssetPagination";
+import { useSidecarMetadata } from "@/lib/hooks/useSidecarMetadata";
+import { refreshImportedTagQueries } from "@/lib/assets/tagActions";
 import { insertRestoredFolder, mergeFolderRestoreStates, restoreFoldersProgressively, type FolderRestoreState } from "@/lib/browse/folderRestoration";
 import {
   applyEntryFailure,
@@ -317,6 +320,25 @@ export function App({ perfScenario }: { perfScenario?: PerfScenario }) {
   }, []);
 
   useEffect(() => {
+    let disposed = false;
+    let unlisten: (() => void) | undefined;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const paths = new Set<string>();
+    void onAssetTagsUpdated((path) => {
+      if (disposed) return;
+      paths.add(path);
+      if (timer !== undefined) return;
+      timer = setTimeout(() => {
+        timer = undefined;
+        const imported = new Set(paths);
+        paths.clear();
+        void refreshImportedTagQueries(queryClient, imported);
+      }, 100);
+    }).then((dispose) => { if (disposed) dispose(); else unlisten = dispose; });
+    return () => { disposed = true; clearTimeout(timer); unlisten?.(); };
+  }, [queryClient]);
+
+  useEffect(() => {
     let unlisten: (() => void) | undefined;
     let disposed = false;
     void onImageProjectionUpdated(acceptImageProjection).then((dispose) => {
@@ -442,6 +464,10 @@ export function App({ perfScenario }: { perfScenario?: PerfScenario }) {
       : preloadAssetsQuery.data?.pages.flatMap((page) => page.items) ?? [];
     return [...listed, ...candidates.filter((asset) => !visibleIds.has(asset.id))];
   }, [assets, cheapAssets, preloadAssetsQuery.data, progressiveMetadataQuery.data, progressivelyFilterMetadata]);
+  const sidecarSnapshotRevision = resultData?.pages[0]?.snapshotRevision
+    ?? progressiveMetadataQuery.data?.pages[0]?.snapshotRevision
+    ?? preloadAssetsQuery.data?.pages[0]?.snapshotRevision;
+  useSidecarMetadata(JSON.stringify([activeSession?.id, currentPath, sidecarSnapshotRevision]), preloadCandidates);
   const total = progressivelyFilterMetadata
     ? assets.length
     : resultData?.pages[0]?.total ?? 0;

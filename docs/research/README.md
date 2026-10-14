@@ -4,6 +4,10 @@ This directory contains dated experiments, measurements, diagnoses, and local
 qualification evidence. Reports state their fixture, platform, cache, and
 measurement limits; they do not define current product behavior by themselves.
 
+- [2026-10-15: sidecar markings and keyword validation](2026-10-15-sidecar-markings-validation.md)
+  — real HIF/XMP parity, direct-summary release timings, background tag import
+  and visible macOS WebView checks.
+
 - [2026-10-14: four-package core refactor implementation and qualification](2026-10-14-core-layout-refactor-validation.md)
   — completed ownership changes, Windows Release WebView/real media and DirectML comparisons,
   regression coverage, incremental build costs and measurement limits.

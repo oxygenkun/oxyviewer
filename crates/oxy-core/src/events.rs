@@ -2,11 +2,13 @@
 use crate::browse::types::{DirectoryBrowseProgress, DirectoryTreeSnapshot};
 use crate::library::types::LibraryIndexUpdate;
 use crate::resources::types::{HeifStatusEvent, ImageProjection, MetadataProjection};
+use std::path::PathBuf;
 
 #[derive(Debug, Clone)]
 pub enum CoreEvent {
     ImageProjectionUpdated(Box<ImageProjection>),
     MetadataProjectionUpdated(MetadataProjection),
+    AssetTagsUpdated(PathBuf),
     HeifTilePublished(Box<oxy_media::HeifTilePublication>),
     HeifStatusUpdated(HeifStatusEvent),
     DirectoryTreeUpdated(DirectoryTreeSnapshot),

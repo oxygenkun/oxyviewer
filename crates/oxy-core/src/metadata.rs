@@ -135,9 +135,18 @@ impl MetadataFacade {
         _kind: AssetKind,
         display_dimensions: Option<(u32, u32)>,
     ) -> Result<MetadataDocument, MetadataError> {
-        let mut document = NativeMetadataReader.read(path, display_dimensions)?;
-        if sidecar_path(path).is_file() {
-            let xml = fs::read_to_string(sidecar_path(path))?;
+        let sidecar = sidecar_path(path);
+        let has_sidecar = sidecar.is_file();
+        let mut document = match NativeMetadataReader.read(path, display_dimensions) {
+            Ok(document) => document,
+            Err(error) if has_sidecar => MetadataDocument {
+                diagnostics: vec![format!("failed to read embedded metadata: {error}")],
+                ..MetadataDocument::default()
+            },
+            Err(error) => return Err(error.into()),
+        };
+        if has_sidecar {
+            let xml = fs::read_to_string(sidecar)?;
             document.apply_sidecar(&xml)?;
         }
         Ok(document)
@@ -222,8 +231,31 @@ impl MetadataFacade {
         &self,
         observation: &MetadataObservation,
     ) -> Result<MetadataProjection, MetadataError> {
-        self.read_document_observation(observation, None)
+        self.read_editable_observation(observation)
             .map(|(_, projection)| projection)
+    }
+
+    /// Summary markings and keywords need only the adjacent XMP when present.
+    /// Keep a slow or unsupported native image read out of this sidecar path.
+    pub(crate) fn read_editable_observation(
+        &self,
+        observation: &MetadataObservation,
+    ) -> Result<(EditableMetadata, MetadataProjection), MetadataError> {
+        let asset = &observation.asset;
+        let editable = if sidecar_path(&asset.path).is_file() {
+            read_sidecar(&asset.path)?
+        } else {
+            NativeMetadataReader.read(&asset.path, None)?.editable
+        };
+        let projection = self.merge_summary_observation(
+            asset,
+            observation.fingerprint,
+            observation.valid_at,
+            editable.rating,
+            editable.color_label.clone(),
+            editable.pick_label,
+        );
+        Ok((editable, projection))
     }
 
     pub fn mark_observation_loading(
@@ -621,7 +653,7 @@ fn validate_patch(patch: &crate::metadata::types::MetadataPatch) -> Result<(), M
     Ok(())
 }
 
-fn read_sidecar(asset_path: &Path) -> Result<EditableMetadata, MetadataError> {
+pub(crate) fn read_sidecar(asset_path: &Path) -> Result<EditableMetadata, MetadataError> {
     let path = sidecar_path(asset_path);
     if !path.is_file() {
         return Ok(EditableMetadata::default());

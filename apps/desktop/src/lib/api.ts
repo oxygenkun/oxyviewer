@@ -676,6 +676,11 @@ export async function onMetadataProjectionUpdated(
   return listen<MetadataProjection>("metadata-projection-updated", (event) => callback(event.payload));
 }
 
+export async function onAssetTagsUpdated(callback: (path: string) => void): Promise<UnlistenFn> {
+  if (!isTauri()) return () => {};
+  return listen<string>("asset-tags-updated", (event) => callback(event.payload));
+}
+
 export async function onImageProjectionUpdated(
   callback: (projection: ImageProjection) => void,
 ): Promise<UnlistenFn> {
