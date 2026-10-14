@@ -7,7 +7,7 @@
  *
  * Usage:
  *   node tests/perf/perf-e2e.mjs [--scenario <name>]... [--runs N]
- *                            [--update-baseline] [--verbose] [--app <path>]
+ *                            [--update-baseline] [--verbose] [--app <path>] [--state-layout core-v2|legacy]
  *   node tests/perf/perf-e2e.mjs --folder <path> --select-name <file>
  *                            [--scroll-end] [--cold-cache] [--await-mark <token>]
  *
@@ -39,6 +39,7 @@ function parseArgs(argv) {
     verbose: false,
     app: undefined,
     config: SCENARIOS_PATH,
+    stateLayout: "core-v2",
     folder: undefined,
     selectName: undefined,
     scrollEnd: false,
@@ -54,6 +55,7 @@ function parseArgs(argv) {
     else if (arg === "--verbose") args.verbose = true;
     else if (arg === "--app") args.app = argv[++index];
     else if (arg === "--config") args.config = path.resolve(argv[++index]);
+    else if (arg === "--state-layout") args.stateLayout = argv[++index];
     else if (arg === "--folder") args.folder = argv[++index];
     else if (arg === "--select-name") args.selectName = argv[++index];
     else if (arg === "--scroll-end") args.scrollEnd = true;
@@ -61,7 +63,7 @@ function parseArgs(argv) {
     else if (arg === "--cold-cache") args.coldCache = true;
     else if (arg === "--await-mark") args.awaitMarks.push(argv[++index]);
     else if (arg === "--help" || arg === "-h") {
-      console.log("Usage: node tests/perf/perf-e2e.mjs [--config path] [--scenario name]... [--runs N] [--update-baseline] [--verbose] [--app path]");
+      console.log("Usage: node tests/perf/perf-e2e.mjs [--config path] [--scenario name]... [--runs N] [--update-baseline] [--verbose] [--app path] [--state-layout core-v2|legacy]");
       console.log("       node tests/perf/perf-e2e.mjs --folder path --select-name file [--scroll-end] [--cold-cache] [--await-mark token]");
       console.log("       node tests/perf/perf-e2e.mjs --folder path --grid-scroll [--cold-cache] [--runs N]");
       process.exit(0);
@@ -69,6 +71,9 @@ function parseArgs(argv) {
       console.error(`Unknown argument: ${arg}`);
       process.exit(2);
     }
+  }
+  if (!["core-v2", "legacy"].includes(args.stateLayout)) {
+    throw new Error("--state-layout must be core-v2 or legacy (baseline-only)");
   }
   return args;
 }
@@ -197,7 +202,7 @@ function prepareFixture(name, fixture) {
 // ---------------------------------------------------------------------------
 
 function hasManagedArtifact(cacheDir) {
-  const root = path.join(cacheDir, "media-cache-v2");
+  const root = path.join(cacheDir, "media-cache-v3");
   if (!fs.statSync(root, { throwIfNoEntry: false })?.isDirectory()) return false;
   for (const prefix of fs.readdirSync(root, { withFileTypes: true })) {
     if (!prefix.isDirectory() || !/^[0-9a-f]{2}$/.test(prefix.name)) continue;
@@ -483,9 +488,13 @@ async function main() {
       continue;
     }
     const runs = args.runs ?? scenario.runs ?? 3;
+    const cacheRoot = path.join(REPORTS_DIR, ".runtime", name, "cache");
     const runtime = {
       dataDir: path.join(REPORTS_DIR, ".runtime", name, "data"),
-      cacheDir: path.join(REPORTS_DIR, ".runtime", name, "cache", "previews"),
+      cacheDir: args.stateLayout === "legacy" ? path.join(cacheRoot, "previews") : cacheRoot,
+      previewDir: args.stateLayout === "legacy"
+        ? path.join(cacheRoot, "previews")
+        : path.join(cacheRoot, "core-v2", "previews"),
     };
     fs.rmSync(path.join(REPORTS_DIR, ".runtime", name), { recursive: true, force: true });
     const selectName = scenario.selectName
@@ -529,7 +538,7 @@ async function main() {
         continue;
       }
       if (scenario.requireWarmArtifact
-        && !hasManagedArtifact(runtime.cacheDir)) {
+        && !hasManagedArtifact(runtime.previewDir)) {
         failures.push(`${name}: warmup did not publish a managed cache artifact`);
         console.error("  WARMUP INCOMPLETE: no managed cache artifact; measured runs rejected");
         continue;

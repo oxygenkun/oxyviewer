@@ -142,7 +142,7 @@
       "fixture": { "type": "file", "path": "tests/fixtures/DSC00449.HIF" },
       "selectName": "DSC00449.HIF",
       "enterLoupe": true,
-      "awaitMarks": ["image:loaded@full"],
+      "awaitMarks": ["image:loaded@full|heif:all-tiles-painted"],
       "budgets": {},
       "runs": 3,
       "coldCache": true,

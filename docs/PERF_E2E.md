@@ -61,7 +61,7 @@ PerfHarness 组件（真实 UI 路径）
   │  openPath(folder) → 等首屏数据 → 双 rAF 标记首屏 paint
   │  → select(asset) → setView("loupe") → 等 awaitMarks
   ▼
-perfProbe（src/lib/perfProbe.ts，未激活时零开销）
+perfProbe（src/lib/diagnostics/perfProbe.ts，未激活时零开销）
   │  埋点：api.ts(openFolder/listAssets/generatedPreview/startHeifDecode)
   │       Thumbnail(image:loaded)                         PerfHarness
   ▼
@@ -256,3 +256,18 @@ WebView can clamp timers; such runs are not valid fast-scroll measurements.
 该探针只证明 DOM 几何正确，不能证明最终绘制的像素比例。macOS WKWebView
 曾在 DOM 完全正确时将 `object-fit: contain` 的大图拉伸；必须另外在 Release
 窗口检查 73% 前后及 100% / 200% 的实际画面，并与同图低倍率的细节比例对照。
+
+## Four-package state and delivery qualification
+
+The runner defaults to `core-v2`: OXY_PERF_CACHE_DIR is an isolated cache root,
+with managed previews under core-v2/previews/media-cache-v3. Warmup inspection
+uses that actual preview directory. `--state-layout legacy` is only for comparing
+an explicitly selected pre-refactor executable; it uses the old isolated preview
+path and does not add compatibility to the product.
+
+Await tokens may join alternatives with `|`. The full-HIF scenario accepts
+`image:loaded@full|heif:all-tiles-painted`: macOS/artifact delivery and native tile
+delivery have different completion marks. Native completion requires the selected
+photo, all tiles settled, zero failures and a visible canvas. A thumbnail, hidden
+canvas, failed tile or another photo cannot complete that gate. Cached full-HIF
+still requires its explicit cache-hit and loaded-full marks.

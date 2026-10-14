@@ -306,6 +306,12 @@ resource leases, cancellation and stale-publication semantics.
   strict all-targets Clippy and generated contract drift. Frontend check,
   413 tests across 70 files and production build pass. These checks do not
   replace native release/real-media performance qualification.
+- Release qualification caught stale runner assumptions: media-cache-v2 and
+  unversioned preview roots, plus full-HIF completion tied only to cached images.
+  Runner now inspects core-v2/media-cache-v3, with an explicit baseline-only
+  legacy layout. HIF completion accepts artifact or visible successful native
+  frame; two focused regressions reject other photos, thumbnails, hidden and
+  failed tile frames. Real warm-artifact and native-full rechecks pass.
 - Next: finish current documentation/tooling review, then run the final native
   release comparison, real RAW/JPEG/HIF and analysis qualification, and measure
   incremental check/build costs against the original baseline.

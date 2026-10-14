@@ -24,9 +24,11 @@ const DEFAULT_TIMEOUT_MS = 30_000;
 /**
  * Await token syntax: `mark-name`, `mark-name@level` (shorthand for the
  * semantic detail.stage), or `mark-name@key=value` matched on any detail field.
+ * Alternatives separated by `|` accept either delivery representation.
  * Image marks are restricted to the selected asset's large loupe image.
  */
-function markSatisfied(token: string, scenario: PerfScenario): boolean {
+export function markSatisfied(token: string, scenario: Pick<PerfScenario, "selectName" | "scrollToEnd">): boolean {
+  if (token.includes("|")) return token.split("|").some((alternative) => markSatisfied(alternative, scenario));
   const atIndex = token.indexOf("@");
   const name = atIndex === -1 ? token : token.slice(0, atIndex);
   const condition = atIndex === -1 ? undefined : token.slice(atIndex + 1);
@@ -45,6 +47,9 @@ function markSatisfied(token: string, scenario: PerfScenario): boolean {
     mark.name === name
     && (!scenario.selectName || mark.detail?.assetName === scenario.selectName)
     && (name !== "image:loaded" || mark.detail?.large === !scenario.scrollToEnd)
+    && (name !== "heif:all-tiles-painted" || (
+      mark.detail?.failed === 0 && mark.detail?.allSettled === true && mark.detail?.canvasVisibility === "visible"
+    ))
     && (key === undefined || String(mark.detail?.[key]) === String(value))
   );
 }
