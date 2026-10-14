@@ -293,6 +293,11 @@ resource leases, cancellation and stale-publication semantics.
   geometry commits wake the existing coalescing mirror worker; failure does not.
   A real-JPEG regression proves the confirmed tag reaches XMP and stopped writes
   are rejected. Existing core tests, that regression and workspace Clippy pass.
+- ExifTool status/configuration/install now launch through MetadataService and
+  CoreRuntime. Configuration/install serialize their shared destination; status
+  does not wait for the install gate. A held-gate shutdown test proves the live
+  worker is reported, stopped installation writes nothing and future admission
+  is rejected. Both metadata service tests and strict workspace Clippy pass.
 - Next: move remaining desktop use-case coordination and person transactions,
   remove legacy person identity paths and finish ownership/docs/tooling gates,
   then complete final release/performance qualification.

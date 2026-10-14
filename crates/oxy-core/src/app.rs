@@ -62,7 +62,6 @@ pub struct OxyApp {
     pub metadata_service: Arc<MetadataService>,
     pub resource_service: Arc<ResourceService>,
     pub queue_diagnostics: Arc<QueueDiagnostics>,
-    pub metadata_provider: Arc<ProviderManager>,
     pub burst_scan: Arc<BurstScanner>,
 }
 
@@ -140,6 +139,8 @@ impl OxyApp {
             metadata: metadata.clone(),
             queue: metadata_queue.clone(),
             jobs: jobs.clone(),
+            provider: metadata_provider,
+            provider_mutation: Default::default(),
         });
         let library_index_queue = LibraryIndexQueue::new(library.clone(), files.clone());
         let queue_diagnostics = Arc::new(QueueDiagnostics {
@@ -215,7 +216,6 @@ impl OxyApp {
                 metadata_service,
                 resource_service,
                 queue_diagnostics,
-                metadata_provider,
                 burst_scan: Default::default(),
             },
             events,

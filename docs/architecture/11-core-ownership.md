@@ -173,3 +173,7 @@ repository 保留几何写入，文件/根恢复语句集中于 people::repo::re
 向桌面公开原始 People/Library、person operation/model 目录或 metadata facade。
 人物写入拒绝停止后的准入，确认、标签关联和标框的成功提交唤醒已有 coalescing
 TagXmpSync worker；失败不触发镜像。真实 JPEG 回归覆盖确认标签进入 XMP。
+
+ExifTool 的观察、配置和安装由 MetadataService 发起受控 worker。配置与安装的
+目标目录使用专用 gate，状态观察独立；等待 gate 的任务停止后不会再开始原生动作。
+已经开始的原生调用自行展开，退出仍按真实 worker 状态报告超时。桌面只等待结果。

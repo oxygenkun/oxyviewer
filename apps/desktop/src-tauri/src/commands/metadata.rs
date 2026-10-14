@@ -60,10 +60,12 @@ pub(crate) async fn sync_metadata_to_embedded(
 pub(crate) async fn get_exiftool_status(
     state: State<'_, AppState>,
 ) -> Result<ExiftoolStatus, String> {
-    let provider = state.metadata_provider.clone();
-    tauri::async_runtime::spawn_blocking(move || provider.status())
-        .await
-        .map_err(|error| error.to_string())
+    let receiver = state.metadata_service.provider_status()?;
+    tauri::async_runtime::spawn_blocking(move || {
+        receiver.recv().map_err(|error| error.to_string())?
+    })
+    .await
+    .map_err(|error| error.to_string())?
 }
 
 #[tauri::command]
@@ -71,16 +73,20 @@ pub(crate) async fn configure_exiftool(
     path: PathBuf,
     state: State<'_, AppState>,
 ) -> Result<ExiftoolStatus, String> {
-    let provider = state.metadata_provider.clone();
-    tauri::async_runtime::spawn_blocking(move || provider.set_user_executable(path))
-        .await
-        .map_err(|error| error.to_string())?
+    let receiver = state.metadata_service.configure_provider(path)?;
+    tauri::async_runtime::spawn_blocking(move || {
+        receiver.recv().map_err(|error| error.to_string())?
+    })
+    .await
+    .map_err(|error| error.to_string())?
 }
 
 #[tauri::command]
 pub(crate) async fn install_exiftool(state: State<'_, AppState>) -> Result<ExiftoolStatus, String> {
-    let provider = state.metadata_provider.clone();
-    tauri::async_runtime::spawn_blocking(move || provider.install_managed())
-        .await
-        .map_err(|error| error.to_string())?
+    let receiver = state.metadata_service.install_provider()?;
+    tauri::async_runtime::spawn_blocking(move || {
+        receiver.recv().map_err(|error| error.to_string())?
+    })
+    .await
+    .map_err(|error| error.to_string())?
 }

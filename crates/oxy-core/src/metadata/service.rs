@@ -1,6 +1,7 @@
 //! Metadata read and edit use cases, with application-owned write workers.
 use super::{
     MetadataFacade,
+    provider::{ExiftoolStatus, ProviderManager},
     types::{AssetDetailsResult, MetadataPatch},
 };
 use crate::{
@@ -17,7 +18,7 @@ use oxy_media::types::AssetKind;
 use std::{
     path::PathBuf,
     sync::{
-        Arc,
+        Arc, Mutex,
         mpsc::{self, Receiver},
     },
 };
@@ -28,6 +29,14 @@ pub struct MetadataService {
     pub(crate) metadata: MetadataFacade,
     pub(crate) queue: MetadataQueue,
     pub(crate) jobs: Arc<JobRegistry>,
+    pub(crate) provider: Arc<ProviderManager>,
+    pub(crate) provider_mutation: Mutex<()>,
+}
+
+enum ProviderWork {
+    Status,
+    Configure(PathBuf),
+    Install,
 }
 
 enum Edit {
@@ -47,6 +56,60 @@ impl Drop for EditingJob {
 }
 
 impl MetadataService {
+    pub fn provider_status(
+        self: &Arc<Self>,
+    ) -> Result<Receiver<Result<ExiftoolStatus, String>>, String> {
+        self.start_provider(ProviderWork::Status)
+    }
+
+    pub fn configure_provider(
+        self: &Arc<Self>,
+        path: PathBuf,
+    ) -> Result<Receiver<Result<ExiftoolStatus, String>>, String> {
+        self.start_provider(ProviderWork::Configure(path))
+    }
+
+    pub fn install_provider(
+        self: &Arc<Self>,
+    ) -> Result<Receiver<Result<ExiftoolStatus, String>>, String> {
+        self.start_provider(ProviderWork::Install)
+    }
+
+    fn start_provider(
+        self: &Arc<Self>,
+        work: ProviderWork,
+    ) -> Result<Receiver<Result<ExiftoolStatus, String>>, String> {
+        let service = Arc::clone(self);
+        let (sender, receiver) = mpsc::channel();
+        self.runtime
+            .spawn_named("metadata-provider".into(), move || {
+                // Configuration and installation share one destination. Status
+                // remains independent, so observing it does not wait for download.
+                let _mutation = if matches!(&work, ProviderWork::Status) {
+                    None
+                } else {
+                    Some(
+                        service
+                            .provider_mutation
+                            .lock()
+                            .unwrap_or_else(std::sync::PoisonError::into_inner),
+                    )
+                };
+                let result = if service.runtime.is_stopping() {
+                    Err("application is shutting down".into())
+                } else {
+                    match work {
+                        ProviderWork::Status => Ok(service.provider.status()),
+                        ProviderWork::Configure(path) => service.provider.set_user_executable(path),
+                        ProviderWork::Install => service.provider.install_managed(),
+                    }
+                };
+                let _ = sender.send(result);
+            })
+            .map_err(|error| error.to_string())?;
+        Ok(receiver)
+    }
+
     pub fn details(&self, path: PathBuf) -> Result<AssetDetailsResult, String> {
         self.queue
             .request_details(&self.runtime, path)?
@@ -148,6 +211,40 @@ impl MetadataService {
 mod tests {
     use super::*;
     use crate::{AppPaths, OxyApp};
+
+    #[test]
+    fn provider_work_is_owned_and_waiting_install_cannot_start_after_shutdown() {
+        let directory = tempfile::tempdir().unwrap();
+        let data = directory.path().join("data");
+        let (app, _) = OxyApp::open(AppPaths {
+            data_dir: data.clone(),
+            preview_dir: directory.path().join("cache"),
+        })
+        .unwrap();
+        let guard = app.metadata_service.provider_mutation.lock().unwrap();
+        let result = app.metadata_service.install_provider().unwrap();
+        assert!(
+            !app.shutdown(std::time::Duration::ZERO),
+            "live worker was reported joined"
+        );
+        drop(guard);
+        assert!(app.shutdown(std::time::Duration::from_secs(3)));
+        assert!(
+            result
+                .recv()
+                .unwrap()
+                .unwrap_err()
+                .contains("shutting down")
+        );
+        assert!(!data.join("providers").exists());
+        assert!(app.metadata_service.install_provider().is_err());
+        assert!(
+            app.metadata_service
+                .configure_provider(data.join("tool"))
+                .is_err()
+        );
+        assert!(app.metadata_service.provider_status().is_err());
+    }
 
     #[test]
     fn partial_batch_refreshes_written_metadata_and_shutdown_rejects_new_edits() {
