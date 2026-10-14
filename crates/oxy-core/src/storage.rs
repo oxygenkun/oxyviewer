@@ -11,12 +11,7 @@ use rusqlite::OpenFlags;
 use std::{path::Path, sync::Arc};
 use thiserror::Error;
 
-/// Handed to a domain crate that owns a transaction boundary.
-///
-/// The transaction belongs to the layer that decides which writes are one act,
-/// so that layer has to name the type — but it should not have to name
-/// `rusqlite` to do it. Re-exporting the two handles is what keeps the storage
-/// engine behind this crate's boundary.
+/// Internal handles for feature repositories and named transaction workflows.
 pub use rusqlite::{Connection, Transaction};
 
 /// Failures from opening or using the SQLite store itself.
@@ -47,7 +42,7 @@ impl StoreError {
     ///
     /// A domain crate maps this to the rule it means — a tag name repeated
     /// among its siblings, an identity claimed twice — without naming the
-    /// engine, which is what lets `oxy-tags` depend on this crate alone.
+    /// engine, without exporting connection mechanisms through the application API.
     pub fn is_constraint_violation(&self) -> bool {
         matches!(
             self,
@@ -119,6 +114,7 @@ impl Store {
     ///
     /// There is no second connection: an in-memory database cannot be shared
     /// across handles, so [`Store::read`] answers from the write connection.
+    #[cfg(test)]
     pub fn in_memory() -> Result<Self, StoreError> {
         let vector_registration = vector::register();
         let mut connection = Connection::open_in_memory()?;
@@ -157,11 +153,13 @@ impl Store {
     ///
     /// Extension probing needs the connection handle itself rather than a
     /// guard, because it opens a second statement on each connection.
+    #[cfg(test)]
     pub fn reader(&self) -> Option<&Mutex<Connection>> {
         self.reader.as_ref()
     }
 
     /// The projection-only reader, before locking it. `None` in memory.
+    #[cfg(test)]
     pub fn projection_reader(&self) -> Option<&Mutex<Connection>> {
         self.projection_reader.as_ref()
     }
@@ -184,6 +182,7 @@ impl Store {
     }
 
     /// Empties every rebuildable table. Never touches a user-owned one.
+    #[cfg(test)]
     pub fn clear_rebuildable_cache(&self) -> Result<(), StoreError> {
         let mut connection = self.write();
         schema::clear_cache(&mut connection)?;

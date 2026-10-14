@@ -175,6 +175,11 @@ resource leases, cancellation and stale-publication semantics.
   retired; a new disk-store test proves catalog reads complete while the writer
   is held. Core's 280 tests / 12 ignored, desktop's 5 tests and strict workspace
   Clippy pass. Legacy identity APIs/UI and their tables still require retirement.
+- Storage and declaration macros are now crate-private. Library/People/Tags
+  database constructors no longer form an external assembly API; OxyApp owns
+  their construction. In-memory setup, reader diagnostics and full database
+  cache-clear helpers are test-only, retaining declaration-based user/marker
+  preservation checks without broadening the product's preview-clear action.
 - Next: move remaining desktop use-case coordination and person SQL,
   remove legacy person identity paths and finish ownership/docs/tooling gates,
   then complete final release/performance qualification.

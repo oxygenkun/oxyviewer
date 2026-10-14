@@ -46,7 +46,7 @@ pub struct People {
 }
 
 impl People {
-    pub fn new(store: Arc<Store>) -> Self {
+    pub(crate) fn new(store: Arc<Store>) -> Self {
         let vector_status = store.vector_status();
         Self {
             store,

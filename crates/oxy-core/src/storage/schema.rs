@@ -2,9 +2,12 @@
 //! Creation and clearing use the same declarations in dependency order; table
 //! names are never used to guess deletion ownership.
 
-pub mod cache;
-pub mod user;
+#[cfg(test)]
+mod cache;
+#[cfg(test)]
+mod user;
 
+#[cfg(test)]
 pub use crate::storage::table::DataClass;
 
 use crate::storage::table;
@@ -34,6 +37,7 @@ pub(super) fn definitions() -> &'static [table::TableDef] {
 ///
 /// This exists to be audited and asserted against, not to be consulted before
 /// deleting: a clear reads the declaration's `DataClass` directly.
+#[cfg(test)]
 pub fn tables() -> impl Iterator<Item = (&'static str, DataClass)> {
     cache::DEFS
         .iter()
@@ -42,16 +46,19 @@ pub fn tables() -> impl Iterator<Item = (&'static str, DataClass)> {
 }
 
 /// Tables a cache clear may empty.
+#[cfg(test)]
 pub fn rebuildable_tables() -> impl Iterator<Item = &'static str> {
     table::names(&cache::DEFS)
 }
 
 /// Tables that survive every cache clear, migration, and re-index.
+#[cfg(test)]
 pub fn user_owned_tables() -> impl Iterator<Item = &'static str> {
     table::names(&user::DEFS)
 }
 
 /// The class of a declared table, if the schema claims it.
+#[cfg(test)]
 pub fn class_of(name: &str) -> Option<DataClass> {
     tables()
         .find(|(table, _)| *table == name)
@@ -65,6 +72,7 @@ pub fn class_of(name: &str) -> Option<DataClass> {
 /// clear publish an older result with a higher revision and win over
 /// everything written after. Clearing a schema marker would only force a
 /// needless rebuild of an otherwise valid cache.
+#[cfg(test)]
 pub fn preserved_on_clear() -> impl Iterator<Item = &'static str> {
     table::preserved(&cache::DEFS)
 }
@@ -110,6 +118,7 @@ pub(crate) fn ensure(connection: &mut Connection) -> Result<(), crate::storage::
 }
 
 /// Empties every rebuildable table. Never touches a user-owned one.
+#[cfg(test)]
 pub(crate) fn clear_cache(connection: &mut Connection) -> Result<(), rusqlite::Error> {
     cache::clear(connection)
 }

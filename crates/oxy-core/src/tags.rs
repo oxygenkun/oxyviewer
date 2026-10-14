@@ -46,7 +46,7 @@ pub struct Tags {
 }
 
 impl Tags {
-    pub fn new(store: Arc<Store>) -> Self {
+    pub(crate) fn new(store: Arc<Store>) -> Self {
         Self { store }
     }
 

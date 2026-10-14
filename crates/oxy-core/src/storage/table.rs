@@ -43,6 +43,7 @@ pub enum DataClass {
     Marker,
 }
 
+#[cfg(test)]
 impl DataClass {
     /// Whether a cache clear empties a table of this class.
     pub fn is_cleared_by_cache_clear(self) -> bool {
@@ -92,10 +93,7 @@ pub struct TableDef {
 /// declared *after* every table it references, and a clear walks the
 /// declaration backwards so it always empties the referencing table first.
 ///
-/// `#[macro_export]` places the macro at this crate's root; the `pub use`
-/// below re-exports it at `crate::storage::table::tables`, so another crate can
-/// invoke it by path next to the type it produces.
-#[macro_export]
+/// Feature schemas invoke the internal macro through `storage::table::tables`.
 macro_rules! tables {
     ( $( $class:ident $creation:ident $name:ident $( = $ddl:literal )? );+ $(;)? ) => {
         pub const DEFS: &[$crate::storage::table::TableDef] =
@@ -103,13 +101,12 @@ macro_rules! tables {
     };
 }
 
-pub use crate::tables;
+pub(crate) use tables;
 
 /// The class-and-creation-to-[`TableDef`] expansion used by [`tables!`].
 ///
 /// Re-exported at `crate::storage::table::table_def` so the `tables!` expansion can
 /// reach it by path from a crate that does not import it.
-#[macro_export]
 macro_rules! table_def {
     (cache create $name:ident = $ddl:literal) => {
         $crate::storage::table::TableDef {
@@ -153,7 +150,7 @@ macro_rules! table_def {
     };
 }
 
-pub use crate::table_def;
+pub(crate) use table_def;
 
 /// Creates every declared table that this declaration owns.
 pub fn create_all(connection: &Connection, defs: &[TableDef]) -> Result<(), rusqlite::Error> {
@@ -174,6 +171,7 @@ pub fn create_all(connection: &Connection, defs: &[TableDef]) -> Result<(), rusq
 /// order — a table is created after the table it references — so clearing in
 /// reverse always empties the referencing table first and never leaves a
 /// foreign key pointing at a row that is about to disappear.
+#[cfg(test)]
 pub fn clear_all(connection: &Connection, defs: &[TableDef]) -> Result<(), rusqlite::Error> {
     let mut sql = String::new();
     for def in defs
@@ -189,11 +187,13 @@ pub fn clear_all(connection: &Connection, defs: &[TableDef]) -> Result<(), rusql
 }
 
 /// Every table a declaration owns, created by it or not.
+#[cfg(test)]
 pub fn names(defs: &'static [TableDef]) -> impl Iterator<Item = &'static str> {
     defs.iter().map(|def| def.name)
 }
 
 /// Declared tables a clear leaves in place.
+#[cfg(test)]
 pub fn preserved(defs: &'static [TableDef]) -> impl Iterator<Item = &'static str> {
     defs.iter()
         .filter(|def| !def.class.is_cleared_by_cache_clear())

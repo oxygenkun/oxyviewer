@@ -12,7 +12,7 @@ pub mod metadata;
 pub mod people;
 pub mod resources;
 pub mod runtime;
-pub mod storage;
+pub(crate) mod storage;
 pub mod tags;
 
 pub mod settings;

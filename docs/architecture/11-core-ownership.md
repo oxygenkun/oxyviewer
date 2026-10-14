@@ -95,6 +95,11 @@ PersonService 拥有模型状态、下载与导入、operation 预留/取消、�
 人物与标签的来源查询分别在各自 repository，workflow 在事务内组合结果，保留
 手工和 sidecar 来源。旧身份 API 与未使用前端组件仍待退役，不能据此宣布兼容清理完成。
 
+storage 及表声明宏仅在 core 内部可见，桌面和外部调用方通过 OxyApp 装配服务，
+不能自行打开数据库或取得连接。内存库、连接诊断和全库 cache clear 的入口仅供内部
+测试使用；它们继续验证按声明逆序清理且保留 user/marker 表。产品设置中的预览清理
+仍只清理当前版本的预览文件，未扩展为 SQLite 清理。
+
 默认数据和缓存路径使用 `core-v2` 子目录，custom cache 也有独立的版本子目录。
 Store 只接收本核心的 application ID/schema version，或尚未创建表的空文件。
 打开已有文件先做只读检查，未识别的旧库或未来版本不会被升级、重建或 checkpoint。

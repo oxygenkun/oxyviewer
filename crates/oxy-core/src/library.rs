@@ -18,12 +18,9 @@ mod user;
 use crate::storage::Store;
 use parking_lot::{Mutex, MutexGuard};
 use rusqlite::Connection;
-use std::{
-    collections::HashSet,
-    path::{Path, PathBuf},
-    sync::Arc,
-    time::Duration,
-};
+#[cfg(test)]
+use std::path::Path;
+use std::{collections::HashSet, path::PathBuf, sync::Arc, time::Duration};
 use thiserror::Error;
 
 pub(crate) const DEFAULT_PAGE_SIZE: usize = 250;
@@ -77,17 +74,20 @@ impl Library {
     /// and brings the schema up to date with user-owned tables first. Nothing
     /// about the schema is decided here, so a storage version bump cannot be
     /// something this constructor forgets to run.
-    pub fn open(path: &Path) -> Result<Self, LibraryError> {
+    #[cfg(test)]
+    pub(crate) fn open(path: &Path) -> Result<Self, LibraryError> {
         Ok(Self::from_store(Arc::new(Store::open(path)?)))
     }
 
     /// Opens a library that lives only in this process.
-    pub fn in_memory() -> Result<Self, LibraryError> {
+    #[cfg(test)]
+    pub(crate) fn in_memory() -> Result<Self, LibraryError> {
         Ok(Self::from_store(Arc::new(Store::in_memory()?)))
     }
 
     /// Standalone harnesses share an isolated snapshot handle and foreground
     /// gate over this store. OxyApp supplies its own assembled handles.
+    #[cfg(test)]
     fn from_store(store: Arc<Store>) -> Self {
         let foreground = Arc::new(crate::jobs::ForegroundGate::default());
         let snapshots = Arc::new(crate::browse::snapshots::BrowseSnapshots::new(
@@ -112,7 +112,8 @@ impl Library {
     }
 
     /// The store this library reads, so a sibling domain can be built over it.
-    pub fn store(&self) -> Arc<Store> {
+    #[cfg(test)]
+    pub(crate) fn store(&self) -> Arc<Store> {
         Arc::clone(&self.store)
     }
 }
