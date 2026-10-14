@@ -1,5 +1,5 @@
 use crate::state::AppState;
-use oxy_core::contracts::{AssetKind, RawDecoderStatus};
+use oxy_core::contracts::RawDecoderStatus;
 use std::path::PathBuf;
 use tauri::State;
 
@@ -7,12 +7,12 @@ use tauri::State;
 pub(crate) async fn get_raw_decoder_status(
     path: Option<PathBuf>,
     refresh: bool,
+    state: State<'_, AppState>,
 ) -> Result<RawDecoderStatus, String> {
-    tauri::async_runtime::spawn_blocking(move || {
-        oxy_media::raw_decoder_status(path.as_deref(), refresh)
-    })
-    .await
-    .map_err(|error| error.to_string())
+    let service = state.resource_service.clone();
+    tauri::async_runtime::spawn_blocking(move || service.raw_decoder_status(path, refresh))
+        .await
+        .map_err(|error| error.to_string())
 }
 
 #[tauri::command]
@@ -20,17 +20,10 @@ pub(crate) async fn retry_raw_full(
     path: PathBuf,
     state: State<'_, AppState>,
 ) -> Result<(), String> {
-    let queue = state.preview_queue.clone();
-    tauri::async_runtime::spawn_blocking(move || {
-        if AssetKind::from_path(&path) != Some(AssetKind::Raw) {
-            return Err("expected a RAW file".into());
-        }
-        oxy_media::request_raw_retry(&path).map_err(|error| error.to_string())?;
-        queue.invalidate_preview(&path, oxy_core::contracts::RenderLevel::Full);
-        Ok(())
-    })
-    .await
-    .map_err(|error| error.to_string())?
+    let service = state.resource_service.clone();
+    tauri::async_runtime::spawn_blocking(move || service.retry_raw_full(path))
+        .await
+        .map_err(|error| error.to_string())?
 }
 
 #[tauri::command]

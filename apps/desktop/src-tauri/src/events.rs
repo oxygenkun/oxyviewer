@@ -32,6 +32,12 @@ pub(crate) fn forward(app: AppHandle, events: Receiver<CoreEvent>) {
                     CoreEvent::MetadataProjectionUpdated(value) => {
                         let _ = app.emit("metadata-projection-updated", value);
                     }
+                    CoreEvent::HeifTilePublished(tile) => {
+                        let _ = app.emit("heif-tile-ready", heif_tile_event(*tile));
+                    }
+                    CoreEvent::HeifStatusUpdated(value) => {
+                        let _ = app.emit("heif-decode-status", value);
+                    }
                     CoreEvent::DirectoryTreeUpdated(value) => {
                         let _ = app.emit("directory-tree-updated", value);
                     }
@@ -50,4 +56,20 @@ pub(crate) fn forward(app: AppHandle, events: Receiver<CoreEvent>) {
         })
         .expect("failed to start desktop event adapter");
     host.manage(EventAdapter(Mutex::new(Some(worker))));
+}
+
+fn heif_tile_event(tile: oxy_media::HeifTilePublication) -> oxy_core::contracts::HeifTileReady {
+    oxy_core::contracts::HeifTileReady {
+        session_id: tile.session_id.clone(),
+        generation: tile.generation,
+        x: tile.x,
+        y: tile.y,
+        width: tile.width,
+        height: tile.height,
+        payload: tile.payload,
+        url: format!(
+            "oxy-media://localhost/tile/{}/{}/{}/{}",
+            tile.session_id, tile.generation, tile.x, tile.y
+        ),
+    }
 }

@@ -14,7 +14,7 @@ use crate::{
     metadata::{BurstScanner, MetadataFacade, MetadataService, provider::ProviderManager},
     people::{People, PersonService, execution::operations::PersonOperations},
     resources::{
-        DebugSnapshotCache, LibraryIndexQueue, cache::CacheManager,
+        DebugSnapshotCache, LibraryIndexQueue, cache::CacheManager, diagnostics::QueueDiagnostics,
         directory_tree::DirectoryTreeQueue, metadata::MetadataQueue, preview::PreviewQueue,
         service::ResourceService,
     },
@@ -65,12 +65,8 @@ pub struct OxyApp {
     pub media_resources: oxy_media::ResourceRegistry,
     pub metadata: MetadataFacade,
     pub metadata_service: Arc<MetadataService>,
-    pub metadata_queue: MetadataQueue,
-    pub preview_queue: PreviewQueue,
     pub resource_service: Arc<ResourceService>,
-    pub debug_snapshots: Arc<DebugSnapshotCache>,
-    pub directory_tree_queue: DirectoryTreeQueue,
-    pub library_index_queue: LibraryIndexQueue,
+    pub queue_diagnostics: Arc<QueueDiagnostics>,
     pub metadata_provider: Arc<ProviderManager>,
     pub burst_scan: Arc<BurstScanner>,
 }
@@ -143,10 +139,13 @@ impl OxyApp {
             cache.clone(),
         );
         let jobs = Arc::new(JobRegistry::default());
+        let heif = Arc::new(oxy_media::HeifDecodeService::default());
         let resource_service = Arc::new(ResourceService {
             runtime: runtime.clone(),
             queue: preview_queue.clone(),
             cache: cache.clone(),
+            files: files.clone(),
+            heif: heif.clone(),
         });
         let metadata_service = Arc::new(MetadataService {
             runtime: runtime.clone(),
@@ -156,6 +155,13 @@ impl OxyApp {
             jobs: jobs.clone(),
         });
         let library_index_queue = LibraryIndexQueue::new(library.clone(), files.clone());
+        let queue_diagnostics = Arc::new(QueueDiagnostics {
+            preview: preview_queue.clone(),
+            metadata: metadata_queue.clone(),
+            directory_tree: directory_tree_queue.clone(),
+            library_index: library_index_queue.clone(),
+            snapshots: Arc::new(DebugSnapshotCache::default()),
+        });
         let library_service = Arc::new(LibraryService {
             snapshots: snapshots.clone(),
             library: library.clone(),
@@ -187,10 +193,10 @@ impl OxyApp {
             metadata: metadata.clone(),
             tags: tags.clone(),
             people: people.clone(),
-            metadata_queue: metadata_queue.clone(),
-            preview_queue: preview_queue.clone(),
-            directory_tree_queue: directory_tree_queue.clone(),
-            library_index_queue: library_index_queue.clone(),
+            metadata_queue,
+            preview_queue,
+            directory_tree_queue,
+            library_index_queue,
             runtime: runtime.clone(),
             tag_sync: tag_sync.clone(),
         });
@@ -212,16 +218,12 @@ impl OxyApp {
                 person_operations,
                 person_model_dir,
                 cache,
-                heif: Arc::new(oxy_media::HeifDecodeService::default()),
+                heif,
                 media_resources: oxy_media::shared_resource_registry(),
                 metadata,
                 metadata_service,
-                metadata_queue,
-                preview_queue,
                 resource_service,
-                debug_snapshots: Default::default(),
-                directory_tree_queue,
-                library_index_queue,
+                queue_diagnostics,
                 metadata_provider,
                 burst_scan: Default::default(),
             },
@@ -293,7 +295,8 @@ mod tests {
         assert_eq!(app.runtime.active_workers(), 0);
         assert!(matches!(events.recv().unwrap(), CoreEvent::Shutdown));
         assert!(
-            app.metadata_queue
+            app.metadata_service
+                .queue
                 .request_summaries(
                     &app.runtime,
                     vec![],

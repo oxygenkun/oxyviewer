@@ -1,9 +1,6 @@
 use crate::state::AppState;
 use oxy_core::contracts::{DebugQueueSnapshot, PerfScenario};
-use std::{
-    path::PathBuf,
-    time::{Instant, SystemTime, UNIX_EPOCH},
-};
+use std::{path::PathBuf, time::Instant};
 use tauri::{AppHandle, Emitter, Manager, State, WebviewUrl, WebviewWindowBuilder};
 
 #[tauri::command]
@@ -37,47 +34,11 @@ pub(crate) async fn get_debug_queue_snapshot(
     if !cfg!(debug_assertions) && get_perf_scenario().is_none() {
         return Err("queue diagnostics are only available in debug builds".into());
     }
-    let preview = state.preview_queue.clone();
-    let metadata = state.metadata_queue.clone();
-    let directory_tree = state.directory_tree_queue.clone();
-    let library_index = state.library_index_queue.clone();
-    let snapshots = std::sync::Arc::clone(&state.debug_snapshots);
+    let diagnostics = state.queue_diagnostics.clone();
     let requested_at = Instant::now();
-    tauri::async_runtime::spawn_blocking(move || {
-        let collection_started = Instant::now();
-        let worker_wait_micros = requested_at
-            .elapsed()
-            .as_micros()
-            .try_into()
-            .unwrap_or(u64::MAX);
-        let captured_at_unix_ms = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .map_err(|error| error.to_string())?
-            .as_millis()
-            .try_into()
-            .unwrap_or(u64::MAX);
-        let [loupe, thumbnail] = preview.debug_snapshot();
-        let (queues, stale_queues) = snapshots.remember([
-            ("loupe", loupe),
-            ("thumbnail", thumbnail),
-            ("metadata", metadata.debug_snapshot()),
-            ("directoryTree", directory_tree.debug_snapshot()),
-            ("libraryIndex", library_index.debug_snapshot()),
-        ]);
-        Ok(DebugQueueSnapshot {
-            captured_at_unix_ms,
-            worker_wait_micros,
-            collection_micros: collection_started
-                .elapsed()
-                .as_micros()
-                .try_into()
-                .unwrap_or(u64::MAX),
-            queues,
-            stale_queues,
-        })
-    })
-    .await
-    .map_err(|error| error.to_string())?
+    tauri::async_runtime::spawn_blocking(move || diagnostics.collect(requested_at))
+        .await
+        .map_err(|error| error.to_string())?
 }
 
 pub(crate) fn create_debug_queue_window(app: &AppHandle) -> tauri::Result<()> {

@@ -227,6 +227,17 @@ resource leases, cancellation and stale-publication semantics.
   admission cannot replace the new selection and shutdown rejects preparation.
   All 284 core tests / 12 ignored and strict workspace Clippy pass. HEIF delivery
   orchestration and final release/real-media qualification remain outstanding.
+- HEIF cache/artifact/session choice and native callbacks now belong to the
+  resource service. Owned full workers publish typed tile/status events; desktop
+  only builds transport URLs and adapts whole requests. RAW retry, preview cancel
+  and schedule keys also stay in core. QueueDiagnostics collects the existing
+  five nonblocking observations and retains stale samples; OxyApp's exposed queue
+  handles and desktop's resource alias are removed, implementation modules are
+  crate-private. Core's 284 tests / 13 ignored, 5 desktop tests, strict workspace
+  Clippy and contract drift pass. The added ignored native HEIF regression was
+  explicitly run with the repository fixture and passed: tile/status publication
+  and subsequent cached full-artifact reuse. This headless native check does not
+  establish release WebView performance; final comparison remains required.
 - Next: move remaining desktop use-case coordination and person transactions,
   remove legacy person identity paths and finish ownership/docs/tooling gates,
   then complete final release/performance qualification.

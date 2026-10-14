@@ -1,7 +1,8 @@
 pub mod cache;
-pub mod directory_tree;
-pub mod metadata;
-pub mod preview;
+pub mod diagnostics;
+pub(crate) mod directory_tree;
+pub(crate) mod metadata;
+pub(crate) mod preview;
 pub(crate) mod projections;
 pub(crate) mod repo;
 pub(crate) mod schema;
@@ -23,7 +24,7 @@ use std::{
 /// This lock only copies diagnostics; no filesystem, database or queue work
 /// runs while it is held.
 #[derive(Default)]
-pub struct DebugSnapshotCache {
+pub(crate) struct DebugSnapshotCache {
     queues: Mutex<HashMap<String, DebugQueueState>>,
 }
 

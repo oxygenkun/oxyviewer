@@ -1,6 +1,5 @@
 mod commands;
 mod events;
-use oxy_core::resources as jobs;
 mod providers;
 mod state;
 

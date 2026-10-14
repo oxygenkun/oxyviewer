@@ -25,8 +25,6 @@ use std::{
     },
 };
 
-pub const METADATA_PROJECTION_UPDATED_EVENT: &str = "metadata-projection-updated";
-
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 struct RequestKey {
     path: PathBuf,

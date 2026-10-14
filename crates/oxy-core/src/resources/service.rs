@@ -1,17 +1,27 @@
 //! Application preview admission, delivery and explicit cache maintenance.
 use super::{
     cache::CacheManager,
-    preview::{PreviewQueue, PreviewRequest},
-    types::{CacheSettings, ImageProjection},
+    preview::{PreviewIdentity, PreviewQueue, PreviewRequest, PreviewScheduleKey},
+    types::{
+        CacheSettings, ImageProjection, PreviewOmittedPolicy, PreviewScheduleIntent,
+        SchedulePlacement,
+    },
 };
-use crate::{events::CoreEvent, runtime::CoreRuntime};
-use oxy_media::types::{PreviewPriority, RenderLevel};
+use crate::{events::CoreEvent, files::FsCatalog, runtime::CoreRuntime};
+use oxy_media::types::{
+    AssetKind, HeifCapabilities, PreviewPriority, RenderLevel, raw::RawDecoderStatus,
+};
 use std::{path::PathBuf, sync::Arc};
+
+mod heif;
+pub use heif::{HeifFullInput, PreparedHeifFull};
 
 pub struct ResourceService {
     pub(crate) runtime: CoreRuntime,
     pub(crate) queue: PreviewQueue,
     pub(crate) cache: Arc<CacheManager>,
+    pub(crate) files: Arc<FsCatalog>,
+    pub(crate) heif: Arc<oxy_media::HeifDecodeService>,
 }
 
 pub struct PreviewInput {
@@ -73,6 +83,72 @@ impl ResourceService {
         let settings = self.cache.clear()?;
         self.queue.invalidate_all();
         Ok(settings)
+    }
+
+    pub fn cancel_preview(&self, path: PathBuf, level: RenderLevel, request_id: &str) -> bool {
+        self.queue
+            .cancel_request(PreviewIdentity { path, level }, request_id)
+    }
+
+    pub fn reconcile_schedule(
+        &self,
+        scope_id: String,
+        epoch: u64,
+        intents: Vec<PreviewScheduleIntent>,
+        omitted: PreviewOmittedPolicy,
+    ) -> Result<bool, String> {
+        self.queue
+            .reconcile_schedule(scope_id, epoch, intents, omitted)
+    }
+
+    pub fn upsert_schedule(
+        &self,
+        scope_id: String,
+        epoch: u64,
+        path: PathBuf,
+        level: RenderLevel,
+        priority: PreviewPriority,
+        placement: SchedulePlacement,
+    ) -> bool {
+        self.queue.upsert_schedule(
+            scope_id,
+            epoch,
+            PreviewScheduleKey { path, level },
+            priority,
+            placement,
+        )
+    }
+
+    pub fn release_schedule(
+        &self,
+        scope_id: &str,
+        epoch: u64,
+        path: PathBuf,
+        level: RenderLevel,
+    ) -> bool {
+        self.queue
+            .release_schedule(scope_id, epoch, &PreviewScheduleKey { path, level })
+    }
+
+    pub fn heif_capabilities(&self) -> Vec<HeifCapabilities> {
+        self.heif.capabilities()
+    }
+
+    pub fn cancel_heif(&self, session_id: &str) -> bool {
+        self.heif.cancel(session_id)
+    }
+
+    pub fn raw_decoder_status(&self, path: Option<PathBuf>, refresh: bool) -> RawDecoderStatus {
+        oxy_media::raw_decoder_status(path.as_deref(), refresh)
+    }
+
+    pub fn retry_raw_full(&self, path: PathBuf) -> Result<(), String> {
+        if AssetKind::from_path(&path) != Some(AssetKind::Raw) {
+            return Err("expected a RAW file".into());
+        }
+        oxy_media::request_raw_retry(&path).map_err(|error| error.to_string())?;
+        self.queue.invalidate_preview(&path, RenderLevel::Full);
+        Ok(())
     }
 }
 

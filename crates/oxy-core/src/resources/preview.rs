@@ -26,7 +26,6 @@ use std::{
     time::{Duration, Instant},
 };
 
-pub const IMAGE_PROJECTION_UPDATED_EVENT: &str = "image-projection-updated";
 const PROJECTION_SOURCE_REVISION_VERSION: &str = "projection-source-v1";
 const MAX_RETAINED_THUMBNAILS: usize = 2;
 

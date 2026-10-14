@@ -10,8 +10,6 @@ use std::{
     time::{Duration, Instant},
 };
 
-pub const DIRECTORY_TREE_UPDATED_EVENT: &str = "directory-tree-updated";
-
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 struct RequestKey {
     session_id: String,

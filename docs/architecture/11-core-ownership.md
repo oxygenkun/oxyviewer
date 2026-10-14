@@ -124,7 +124,14 @@ storage 及表声明宏仅在 core 内部可见，桌面和外部调用方通过
 ResourceService 负责普通预览的选择、请求范围、投影事件与结果等待，以及显式预览
 清理后的失效。Full selection 在派发 blocking 工作前取得，避免较旧请求晚入队时
 重新选中旧照片。准备阶段不读取源文件；解析与等待在 blocking executor，解码仍由
-原受控队列完成。HEIF 会话的呈现选择和回调编排仍待继续迁入此服务。
+原受控队列完成。
+
+HEIF 的缓存/产物/原生会话选择及回调也属于 ResourceService。Full 队列继续拥有
+会话 worker，tile 和状态通过 CoreEvent 发布；桌面事件 adapter 构造协议 URL，
+协议读取使用同一个原生 HEIF 服务。成功后的检查仍只查缓存，不触发第二次源解码。
+RAW 重试、预览取消与 schedule 用例也经过服务，桌面不再构造 queue key。
+QueueDiagnostics 负责五组非阻塞观察与 busy 时保留样本；等待/采集时长字段保持原义。
+OxyApp 不再公开队列句柄，preview/metadata/directory_tree 实现模块仅 core 内部可见。
 
 默认数据和缓存路径使用 `core-v2` 子目录，custom cache 也有独立的版本子目录。
 Store 只接收本核心的 application ID/schema version，或尚未创建表的空文件。
