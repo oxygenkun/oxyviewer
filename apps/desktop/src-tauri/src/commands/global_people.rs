@@ -42,14 +42,10 @@ pub(crate) async fn set_global_person_tag(
     input: SetGlobalPersonTag,
     state: State<'_, AppState>,
 ) -> Result<(), String> {
-    let people = Arc::clone(&state.people);
-    tauri::async_runtime::spawn_blocking(move || {
-        people
-            .set_global_person_tag(&input)
-            .map_err(|e| e.to_string())
-    })
-    .await
-    .map_err(|e| e.to_string())?
+    let service = Arc::clone(&state.person_service);
+    tauri::async_runtime::spawn_blocking(move || service.set_global_person_tag(input))
+        .await
+        .map_err(|e| e.to_string())?
 }
 #[tauri::command]
 pub(crate) async fn get_global_person_references(

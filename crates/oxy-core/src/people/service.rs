@@ -24,6 +24,11 @@ pub struct PersonService {
 mod analysis_verification;
 
 impl PersonService {
+    pub fn set_global_person_tag(&self, input: SetGlobalPersonTag) -> Result<(), String> {
+        crate::app::workflows::person_tags::set_global_person_tag(&self.people.store, &input)
+            .map_err(|error| error.to_string())
+    }
+
     pub fn workspace(&self, folder_path: PathBuf) -> Result<FolderPeopleWorkspace, String> {
         let folder = folder_path.canonicalize().map_err(|e| e.to_string())?;
         self.people

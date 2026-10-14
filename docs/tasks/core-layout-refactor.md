@@ -197,7 +197,16 @@ resource leases, cancellation and stale-publication semantics.
   its selection/dispatch/cache/event scope, and a separate explicit approval
   question is pending. Both approval questions were first raised in this turn;
   the work remains active, with no final release qualification claim.
-- Next: move remaining desktop use-case coordination and person SQL,
+- Global person tag mutation now calls PersonService and a named person_tags
+  workflow, which owns the transaction across identity revision, tag linkage,
+  photo contributions, mirror queue and request result. Feature-owned request
+  helpers retain payload replay semantics; a fault-injection test proves all
+  writes roll back on final event failure and retries apply only once. Legacy
+  source path reads also compose person/tag repositories within the existing
+  transaction. All 282 core tests / 12 ignored and strict workspace Clippy pass.
+  Source inspection confirms the analysis ledger already delegates its SQL to
+  person repositories; its transaction fences remain feature policy.
+- Next: move remaining desktop use-case coordination and person transactions,
   remove legacy person identity paths and finish ownership/docs/tooling gates,
   then complete final release/performance qualification.
 

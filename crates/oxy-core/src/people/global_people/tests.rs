@@ -501,14 +501,16 @@ fn geometry_change_withdraws_reference_and_person_tag_but_preserves_manual_tag()
         crate::tags::repo::reconcile_effective(&c, &t.asset_path.to_string_lossy(), tag).unwrap();
         tag
     };
-    people
-        .set_global_person_tag(&SetGlobalPersonTag {
+    crate::app::workflows::person_tags::set_global_person_tag(
+        &people.store,
+        &SetGlobalPersonTag {
             person_id: a.id.clone(),
             tag_id: Some(tag),
             expected_revision: a.revision,
             request_id: "tag".into(),
-        })
-        .unwrap();
+        },
+    )
+    .unwrap();
     people
         .review_person_tuples(&request(
             &people,

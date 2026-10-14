@@ -1,61 +1,7 @@
+use super::requests::{payload, record, replay};
 use super::*;
 
-fn payload<T: Serialize>(kind: &str, input: &T) -> Result<String, PeopleError> {
-    Ok(serde_json::to_string(&(kind, input))?)
-}
-fn replay<T: serde::de::DeserializeOwned>(
-    c: &Connection,
-    id: &str,
-    payload: &str,
-) -> Result<Option<T>, PeopleError> {
-    if id.trim().is_empty() {
-        return Err(PeopleError::PersonConflict);
-    }
-    db::event(c, id)?
-        .map(|(original, result)| {
-            if original != payload {
-                return Err(PeopleError::PersonConflict);
-            }
-            Ok(serde_json::from_str(&result)?)
-        })
-        .transpose()
-}
-fn record<T: Serialize>(
-    c: &Connection,
-    id: &str,
-    payload: &str,
-    result: &T,
-) -> Result<(), PeopleError> {
-    db::record_event(c, id, payload, &serde_json::to_string(result)?)?;
-    Ok(())
-}
-
 impl People {
-    pub fn set_global_person_tag(&self, input: &SetGlobalPersonTag) -> Result<(), PeopleError> {
-        let payload = payload("globalTag", input)?;
-        let mut c = self.store.write();
-        let tx = c.transaction().map_err(StoreError::from)?;
-        if let Some(result) = replay(&tx, &input.request_id, &payload)? {
-            return Ok(result);
-        }
-        if !db::catalog(&tx)?
-            .iter()
-            .any(|p| p.id == input.person_id && p.revision == input.expected_revision)
-        {
-            return Err(PeopleError::PersonConflict);
-        }
-        if let Some(tag) = input.tag_id
-            && !crate::tags::repo::tag_exists(&tx, tag)?
-        {
-            return Err(PeopleError::MissingTagParent);
-        }
-        db::set_tag(&tx, &input.person_id, input.tag_id)?;
-        db::bump(&tx, &input.person_id)?;
-        crate::app::workflows::person_tags::reconcile_global_person_sources(&tx, &input.person_id)?;
-        record(&tx, &input.request_id, &payload, &())?;
-        tx.commit().map_err(StoreError::from)?;
-        Ok(())
-    }
     pub fn save_person_tuple_geometry(
         &self,
         input: &SavePersonTupleGeometry,

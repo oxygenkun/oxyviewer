@@ -13,6 +13,7 @@ use std::{
 
 mod grouping;
 mod mutations;
+pub(crate) mod requests;
 #[cfg(test)]
 mod tests;
 

@@ -13,6 +13,19 @@ use crate::storage::StoreError;
 use rusqlite::{Connection, OptionalExtension, params};
 use std::path::{Path, PathBuf};
 
+pub(crate) fn review_asset_paths(
+    connection: &Connection,
+    subject_id: &str,
+) -> Result<Vec<String>, StoreError> {
+    let mut statement = connection.prepare(
+        "SELECT DISTINCT i.asset_path FROM person_manual_instances i
+         JOIN person_review_decisions r ON r.instance_id=i.id WHERE r.subject_id=?1",
+    )?;
+    Ok(statement
+        .query_map([subject_id], |row| row.get("asset_path"))?
+        .collect::<Result<_, _>>()?)
+}
+
 /// The columns that make up a [`FolderPerson`], including the two correlated
 /// lookups that report its confirmed reference and its pending review count.
 const FOLDER_PERSON_COLUMNS: &str = "id,folder_path,display_name,identity_confirmed,revision,

@@ -99,6 +99,12 @@ PersonService 拥有模型状态、下载与导入、operation 预留/取消、�
 人物与标签的来源查询分别在各自 repository，workflow 在事务内组合结果，保留
 手工和 sidecar 来源。旧身份 API 与未使用前端组件仍待退役，不能据此宣布兼容清理完成。
 
+设置全局人物标签由 PersonService 调用 person_tags workflow，后者拥有版本校验、
+人物标签关联、照片来源贡献、镜像队列和请求结果的同一事务。最后写入请求结果失败时，
+这些状态全部回滚；相同 payload 重试直接返回原结果。请求编码与事件记录属于人物
+功能，SQL 仍在功能 repository。旧 subject 来源路径也由人物和标签 repository 分别
+读取，再在既有事务内合并为有序去重集合，workflow 不再携带该查询。
+
 当前前端只挂载 GlobalPeopleContext：旧人物标框、检测框、文件夹审阅/聚类组件、
 Sidebar 后备分支及其专用测试已移除。模型控件只负责安装与任务状态，分组仍由全局
 人物面板发起。旧 demo 过滤与来源状态、剩余旧 IPC/schema 尚在清理范围内。
