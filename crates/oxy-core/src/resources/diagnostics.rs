@@ -1,10 +1,13 @@
 //! Nonblocking queue observations with retained samples for busy queues.
 use super::{
-    DebugSnapshotCache, LibraryIndexQueue, directory_tree::DirectoryTreeQueue,
-    metadata::MetadataQueue, preview::PreviewQueue, types::DebugQueueSnapshot,
+    metadata::MetadataQueue,
+    preview::PreviewQueue,
+    types::{DebugQueueSnapshot, DebugQueueState},
 };
+use crate::{browse::tree_queue::DirectoryTreeQueue, library::scheduling::LibraryIndexQueue};
 use std::{
-    sync::Arc,
+    collections::HashMap,
+    sync::{Arc, Mutex},
     time::{Instant, SystemTime, UNIX_EPOCH},
 };
 
@@ -50,5 +53,66 @@ impl QueueDiagnostics {
             queues,
             stale_queues,
         })
+    }
+}
+
+/// Retain the last successful sample when a worker owns a queue lock.
+/// This lock only copies diagnostics; no filesystem, database or queue work
+/// runs while it is held.
+#[derive(Default)]
+pub(crate) struct DebugSnapshotCache {
+    queues: Mutex<HashMap<String, DebugQueueState>>,
+}
+
+impl DebugSnapshotCache {
+    pub fn remember(
+        &self,
+        observations: [(&str, Option<DebugQueueState>); 5],
+    ) -> (Vec<DebugQueueState>, Vec<String>) {
+        let mut previous = self.queues.lock().expect("snapshot cache poisoned");
+        let mut queues = Vec::new();
+        let mut stale = Vec::new();
+        for (name, observed) in observations {
+            if let Some(observed) = observed {
+                previous.insert(name.to_owned(), observed);
+            } else {
+                stale.push(name.to_owned());
+            }
+            if let Some(queue) = previous.get(name) {
+                queues.push(queue.clone());
+            }
+        }
+        (queues, stale)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn busy_snapshot_keeps_the_last_sample_and_marks_it_stale() {
+        let cache = DebugSnapshotCache::default();
+        let sample = DebugQueueState {
+            name: "thumbnail".into(),
+            concurrency: 3,
+            pending: vec![],
+            active: vec![],
+        };
+        let observations = |value| {
+            [
+                ("loupe", None),
+                ("thumbnail", value),
+                ("metadata", None),
+                ("directoryTree", None),
+                ("libraryIndex", None),
+            ]
+        };
+        let (first, stale) = cache.remember(observations(Some(sample.clone())));
+        assert_eq!(first, vec![sample.clone()]);
+        assert!(!stale.iter().any(|name| name == "thumbnail"));
+        let (busy, stale) = cache.remember(observations(None));
+        assert_eq!(busy, vec![sample]);
+        assert!(stale.iter().any(|name| name == "thumbnail"));
     }
 }

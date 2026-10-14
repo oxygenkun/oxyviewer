@@ -1,12 +1,11 @@
 //! Library use cases: root configuration, recovery and deferred indexing.
 use super::{
     Library,
+    scheduling::LibraryIndexQueue,
     types::{RootRelocationPlan, RootRelocationResult},
 };
 use crate::{
-    app::workflows::root_relocation,
-    resources::{LibraryIndexQueue, cache::CacheManager},
-    runtime::CoreRuntime,
+    app::workflows::root_relocation, resources::cache::CacheManager, runtime::CoreRuntime,
 };
 use std::{
     path::{Path, PathBuf},

@@ -3,10 +3,8 @@ use crate::browse::types::{
     AssetQuery, BrowsePage, DirectoryBrowseProgress, DirectorySearchMatch, DirectoryTreeSnapshot,
     FolderSession,
 };
-use crate::resources::{
-    LibraryIndexQueue, directory_tree::DirectoryTreeQueue, metadata::MetadataQueue,
-    preview::PreviewQueue,
-};
+use crate::resources::{metadata::MetadataQueue, preview::PreviewQueue};
+use crate::{browse::tree_queue::DirectoryTreeQueue, library::scheduling::LibraryIndexQueue};
 use crate::{
     events::CoreEvent,
     files::FsCatalog,

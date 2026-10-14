@@ -6,16 +6,18 @@ pub(crate) mod workflows;
 pub use external_apps::ExternalAppManager;
 
 use crate::{
-    browse::BrowseService,
+    browse::{BrowseService, tree_queue::DirectoryTreeQueue},
     events::CoreEvent,
     files::{FileService, FsCatalog},
     jobs::JobRegistry,
-    library::{Library, LibraryService},
+    library::{Library, LibraryService, scheduling::LibraryIndexQueue},
     metadata::{BurstScanner, MetadataService, provider::ProviderManager},
     people::{People, PersonService, execution::operations::PersonOperations},
     resources::{
-        DebugSnapshotCache, LibraryIndexQueue, cache::CacheManager, diagnostics::QueueDiagnostics,
-        directory_tree::DirectoryTreeQueue, metadata::MetadataQueue, preview::PreviewQueue,
+        cache::CacheManager,
+        diagnostics::{DebugSnapshotCache, QueueDiagnostics},
+        metadata::MetadataQueue,
+        preview::PreviewQueue,
         service::ResourceService,
     },
     runtime::CoreRuntime,

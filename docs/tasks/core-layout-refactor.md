@@ -298,6 +298,10 @@ resource leases, cancellation and stale-publication semantics.
   does not wait for the install gate. A held-gate shutdown test proves the live
   worker is reported, stopped installation writes nothing and future admission
   is rejected. Both metadata service tests and strict workspace Clippy pass.
+- Index scheduling/progress now belongs to library::scheduling, tree scheduling
+  to browse::tree_queue, and retained diagnostic samples to resources::diagnostics.
+  These implementations are crate-private and their algorithms are unchanged.
+  All 286 core tests / 13 ignored and strict workspace Clippy pass.
 - Next: move remaining desktop use-case coordination and person transactions,
   remove legacy person identity paths and finish ownership/docs/tooling gates,
   then complete final release/performance qualification.

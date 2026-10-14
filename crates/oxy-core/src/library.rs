@@ -3,6 +3,7 @@
 //! statements; shared SQLite mechanisms live in storage.
 
 pub(crate) mod repo;
+pub(crate) mod scheduling;
 pub(crate) mod schema;
 mod service;
 pub mod types;
