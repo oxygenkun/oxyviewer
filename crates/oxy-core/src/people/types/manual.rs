@@ -295,14 +295,6 @@ pub struct DetectedPersonInstance {
     pub association_score: Option<f32>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[cfg_attr(feature = "contracts", derive(ts_rs::TS))]
-#[serde(rename_all = "camelCase")]
-pub struct PersonDetectionSnapshot {
-    pub source_revision: String,
-    pub instances: Vec<DetectedPersonInstance>,
-}
-
 /// Which encoder produced a cached feature vector.
 ///
 /// The stored spelling lives here rather than in the crate that reads the

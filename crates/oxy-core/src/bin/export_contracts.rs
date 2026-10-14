@@ -12,8 +12,6 @@ fn main() -> Result<(), Box<dyn Error>> {
     let mut types = BTreeMap::new();
     register::<oxy_core::contracts::AboutLink>(&mut types, &cfg);
     register::<oxy_media::types::AccelerationKind>(&mut types, &cfg);
-    register::<oxy_core::contracts::AdoptPersonCluster>(&mut types, &cfg);
-    register::<oxy_core::contracts::AdoptPersonClusterResult>(&mut types, &cfg);
     register::<oxy_media::types::AnalysisRequirement>(&mut types, &cfg);
     register::<oxy_core::contracts::AppInfo>(&mut types, &cfg);
     register::<oxy_media::types::ArtifactFacts>(&mut types, &cfg);
@@ -101,7 +99,6 @@ fn main() -> Result<(), Box<dyn Error>> {
     register::<oxy_core::contracts::PersonCluster>(&mut types, &cfg);
     register::<oxy_core::contracts::PersonClusterMember>(&mut types, &cfg);
     register::<oxy_core::contracts::PersonClusterSnapshot>(&mut types, &cfg);
-    register::<oxy_core::contracts::PersonDetectionSnapshot>(&mut types, &cfg);
     register::<oxy_core::contracts::PersonDistanceMetric>(&mut types, &cfg);
     register::<oxy_core::contracts::PersonInstance>(&mut types, &cfg);
     register::<oxy_core::contracts::PersonModelArtifact>(&mut types, &cfg);

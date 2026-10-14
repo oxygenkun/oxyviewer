@@ -2,8 +2,6 @@
 
 export type AboutLink = "repository" | "releases" | "license";
 export type AccelerationKind = "hardware" | "software" | "unknown";
-export type AdoptPersonCluster = { folderPath: string, snapshotId: string, clusterId: string, subjectId: string | null, displayName: string | null, requestId: string, };
-export type AdoptPersonClusterResult = { person: FolderPerson, added: number, preserved: number, conflicted: number, };
 export type AnalysisRequirement = {
 /**
  * Reject an original smaller than this; never report it as an empty image.
@@ -191,10 +189,9 @@ export type PersonAnalysisTask = { runId: string, folderPath: string, assetPath:
  */
 claimToken: string, };
 export type PersonAnalysisTaskInput = { assetPath: string, sourceRevision: string, stageId: string, stageFingerprint: string, stageOrder: number, };
-export type PersonCluster = { id: string, members: Array<PersonClusterMember>, cover: AssetSummary | null, people: Array<FolderPerson>, };
+export type PersonCluster = { id: string, members: Array<PersonClusterMember>, cover: AssetSummary | null, };
 export type PersonClusterMember = { assetPath: string, instanceId: string, sourceRevision: string, summaryRevision: string, faceBox: [number, number, number, number], };
 export type PersonClusterSnapshot = { snapshotId: string, folderPath: string, runId: string, pipelineFingerprint: string, algorithm: string, clusters: Array<PersonCluster>, ungrouped: Array<PersonClusterMember>, noFaceCount: number, unavailableCount: number, };
-export type PersonDetectionSnapshot = { sourceRevision: string, instances: Array<DetectedPersonInstance>, };
 export type PersonDistanceMetric = "cosine";
 export type PersonInstance = { id: string, folderPath: string, assetPath: string, sourceRevision: string,
 /**

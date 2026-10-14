@@ -1,9 +1,7 @@
 //! Conservative folder suggestions. Computation never writes user facts.
-use crate::browse::types::AssetSummary;
 use crate::jobs::CancellationToken;
 use crate::people::types::{
-    PersonAnalysisState, PersonCluster, PersonClusterFilter, PersonClusterMember,
-    PersonClusterSnapshot,
+    PersonAnalysisState, PersonCluster, PersonClusterMember, PersonClusterSnapshot,
 };
 use crate::people::{People, PeopleError, environment::catalog};
 use crate::storage::StoreError;
@@ -13,7 +11,6 @@ use std::{
     path::Path,
 };
 
-mod adoption;
 #[cfg(test)]
 pub(crate) mod tests;
 
@@ -168,7 +165,6 @@ fn group(
         clusters.push(PersonCluster {
             id: digest(&keys)?,
             cover: None,
-            people: Vec::new(),
             members,
         });
     }
@@ -357,63 +353,6 @@ impl People {
             raw.map(|s| serde_json::from_str(&s)).transpose()?;
         let fingerprint = crate::people::pipeline_fingerprint(&catalog::manifest())
             .map_err(|e| PeopleError::Cluster(e.to_string()))?;
-        let mut snapshot =
-            snapshot.filter(|s| s.algorithm == ALGORITHM && s.pipeline_fingerprint == fingerprint);
-        if let Some(snapshot) = &mut snapshot {
-            let connection = self.store.read();
-            let people = crate::people::repo::manual::list_folder_people(
-                &connection,
-                &folder.to_string_lossy(),
-            )?;
-            let links =
-                crate::people::repo::manual::cluster_links(&connection, &folder.to_string_lossy())?;
-            for cluster in &mut snapshot.clusters {
-                cluster.people = people
-                    .iter()
-                    .filter(|person| {
-                        links
-                            .iter()
-                            .any(|(id, subject)| id == &cluster.id && subject == &person.id)
-                    })
-                    .cloned()
-                    .collect();
-            }
-        }
-        Ok(snapshot)
-    }
-
-    pub fn filter_assets_by_cluster(
-        &self,
-        folder: &Path,
-        assets: &[AssetSummary],
-        filter: &PersonClusterFilter,
-    ) -> Result<Vec<AssetSummary>, PeopleError> {
-        let Some(snapshot) = self
-            .person_clusters(folder)?
-            .filter(|s| s.snapshot_id == filter.snapshot_id)
-        else {
-            return Ok(Vec::new());
-        };
-        let members = if filter.cluster_id == "ungrouped" {
-            &snapshot.ungrouped
-        } else {
-            let Some(cluster) = snapshot.clusters.iter().find(|c| c.id == filter.cluster_id) else {
-                return Ok(Vec::new());
-            };
-            &cluster.members
-        };
-        let versions: HashMap<_, _> = members
-            .iter()
-            .map(|m| (&m.asset_path, &m.summary_revision))
-            .collect();
-        Ok(assets
-            .iter()
-            .filter(|a| {
-                versions
-                    .get(&a.path)
-                    .is_some_and(|r| **r == format!("{}:{}", a.size_bytes, a.modified_at_ms))
-            })
-            .cloned()
-            .collect())
+        Ok(snapshot.filter(|s| s.algorithm == ALGORITHM && s.pipeline_fingerprint == fingerprint))
     }
 }

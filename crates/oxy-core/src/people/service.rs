@@ -77,104 +77,6 @@ impl PersonService {
             .map_err(|e| e.to_string())
     }
 
-    pub fn detections(
-        &self,
-        folder_path: PathBuf,
-        asset_path: PathBuf,
-    ) -> Result<PersonDetectionSnapshot, String> {
-        let people = Arc::clone(&self.people);
-
-        let folder = folder_path
-            .canonicalize()
-            .map_err(|error| error.to_string())?;
-        let observation =
-            crate::files::observe_file(&asset_path).map_err(|error| error.to_string())?;
-        let revision = observation.revision_id();
-        let producer =
-            crate::people::stage_fingerprint(&model_catalog::manifest(), model_catalog::DETECTOR)
-                .map_err(|error| error.to_string())?;
-        let instances = people
-            .list_person_detections(&folder, &observation.canonical_path, &revision, &producer)
-            .map_err(|error| error.to_string())?;
-        Ok(PersonDetectionSnapshot {
-            source_revision: revision,
-            instances,
-        })
-    }
-
-    pub fn adopt_detection(
-        &self,
-        folder_path: PathBuf,
-        asset_path: PathBuf,
-        source_revision: String,
-        instance_id: String,
-    ) -> Result<PersonInstance, String> {
-        let people = Arc::clone(&self.people);
-        let files = Arc::clone(&self.files);
-
-        let folder = folder_path
-            .canonicalize()
-            .map_err(|error| error.to_string())?;
-        let before = crate::files::observe_file(&asset_path).map_err(|error| error.to_string())?;
-        if before.revision_id() != source_revision {
-            return Err("源图已变化，请重新识别".into());
-        }
-        let producer =
-            crate::people::stage_fingerprint(&model_catalog::manifest(), model_catalog::DETECTOR)
-                .map_err(|error| error.to_string())?;
-        let instance = people
-            .list_person_detections(&folder, &before.canonical_path, &source_revision, &producer)
-            .map_err(|error| error.to_string())?
-            .into_iter()
-            .find(|item| item.instance_id == instance_id)
-            .ok_or("检测结果已失效")?;
-        let asset = files
-            .get_asset(&before.canonical_path)
-            .map_err(|error| error.to_string())?;
-        if crate::files::observe_file(&asset.path)
-            .map_err(|error| error.to_string())?
-            .revision_id()
-            != source_revision
-        {
-            return Err("源图已变化".into());
-        }
-        people
-            .create_person_instance_with_source_identity(
-                &CreatePersonInstance {
-                    folder_path: folder.clone(),
-                    asset_path: asset.path.clone(),
-                    source_revision: format!("{}:{}", asset.size_bytes, asset.modified_at_ms),
-                    face_box: instance.face_box,
-                    body_box: instance.body_box,
-                    request_id: format!(
-                        "adopt:{}:{}:{source_revision}:{instance_id}",
-                        folder.display(),
-                        asset.path.display()
-                    ),
-                },
-                Some(&source_revision),
-            )
-            .map_err(|error| error.to_string())
-    }
-
-    pub fn clusters(&self, folder_path: PathBuf) -> Result<Option<PersonClusterSnapshot>, String> {
-        let people = Arc::clone(&self.people);
-
-        let folder = folder_path.canonicalize().map_err(|e| e.to_string())?;
-        people.person_clusters(&folder).map_err(|e| e.to_string())
-    }
-
-    pub fn adopt_cluster(
-        &self,
-        input: AdoptPersonCluster,
-    ) -> Result<AdoptPersonClusterResult, String> {
-        let people = Arc::clone(&self.people);
-
-        people
-            .adopt_person_cluster(&input)
-            .map_err(|e| e.to_string())
-    }
-
     fn reserve(
         &self,
         request_id: String,
@@ -197,40 +99,6 @@ impl PersonService {
             error: None,
             run: None,
         })
-    }
-
-    pub fn start_clustering(
-        &self,
-        session_id: String,
-        folder_path: PathBuf,
-        request_id: String,
-    ) -> Result<(), String> {
-        let operation = self.reserve(
-            request_id,
-            Some(folder_path.clone()),
-            PersonOperationState::Clustering,
-        )?;
-        let people = Arc::clone(&self.people);
-        let files = Arc::clone(&self.files);
-        let work = Arc::clone(&operation);
-        PersonOperations::launch(&self.runtime, operation, move || {
-            let folder = files
-                .session_directory(&session_id, Some(&folder_path))
-                .map_err(|e| e.to_string())?;
-            work.update(|s| s.detail = "正在使用已有特征聚类…".into());
-            let snapshot = people
-                .cluster_folder(&folder, work.cancellation())
-                .map_err(|e| e.to_string())?;
-            work.update(|s| {
-                s.detail = format!(
-                    "聚类完成：{} 个分组，{} 个未分组人脸。",
-                    snapshot.clusters.len(),
-                    snapshot.ungrouped.len()
-                );
-            });
-            Ok(())
-        })?;
-        Ok(())
     }
 
     pub fn start_model_download(&self, model_id: String, request_id: String) -> Result<(), String> {
@@ -344,7 +212,8 @@ impl PersonService {
     pub fn cancel_operation(&self, id: &str) -> Result<(), String> {
         self.person_operations.cancel(id)
     }
-    pub fn start_analysis(
+    #[cfg(test)]
+    fn start_analysis(
         &self,
         session_id: String,
         folder_path: PathBuf,
@@ -727,31 +596,54 @@ mod tests {
     }
 
     #[test]
-    fn adopting_a_stale_detection_creates_no_manual_fact() {
+    fn reviewing_a_stale_suggestion_creates_no_manual_fact() {
         let directory = tempfile::tempdir().unwrap();
         let root = directory.path().canonicalize().unwrap();
-        let photo = root.join("photo.jpg");
-        std::fs::write(&photo, b"source").unwrap();
         let app = host(&root);
-        let before = app
-            .person_service
-            .detections(root.clone(), photo.clone())
+        let person = app
+            .people
+            .save_global_person(&SaveGlobalPerson {
+                id: None,
+                display_name: "Ada".into(),
+                expected_revision: 0,
+                request_id: "person".into(),
+            })
             .unwrap();
-        assert!(before.instances.is_empty());
-        std::fs::write(&photo, b"changed source").unwrap();
+        crate::people::clusters::tests::analyzed_fixture(&app.people, &root);
+        let workspace = app
+            .people
+            .run_people_grouping(
+                &RunPeopleGrouping {
+                    folder_path: root.clone(),
+                    person_ids: None,
+                    similarity: 0.5,
+                    request_id: "group".into(),
+                },
+                &crate::jobs::CancellationToken::default(),
+            )
+            .unwrap();
+        let tuples = workspace.groups[0].members.clone();
+        std::fs::write(&tuples[0].asset_path, b"changed source").unwrap();
         assert!(
             app.person_service
-                .adopt_detection(
-                    root.clone(),
-                    photo.clone(),
-                    before.source_revision,
-                    "missing".into()
-                )
+                .review_tuples(ReviewPersonTuples {
+                    folder_path: root,
+                    workspace_revision: workspace.revision,
+                    tuples,
+                    person_id: person.id,
+                    decision: PersonReviewDecision::Belongs,
+                    replace_confirmed: false,
+                    request_id: "stale-review".into(),
+                })
                 .is_err()
         );
         assert!(
-            app.people
-                .list_person_instances(&root, &photo)
+            crate::people::repo::global::tuples(&app.people.store.read(), None)
+                .unwrap()
+                .is_empty()
+        );
+        assert!(
+            crate::people::repo::global::reviews(&app.people.store.read(), None)
                 .unwrap()
                 .is_empty()
         );

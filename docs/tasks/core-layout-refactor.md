@@ -255,7 +255,6 @@ resource leases, cancellation and stale-publication semantics.
   tags remain. Suggestions are invalidated. The test covers retained references
   and changed-source handling; all 285 core tests / 13 ignored and strict
   workspace Clippy pass.
-- Next: move remaining desktop use-case coordination and person transactions,
 - Removed legacy subject/cluster fields from AssetQuery and their composition
   branches in BrowseService. The generator no longer exports the three old
   query types; current tuple filtering remains and the index-search fast path
@@ -263,6 +262,12 @@ resource leases, cancellation and stale-publication semantics.
   results for multiple instances and paging. All 286 core tests / 13 ignored,
   strict workspace Clippy, regenerated contract drift, frontend check and 413
   frontend tests pass.
+- Next: move remaining desktop use-case coordination and person transactions,
+- Retired detector/group adoption into folder identities from PersonService,
+  cluster DTOs and repositories. Derived grouping remains independent of user
+  facts; regressions now exercise global names, stale suggestions and source
+  exclusion. All 286 core tests / 13 ignored, strict workspace Clippy,
+  regenerated contracts and frontend type checking pass.
 - Next: move remaining desktop use-case coordination and person transactions,
   remove legacy person identity paths and finish ownership/docs/tooling gates,
   then complete final release/performance qualification.

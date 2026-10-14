@@ -1134,26 +1134,3 @@ fn row_person_tag_override(row: &rusqlite::Row<'_>) -> rusqlite::Result<PersonTa
         revision: row.get("revision")?,
     })
 }
-
-/// Explicitly adopted group membership, preserved with the user's reviews.
-pub fn link_cluster(
-    connection: &Connection,
-    folder: &str,
-    cluster: &str,
-    subject: &str,
-) -> Result<(), StoreError> {
-    connection.execute("INSERT OR IGNORE INTO person_cluster_adoptions(folder_path,cluster_id,subject_id) VALUES (?1,?2,?3)", params![folder,cluster,subject])?;
-    Ok(())
-}
-
-pub fn cluster_links(
-    connection: &Connection,
-    folder: &str,
-) -> Result<Vec<(String, String)>, StoreError> {
-    let mut statement=connection.prepare("SELECT a.cluster_id,a.subject_id FROM person_cluster_adoptions a JOIN folder_people p ON p.id=a.subject_id AND p.folder_path=a.folder_path WHERE a.folder_path=?1 ORDER BY a.cluster_id,a.subject_id")?;
-    Ok(statement
-        .query_map([folder], |row| {
-            Ok((row.get("cluster_id")?, row.get("subject_id")?))
-        })?
-        .collect::<Result<_, _>>()?)
-}

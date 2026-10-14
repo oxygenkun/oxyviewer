@@ -133,8 +133,7 @@ pub(crate) fn analyzed_fixture(people: &People, folder: &Path) {
 }
 
 #[test]
-fn groups_survive_reopen_and_adoption_preserves_negatives_and_cache_clear_preserves_names() {
-    use crate::people::types::{AdoptPersonCluster, PersonReviewDecision, SetPersonReview};
+fn groups_survive_reopen_and_cache_clear_preserves_global_names() {
     use std::sync::Arc;
     let temporary = tempfile::tempdir().unwrap();
     let folder = temporary.path().canonicalize().unwrap();
@@ -147,95 +146,29 @@ fn groups_survive_reopen_and_adoption_preserves_negatives_and_cache_clear_preser
         .unwrap();
     assert_eq!(snapshot.clusters.len(), 1);
     assert_eq!(snapshot.no_face_count, 1);
-    assert!(people.list_folder_people(&folder).unwrap().is_empty());
-    let restarted = People::new(Arc::new(crate::storage::Store::open(&db).unwrap()));
-    assert_eq!(
-        restarted.person_clusters(&folder).unwrap(),
-        Some(snapshot.clone())
+    assert!(people.global_people().unwrap().is_empty());
+    assert!(
+        crate::people::repo::global::tuples(&store.read(), None)
+            .unwrap()
+            .is_empty()
     );
-    let mut request = AdoptPersonCluster {
-        folder_path: folder.clone(),
-        snapshot_id: snapshot.snapshot_id.clone(),
-        cluster_id: snapshot.clusters[0].id.clone(),
-        subject_id: None,
-        display_name: Some("测试人物".into()),
-        request_id: "adopt".into(),
-    };
-    let first = people.adopt_person_cluster(&request).unwrap();
-    let restored = restarted.person_clusters(&folder).unwrap().unwrap();
-    assert_eq!(
-        restored.clusters[0].people[0].display_name.as_deref(),
-        Some("测试人物")
-    );
-    let assets =
-        crate::files::scan_assets_with_progress_and_cancel(&folder, |_| {}, || false).unwrap();
-    let filtered = people
-        .filter_assets_by_cluster(
-            &folder,
-            &assets,
-            &PersonClusterFilter {
-                snapshot_id: snapshot.snapshot_id.clone(),
-                cluster_id: snapshot.clusters[0].id.clone(),
-            },
-        )
-        .unwrap();
-    assert_eq!(filtered.len(), 2);
-    let query = crate::browse::types::AssetQuery {
-        page_size: Some(1),
-        ..Default::default()
-    };
-    let page = crate::files::page_assets(&filtered, &query, 0);
-    assert_eq!(page.total, 2);
-    assert_eq!(page.items.len(), 1);
-    assert_eq!(first.added, 2);
-    assert!(!first.person.identity_confirmed);
-    assert_eq!(
-        people.adopt_person_cluster(&request).unwrap().person.id,
-        first.person.id
-    );
-    let reviews = people
-        .list_person_reviews(&folder, &first.person.id)
-        .unwrap();
-    people
-        .set_person_review(&SetPersonReview {
-            folder_path: folder.clone(),
-            instance_id: reviews[0].instance.id.clone(),
-            subject_id: first.person.id.clone(),
-            decision: PersonReviewDecision::DoesNotBelong,
-            expected_revision: reviews[0].revision,
-            request_id: "reject".into(),
+    let person = people
+        .save_global_person(&crate::people::types::SaveGlobalPerson {
+            id: None,
+            display_name: "Ada".into(),
+            expected_revision: 0,
+            request_id: "person".into(),
         })
         .unwrap();
-    request.request_id = "adopt-again".into();
-    request.subject_id = Some(first.person.id.clone());
-    let repeat = people.adopt_person_cluster(&request).unwrap();
-    assert_eq!(repeat.added, 0);
-    assert_eq!(repeat.preserved, 2);
-    assert_eq!(
-        people
-            .list_person_reviews(&folder, &first.person.id)
-            .unwrap()
-            .iter()
-            .filter(|r| r.decision == PersonReviewDecision::DoesNotBelong)
-            .count(),
-        1
-    );
+    let restarted = People::new(Arc::new(crate::storage::Store::open(&db).unwrap()));
+    assert_eq!(restarted.person_clusters(&folder).unwrap(), Some(snapshot));
     store.clear_rebuildable_cache().unwrap();
     assert!(people.person_clusters(&folder).unwrap().is_none());
-    assert_eq!(
-        people.list_folder_people(&folder).unwrap()[0]
-            .display_name
-            .as_deref(),
-        Some("测试人物")
-    );
-    assert_eq!(
-        people.adopt_person_cluster(&request).unwrap().person.id,
-        first.person.id
-    );
+    assert_eq!(people.global_people().unwrap()[0], person);
 }
 
 #[test]
-fn stale_source_cancellation_and_new_run_cannot_publish_or_adopt_old_groups() {
+fn stale_source_cancellation_and_new_run_cannot_publish_old_groups() {
     let temp = tempfile::tempdir().unwrap();
     let folder = temp.path().canonicalize().unwrap();
     let people = crate::people::testing::in_memory();
@@ -244,21 +177,16 @@ fn stale_source_cancellation_and_new_run_cannot_publish_or_adopt_old_groups() {
     let snapshot = people.cluster_folder(&folder, &token).unwrap();
     token.cancel();
     assert!(people.cluster_folder(&folder, &token).is_err());
-    assert_eq!(
-        people.person_clusters(&folder).unwrap(),
-        Some(snapshot.clone())
-    );
+    assert_eq!(people.person_clusters(&folder).unwrap(), Some(snapshot));
     std::fs::write(folder.join("a.jpg"), b"changed source").unwrap();
-    let request = crate::people::types::AdoptPersonCluster {
-        folder_path: folder.clone(),
-        snapshot_id: snapshot.snapshot_id,
-        cluster_id: snapshot.clusters[0].id.clone(),
-        subject_id: None,
-        display_name: None,
-        request_id: "stale".into(),
-    };
-    assert!(people.adopt_person_cluster(&request).is_err());
-    assert!(people.list_folder_people(&folder).unwrap().is_empty());
+    let refreshed = people
+        .cluster_folder(&folder, &CancellationToken::default())
+        .unwrap();
+    assert!(refreshed.clusters.is_empty());
+    assert_eq!(refreshed.ungrouped.len(), 1);
+    assert_eq!(refreshed.ungrouped[0].asset_path, folder.join("b.jpg"));
+    assert_eq!(refreshed.unavailable_count, 1);
+    assert!(people.global_people().unwrap().is_empty());
     people
         .begin_person_analysis(&crate::people::types::BeginPersonAnalysis {
             folder_path: folder.clone(),

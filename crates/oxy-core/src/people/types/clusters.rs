@@ -20,8 +20,6 @@ pub struct PersonCluster {
     pub id: String,
     pub members: Vec<PersonClusterMember>,
     pub cover: Option<crate::browse::types::AssetSummary>,
-    #[serde(default)]
-    pub people: Vec<crate::people::types::FolderPerson>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -38,35 +36,4 @@ pub struct PersonClusterSnapshot {
     pub ungrouped: Vec<PersonClusterMember>,
     pub no_face_count: usize,
     pub unavailable_count: usize,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-#[cfg_attr(feature = "contracts", derive(ts_rs::TS))]
-#[serde(rename_all = "camelCase")]
-pub struct PersonClusterFilter {
-    pub snapshot_id: String,
-    /// "ungrouped" selects all singleton / ambiguous detections.
-    pub cluster_id: String,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[cfg_attr(feature = "contracts", derive(ts_rs::TS))]
-#[serde(rename_all = "camelCase")]
-pub struct AdoptPersonCluster {
-    pub folder_path: PathBuf,
-    pub snapshot_id: String,
-    pub cluster_id: String,
-    pub subject_id: Option<String>,
-    pub display_name: Option<String>,
-    pub request_id: String,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[cfg_attr(feature = "contracts", derive(ts_rs::TS))]
-#[serde(rename_all = "camelCase")]
-pub struct AdoptPersonClusterResult {
-    pub person: crate::people::types::FolderPerson,
-    pub added: usize,
-    pub preserved: usize,
-    pub conflicted: usize,
 }
