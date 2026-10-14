@@ -1,7 +1,8 @@
 //! Rebuildable model detections. Manual boxes and review decisions live in
 //! separate tables and are never written through this cache.
 //!
-//! The tables and the statements live in `oxy_store`; what stays here is what a
+//! Tables and statements live in the adjacent schema and repository; this policy
+//! owns what a
 //! detection *means* — that a box is inside the image, that a stage replaces
 //! its own set and nothing else's, and that a detection never answers a review
 //! decision.

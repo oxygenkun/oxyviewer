@@ -1,7 +1,7 @@
 //! Rebuildable person feature cache. Manual identity facts never depend on it.
 //!
-//! The tables, their format marker, the sqlite-vec registration, and the
-//! statements that score, write, or follow a rename live in `oxy_store`; what
+//! Tables, format markers and statements live in the feature schema/repositories;
+//! sqlite-vec registration stays in private storage. What
 //! stays here is what a feature *means* — how a vector is validated against the
 //! feature space it claims to belong to, what a rebuild may replace, and what
 //! makes a cached vector still eligible for a candidate query.

@@ -33,7 +33,7 @@ use thiserror::Error;
 /// The person domain over one store.
 ///
 /// It holds the store rather than opening one: the application opens the file
-/// once and gives it to every domain crate, so none of them wraps another and
+/// once and gives it to every feature, so none of them wraps another and
 /// none of them decides where the database lives.
 pub struct People {
     pub(crate) store: Arc<Store>,

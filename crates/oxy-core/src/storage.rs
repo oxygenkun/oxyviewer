@@ -40,7 +40,7 @@ pub enum StoreError {
 impl StoreError {
     /// Whether SQLite refused the write because a declared constraint failed.
     ///
-    /// A domain crate maps this to the rule it means — a tag name repeated
+    /// A feature policy maps this to the rule it means — a tag name repeated
     /// among its siblings, an identity claimed twice — without naming the
     /// engine, without exporting connection mechanisms through the application API.
     pub fn is_constraint_violation(&self) -> bool {

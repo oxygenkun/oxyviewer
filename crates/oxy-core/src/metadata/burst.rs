@@ -5,7 +5,7 @@
 //! therefore works incrementally: each call parses only the paths it has not
 //! seen, groups the caller's current listing, and keeps the values so the next
 //! page costs only its own files. Grouping itself is a pure function in
-//! `oxy_domain`, so a run that straddles two pages still collapses once both
+//! `metadata::types`, so a run that straddles two pages still collapses once both
 //! are loaded.
 
 use crate::metadata::types::{BurstFrame, BurstGroup};

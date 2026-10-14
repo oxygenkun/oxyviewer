@@ -427,7 +427,7 @@ fn normalize_name(name: &str) -> Result<(String, String), TagError> {
 ///
 /// The unique index on `(parent, name_key)` is the only constraint a tag write
 /// can legitimately hit; anything else is a real storage failure. Asking the
-/// error rather than matching the engine keeps `rusqlite` out of this crate.
+/// error rather than matching the engine keeps SQLite details in the repository.
 fn map_constraint(error: StoreError) -> TagError {
     if error.is_constraint_violation() {
         return TagError::DuplicateTagName;
