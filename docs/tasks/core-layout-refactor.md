@@ -180,6 +180,13 @@ resource leases, cancellation and stale-publication semantics.
   their construction. In-memory setup, reader diagnostics and full database
   cache-clear helpers are test-only, retaining declaration-based user/marker
   preservation checks without broadening the product's preview-clear action.
+- Removed unmounted folder-person contexts, overlays, review/cluster components
+  and Sidebar fallback, together with their obsolete model tests and unused
+  identity mutation wrappers. Model controls retain installation/status/cancel;
+  current grouping remains in GlobalPeoplePanel. Frontend check, 70 test files /
+  413 tests and production build pass. Legacy demo filters/source state and old
+  desktop/schema paths remain; further demo deletion awaits explicit approval
+  after automatic review rejected the broad semantic-removal patch.
 - Next: move remaining desktop use-case coordination and person SQL,
   remove legacy person identity paths and finish ownership/docs/tooling gates,
   then complete final release/performance qualification.

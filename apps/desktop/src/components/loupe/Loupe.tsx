@@ -1,5 +1,3 @@
-import { PersonBoxOverlay } from "@/components/people/PersonBoxOverlay";
-import { AutomaticPersonBoxes } from "@/components/people/AutomaticPersonBoxes";
 import { GlobalPersonBoxes } from "@/components/people/GlobalPersonBoxes";
 import type { DisplayedPreviewSize } from "@/lib/preview/previewGeometry";
 import { RawDecoderPanel } from "@/components/settings/RawDecoderPanel";
@@ -524,8 +522,6 @@ export function Loupe({
                 onStatus={setHeifStatus}
               />
             ) : null}
-            <PersonBoxOverlay key={active.id} asset={active} />
-            <AutomaticPersonBoxes key={`automatic:${active.id}`} asset={active} />
             <GlobalPersonBoxes key={`global:${active.id}`} asset={active} />
             {showFocusAreas && Boolean(currentNaturalSize || currentHeifSize) && mappedFocusRegions.length > 0 ? (
               <div className="loupe__focus-overlay" aria-hidden="true">

@@ -95,6 +95,10 @@ PersonService 拥有模型状态、下载与导入、operation 预留/取消、�
 人物与标签的来源查询分别在各自 repository，workflow 在事务内组合结果，保留
 手工和 sidecar 来源。旧身份 API 与未使用前端组件仍待退役，不能据此宣布兼容清理完成。
 
+当前前端只挂载 GlobalPeopleContext：旧人物标框、检测框、文件夹审阅/聚类组件、
+Sidebar 后备分支及其专用测试已移除。模型控件只负责安装与任务状态，分组仍由全局
+人物面板发起。旧 demo 过滤与来源状态、剩余旧 IPC/schema 尚在清理范围内。
+
 storage 及表声明宏仅在 core 内部可见，桌面和外部调用方通过 OxyApp 装配服务，
 不能自行打开数据库或取得连接。内存库、连接诊断和全库 cache clear 的入口仅供内部
 测试使用；它们继续验证按声明逆序清理且保留 user/marker 表。产品设置中的预览清理
