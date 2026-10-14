@@ -21,19 +21,11 @@ pub fn move_asset(
         "UPDATE person_manual_instances SET asset_path=?2 WHERE asset_path=?1",
         params![source, destination],
     )?;
-    connection.execute(
-        "UPDATE historical_people SET reference_asset_path=?2 WHERE reference_asset_path=?1",
-        params![source, destination],
-    )?;
-    connection.execute(
-        "UPDATE person_tag_overrides SET asset_path=?2 WHERE asset_path=?1",
-        params![source, destination],
-    )?;
     Ok(())
 }
 
 pub fn folder_paths(connection: &Connection) -> Result<Vec<String>, StoreError> {
-    let mut statement = connection.prepare("SELECT folder_path AS path FROM folder_people UNION SELECT folder_path AS path FROM person_manual_instances UNION SELECT folder_path AS path FROM person_analysis_heads")?;
+    let mut statement = connection.prepare("SELECT folder_path AS path FROM person_manual_instances UNION SELECT folder_path AS path FROM person_analysis_heads")?;
     Ok(statement
         .query_map([], |row| row.get("path"))?
         .collect::<Result<_, _>>()?)
@@ -51,10 +43,6 @@ pub fn move_folder(
     source: &str,
     destination: &str,
 ) -> Result<(), StoreError> {
-    connection.execute(
-        "UPDATE folder_people SET folder_path=?2,revision=revision+1 WHERE folder_path=?1",
-        params![source, destination],
-    )?;
     connection.execute("UPDATE person_manual_instances SET folder_path=?2,revision=revision+1 WHERE folder_path=?1", params![source,destination])?;
     // Fence all old workers before they can publish to a relocated scope.
     connection.execute(

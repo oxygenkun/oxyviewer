@@ -77,10 +77,10 @@ pub fn preserved_on_clear() -> impl Iterator<Item = &'static str> {
     table::preserved(&cache::DEFS)
 }
 
-/// The first format of the reorganized core. Future upgrades must explicitly
+/// The current global-identity format. Future upgrades must explicitly
 /// preserve user declarations; unrecognized files are never adopted or cleared.
 const APPLICATION_ID: i32 = 0x4f58_5943;
-const SCHEMA_VERSION: i32 = 1;
+const SCHEMA_VERSION: i32 = 2;
 
 pub(crate) fn validate(connection: &Connection) -> Result<(), crate::storage::StoreError> {
     let application_id: i32 =
@@ -168,6 +168,32 @@ mod tests {
         }
     }
 
+    #[test]
+    fn current_format_creates_no_retired_identity_tables() {
+        let store = Store::in_memory().unwrap();
+        let present = table_names(&store.read());
+        for retired in [
+            "folder_people",
+            "person_cluster_adoptions",
+            "person_review_decisions",
+            "person_review_events",
+            "person_identity_events",
+            "person_references",
+            "person_instance_events",
+            "person_request_results",
+            "historical_people",
+            "folder_historical_links",
+            "person_history_events",
+            "person_tag_links",
+            "person_tag_overrides",
+        ] {
+            assert!(
+                !present.iter().any(|name| name == retired),
+                "retired table created: {retired}"
+            );
+        }
+    }
+
     /// The property the two classes exist to protect: nothing a user typed may
     /// appear in the list a cache clear is allowed to empty.
     #[test]
@@ -219,46 +245,16 @@ mod tests {
                  INSERT INTO file_operation_recovery(operation_json,phase) VALUES ('{}','prepared');
                  INSERT INTO custom_tags(id, name, name_key, sort_order) VALUES (1, 'People', 'people', 0);
                  INSERT INTO asset_tags(asset_path, tag_id) VALUES ('/photo.jpg', 1);
-                 INSERT INTO asset_tag_sources(asset_path, tag_id, source_kind, source_id)
-                   VALUES ('/photo.jpg', 1, 'manual', '');
+                 INSERT INTO asset_tag_sources(asset_path, tag_id, source_kind, source_id) VALUES ('/photo.jpg', 1, 'manual', '');
                  INSERT INTO asset_tag_xmp_state(asset_path) VALUES ('/photo.jpg');
                  INSERT INTO tag_xmp_sync_queue(asset_path) VALUES ('/photo.jpg');
-                 INSERT INTO folder_people(id, folder_path, display_name, identity_confirmed)
-                   VALUES ('person-1', '/folder', 'Ada', 1);
-                 INSERT INTO person_cluster_adoptions(folder_path,cluster_id,subject_id) VALUES ('/folder','cluster-1','person-1');
-                 INSERT INTO person_manual_instances(id, folder_path, asset_path, source_revision)
-                   VALUES ('instance-1', '/folder', '/photo.jpg', '1:1');
+                 INSERT INTO person_manual_instances(id, folder_path, asset_path, source_revision) VALUES ('instance-1', '/folder', '/photo.jpg', '1:1');
                  INSERT INTO global_people(id,display_name) VALUES ('global-1','Ada');
                  INSERT INTO global_person_reviews VALUES ('instance-1','global-1','belongs',1);
                  INSERT INTO global_person_targets VALUES ('instance-1','global-1');
                  INSERT INTO global_person_references VALUES ('global-1','instance-1');
                  INSERT INTO global_person_events VALUES ('global-request','{}','{}');
-                 INSERT INTO global_person_tags VALUES ('global-1',1);
-                 INSERT INTO person_review_decisions(instance_id, subject_id, decision)
-                   VALUES ('instance-1', 'person-1', 'belongs');
-                 INSERT INTO person_review_events(instance_id, subject_id, decision, revision, request_id)
-                   VALUES ('instance-1', 'person-1', 'belongs', 1, 'request-1');
-                 INSERT INTO person_identity_events(subject_id, event_kind, display_name, revision, request_id)
-                   VALUES ('person-1', 'rename', 'Ada', 1, 'request-2');
-                 INSERT INTO person_instance_events(instance_id, previous_json, request_id)
-                   VALUES ('instance-1', '{}', 'request-instance');
-                 INSERT INTO person_references(subject_id, instance_id, source_revision)
-                   VALUES ('person-1', 'instance-1', '1:1');
-                 INSERT INTO historical_people(id, display_name, reference_asset_path,
-                     reference_source_revision)
-                   VALUES ('history-1', 'Ada', '/photo.jpg', '1:1');
-                 INSERT INTO folder_historical_links(subject_id, historical_person_id)
-                   VALUES ('person-1', 'history-1');
-                 INSERT INTO person_history_events(subject_id, historical_person_id, event_kind,
-                     request_id)
-                   VALUES ('person-1', 'history-1', 'link', 'request-4');
-                 INSERT INTO person_tag_links(historical_person_id, tag_id, enabled, revision)
-                   VALUES ('history-1', 1, 1, 1);
-                 INSERT INTO person_tag_overrides(historical_person_id, asset_path, suppressed,
-                     revision)
-                   VALUES ('history-1', '/photo.jpg', 1, 1);
-                 INSERT INTO person_request_results(request_id, operation, entity_id)
-                   VALUES ('request-1', 'setPersonReview', 'person-1');",
+                 INSERT INTO global_person_tags VALUES ('global-1',1);",
             )
             .expect("user facts must seed");
     }

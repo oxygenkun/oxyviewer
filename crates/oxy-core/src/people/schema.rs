@@ -1,18 +1,5 @@
 //! Tables declared by the feature that owns their meaning.
 crate::storage::table::tables! {
-    user create folder_people =
-        "id TEXT PRIMARY KEY,
-        folder_path TEXT NOT NULL,
-        display_name TEXT,
-        identity_confirmed INTEGER NOT NULL DEFAULT 0,
-        revision INTEGER NOT NULL DEFAULT 1,
-        created_at INTEGER NOT NULL DEFAULT (unixepoch()),
-        updated_at INTEGER NOT NULL DEFAULT (unixepoch())";
-    user create person_cluster_adoptions =
-        "folder_path TEXT NOT NULL,
-        cluster_id TEXT NOT NULL,
-        subject_id TEXT NOT NULL REFERENCES folder_people(id),
-        PRIMARY KEY(folder_path,cluster_id,subject_id)";
     user create person_manual_instances =
         "id TEXT PRIMARY KEY,
         folder_path TEXT NOT NULL,
@@ -25,72 +12,6 @@ crate::storage::table::tables! {
         revision INTEGER NOT NULL DEFAULT 1,
         created_at INTEGER NOT NULL DEFAULT (unixepoch()),
         updated_at INTEGER NOT NULL DEFAULT (unixepoch())";
-    user create person_review_decisions =
-        "instance_id TEXT NOT NULL REFERENCES person_manual_instances(id),
-        subject_id TEXT NOT NULL REFERENCES folder_people(id),
-        decision TEXT NOT NULL CHECK(decision IN ('pending','belongs','doesNotBelong','deferred')),
-        revision INTEGER NOT NULL DEFAULT 1,
-        updated_at INTEGER NOT NULL DEFAULT (unixepoch()),
-        PRIMARY KEY(instance_id, subject_id)";
-    user create person_review_events =
-        "id INTEGER PRIMARY KEY AUTOINCREMENT,
-        instance_id TEXT NOT NULL,
-        subject_id TEXT NOT NULL,
-        decision TEXT NOT NULL,
-        revision INTEGER NOT NULL,
-        request_id TEXT NOT NULL UNIQUE,
-        changed_at INTEGER NOT NULL DEFAULT (unixepoch())";
-    user create person_identity_events =
-        "id INTEGER PRIMARY KEY AUTOINCREMENT,
-        subject_id TEXT NOT NULL,
-        event_kind TEXT NOT NULL,
-        display_name TEXT,
-        revision INTEGER NOT NULL,
-        request_id TEXT NOT NULL UNIQUE,
-        changed_at INTEGER NOT NULL DEFAULT (unixepoch())";
-    user create person_references =
-        "subject_id TEXT NOT NULL REFERENCES folder_people(id),
-        instance_id TEXT NOT NULL REFERENCES person_manual_instances(id),
-        source_revision TEXT NOT NULL,
-        confirmed_at INTEGER NOT NULL DEFAULT (unixepoch()),
-        PRIMARY KEY(subject_id, instance_id)";
-    user create person_instance_events =
-        "id INTEGER PRIMARY KEY AUTOINCREMENT,
-        instance_id TEXT NOT NULL,
-        previous_json TEXT NOT NULL,
-        request_id TEXT NOT NULL UNIQUE,
-        changed_at INTEGER NOT NULL DEFAULT (unixepoch())";
-    user create person_request_results = "request_id TEXT PRIMARY KEY, operation TEXT NOT NULL, entity_id TEXT NOT NULL";
-    user create historical_people =
-        "id TEXT PRIMARY KEY,
-        display_name TEXT NOT NULL,
-        reference_asset_path TEXT NOT NULL,
-        reference_source_revision TEXT NOT NULL,
-        revision INTEGER NOT NULL DEFAULT 1,
-        created_at INTEGER NOT NULL DEFAULT (unixepoch())";
-    user create folder_historical_links =
-        "subject_id TEXT PRIMARY KEY REFERENCES folder_people(id),
-        historical_person_id TEXT NOT NULL REFERENCES historical_people(id),
-        linked_at INTEGER NOT NULL DEFAULT (unixepoch())";
-    user create person_history_events =
-        "id INTEGER PRIMARY KEY AUTOINCREMENT,
-        subject_id TEXT NOT NULL,
-        historical_person_id TEXT NOT NULL,
-        event_kind TEXT NOT NULL CHECK(event_kind IN ('link','unlink')),
-        request_id TEXT NOT NULL UNIQUE,
-        linked_at INTEGER NOT NULL DEFAULT (unixepoch())";
-    user create person_tag_links =
-        "historical_person_id TEXT PRIMARY KEY REFERENCES historical_people(id),
-        tag_id INTEGER REFERENCES custom_tags(id) ON DELETE SET NULL,
-        enabled INTEGER NOT NULL DEFAULT 0,
-        revision INTEGER NOT NULL DEFAULT 1,
-        updated_at INTEGER NOT NULL DEFAULT (unixepoch())";
-    user create person_tag_overrides =
-        "historical_person_id TEXT NOT NULL REFERENCES historical_people(id),
-        asset_path TEXT NOT NULL,
-        suppressed INTEGER NOT NULL DEFAULT 1,
-        revision INTEGER NOT NULL DEFAULT 1,
-        PRIMARY KEY(historical_person_id,asset_path)";
     user create global_people =
         "id TEXT PRIMARY KEY, display_name TEXT NOT NULL, revision INTEGER NOT NULL DEFAULT 1";
     user create global_person_reviews =
@@ -195,9 +116,7 @@ fn cache_definitions() -> &'static [table::TableDef] {
 }
 
 pub(crate) fn initialize(connection: &Connection) -> Result<(), rusqlite::Error> {
-    connection.execute_batch("CREATE INDEX IF NOT EXISTS folder_people_folder ON folder_people(folder_path);
-        CREATE INDEX IF NOT EXISTS person_manual_instances_asset ON person_manual_instances(folder_path,asset_path);
-        CREATE INDEX IF NOT EXISTS folder_historical_links_person ON folder_historical_links(historical_person_id);")
+    connection.execute_batch("CREATE INDEX IF NOT EXISTS person_manual_instances_asset ON person_manual_instances(folder_path,asset_path);")
 }
 
 pub(crate) fn refresh_cache_format(connection: &mut Connection) -> Result<(), rusqlite::Error> {

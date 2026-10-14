@@ -281,6 +281,12 @@ resource leases, cancellation and stale-publication semantics.
   reference withdrawal, tag contributions and request history in one transaction.
   Existing core tests and an added final-event failure/replay regression pass;
   strict workspace Clippy passes. Schema retirement has explicit user approval.
+- With explicit schema approval, removed thirteen retired identity table
+  declarations and their path/relocation SQL references. Current schema version
+  is 2; version 1 is rejected read-only, without migration or deletion. Added
+  absence and byte-preserving rejection tests; the all-user-table preservation
+  test seeds every current declaration. All 284 core tests / 13 ignored and
+  strict workspace Clippy pass. No existing user database was changed.
 - Next: move remaining desktop use-case coordination and person transactions,
   remove legacy person identity paths and finish ownership/docs/tooling gates,
   then complete final release/performance qualification.

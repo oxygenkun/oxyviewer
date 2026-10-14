@@ -248,6 +248,42 @@ mod tests {
     }
 
     #[test]
+    fn refuses_interim_schema_one_without_rewriting_or_losing_user_facts() {
+        let directory = tempdir().unwrap();
+        let path = directory.path().join("interim.sqlite");
+        {
+            let store = Store::open(&path).unwrap();
+            store
+                .write()
+                .execute(
+                    "INSERT INTO global_people(id,display_name) VALUES('keep','Ada')",
+                    [],
+                )
+                .unwrap();
+            store
+                .write()
+                .pragma_update(None, "user_version", 1)
+                .unwrap();
+        }
+        let before = std::fs::read(&path).unwrap();
+        assert!(matches!(
+            Store::open(&path),
+            Err(StoreError::UnsupportedSchema { version: 1, .. })
+        ));
+        assert_eq!(std::fs::read(&path).unwrap(), before);
+        let connection =
+            Connection::open_with_flags(&path, rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY).unwrap();
+        let name: String = connection
+            .query_row(
+                "SELECT display_name FROM global_people WHERE id='keep'",
+                [],
+                |row| row.get("display_name"),
+            )
+            .unwrap();
+        assert_eq!(name, "Ada");
+    }
+
+    #[test]
     fn a_disk_store_keeps_separate_readers() {
         let directory = tempdir().unwrap();
         let store = Store::open(&directory.path().join("store.sqlite")).unwrap();
@@ -299,7 +335,7 @@ mod tests {
         // declaration order in the schema modules load-bearing rather than
         // cosmetic: a person tag link points at the user's tag vocabulary.
         let targets: Vec<String> = connection
-            .prepare("PRAGMA foreign_key_list(person_tag_links)")
+            .prepare("PRAGMA foreign_key_list(global_person_tags)")
             .unwrap()
             .query_map([], |row| row.get("table"))
             .unwrap()
@@ -307,7 +343,7 @@ mod tests {
             .unwrap();
         assert!(
             targets.contains(&"custom_tags".to_owned()),
-            "person_tag_links must reference the tag vocabulary: {targets:?}"
+            "global_person_tags must reference the tag vocabulary: {targets:?}"
         );
     }
 

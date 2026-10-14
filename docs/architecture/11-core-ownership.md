@@ -163,3 +163,8 @@ repository 保留几何写入，文件/根恢复语句集中于 people::repo::re
 人工标框的业务规则在 people::global_people::geometry；person_geometry workflow
 拥有标框、参考撤回、标签贡献和请求历史的共同事务。人物模块返回受影响身份，
 不调用标签 workflow。最终事件写入失败时全部回滚，成功请求重试只返回原结果。
+
+当前 schema version 为 2，旧 folder/historical 的 13 个声明与路径/移动 SQL 引用已
+移除。保留人工 tuple 和所有全局用户事实；缓存清理测试覆盖每个当前 user 声明。
+中间版本 1 的数据库在 writer 打开前只读拒绝，不迁移、不删除、不 checkpoint。
+回归验证其文件字节和用户记录保持不变。验收使用新的隔离目录。
