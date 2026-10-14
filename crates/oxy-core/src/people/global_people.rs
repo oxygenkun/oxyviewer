@@ -11,6 +11,7 @@ use std::{
     path::Path,
 };
 
+pub(crate) mod geometry;
 mod grouping;
 mod mutations;
 pub(crate) mod requests;

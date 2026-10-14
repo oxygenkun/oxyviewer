@@ -276,6 +276,11 @@ resource leases, cancellation and stale-publication semantics.
   consumer remains. Current pipeline/evidence contracts live in types/analysis.
   All 281 core tests / 13 ignored, contracts-feature strict workspace Clippy,
   regenerated contracts and frontend checking pass. Table retirement remains.
+- Tuple geometry rules now apply through the named person_geometry workflow;
+  the feature reports affected identities and the workflow owns geometry,
+  reference withdrawal, tag contributions and request history in one transaction.
+  Existing core tests and an added final-event failure/replay regression pass;
+  strict workspace Clippy passes. Schema retirement has explicit user approval.
 - Next: move remaining desktop use-case coordination and person transactions,
   remove legacy person identity paths and finish ownership/docs/tooling gates,
   then complete final release/performance qualification.

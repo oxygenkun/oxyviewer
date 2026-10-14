@@ -232,21 +232,21 @@ mod tests {
         let people = testing::open(&database);
         let folder = std::path::Path::new("/photos");
         let asset = folder.join("a.jpg");
-        let manual = people
-            .save_person_tuple_geometry(
-                &crate::people::types::SavePersonTupleGeometry {
-                    instance_id: None,
-                    expected_revision: 0,
-                    folder_path: folder.to_path_buf(),
-                    asset_path: asset.clone(),
-                    source_revision: "10:20".into(),
-                    face_box: Some([0.1, 0.1, 0.2, 0.2]),
-                    body_box: None,
-                    request_id: "manual".into(),
-                },
-                &"a".repeat(64),
-            )
-            .unwrap();
+        let manual = crate::app::workflows::person_geometry::save_person_tuple_geometry(
+            &people.store,
+            &crate::people::types::SavePersonTupleGeometry {
+                instance_id: None,
+                expected_revision: 0,
+                folder_path: folder.to_path_buf(),
+                asset_path: asset.clone(),
+                source_revision: "10:20".into(),
+                face_box: Some([0.1, 0.1, 0.2, 0.2]),
+                body_box: None,
+                request_id: "manual".into(),
+            },
+            &"a".repeat(64),
+        )
+        .unwrap();
         let producer = "b".repeat(64);
         let pipeline = "a".repeat(64);
         {

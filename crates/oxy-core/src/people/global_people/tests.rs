@@ -84,21 +84,21 @@ fn persisted_edge_faces_can_be_loaded_confirmed_and_edited() {
         .find(|t| t.person_id.as_deref() == Some(&identity.id))
         .unwrap();
     assert_eq!(tuple.decision, Some(PersonReviewDecision::Belongs));
-    people
-        .save_person_tuple_geometry(
-            &SavePersonTupleGeometry {
-                folder_path: folder.clone(),
-                asset_path: tuple.asset_path.clone(),
-                instance_id: Some(tuple.id.clone()),
-                expected_revision: tuple.revision,
-                source_revision: tuple.source_revision.clone(),
-                face_box: tuple.face_box,
-                body_box: Some([0.5, 0.5, 0.5, 0.5]),
-                request_id: "edit-edge".into(),
-            },
-            &tuple.source_identity_revision,
-        )
-        .unwrap();
+    crate::app::workflows::person_geometry::save_person_tuple_geometry(
+        &people.store,
+        &SavePersonTupleGeometry {
+            folder_path: folder.clone(),
+            asset_path: tuple.asset_path.clone(),
+            instance_id: Some(tuple.id.clone()),
+            expected_revision: tuple.revision,
+            source_revision: tuple.source_revision.clone(),
+            face_box: tuple.face_box,
+            body_box: Some([0.5, 0.5, 0.5, 0.5]),
+            request_id: "edit-edge".into(),
+        },
+        &tuple.source_identity_revision,
+    )
+    .unwrap();
     assert!(people.folder_people_workspace(&folder).is_ok());
 }
 
@@ -124,21 +124,21 @@ fn manual(
         std::fs::write(&path, b"source").unwrap();
     }
     let asset = crate::files::FsCatalog::default().get_asset(&path).unwrap();
-    people
-        .save_person_tuple_geometry(
-            &SavePersonTupleGeometry {
-                folder_path: folder.into(),
-                asset_path: path.clone(),
-                instance_id: None,
-                expected_revision: 0,
-                source_revision: format!("{}:{}", asset.size_bytes, asset.modified_at_ms),
-                face_box: face,
-                body_box: body,
-                request_id: name.into(),
-            },
-            &crate::files::observe_file(&path).unwrap().revision_id(),
-        )
-        .unwrap()
+    crate::app::workflows::person_geometry::save_person_tuple_geometry(
+        &people.store,
+        &SavePersonTupleGeometry {
+            folder_path: folder.into(),
+            asset_path: path.clone(),
+            instance_id: None,
+            expected_revision: 0,
+            source_revision: format!("{}:{}", asset.size_bytes, asset.modified_at_ms),
+            face_box: face,
+            body_box: body,
+            request_id: name.into(),
+        },
+        &crate::files::observe_file(&path).unwrap().revision_id(),
+    )
+    .unwrap()
 }
 fn request(
     people: &People,
@@ -563,21 +563,21 @@ fn geometry_change_withdraws_reference_and_person_tag_but_preserves_manual_tag()
         .unwrap()
         .is_empty()
     );
-    let edited = people
-        .save_person_tuple_geometry(
-            &SavePersonTupleGeometry {
-                folder_path: folder,
-                asset_path: t.asset_path.clone(),
-                instance_id: Some(t.id),
-                expected_revision: t.revision,
-                source_revision: t.source_revision,
-                face_box: t.face_box,
-                body_box: Some([0.1, 0.1, 0.3, 0.8]),
-                request_id: "edit".into(),
-            },
-            &t.source_identity_revision,
-        )
-        .unwrap();
+    let edited = crate::app::workflows::person_geometry::save_person_tuple_geometry(
+        &people.store,
+        &SavePersonTupleGeometry {
+            folder_path: folder,
+            asset_path: t.asset_path.clone(),
+            instance_id: Some(t.id),
+            expected_revision: t.revision,
+            source_revision: t.source_revision,
+            face_box: t.face_box,
+            body_box: Some([0.1, 0.1, 0.3, 0.8]),
+            request_id: "edit".into(),
+        },
+        &t.source_identity_revision,
+    )
+    .unwrap();
     assert_eq!(edited.decision, Some(PersonReviewDecision::Pending));
     assert!(
         people
@@ -798,4 +798,99 @@ fn person_tag_remains_until_the_last_confirmed_tuple_is_rejected() {
         );
         assert!(crate::tags::repo::effective_assignment_present(&connection, &path, tag).unwrap());
     }
+}
+
+#[test]
+fn geometry_transaction_rolls_back_reference_tags_and_history_and_replays_once() {
+    let temp = tempfile::tempdir().unwrap();
+    let folder = temp.path().canonicalize().unwrap();
+    let people = crate::people::testing::in_memory();
+    let identity = person(&people, "Ada");
+    let tuple = manual(&people, &folder, "face", Some([0.1, 0.1, 0.2, 0.2]), None);
+    let tag = crate::tags::repo::insert_tag(&people.store.write(), None, "Ada", "ada", 0).unwrap();
+    crate::app::workflows::person_tags::set_global_person_tag(
+        &people.store,
+        &SetGlobalPersonTag {
+            person_id: identity.id.clone(),
+            tag_id: Some(tag),
+            expected_revision: identity.revision,
+            request_id: "tag".into(),
+        },
+    )
+    .unwrap();
+    review_person_tuples(
+        &people.store,
+        &request(
+            &people,
+            &folder,
+            &tuple.id,
+            &identity,
+            PersonReviewDecision::Belongs,
+            "confirm",
+        ),
+    )
+    .unwrap();
+    let identity = people.global_people().unwrap().remove(0);
+    people
+        .set_global_person_reference(&SetGlobalPersonReference {
+            person_id: identity.id,
+            instance_id: tuple.id.clone(),
+            enabled: true,
+            expected_revision: identity.revision,
+            request_id: "reference".into(),
+        })
+        .unwrap();
+    let before = people.folder_people_workspace(&folder).unwrap();
+    let catalog = people.global_people().unwrap();
+    let input = SavePersonTupleGeometry {
+        folder_path: folder.clone(),
+        asset_path: tuple.asset_path.clone(),
+        instance_id: Some(tuple.id),
+        expected_revision: tuple.revision,
+        source_revision: tuple.source_revision,
+        face_box: tuple.face_box,
+        body_box: Some([0.1, 0.1, 0.3, 0.8]),
+        request_id: "edit".into(),
+    };
+    people.store.write().execute_batch("CREATE TRIGGER reject_geometry_event BEFORE INSERT ON global_person_events WHEN NEW.request_id='edit' BEGIN SELECT RAISE(ABORT,'event failure'); END;").unwrap();
+    let apply = || {
+        crate::app::workflows::person_geometry::save_person_tuple_geometry(
+            &people.store,
+            &input,
+            &tuple.source_identity_revision,
+        )
+    };
+    assert!(apply().is_err());
+    assert_eq!(
+        people.folder_people_workspace(&folder).unwrap().revision,
+        before.revision
+    );
+    assert_eq!(people.global_people().unwrap(), catalog);
+    assert!(
+        crate::tags::repo::effective_assignment_present(
+            &people.store.read(),
+            &input.asset_path.to_string_lossy(),
+            tag
+        )
+        .unwrap()
+    );
+    people
+        .store
+        .write()
+        .execute_batch("DROP TRIGGER reject_geometry_event")
+        .unwrap();
+    let result = apply().unwrap();
+    let after = people.global_people().unwrap();
+    assert!(after[0].reference_instance_ids.is_empty());
+    assert_eq!(result.decision, Some(PersonReviewDecision::Pending));
+    assert!(
+        !crate::tags::repo::effective_assignment_present(
+            &people.store.read(),
+            &input.asset_path.to_string_lossy(),
+            tag
+        )
+        .unwrap()
+    );
+    assert_eq!(apply().unwrap(), result);
+    assert_eq!(people.global_people().unwrap(), after);
 }

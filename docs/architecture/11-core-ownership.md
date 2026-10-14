@@ -159,3 +159,7 @@ workflow 已退役。pipeline、分析与证据类型位于 people::types::analy
 repository 保留几何写入，文件/根恢复语句集中于 people::repo::relocation。缓存重建与根
 恢复测试已切换到全局人物事实；根恢复事务更新全局贡献，保留手工来源。旧表声明仍在
 下一步清理范围，当前阶段没有修改 schema 版本或删除任何数据库文件。
+
+人工标框的业务规则在 people::global_people::geometry；person_geometry workflow
+拥有标框、参考撤回、标签贡献和请求历史的共同事务。人物模块返回受影响身份，
+不调用标签 workflow。最终事件写入失败时全部回滚，成功请求重试只返回原结果。

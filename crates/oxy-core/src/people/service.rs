@@ -65,16 +65,16 @@ impl PersonService {
         if crate::files::observe_file(&asset.path).map_err(|e| e.to_string())? != observation {
             return Err("源图已变化".into());
         }
-        self.people
-            .save_person_tuple_geometry(
-                &SavePersonTupleGeometry {
-                    folder_path: folder,
-                    asset_path: asset.path,
-                    ..input
-                },
-                &observation.revision_id(),
-            )
-            .map_err(|e| e.to_string())
+        crate::app::workflows::person_geometry::save_person_tuple_geometry(
+            &self.people.store,
+            &SavePersonTupleGeometry {
+                folder_path: folder,
+                asset_path: asset.path,
+                ..input
+            },
+            &observation.revision_id(),
+        )
+        .map_err(|e| e.to_string())
     }
 
     fn reserve(
