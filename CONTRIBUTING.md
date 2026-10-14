@@ -88,6 +88,11 @@ desktop application and exercise native commands:
 pnpm tauri dev
 ```
 
+On macOS and Linux, this command prepares and verifies the pinned FFmpeg and
+libheif before starting Cargo. The first run may take several minutes; later
+runs reuse the local native build cache. Windows still requires the vcpkg
+libheif installation described above.
+
 Build the browser frontend without packaging the desktop application:
 
 ```bash

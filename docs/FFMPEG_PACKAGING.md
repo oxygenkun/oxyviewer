@@ -19,13 +19,15 @@ pnpm tauri build --bundles app,dmg
 pnpm tauri build --bundles nsis
 ```
 
-`apps/desktop/scripts/tauri.mjs` prepares FFmpeg before `build`/`bundle` and
-merges `tauri.bundle.json`. Do not bypass this wrapper with `pnpm exec tauri`
-for release builds. The overlay keeps plain Cargo checks and `tauri dev`
-independent of the FFmpeg source build. `pnpm ffmpeg:prepare` explicitly
-prepares and verifies the sidecars without building the application; on macOS
-and Linux `pnpm native:prepare` additionally installs the static prefix and the
-pinned libheif that links it.
+`apps/desktop/scripts/tauri.mjs` prepares FFmpeg and libheif before
+`build`/`bundle` and merges `tauri.bundle.json`. On macOS and Linux it also
+prepares these dependencies before `dev`, because Cargo links the pinned
+libheif and FFmpeg static prefixes. Only `build`/`bundle` merges the packaging
+overlay. Do not bypass this wrapper with `pnpm exec tauri` for release builds.
+Plain Cargo commands require `pnpm native:prepare` first on macOS and Linux.
+`pnpm ffmpeg:prepare` explicitly prepares and verifies the sidecars without
+building the application; `pnpm native:prepare` additionally installs the
+static prefix and the pinned libheif that links it on macOS and Linux.
 
 Prerequisites: Node, Rust, curl, tar with xz support, Bash, GNU Make and a C
 compiler; x86_64 builds also need NASM for SIMD. macOS uses Xcode command-line

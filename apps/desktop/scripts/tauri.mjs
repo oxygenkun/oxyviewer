@@ -36,13 +36,17 @@ if (process.platform !== "win32") {
 
 try {
   const args = process.argv.slice(2);
-  if (["build", "bundle"].includes(args[0]) && !args.includes("--help") && !args.includes("-h")) {
+  const isPackaging = ["build", "bundle"].includes(args[0]);
+  const needsNative = isPackaging || (args[0] === "dev" && process.platform !== "win32");
+  if (needsNative && !args.includes("--help") && !args.includes("-h")) {
     const targetIndex = args.findIndex((arg) => arg === "--target" || arg === "-t");
     const target = targetIndex >= 0 ? args[targetIndex + 1] : args.find((arg) => arg.startsWith("--target="))?.slice(9);
     prepare(target);
     prepareLibheif(target);
-    const separator = args.indexOf("--");
-    args.splice(separator < 0 ? args.length : separator, 0, "--config", fileURLToPath(new URL("../src-tauri/tauri.bundle.json", import.meta.url)));
+    if (isPackaging) {
+      const separator = args.indexOf("--");
+      args.splice(separator < 0 ? args.length : separator, 0, "--config", fileURLToPath(new URL("../src-tauri/tauri.bundle.json", import.meta.url)));
+    }
   }
   await cli.run(args, "pnpm tauri");
 } catch (error) {
