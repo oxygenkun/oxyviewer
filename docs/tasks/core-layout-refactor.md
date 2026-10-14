@@ -190,7 +190,13 @@ resource leases, cancellation and stale-publication semantics.
 - PersonService now owns current workspace/source lookup and tuple geometry
   validation previously coordinated by desktop. A headless real-file regression
   covers successful save, folder boundary, changed source and shutdown rejection.
-  All four person-service tests and strict workspace Clippy pass.
+  All four person-service tests and strict workspace Clippy pass. The complete
+  workspace rerun passes: 781 tests, no failures, 28 ignored, including the
+  repository HIF fixture. Frontend remains 413 passing tests with check/build.
+  Preview use-case migration has not been applied: automatic review rejected
+  its selection/dispatch/cache/event scope, and a separate explicit approval
+  question is pending. Both approval questions were first raised in this turn;
+  the work remains active, with no final release qualification claim.
 - Next: move remaining desktop use-case coordination and person SQL,
   remove legacy person identity paths and finish ownership/docs/tooling gates,
   then complete final release/performance qualification.
