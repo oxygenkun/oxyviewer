@@ -90,6 +90,10 @@ PersonService 拥有模型状态、下载与导入、operation 预留/取消、�
 继续校验源身份与当前 producer，失效检测不产生人工事实。DirectML 的真实文件夹
 吞吐验证已从 desktop 测试移到 core，仍需实际模型与 release 环境并显式运行。
 
+当前人物 workspace、照片摘要和人工标框用例也由 PersonService 提供。标框保存先观察
+规范路径和稳定来源身份，再验证界面提供的廉价版本，保存前重新观察文件；People
+继续校验几何与所属文件夹。停止后拒绝新标框写入。Tauri 命令只转交完整用例。
+
 全局人物目录不再在读路径迁移旧 folder/historical 身份。旧迁移入口、映射表声明、
 历史参考/标签回填和来源别名清理已移除；目录读取只使用当前全局身份记录。
 人物与标签的来源查询分别在各自 repository，workflow 在事务内组合结果，保留

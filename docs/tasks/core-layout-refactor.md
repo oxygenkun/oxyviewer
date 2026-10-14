@@ -187,6 +187,10 @@ resource leases, cancellation and stale-publication semantics.
   413 tests and production build pass. Legacy demo filters/source state and old
   desktop/schema paths remain; further demo deletion awaits explicit approval
   after automatic review rejected the broad semantic-removal patch.
+- PersonService now owns current workspace/source lookup and tuple geometry
+  validation previously coordinated by desktop. A headless real-file regression
+  covers successful save, folder boundary, changed source and shutdown rejection.
+  All four person-service tests and strict workspace Clippy pass.
 - Next: move remaining desktop use-case coordination and person SQL,
   remove legacy person identity paths and finish ownership/docs/tooling gates,
   then complete final release/performance qualification.

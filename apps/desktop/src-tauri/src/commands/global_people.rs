@@ -71,37 +71,10 @@ pub(crate) async fn save_person_tuple_geometry(
     input: SavePersonTupleGeometry,
     state: State<'_, AppState>,
 ) -> Result<PersonTuple, String> {
-    let people = Arc::clone(&state.people);
-    let files = Arc::clone(&state.files);
-    tauri::async_runtime::spawn_blocking(move || {
-        let folder = input
-            .folder_path
-            .canonicalize()
-            .map_err(|e| e.to_string())?;
-        let observation =
-            oxy_core::files::observe_file(&input.asset_path).map_err(|e| e.to_string())?;
-        let asset = files
-            .get_asset(&observation.canonical_path)
-            .map_err(|e| e.to_string())?;
-        if input.source_revision != format!("{}:{}", asset.size_bytes, asset.modified_at_ms) {
-            return Err("源图已变化，请重新打开照片".into());
-        }
-        if oxy_core::files::observe_file(&asset.path).map_err(|e| e.to_string())? != observation {
-            return Err("源图已变化".into());
-        }
-        people
-            .save_person_tuple_geometry(
-                &SavePersonTupleGeometry {
-                    folder_path: folder,
-                    asset_path: asset.path,
-                    ..input
-                },
-                &observation.revision_id(),
-            )
-            .map_err(|e| e.to_string())
-    })
-    .await
-    .map_err(|e| e.to_string())?
+    let service = Arc::clone(&state.person_service);
+    tauri::async_runtime::spawn_blocking(move || service.save_tuple_geometry(input))
+        .await
+        .map_err(|e| e.to_string())?
 }
 
 #[tauri::command]
@@ -118,15 +91,10 @@ pub(crate) async fn get_folder_people_workspace(
     folder_path: PathBuf,
     state: State<'_, AppState>,
 ) -> Result<FolderPeopleWorkspace, String> {
-    let people = Arc::clone(&state.people);
-    tauri::async_runtime::spawn_blocking(move || {
-        let path = folder_path.canonicalize().map_err(|e| e.to_string())?;
-        people
-            .folder_people_workspace(&path)
-            .map_err(|e| e.to_string())
-    })
-    .await
-    .map_err(|e| e.to_string())?
+    let service = Arc::clone(&state.person_service);
+    tauri::async_runtime::spawn_blocking(move || service.workspace(folder_path))
+        .await
+        .map_err(|e| e.to_string())?
 }
 #[tauri::command]
 pub(crate) async fn save_global_person(
@@ -173,8 +141,8 @@ pub(crate) async fn get_person_tuple_asset(
     path: PathBuf,
     state: State<'_, AppState>,
 ) -> Result<AssetSummary, String> {
-    let files = Arc::clone(&state.files);
-    tauri::async_runtime::spawn_blocking(move || files.get_asset(&path).map_err(|e| e.to_string()))
+    let service = Arc::clone(&state.person_service);
+    tauri::async_runtime::spawn_blocking(move || service.tuple_asset(path))
         .await
         .map_err(|e| e.to_string())?
 }

@@ -5,7 +5,10 @@ use super::{
     execution::operations::{PersonOperation, PersonOperations},
     types::*,
 };
-use crate::{files::FsCatalog, resources::cache::CacheManager, runtime::CoreRuntime};
+use crate::{
+    browse::types::AssetSummary, files::FsCatalog, resources::cache::CacheManager,
+    runtime::CoreRuntime,
+};
 use std::{path::PathBuf, sync::Arc};
 
 pub struct PersonService {
@@ -21,6 +24,49 @@ pub struct PersonService {
 mod analysis_verification;
 
 impl PersonService {
+    pub fn workspace(&self, folder_path: PathBuf) -> Result<FolderPeopleWorkspace, String> {
+        let folder = folder_path.canonicalize().map_err(|e| e.to_string())?;
+        self.people
+            .folder_people_workspace(&folder)
+            .map_err(|e| e.to_string())
+    }
+
+    pub fn tuple_asset(&self, path: PathBuf) -> Result<AssetSummary, String> {
+        self.files.get_asset(&path).map_err(|e| e.to_string())
+    }
+
+    pub fn save_tuple_geometry(
+        &self,
+        input: SavePersonTupleGeometry,
+    ) -> Result<PersonTuple, String> {
+        if self.runtime.is_stopping() {
+            return Err("application is shutting down".into());
+        }
+        let folder = input
+            .folder_path
+            .canonicalize()
+            .map_err(|e| e.to_string())?;
+        let observation =
+            crate::files::observe_file(&input.asset_path).map_err(|e| e.to_string())?;
+        let asset = self.tuple_asset(observation.canonical_path.clone())?;
+        if input.source_revision != format!("{}:{}", asset.size_bytes, asset.modified_at_ms) {
+            return Err("源图已变化，请重新打开照片".into());
+        }
+        if crate::files::observe_file(&asset.path).map_err(|e| e.to_string())? != observation {
+            return Err("源图已变化".into());
+        }
+        self.people
+            .save_person_tuple_geometry(
+                &SavePersonTupleGeometry {
+                    folder_path: folder,
+                    asset_path: asset.path,
+                    ..input
+                },
+                &observation.revision_id(),
+            )
+            .map_err(|e| e.to_string())
+    }
+
     pub fn detections(
         &self,
         folder_path: PathBuf,
@@ -428,6 +474,72 @@ mod tests {
         })
         .unwrap()
         .0
+    }
+
+    #[test]
+    fn geometry_use_case_validates_source_and_folder_before_writing() {
+        let directory = tempfile::tempdir().unwrap();
+        let root = directory.path().canonicalize().unwrap();
+        let photo = root.join("photo.jpg");
+        std::fs::write(&photo, b"source").unwrap();
+        let app = host(&root);
+        let asset = app.person_service.tuple_asset(photo.clone()).unwrap();
+        let mut input = SavePersonTupleGeometry {
+            folder_path: root.clone(),
+            asset_path: photo.clone(),
+            instance_id: None,
+            expected_revision: 0,
+            source_revision: format!("{}:{}", asset.size_bytes, asset.modified_at_ms),
+            face_box: Some([0.1, 0.1, 0.2, 0.2]),
+            body_box: None,
+            request_id: "geometry".into(),
+        };
+        let tuple = app
+            .person_service
+            .save_tuple_geometry(input.clone())
+            .unwrap();
+        assert_eq!(tuple.asset_path, photo);
+        assert!(
+            app.person_service
+                .workspace(root.clone())
+                .unwrap()
+                .groups
+                .iter()
+                .flat_map(|g| &g.members)
+                .any(|t| t.id == tuple.id)
+        );
+        let other = root.join("other");
+        std::fs::create_dir(&other).unwrap();
+        input.folder_path = other;
+        input.request_id = "outside-folder".into();
+        assert!(
+            app.person_service
+                .save_tuple_geometry(input.clone())
+                .is_err()
+        );
+        input.folder_path = root.clone();
+        input.request_id = "stale-source".into();
+        std::fs::write(&photo, b"changed source").unwrap();
+        assert!(
+            app.person_service
+                .save_tuple_geometry(input.clone())
+                .is_err()
+        );
+        assert_eq!(
+            app.people
+                .list_person_instances(&root, &photo)
+                .unwrap()
+                .len(),
+            1
+        );
+        assert!(app.shutdown(Duration::from_secs(3)));
+        input.request_id = "after-stop".into();
+        assert!(
+            app.person_service
+                .save_tuple_geometry(input)
+                .unwrap_err()
+                .contains("shutting down")
+        );
     }
 
     #[test]
