@@ -246,7 +246,6 @@ resource leases, cancellation and stale-publication semantics.
   global-identity regression: current row relocation repoints the path without
   rebinding its path-dependent source identity; legacy mocked tests do not prove
   the required identity-retention behavior.
-- Next: move remaining desktop use-case coordination and person transactions,
 - A real-file current-model rename test exposed that displayed confirmation
   survives but stored source identity still names the old path, so subsequent
   reference/review validation fails. File-action commit now observes the target
@@ -256,6 +255,14 @@ resource leases, cancellation and stale-publication semantics.
   tags remain. Suggestions are invalidated. The test covers retained references
   and changed-source handling; all 285 core tests / 13 ignored and strict
   workspace Clippy pass.
+- Next: move remaining desktop use-case coordination and person transactions,
+- Removed legacy subject/cluster fields from AssetQuery and their composition
+  branches in BrowseService. The generator no longer exports the three old
+  query types; current tuple filtering remains and the index-search fast path
+  is unchanged. A real-JPEG headless test covers tag intersection, distinct-photo
+  results for multiple instances and paging. All 286 core tests / 13 ignored,
+  strict workspace Clippy, regenerated contract drift, frontend check and 413
+  frontend tests pass.
 - Next: move remaining desktop use-case coordination and person transactions,
   remove legacy person identity paths and finish ownership/docs/tooling gates,
   then complete final release/performance qualification.

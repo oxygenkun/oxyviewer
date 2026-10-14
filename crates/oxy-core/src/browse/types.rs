@@ -1,7 +1,5 @@
 //! Public types owned by the browse feature.
 use crate::files::types::FileDeletionMode;
-use crate::people::types::PersonClusterFilter;
-use crate::people::types::PersonFilter;
 use crate::people::types::PersonTupleFilter;
 use crate::tags::types::CustomTagId;
 use oxy_media::types::AssetKind;
@@ -94,8 +92,6 @@ pub enum TagMatchMode {
 #[cfg_attr(feature = "contracts", derive(ts_rs::TS))]
 #[serde(rename_all = "camelCase")]
 pub struct AssetQuery {
-    pub person_filter: Option<PersonFilter>,
-    pub person_cluster_filter: Option<PersonClusterFilter>,
     pub person_tuple_filter: Option<PersonTupleFilter>,
     #[serde(default)]
     pub tag_ids: Vec<CustomTagId>,

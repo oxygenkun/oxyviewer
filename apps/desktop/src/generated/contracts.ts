@@ -21,7 +21,7 @@ export type AssetDetails = { asset: AssetSummary, width: number | null, height: 
 export type AssetDetailsResult = { details: AssetDetails, metadataProjection: MetadataProjection, };
 export type AssetId = string;
 export type AssetKind = "raw" | "jpeg" | "heif" | "png" | "tiff" | "webp";
-export type AssetQuery = { personFilter: PersonFilter | null, personClusterFilter: PersonClusterFilter | null, personTupleFilter: PersonTupleFilter | null, tagIds: Array<number>, tagMatch: TagMatchMode, search: string | null, kind: AssetKind | null, minimumRating: number | null, colorLabels: Array<string>, pickLabels: Array<string>, sort: AssetSort, direction: SortDirection, pageSize: number | null, };
+export type AssetQuery = { personTupleFilter: PersonTupleFilter | null, tagIds: Array<number>, tagMatch: TagMatchMode, search: string | null, kind: AssetKind | null, minimumRating: number | null, colorLabels: Array<string>, pickLabels: Array<string>, sort: AssetSort, direction: SortDirection, pageSize: number | null, };
 export type AssetSort = "name" | "modified" | "size" | "kind";
 export type AssetSummary = { id: string, path: string, name: string, extension: string, kind: AssetKind, sizeBytes: number, modifiedAtMs: number, hasSidecar: boolean, rating?: number | null, colorLabel?: string | null, pickLabel?: PickLabel | null, };
 export type AssetTagAssignment = { tag: CustomTag, assignedCount: number, assetCount: number, };
@@ -192,17 +192,10 @@ export type PersonAnalysisTask = { runId: string, folderPath: string, assetPath:
 claimToken: string, };
 export type PersonAnalysisTaskInput = { assetPath: string, sourceRevision: string, stageId: string, stageFingerprint: string, stageOrder: number, };
 export type PersonCluster = { id: string, members: Array<PersonClusterMember>, cover: AssetSummary | null, people: Array<FolderPerson>, };
-export type PersonClusterFilter = { snapshotId: string,
-/**
- * "ungrouped" selects all singleton / ambiguous detections.
- */
-clusterId: string, };
 export type PersonClusterMember = { assetPath: string, instanceId: string, sourceRevision: string, summaryRevision: string, faceBox: [number, number, number, number], };
 export type PersonClusterSnapshot = { snapshotId: string, folderPath: string, runId: string, pipelineFingerprint: string, algorithm: string, clusters: Array<PersonCluster>, ungrouped: Array<PersonClusterMember>, noFaceCount: number, unavailableCount: number, };
 export type PersonDetectionSnapshot = { sourceRevision: string, instances: Array<DetectedPersonInstance>, };
 export type PersonDistanceMetric = "cosine";
-export type PersonFilter = { subjectId: string | null, state: PersonFilterState, };
-export type PersonFilterState = "pending" | "belongs" | "doesNotBelong" | "deferred" | "all" | "unassigned" | "needsReview";
 export type PersonInstance = { id: string, folderPath: string, assetPath: string, sourceRevision: string,
 /**
  * Normalized image coordinates [left, top, width, height].

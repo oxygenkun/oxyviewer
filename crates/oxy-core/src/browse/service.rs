@@ -103,9 +103,7 @@ impl BrowseService {
             let _ = app.publish(CoreEvent::DirectoryBrowseProgress(progress.clone()));
             // Preserve existing library-wide search semantics. Ordinary browsing
             // uses independent snapshots even during an incomplete root index.
-            if query.person_filter.is_none()
-                && query.person_cluster_filter.is_none()
-                && query.person_tuple_filter.is_none()
+            if query.person_tuple_filter.is_none()
                 && query
                     .search
                     .as_ref()
@@ -171,20 +169,6 @@ impl BrowseService {
                 )
             };
             let candidates = tagged_assets.as_deref().unwrap_or(&read.assets);
-            let person_assets = query
-                .person_filter
-                .as_ref()
-                .map(|filter| people.filter_assets_by_person(&directory, candidates, filter))
-                .transpose()
-                .map_err(|error| error.to_string())?;
-            let candidates = person_assets.as_deref().unwrap_or(candidates);
-            let cluster_assets = query
-                .person_cluster_filter
-                .as_ref()
-                .map(|filter| people.filter_assets_by_cluster(&directory, candidates, filter))
-                .transpose()
-                .map_err(|error| error.to_string())?;
-            let candidates = cluster_assets.as_deref().unwrap_or(candidates);
             let tuple_assets = query
                 .person_tuple_filter
                 .as_ref()
@@ -499,5 +483,95 @@ mod tests {
         assert_eq!(page.page.items[0].name, "selected.jpg");
         assert_eq!(page.page.items[0].rating, Some(4));
         assert!(app.shutdown(Duration::from_secs(2)));
+    }
+
+    #[test]
+    fn current_person_query_intersects_tags_and_pages_distinct_photos() {
+        use crate::people::types::*;
+        let directory = tempfile::tempdir().unwrap();
+        let folder = directory.path().join("photos");
+        std::fs::create_dir(&folder).unwrap();
+        let folder = folder.canonicalize().unwrap();
+        let app = host(directory.path());
+        let person = app
+            .people
+            .save_global_person(&SaveGlobalPerson {
+                id: None,
+                display_name: "Ada".into(),
+                expected_revision: 0,
+                request_id: "person".into(),
+            })
+            .unwrap();
+        let tag = app.tags.create_custom_tag(None, "selected").unwrap();
+        let mut tuples = Vec::new();
+        for name in ["a.jpg", "b.jpg", "c.jpg"] {
+            let path = folder.join(name);
+            photo(&path);
+            let asset = app.person_service.tuple_asset(path.clone()).unwrap();
+            // Two faces in one photo still contribute one browsing result.
+            for index in 0..if name == "a.jpg" { 2 } else { 1 } {
+                tuples.push(
+                    app.person_service
+                        .save_tuple_geometry(SavePersonTupleGeometry {
+                            folder_path: folder.clone(),
+                            asset_path: path.clone(),
+                            instance_id: None,
+                            expected_revision: 0,
+                            source_revision: format!(
+                                "{}:{}",
+                                asset.size_bytes, asset.modified_at_ms
+                            ),
+                            face_box: Some([0.1 + f64::from(index) * 0.4, 0.1, 0.2, 0.2]),
+                            body_box: None,
+                            request_id: format!("geometry:{name}:{index}"),
+                        })
+                        .unwrap(),
+                );
+            }
+            if name != "c.jpg" {
+                app.tags.set_asset_tag(&[path], tag.id, true).unwrap();
+            }
+        }
+        let workspace = app.person_service.workspace(folder.clone()).unwrap();
+        app.person_service
+            .review_tuples(ReviewPersonTuples {
+                folder_path: folder.clone(),
+                workspace_revision: workspace.revision,
+                tuples,
+                person_id: person.id.clone(),
+                decision: PersonReviewDecision::Belongs,
+                replace_confirmed: false,
+                request_id: "review".into(),
+            })
+            .unwrap();
+        let session = app.browse.open_folder(folder).unwrap();
+        let query = AssetQuery {
+            person_tuple_filter: Some(PersonTupleFilter {
+                group_id: format!("person:{}", person.id),
+                decision: Some(PersonReviewDecision::Belongs),
+            }),
+            tag_ids: vec![tag.id],
+            page_size: Some(1),
+            ..Default::default()
+        };
+        let first = app
+            .browse
+            .list_assets(session.id.clone(), None, query.clone(), None, None)
+            .unwrap();
+        assert_eq!(first.page.total, 2);
+        assert_eq!(first.page.items[0].name, "a.jpg");
+        let second = app
+            .browse
+            .list_assets(
+                session.id,
+                None,
+                query,
+                first.page.next_cursor,
+                first.snapshot_revision,
+            )
+            .unwrap();
+        assert_eq!(second.page.items[0].name, "b.jpg");
+        assert!(second.page.next_cursor.is_none());
+        assert!(app.shutdown(Duration::from_secs(3)));
     }
 }

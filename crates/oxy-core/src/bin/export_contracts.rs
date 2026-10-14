@@ -99,13 +99,10 @@ fn main() -> Result<(), Box<dyn Error>> {
     register::<oxy_core::contracts::PersonAnalysisTask>(&mut types, &cfg);
     register::<oxy_core::contracts::PersonAnalysisTaskInput>(&mut types, &cfg);
     register::<oxy_core::contracts::PersonCluster>(&mut types, &cfg);
-    register::<oxy_core::contracts::PersonClusterFilter>(&mut types, &cfg);
     register::<oxy_core::contracts::PersonClusterMember>(&mut types, &cfg);
     register::<oxy_core::contracts::PersonClusterSnapshot>(&mut types, &cfg);
     register::<oxy_core::contracts::PersonDetectionSnapshot>(&mut types, &cfg);
     register::<oxy_core::contracts::PersonDistanceMetric>(&mut types, &cfg);
-    register::<oxy_core::contracts::PersonFilter>(&mut types, &cfg);
-    register::<oxy_core::contracts::PersonFilterState>(&mut types, &cfg);
     register::<oxy_core::contracts::PersonInstance>(&mut types, &cfg);
     register::<oxy_core::contracts::PersonModelArtifact>(&mut types, &cfg);
     register::<oxy_core::contracts::PersonModelArtifactFormat>(&mut types, &cfg);
