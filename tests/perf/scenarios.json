@@ -71,7 +71,7 @@
       "fixture": { "type": "file", "path": "tests/fixtures/DSC00529.ARW" },
       "selectName": "DSC00529.ARW",
       "enterLoupe": true,
-      "awaitMarks": ["image:loaded", "preview:result@level=preview"],
+      "awaitMarks": ["image:loaded", "preview:result@level=preview|image:loaded@full"],
       "budgets": { "firstPreviewMs": 800 },
       "runs": 3,
       "coldCache": true,
@@ -112,7 +112,7 @@
       "fixture": { "type": "file", "path": "tests/fixtures/DSC00529.ARW" },
       "selectName": "DSC00529.ARW",
       "enterLoupe": true,
-      "awaitMarks": ["image:loaded", "preview:result@level=preview"],
+      "awaitMarks": ["image:loaded@full"],
       "budgets": { "firstPreviewMs": 150 },
       "runs": 3,
       "coldCache": false,
@@ -121,6 +121,7 @@
       "warmupSettleMs": 8000,
       "requireWarmArtifact": true,
       "expectedPreviewBackend": "cached artifact",
+      "expectedBackendLevel": "full",
       "timeoutMs": 60000
     },
     "warm-loupe-hif-artifact": {

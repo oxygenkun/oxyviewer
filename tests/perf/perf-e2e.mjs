@@ -583,6 +583,7 @@ async function main() {
         const backend = result.report.marks.find((mark) =>
           mark.name === "preview:result"
           && mark.detail?.assetName === selectName
+          && (!scenario.expectedBackendLevel || mark.detail?.level === scenario.expectedBackendLevel)
           && mark.detail?.diagnostics?.backend
         )?.detail?.diagnostics?.backend;
         if (backend !== scenario.expectedPreviewBackend) {

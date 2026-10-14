@@ -271,3 +271,10 @@ delivery have different completion marks. Native completion requires the selecte
 photo, all tiles settled, zero failures and a visible canvas. A thumbnail, hidden
 canvas, failed tile or another photo cannot complete that gate. Cached full-HIF
 still requires its explicit cache-hit and loaded-full marks.
+
+RAW sources with a qualified native-size camera JPEG may go directly from
+thumbnail to full presentation. Cold qualification accepts semantic preview
+arrival or a displayed full image; full is a higher-quality completion, not a
+missing-preview failure. Warm RAW requires a displayed full image and the
+full-level `cached artifact` backend, rather than accepting a thumbnail hit.
+The 800/150 ms first-preview budgets are unchanged.
