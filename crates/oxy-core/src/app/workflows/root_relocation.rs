@@ -319,7 +319,11 @@ mod tests {
         let mut proofs = Vec::new();
         {
             let db = library.write();
-            db.execute("INSERT INTO folder_people(id,folder_path,display_name,identity_confirmed) VALUES('person',?1,'Alice',1)", [old.to_string_lossy().as_ref()]).unwrap();
+            db.execute(
+                "INSERT INTO global_people(id,display_name) VALUES('person','Alice')",
+                [],
+            )
+            .unwrap();
             db.execute(
                 "INSERT INTO custom_tags(id,name,name_key,sort_order) VALUES(1,'tag','tag',0)",
                 [],
@@ -331,8 +335,8 @@ mod tests {
                 let revision = crate::files::observe_file(&file).unwrap().revision_id();
                 proofs.push((file.clone(), revision.clone()));
                 db.execute("INSERT INTO person_manual_instances(id,folder_path,asset_path,source_revision,source_identity_revision) VALUES(?1,?2,?3,'10:20',?4)", rusqlite::params![name, old.to_string_lossy(), file.to_string_lossy(),revision]).unwrap();
-                db.execute("INSERT INTO person_review_decisions(instance_id,subject_id,decision) VALUES(?1,'person','belongs')", [name]).unwrap();
-                db.execute("INSERT INTO person_references(subject_id,instance_id,source_revision) VALUES('person',?1,'10:20')", [name]).unwrap();
+                db.execute("INSERT INTO global_person_reviews(instance_id,person_id,decision) VALUES(?1,'person','belongs')", [name]).unwrap();
+                db.execute("INSERT INTO global_person_references(person_id,instance_id) VALUES('person',?1)", [name]).unwrap();
                 db.execute(
                     "INSERT INTO asset_tags(asset_path,tag_id) VALUES(?1,1)",
                     [file.to_string_lossy().as_ref()],
@@ -380,8 +384,8 @@ mod tests {
                 assert_eq!(needs_review, review);
             }
             for table in [
-                "person_review_decisions",
-                "person_references",
+                "global_person_reviews",
+                "global_person_references",
                 "asset_tags",
                 "asset_tag_sources",
             ] {

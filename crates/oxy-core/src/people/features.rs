@@ -603,7 +603,12 @@ mod tests {
         let database = temporary.path().join("library.sqlite");
         let people = testing::open(&database);
         let person = people
-            .create_folder_person(Path::new("/photos"), "manual")
+            .save_global_person(&crate::people::types::SaveGlobalPerson {
+                id: None,
+                display_name: "Ada".into(),
+                expected_revision: 0,
+                request_id: "manual".into(),
+            })
             .unwrap();
         let cached = feature(
             "instance",
@@ -620,10 +625,7 @@ mod tests {
             .unwrap();
         drop(people);
         let reopened = testing::open(&database);
-        assert_eq!(
-            reopened.list_folder_people(Path::new("/photos")).unwrap()[0].id,
-            person.id
-        );
+        assert_eq!(reopened.global_people().unwrap()[0].id, person.id);
         assert!(
             reopened
                 .search_person_features(
@@ -644,12 +646,14 @@ mod tests {
         let mut people = testing::in_memory();
         people.vector_status = Err("test unavailable".into());
         let person = people
-            .create_folder_person(Path::new("/photos"), "manual")
+            .save_global_person(&crate::people::types::SaveGlobalPerson {
+                id: None,
+                display_name: "Ada".into(),
+                expected_revision: 0,
+                request_id: "manual".into(),
+            })
             .unwrap();
-        assert_eq!(
-            people.list_folder_people(Path::new("/photos")).unwrap()[0].id,
-            person.id
-        );
+        assert_eq!(people.global_people().unwrap()[0].id, person.id);
         assert!(matches!(
             people.put_person_feature(&feature(
                 "one",

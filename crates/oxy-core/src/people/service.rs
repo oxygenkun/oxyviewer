@@ -396,7 +396,7 @@ mod tests {
                 .save_tuple_geometry(input.clone())
                 .is_err()
         );
-        input.folder_path = root.clone();
+        input.folder_path = root;
         input.request_id = "stale-source".into();
         std::fs::write(&photo, b"changed source").unwrap();
         assert!(
@@ -405,8 +405,7 @@ mod tests {
                 .is_err()
         );
         assert_eq!(
-            app.people
-                .list_person_instances(&root, &photo)
+            crate::people::repo::global::tuples(&app.people.store.read(), None)
                 .unwrap()
                 .len(),
             1

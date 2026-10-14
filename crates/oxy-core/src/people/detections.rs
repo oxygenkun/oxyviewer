@@ -233,14 +233,19 @@ mod tests {
         let folder = std::path::Path::new("/photos");
         let asset = folder.join("a.jpg");
         let manual = people
-            .create_person_instance(&crate::people::types::CreatePersonInstance {
-                folder_path: folder.to_path_buf(),
-                asset_path: asset.clone(),
-                source_revision: "10:20".into(),
-                face_box: Some([0.1, 0.1, 0.2, 0.2]),
-                body_box: None,
-                request_id: "manual".into(),
-            })
+            .save_person_tuple_geometry(
+                &crate::people::types::SavePersonTupleGeometry {
+                    instance_id: None,
+                    expected_revision: 0,
+                    folder_path: folder.to_path_buf(),
+                    asset_path: asset.clone(),
+                    source_revision: "10:20".into(),
+                    face_box: Some([0.1, 0.1, 0.2, 0.2]),
+                    body_box: None,
+                    request_id: "manual".into(),
+                },
+                &"a".repeat(64),
+            )
             .unwrap();
         let producer = "b".repeat(64);
         let pipeline = "a".repeat(64);
@@ -278,7 +283,7 @@ mod tests {
         drop(people);
         let reopened = testing::open(&database);
         assert_eq!(
-            reopened.list_person_instances(folder, &asset).unwrap()[0].id,
+            crate::people::repo::global::tuples(&reopened.store.read(), None).unwrap()[0].id,
             manual.id
         );
         assert!(

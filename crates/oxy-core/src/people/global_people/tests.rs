@@ -734,3 +734,68 @@ fn global_gallery_pages_confirmed_history_across_folders_and_preserves_offline_r
         1
     );
 }
+
+#[test]
+fn person_tag_remains_until_the_last_confirmed_tuple_is_rejected() {
+    let temp = tempfile::tempdir().unwrap();
+    let folder = temp.path().canonicalize().unwrap();
+    let people = crate::people::testing::in_memory();
+    let identity = person(&people, "Ada");
+    let first = manual(&people, &folder, "first", Some([0.1, 0.1, 0.2, 0.2]), None);
+    let second = manual(&people, &folder, "second", Some([0.5, 0.1, 0.2, 0.2]), None);
+    let path = first.asset_path.to_string_lossy();
+    let tag = {
+        let connection = people.store.write();
+        let tag = crate::tags::repo::insert_tag(&connection, None, "Ada", "ada", 0).unwrap();
+        crate::tags::repo::insert_source(&connection, &path, tag, "manual", "").unwrap();
+        crate::tags::repo::reconcile_effective(&connection, &path, tag).unwrap();
+        tag
+    };
+    crate::app::workflows::person_tags::set_global_person_tag(
+        &people.store,
+        &SetGlobalPersonTag {
+            person_id: identity.id.clone(),
+            tag_id: Some(tag),
+            expected_revision: identity.revision,
+            request_id: "tag".into(),
+        },
+    )
+    .unwrap();
+    for (index, tuple) in [&first, &second].into_iter().enumerate() {
+        review_person_tuples(
+            &people.store,
+            &request(
+                &people,
+                &folder,
+                &tuple.id,
+                &identity,
+                PersonReviewDecision::Belongs,
+                &format!("confirm-{index}"),
+            ),
+        )
+        .unwrap();
+    }
+    let source = format!("global:{}", identity.id);
+    for (index, tuple) in [&first, &second].into_iter().enumerate() {
+        review_person_tuples(
+            &people.store,
+            &request(
+                &people,
+                &folder,
+                &tuple.id,
+                &identity,
+                PersonReviewDecision::DoesNotBelong,
+                &format!("reject-{index}"),
+            ),
+        )
+        .unwrap();
+        let connection = people.store.read();
+        assert_eq!(
+            !crate::tags::repo::source_tag_ids_of(&connection, &path, "person", &source)
+                .unwrap()
+                .is_empty(),
+            index == 0,
+        );
+        assert!(crate::tags::repo::effective_assignment_present(&connection, &path, tag).unwrap());
+    }
+}
