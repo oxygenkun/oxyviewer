@@ -153,3 +153,9 @@ cache-format marker。缓存格式失配只重建该功能声明的派生表，�
 重构仍在实施：部分用例协调留在 desktop commands，浏览和索引中的 SQL 仍待进一步
 收敛，旧人物入口与身份兼容路径尚未清除。详见
 [实施清单](../tasks/core-layout-refactor.md)；包数量收敛不代表该清单已经完成。
+
+旧 folder/historical 身份核心 API、专属 DTO、请求/审阅 repository 和旧 subject 标签
+workflow 已退役。pipeline、分析与证据类型位于 people::types::analysis；当前人工 tuple
+repository 保留几何写入，文件/根恢复语句集中于 people::repo::relocation。缓存重建与根
+恢复测试已切换到全局人物事实；根恢复事务更新全局贡献，保留手工来源。旧表声明仍在
+下一步清理范围，当前阶段没有修改 schema 版本或删除任何数据库文件。

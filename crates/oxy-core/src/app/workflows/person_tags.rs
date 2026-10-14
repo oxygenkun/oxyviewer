@@ -6,7 +6,6 @@ use crate::people::{
     types::SetGlobalPersonTag,
 };
 use crate::storage::{Connection, Store, StoreError};
-use crate::tags::types::CustomTagId;
 use std::collections::{BTreeSet, HashMap};
 
 const PERSON_SOURCE: &str = "person";
@@ -82,80 +81,6 @@ pub fn reconcile_global_person_sources(
         }
     }
     Ok(())
-}
-
-pub fn reconcile_person_source_for_asset(
-    connection: &Connection,
-    subject_id: &str,
-    asset_path: &str,
-) -> Result<(), StoreError> {
-    let desired =
-        crate::people::repo::manual::person_source_tag(connection, subject_id, asset_path)?;
-    let previous =
-        crate::tags::repo::source_tag_ids_of(connection, asset_path, PERSON_SOURCE, subject_id)?;
-    let mut affected = previous;
-    if let Some(tag_id) = desired {
-        affected.insert(tag_id);
-    }
-    let before = affected
-        .iter()
-        .map(|tag_id| {
-            crate::tags::repo::effective_assignment_present(connection, asset_path, *tag_id)
-                .map(|present| (*tag_id, present))
-        })
-        .collect::<Result<HashMap<CustomTagId, bool>, StoreError>>()?;
-
-    crate::tags::repo::delete_sources_of(connection, asset_path, PERSON_SOURCE, subject_id)?;
-    if let Some(tag_id) = desired {
-        crate::tags::repo::insert_source(
-            connection,
-            asset_path,
-            tag_id,
-            PERSON_SOURCE,
-            subject_id,
-        )?;
-    }
-
-    let mut changed = false;
-    for tag_id in affected {
-        crate::tags::repo::reconcile_effective(connection, asset_path, tag_id)?;
-        let after =
-            crate::tags::repo::effective_assignment_present(connection, asset_path, tag_id)?;
-        changed |= before.get(&tag_id).copied().unwrap_or(false) != after;
-    }
-    if changed {
-        crate::tags::repo::enqueue_sync(connection, &[asset_path.to_owned()])
-    } else {
-        Ok(())
-    }
-}
-
-pub fn reconcile_person_sources_for_subject(
-    connection: &Connection,
-    subject_id: &str,
-) -> Result<(), StoreError> {
-    for asset_path in person_source_asset_paths(connection, subject_id)? {
-        reconcile_person_source_for_asset(connection, subject_id, &asset_path)?;
-    }
-    Ok(())
-}
-
-pub fn person_source_asset_paths(
-    connection: &Connection,
-    subject_id: &str,
-) -> Result<Vec<String>, StoreError> {
-    Ok(
-        crate::people::repo::manual::review_asset_paths(connection, subject_id)?
-            .into_iter()
-            .chain(crate::tags::repo::source_asset_paths(
-                connection,
-                PERSON_SOURCE,
-                subject_id,
-            )?)
-            .collect::<BTreeSet<_>>()
-            .into_iter()
-            .collect(),
-    )
 }
 
 #[cfg(test)]

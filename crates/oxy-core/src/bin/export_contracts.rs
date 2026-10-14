@@ -31,8 +31,6 @@ fn main() -> Result<(), Box<dyn Error>> {
     register::<oxy_core::contracts::CacheSettings>(&mut types, &cfg);
     register::<oxy_core::contracts::CacheSettingsUpdate>(&mut types, &cfg);
     register::<oxy_media::types::CaptureMetadata>(&mut types, &cfg);
-    register::<oxy_core::contracts::ConfirmFolderPerson>(&mut types, &cfg);
-    register::<oxy_core::contracts::CreatePersonInstance>(&mut types, &cfg);
     register::<oxy_core::contracts::CustomTag>(&mut types, &cfg);
     register::<oxy_core::contracts::DebugQueueItem>(&mut types, &cfg);
     register::<oxy_core::contracts::DebugQueueSnapshot>(&mut types, &cfg);
@@ -58,7 +56,6 @@ fn main() -> Result<(), Box<dyn Error>> {
     register::<oxy_media::types::FocusInfo>(&mut types, &cfg);
     register::<oxy_media::types::FocusRegion>(&mut types, &cfg);
     register::<oxy_core::contracts::FolderPeopleWorkspace>(&mut types, &cfg);
-    register::<oxy_core::contracts::FolderPerson>(&mut types, &cfg);
     register::<oxy_core::contracts::FolderSession>(&mut types, &cfg);
     register::<oxy_core::contracts::GlobalPerson>(&mut types, &cfg);
     register::<oxy_core::contracts::GlobalPersonFolder>(&mut types, &cfg);
@@ -73,14 +70,12 @@ fn main() -> Result<(), Box<dyn Error>> {
     register::<oxy_core::contracts::HeifStatusEvent>(&mut types, &cfg);
     register::<oxy_media::types::HeifTilePayload>(&mut types, &cfg);
     register::<oxy_core::contracts::HeifTileReady>(&mut types, &cfg);
-    register::<oxy_core::contracts::HistoricalPerson>(&mut types, &cfg);
     register::<oxy_media::types::ImageOperation>(&mut types, &cfg);
     register::<oxy_media::types::ImageOrigin>(&mut types, &cfg);
     register::<oxy_core::contracts::ImageProjection>(&mut types, &cfg);
     register::<oxy_core::contracts::JobPriority>(&mut types, &cfg);
     register::<oxy_core::contracts::JobProgress>(&mut types, &cfg);
     register::<oxy_core::contracts::LibraryIndexUpdate>(&mut types, &cfg);
-    register::<oxy_core::contracts::LinkHistoricalPerson>(&mut types, &cfg);
     register::<oxy_media::types::MediaPersistence>(&mut types, &cfg);
     register::<oxy_media::types::MediaResourceDescriptor>(&mut types, &cfg);
     register::<oxy_media::types::MediaSatisfaction>(&mut types, &cfg);
@@ -100,19 +95,15 @@ fn main() -> Result<(), Box<dyn Error>> {
     register::<oxy_core::contracts::PersonClusterMember>(&mut types, &cfg);
     register::<oxy_core::contracts::PersonClusterSnapshot>(&mut types, &cfg);
     register::<oxy_core::contracts::PersonDistanceMetric>(&mut types, &cfg);
-    register::<oxy_core::contracts::PersonInstance>(&mut types, &cfg);
     register::<oxy_core::contracts::PersonModelArtifact>(&mut types, &cfg);
     register::<oxy_core::contracts::PersonModelArtifactFormat>(&mut types, &cfg);
     register::<oxy_core::contracts::PersonModelLicenseStatus>(&mut types, &cfg);
     register::<oxy_core::contracts::PersonModelStatus>(&mut types, &cfg);
     register::<oxy_core::contracts::PersonOperationState>(&mut types, &cfg);
     register::<oxy_core::contracts::PersonOperationStatus>(&mut types, &cfg);
-    register::<oxy_core::contracts::PersonReview>(&mut types, &cfg);
     register::<oxy_core::contracts::PersonReviewDecision>(&mut types, &cfg);
     register::<oxy_core::contracts::PersonStageKind>(&mut types, &cfg);
     register::<oxy_core::contracts::PersonStageManifest>(&mut types, &cfg);
-    register::<oxy_core::contracts::PersonTagLink>(&mut types, &cfg);
-    register::<oxy_core::contracts::PersonTagOverride>(&mut types, &cfg);
     register::<oxy_core::contracts::PersonTuple>(&mut types, &cfg);
     register::<oxy_core::contracts::PersonTupleFilter>(&mut types, &cfg);
     register::<oxy_core::contracts::PersonTupleGroup>(&mut types, &cfg);
@@ -136,7 +127,6 @@ fn main() -> Result<(), Box<dyn Error>> {
     register::<oxy_core::contracts::RelocationEntry>(&mut types, &cfg);
     register::<oxy_core::contracts::RelocationMatch>(&mut types, &cfg);
     register::<oxy_media::types::RenderLevel>(&mut types, &cfg);
-    register::<oxy_core::contracts::ResetFolderPerson>(&mut types, &cfg);
     register::<oxy_core::contracts::ResourceLoadStatus>(&mut types, &cfg);
     register::<oxy_media::types::ResourceRegistryStats>(&mut types, &cfg);
     register::<oxy_core::contracts::ReviewPersonTuples>(&mut types, &cfg);
@@ -149,16 +139,11 @@ fn main() -> Result<(), Box<dyn Error>> {
     register::<oxy_core::contracts::SchedulePlacement>(&mut types, &cfg);
     register::<oxy_core::contracts::SetGlobalPersonReference>(&mut types, &cfg);
     register::<oxy_core::contracts::SetGlobalPersonTag>(&mut types, &cfg);
-    register::<oxy_core::contracts::SetPersonReview>(&mut types, &cfg);
-    register::<oxy_core::contracts::SetPersonTagLink>(&mut types, &cfg);
-    register::<oxy_core::contracts::SetPersonTagOverride>(&mut types, &cfg);
     register::<oxy_core::contracts::SortDirection>(&mut types, &cfg);
     register::<oxy_media::types::SourceImage>(&mut types, &cfg);
     register::<oxy_core::contracts::TagDeleteImpact>(&mut types, &cfg);
     register::<oxy_core::contracts::TagMatchMode>(&mut types, &cfg);
     register::<oxy_core::contracts::TagSyncStatus>(&mut types, &cfg);
-    register::<oxy_core::contracts::UnlinkHistoricalPerson>(&mut types, &cfg);
-    register::<oxy_core::contracts::UpdatePersonInstance>(&mut types, &cfg);
     register::<oxy_core::contracts::UpdateStatus>(&mut types, &cfg);
     for (name, value) in [
         (

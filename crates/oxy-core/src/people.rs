@@ -16,7 +16,6 @@ pub mod execution;
 pub mod features;
 mod geometry;
 pub mod global_people;
-pub mod identity;
 pub mod inference;
 
 #[cfg(test)]

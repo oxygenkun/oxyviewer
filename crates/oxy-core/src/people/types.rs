@@ -1,6 +1,6 @@
 //! Public types owned by the people feature.
-mod manual;
-pub use manual::*;
+mod analysis;
+pub use analysis::*;
 mod clusters;
 pub use clusters::*;
 mod global;

@@ -62,8 +62,6 @@ releaseMode: string | null,
  * camera did not report an index).
  */
 sequenceNumber: number | null, };
-export type ConfirmFolderPerson = { folderPath: string, subjectId: string, referenceInstanceId: string, displayName: string, expectedRevision: number, requestId: string, };
-export type CreatePersonInstance = { folderPath: string, assetPath: string, sourceRevision: string, faceBox: [number, number, number, number] | null, bodyBox: [number, number, number, number] | null, requestId: string, };
 export type CustomTag = { id: number, parentId: number | null, name: string, path: string, sortOrder: number, };
 export type CustomTagId = number;
 export type DebugQueueItem = { key: string, path?: string | null, rootPath?: string | null, stage: string, priority: string, rank?: number | null, consumers: number, pendingCount?: number | null, assetCount?: number | null, directoryCount?: number | null, };
@@ -126,7 +124,6 @@ centerX: number, centerY: number,
  */
 width?: number | null, height?: number | null, };
 export type FolderPeopleWorkspace = { folderPath: string, revision: string, groups: Array<PersonTupleGroup>, unknownCount: number, knownCount: number, noFaceCount: number, unavailableCount: number, hasAnalysis: boolean, notice: string | null, };
-export type FolderPerson = { id: string, folderPath: string, displayName: string | null, identityConfirmed: boolean, revision: number, referenceInstanceId: string | null, pendingCount: number, };
 export type FolderSession = { id: string, rootPath: string, displayName: string, openedAtMs: number, deletionMode: FileDeletionMode, };
 export type GlobalPerson = { id: string, displayName: string, revision: number, referenceInstanceIds: Array<string>, tagId: number | null, };
 export type GlobalPersonFolder = { folderPath: string, coverAssetPath: string, photoCount: number, instanceCount: number, };
@@ -149,7 +146,6 @@ export type HeifFullPresentation = { "delivery": "artifact", projection: ImagePr
 export type HeifStatusEvent = { sessionId: string, generation: number, status: HeifDecodeStatus, diagnostics: HeifDiagnostics | null, message: string | null, };
 export type HeifTilePayload = "rgba" | "jpeg";
 export type HeifTileReady = { sessionId: string, generation: number, x: number, y: number, width: number, height: number, payload: HeifTilePayload, url: string, };
-export type HistoricalPerson = { id: string, displayName: string, referenceAssetPath: string, referenceSourceRevision: string, revision: number, };
 export type ImageOperation = { "operation": "decode", backend: string, } | { "operation": "develop", backend: string, } | { "operation": "resize", from: DisplayDimensions, to: DisplayDimensions, } | { "operation": "orient", exif: number, } | { "operation": "encode", format: string, } | { "operation": "colorConvert", target: string, } | { "operation": "sharpen" } | { "operation": "crop", region: PreviewContentRect, } | { "operation": "pad", canvas: DisplayDimensions, } | { "operation": "metadataEdit" } | { "operation": "assemble", mode: string, };
 export type ImageOrigin = "primaryImage" | "embeddedPreview" | "rawSensor";
 export type ImageProjection = { path: string, sourceRevision: string,
@@ -161,11 +157,6 @@ export type JobId = string;
 export type JobPriority = "libraryIndex" | "directoryBackground" | "selectedMetadata" | "visibleThumbnail" | "loupePreview";
 export type JobProgress = { jobId: string, completed: number, total: number | null, message: string | null, };
 export type LibraryIndexUpdate = { rootPath: string, assetCount: number, directoryCount: number, };
-export type LinkHistoricalPerson = { folderPath: string, subjectId: string,
-/**
- * None creates a new historical identity from the confirmed folder person.
- */
-historicalPersonId: string | null, expectedRevision: number, requestId: string, };
 export type MediaPersistence = "notApplicable" | "pending" | "persisted" | "skipped";
 export type MediaResourceDescriptor = { resourceId: string, url: string, mediaType: string, };
 export type MediaSatisfaction = "satisfied" | "interim";
@@ -193,23 +184,15 @@ export type PersonCluster = { id: string, members: Array<PersonClusterMember>, c
 export type PersonClusterMember = { assetPath: string, instanceId: string, sourceRevision: string, summaryRevision: string, faceBox: [number, number, number, number], };
 export type PersonClusterSnapshot = { snapshotId: string, folderPath: string, runId: string, pipelineFingerprint: string, algorithm: string, clusters: Array<PersonCluster>, ungrouped: Array<PersonClusterMember>, noFaceCount: number, unavailableCount: number, };
 export type PersonDistanceMetric = "cosine";
-export type PersonInstance = { id: string, folderPath: string, assetPath: string, sourceRevision: string,
-/**
- * Normalized image coordinates [left, top, width, height].
- */
-faceBox: [number, number, number, number] | null, bodyBox: [number, number, number, number] | null, needsReview: boolean, revision: number, };
 export type PersonModelArtifact = { artifactId: string, downloadUrl: string, format: PersonModelArtifactFormat, sizeBytes: number, sha256: string, licenseName: string, licenseUrl: string, licenseStatus: PersonModelLicenseStatus, };
 export type PersonModelArtifactFormat = "onnx" | "safetensors";
 export type PersonModelLicenseStatus = "verifiedForDistribution" | "researchOnly" | "unresolved";
 export type PersonModelStatus = { id: string, name: string, sizeBytes: number, installed: boolean, downloadAvailable: boolean, sourceUrl: string, usage: string, error: string | null, };
 export type PersonOperationState = "downloading" | "preparing" | "analysing" | "clustering" | "completed" | "cancelled" | "failed";
 export type PersonOperationStatus = { operationId: string, folderPath: string | null, state: PersonOperationState, completed: number, total: number, detail: string, error: string | null, run: PersonAnalysisRun | null, };
-export type PersonReview = { instance: PersonInstance, subjectId: string, decision: PersonReviewDecision, revision: number, };
 export type PersonReviewDecision = "pending" | "belongs" | "doesNotBelong" | "deferred";
 export type PersonStageKind = "faceDetector" | "bodyDetector" | "association" | "qualityGate" | "faceEncoder" | "bodyEncoder" | "clusterer" | "retriever";
 export type PersonStageManifest = { stageId: string, kind: PersonStageKind, dependsOn: Array<string>, inputSchema: string, outputSchema: string, runtimeVersion: string, preprocessingVersion: string, postprocessingVersion: string, featureSpaceId: string | null, distanceMetric: PersonDistanceMetric | null, calibrationId: string | null, artifact: PersonModelArtifact | null, };
-export type PersonTagLink = { historicalPersonId: string, tagId: number | null, enabled: boolean, revision: number, };
-export type PersonTagOverride = { historicalPersonId: string, assetPath: string, suppressed: boolean, revision: number, };
 export type PersonTuple = { id: string, assetPath: string, sourceRevision: string, sourceIdentityRevision: string, faceBox: [number, number, number, number] | null, bodyBox: [number, number, number, number] | null, revision: number, needsReview: boolean, personId: string | null, decision: PersonReviewDecision | null, score: number | null, };
 export type PersonTupleFilter = { groupId: string, decision: PersonReviewDecision | null, };
 export type PersonTupleGroup = { id: string, personId: string | null, members: Array<PersonTuple>, cover: AssetSummary | null, };
@@ -291,7 +274,6 @@ export type RawSystemCodec = { name: string, decoderId: string, version: string,
 export type RelocationEntry = { oldPath: string, newPath: string, status: RelocationMatch, oldIdentityRevision: string | null, newIdentityRevision: string | null, };
 export type RelocationMatch = "verified" | "unverified" | "missing";
 export type RenderLevel = "thumbnail" | "preview" | "full";
-export type ResetFolderPerson = { folderPath: string, subjectId: string, displayName: string, expectedRevision: number, requestId: string, };
 export type ResourceLoadStatus = "loading" | "ready" | "error";
 export type ResourceRegistryStats = { maxEntries: number, maxEncodedBytes: number, maxMaterializedResponses: number, maxMaterializedBytes: number, entries: number, encodedBytes: number, peakEncodedBytes: number, peakEntries: number, uiLeased: number, readLeased: number, releasedOrExpired: number, stagedFiles: number, stagedBytes: number, materializedResponses: number, materializedBytes: number, };
 export type ReviewPersonTuples = { folderPath: string, workspaceRevision: string, tuples: Array<PersonTuple>, personId: string, decision: PersonReviewDecision, replaceConfirmed: boolean, requestId: string, };
@@ -313,9 +295,6 @@ export type SchedulePlacement = "front" | "back";
 export type SessionId = string;
 export type SetGlobalPersonReference = { personId: string, instanceId: string, enabled: boolean, expectedRevision: number, requestId: string, };
 export type SetGlobalPersonTag = { personId: string, tagId: number | null, expectedRevision: number, requestId: string, };
-export type SetPersonReview = { folderPath: string, instanceId: string, subjectId: string, decision: PersonReviewDecision, expectedRevision: number, requestId: string, };
-export type SetPersonTagLink = { folderPath: string, subjectId: string, tagId: number | null, enabled: boolean, expectedRevision: number, requestId: string, };
-export type SetPersonTagOverride = { folderPath: string, subjectId: string, assetPath: string, suppressed: boolean, expectedRevision: number, requestId: string, };
 export type SortDirection = "ascending" | "descending";
 export type SourceImage = { exifOrientation: number, revisionId: string,
 /**
@@ -325,6 +304,4 @@ candidateId: string, origin: ImageOrigin, encodedDimensions: EncodedDimensions |
 export type TagDeleteImpact = { tagCount: number, assetCount: number, };
 export type TagMatchMode = "all" | "any";
 export type TagSyncStatus = { pendingCount: number, failedCount: number, lastError: string | null, };
-export type UnlinkHistoricalPerson = { folderPath: string, subjectId: string, expectedRevision: number, requestId: string, };
-export type UpdatePersonInstance = { folderPath: string, instanceId: string, sourceRevision: string, faceBox: [number, number, number, number] | null, bodyBox: [number, number, number, number] | null, expectedRevision: number, requestId: string, };
 export type UpdateStatus = { currentVersion: string, latestVersion: string, updateAvailable: boolean, releaseUrl: string, releaseName?: string | null, publishedAt?: string | null, };

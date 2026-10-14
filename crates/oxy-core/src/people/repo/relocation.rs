@@ -98,3 +98,34 @@ pub fn rebind_detections(
     connection.execute("UPDATE person_instances_cache SET asset_path=?2,folder_path=?3,source_revision=?5 WHERE asset_path=?1 AND source_revision=?4", params![source,destination,folder,old_revision,new_revision])?;
     Ok(())
 }
+
+pub fn rename_cached_features(
+    connection: &Connection,
+    source: &str,
+    destination: &str,
+) -> Result<(), StoreError> {
+    connection.execute(
+        "UPDATE person_features_cache SET asset_path=?2 WHERE asset_path=?1",
+        params![source, destination],
+    )?;
+    Ok(())
+}
+
+pub fn forget_cached_features(connection: &Connection, asset_path: &str) -> Result<(), StoreError> {
+    connection.execute(
+        "DELETE FROM person_features_cache WHERE asset_path=?1",
+        params![asset_path],
+    )?;
+    Ok(())
+}
+
+pub fn require_review_for_asset(
+    connection: &Connection,
+    asset_path: &str,
+) -> Result<(), StoreError> {
+    connection.execute(
+        "UPDATE person_manual_instances SET needs_review=1 WHERE asset_path=?1",
+        params![asset_path],
+    )?;
+    Ok(())
+}
