@@ -51,17 +51,7 @@ export async function savePersonTupleGeometry(folderPath:string,asset:AssetSumma
   if(!isTauri())throw new Error("请在桌面应用中标记本地人物实例");
   return invoke("save_person_tuple_geometry",{input:{folderPath,assetPath:asset.path,instanceId:tuple?.id??null,expectedRevision:tuple?.revision??0,sourceRevision:`${asset.sizeBytes}:${asset.modifiedAtMs}`,faceBox,bodyBox,requestId:crypto.randomUUID()}});
 }
-import type { PersonModelStatus, PersonOperationStatus, PersonDetectionSnapshot } from "@/types";
-
-export async function getPersonDetections(folderPath: string, assetPath: string): Promise<PersonDetectionSnapshot> {
-  if (!isTauri()) return { sourceRevision: "demo", instances: [] };
-  return invoke("get_person_detections", { folderPath, assetPath });
-}
-
-export async function adoptPersonDetection(folderPath: string, assetPath: string, sourceRevision: string, instanceId: string): Promise<PersonInstance> {
-  if (!isTauri()) throw new Error("请在桌面应用中采用检测结果");
-  return invoke("adopt_person_detection", { folderPath, assetPath, sourceRevision, instanceId });
-}
+import type { PersonModelStatus, PersonOperationStatus } from "@/types";
 
 export async function getPersonModels(): Promise<PersonModelStatus[]> {
   if (!isTauri()) return [{ id: "demo", name: "人物识别模型", sizeBytes: 0, installed: false, downloadAvailable: false, sourceUrl: "", usage: "请在桌面应用中下载模型并识别本地照片。", error: null }];
@@ -86,11 +76,6 @@ export async function importPersonModel(modelId: string): Promise<boolean> {
   return true;
 }
 
-export async function startFolderPersonAnalysis(sessionId: string, folderPath: string): Promise<void> {
-  if (!isTauri()) throw new Error("请在桌面应用中识别文件夹");
-  await invoke("start_folder_person_analysis", { sessionId, folderPath, requestId: crypto.randomUUID() });
-}
-
 export async function cancelPersonOperation(operationId: string): Promise<void> {
   if (isTauri()) await invoke("cancel_person_operation", { operationId });
 }
@@ -101,12 +86,6 @@ import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { getCurrentWebview } from "@tauri-apps/api/webview";
 import { open } from "@tauri-apps/plugin-dialog";
 import type {
-  FolderPerson,
-  HistoricalPerson,
-  PersonTagLink,
-  PersonTagOverride,
-  PersonInstance,
-  PersonReview,
   PersonReviewDecision,
   AboutLink,
   AppInfo,
@@ -153,29 +132,8 @@ import type {
   WindowDragEvent,
 } from "@/types";
 
-const demoPeople = new Map<string, FolderPerson[]>();
-const demoPersonInstances = new Map<string, PersonInstance[]>();
-const demoPersonReviews = new Map<string, PersonReview>();
-const demoHistoricalPeople = new Map<string, HistoricalPerson>();
-const demoHistoricalLinks = new Map<string, string>();
-const demoPersonTagLinks = new Map<string, PersonTagLink>();
-const demoPersonTagOverrides = new Map<string, PersonTagOverride>();
 function demoEffectiveTagIds(path: string): Set<number> {
-  const ids = new Set(demoAssetTags.get(path) ?? []);
-  for (const [subjectId, historyId] of demoHistoricalLinks) {
-    const link = demoPersonTagLinks.get(historyId);
-    if (!link?.enabled || link.tagId === null || !demoTags.some(tag => tag.id === link.tagId)) continue;
-    if (demoPersonTagOverrides.get(`${historyId}:${path}`)?.suppressed) continue;
-    if ([...demoPersonReviews.values()].some(review => review.subjectId === subjectId && review.instance.assetPath === path && review.decision === "belongs" && !review.instance.needsReview)) ids.add(link.tagId);
-  }
-  return ids;
-}
-let demoPersonId = 0;
-const nextDemoPersonId = () => `demo-person-${++demoPersonId}`;
-
-export async function listPersonReviews(folderPath: string, subjectId: string): Promise<PersonReview[]> {
-  if (isTauri()) return invoke("list_person_reviews", { folderPath, subjectId });
-  return [...demoPersonReviews.values()].filter((item) => item.instance.folderPath === folderPath && item.subjectId === subjectId);
+  return new Set(demoAssetTags.get(path) ?? []);
 }
 
 import { getFolderThumbnail, getFolderThumbnailGeneration, preloadFolderThumbnail } from "@/lib/cache/folderThumbnailCache";
@@ -339,26 +297,12 @@ export async function listAssets(
       const root = demoTags.find((tag) => tag.id === id);
       return new Set(root ? demoTags.filter((tag) => tag.id === id || tag.path.startsWith(`${root.path}|`)).map((tag) => tag.id) : []);
     });
-    const clusterSnapshot = query.personClusterFilter ? await getPersonClusters(directory) : null;
-    const clusterMembers = clusterSnapshot?.snapshotId === query.personClusterFilter?.snapshotId ? (query.personClusterFilter?.clusterId === "ungrouped" ? clusterSnapshot?.ungrouped : clusterSnapshot?.clusters.find(c => c.id === query.personClusterFilter?.clusterId)?.members) : undefined;
-    const personReviews = query.personFilter ? await listPersonReviews(directory, query.personFilter.subjectId ?? "") : [];
     const filtered = [...demoAssets]
-      .filter(asset => {
-        const filter = query.personFilter;
-        if (!filter) return true;
-        const instances = (demoPersonInstances.get(directory) ?? []).filter(item => item.assetPath === asset.path);
-        const valid = (item: PersonInstance) => !item.needsReview && item.sourceRevision === `${asset.sizeBytes}:${asset.modifiedAtMs}`;
-        const reviews = personReviews.filter(item => item.instance.assetPath === asset.path && valid(item.instance));
-        if (filter.state === "unassigned") return !reviews.length;
-        if (filter.state === "needsReview") return instances.some(item => !valid(item));
-        return reviews.some(item => filter.state === "all" ? item.decision !== "doesNotBelong" : item.decision === filter.state);
-      })
       .filter((asset) => !tagGroups.length || (query.tagMatch === "any"
         ? tagGroups.some((group) => [...demoEffectiveTagIds(asset.path)].some((id) => group.has(id)))
         : tagGroups.every((group) => [...demoEffectiveTagIds(asset.path)].some((id) => group.has(id)))))
       .filter((asset) => !query.personTupleFilter || Boolean(demoGlobalWorkspaces.get(directory)?.groups.find(g=>g.id===query.personTupleFilter?.groupId)?.members.some(t=>t.assetPath===asset.path&&(!query.personTupleFilter?.decision||t.decision===query.personTupleFilter.decision))))
-      .filter((asset) => !query.personClusterFilter || Boolean(clusterMembers?.some(m => m.assetPath === asset.path && m.summaryRevision === `${asset.sizeBytes}:${asset.modifiedAtMs}`)))
-      .filter((asset) => (!query.personClusterFilter && !query.personFilter && !query.tagIds?.length && needle) || asset.path.slice(0, asset.path.lastIndexOf("/")) === directory)
+      .filter((asset) => (!query.personTupleFilter && !query.tagIds?.length && needle) || asset.path.slice(0, asset.path.lastIndexOf("/")) === directory)
       .filter((asset) => !query.kind || asset.kind === query.kind)
       .filter((asset) => !query.minimumRating || (asset.rating ?? 0) >= query.minimumRating)
       .filter((asset) => !query.colorLabels?.length ||
@@ -789,13 +733,6 @@ export async function getAssetTagSourceKinds(path: string, tagId: number): Promi
   if (isTauri()) return invoke("get_asset_tag_source_kinds", { path, tagId });
   const kinds: string[] = [];
   if (demoAssetTags.get(path)?.has(tagId)) kinds.push("manual");
-  for (const [subjectId, historyId] of demoHistoricalLinks) {
-    const link = demoPersonTagLinks.get(historyId);
-    if (!link?.enabled || link.tagId !== tagId || demoPersonTagOverrides.get(`${historyId}:${path}`)?.suppressed) continue;
-    if ([...demoPersonReviews.values()].some(review => review.subjectId === subjectId && review.instance.assetPath === path && review.decision === "belongs" && !review.instance.needsReview)) {
-      kinds.push("person"); break;
-    }
-  }
   return kinds;
 }
 
@@ -864,7 +801,6 @@ export async function deleteCustomTag(id: number): Promise<TagDeleteImpact> {
     collect(id);
     demoTags = demoTags.filter((tag) => !remove.has(tag.id));
     for (const ids of demoAssetTags.values()) for (const tagId of remove) ids.delete(tagId);
-    for (const [historyId, link] of demoPersonTagLinks) if (link.tagId !== null && remove.has(link.tagId)) demoPersonTagLinks.set(historyId, { ...link, tagId: null, enabled: false });
     return impact;
   }
   return invoke<TagDeleteImpact>("delete_custom_tag", { id });
@@ -1411,17 +1347,4 @@ export async function relocateLibraryRoot(plan: RootRelocationPlan): Promise<Roo
   if (index < 0 || demoRoots.includes(plan.newRoot)) throw new Error("Folder list changed");
   demoRoots[index] = plan.newRoot;
   return { rootPath: plan.newRoot, linkedFiles: 2, needsReview: 2, missingFiles: 1, reusedArtifacts: 1, cacheFailures: 0 };
-}
-
-export async function getPersonClusters(folderPath: string): Promise<import("@/types").PersonClusterSnapshot | null> {
-  if (!isTauri()) return null;
-  return invoke("get_person_clusters", { folderPath });
-}
-export async function startPersonClustering(sessionId: string, folderPath: string): Promise<void> {
-  if (!isTauri()) throw new Error("请在桌面应用中聚类本地照片");
-  await invoke("start_person_clustering", { sessionId, folderPath, requestId: crypto.randomUUID() });
-}
-export async function adoptPersonCluster(folderPath: string, snapshotId: string, clusterId: string, subjectId?: string, displayName?: string): Promise<import("@/types").AdoptPersonClusterResult> {
-  if (!isTauri()) throw new Error("请在桌面应用中采用分组");
-  return invoke("adopt_person_cluster", { input: { folderPath, snapshotId, clusterId, subjectId, displayName, requestId: crypto.randomUUID() } });
 }

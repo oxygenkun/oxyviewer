@@ -17,7 +17,7 @@ export function useGlobalPeople(folderPath: string | undefined, enabled: boolean
   const [showBoxes, setShowBoxes] = useState(true);
   const anchor = useRef<string | undefined>(undefined);
   useEffect(() => { setHeldAsset(undefined); setSelected(new Set()); setDraw(undefined); setEdit(undefined); anchor.current = undefined; }, [folderPath, enabled]);
-  const refresh = async () => { await Promise.all(["global-people", "global-reference", "global-gallery", "global-person-folders", "people-workspace", "assets", "person-instances", "person-reviews", "asset-tag-assignments", "tag-sync-status"].map(key => client.invalidateQueries({ queryKey: [key] }))); };
+  const refresh = async () => { await Promise.all(["global-people", "global-reference", "global-gallery", "global-person-folders", "people-workspace", "assets", "asset-tag-assignments", "tag-sync-status"].map(key => client.invalidateQueries({ queryKey: [key] }))); };
   const group = result.data?.groups.find(g => g.id === filter?.groupId);
   const members = group?.members.filter(t => !filter?.decision || t.decision === filter.decision) ?? [];
   const choose = (id: string, additive = false, range = false) => {

@@ -214,6 +214,12 @@ resource leases, cancellation and stale-publication semantics.
   and verifies one-time successful replay. All 283 core tests / 12 ignored and
   strict workspace Clippy pass. The user has now explicitly approved both pending
   legacy identity cleanup and preview migration with final qualification gates.
+- With explicit approval, retired the remaining folder/historical demo state,
+  filters and API wrappers, plus 25 obsolete desktop commands. Current global
+  identity commands, model management and grouping remain. Removed unused
+  sidebar/review styles and query keys while retaining live canvas/folder layout.
+  Frontend check, 413 tests and production build, 5 desktop tests and strict
+  workspace Clippy pass. Core legacy APIs/types/tables still require retirement.
 - Next: move remaining desktop use-case coordination and person transactions,
   remove legacy person identity paths and finish ownership/docs/tooling gates,
   then complete final release/performance qualification.
