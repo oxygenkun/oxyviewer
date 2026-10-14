@@ -247,6 +247,16 @@ resource leases, cancellation and stale-publication semantics.
   rebinding its path-dependent source identity; legacy mocked tests do not prove
   the required identity-retention behavior.
 - Next: move remaining desktop use-case coordination and person transactions,
+- A real-file current-model rename test exposed that displayed confirmation
+  survives but stored source identity still names the old path, so subsequent
+  reference/review validation fails. File-action commit now observes the target
+  before taking the writer and uses the same path-rebase proof as root recovery.
+  Matching manual/features/detections rebind in the transaction; unmatched manual
+  facts remain marked for review, derived person contributions withdraw, manual
+  tags remain. Suggestions are invalidated. The test covers retained references
+  and changed-source handling; all 285 core tests / 13 ignored and strict
+  workspace Clippy pass.
+- Next: move remaining desktop use-case coordination and person transactions,
   remove legacy person identity paths and finish ownership/docs/tooling gates,
   then complete final release/performance qualification.
 

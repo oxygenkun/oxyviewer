@@ -1,6 +1,17 @@
 //! Person rows affected by a confirmed root recovery.
 use crate::storage::{Connection, StoreError};
 use rusqlite::params;
+pub(crate) fn forget_mismatched_features(
+    connection: &Connection,
+    path: &str,
+    revision: &str,
+) -> Result<(), StoreError> {
+    connection.execute(
+        "DELETE FROM person_features_cache WHERE asset_path=?1 AND source_revision<>?2",
+        params![path, revision],
+    )?;
+    Ok(())
+}
 pub fn move_asset(
     connection: &Connection,
     source: &str,

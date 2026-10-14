@@ -88,3 +88,13 @@ pub fn completed_sources(
         })?
         .collect::<Result<_, _>>()?)
 }
+pub(crate) fn forget_snapshot(
+    connection: &crate::storage::Connection,
+    folder: &str,
+) -> Result<(), crate::storage::StoreError> {
+    connection.execute(
+        "DELETE FROM person_cluster_snapshots WHERE folder_path=?1",
+        [folder],
+    )?;
+    Ok(())
+}

@@ -273,3 +273,23 @@ pub fn reference_vectors(
     }
     Ok(result)
 }
+pub(crate) fn people_for_asset(
+    connection: &crate::storage::Connection,
+    path: &str,
+) -> Result<Vec<String>, crate::storage::StoreError> {
+    let mut statement = connection.prepare("SELECT DISTINCT r.person_id FROM global_person_reviews r JOIN person_manual_instances i ON i.id=r.instance_id WHERE i.asset_path=?1")?;
+    Ok(statement
+        .query_map([path], |row| row.get("person_id"))?
+        .collect::<Result<_, _>>()?)
+}
+
+pub(crate) fn forget_suggestions(
+    connection: &crate::storage::Connection,
+    folder: &str,
+) -> Result<(), crate::storage::StoreError> {
+    connection.execute(
+        "DELETE FROM global_person_suggestions WHERE folder_path=?1",
+        [folder],
+    )?;
+    Ok(())
+}
