@@ -2,6 +2,24 @@ use super::*;
 use crate::jobs::CancellationToken;
 
 #[test]
+fn global_catalog_is_read_only_and_does_not_wait_for_the_writer() {
+    let directory = tempfile::tempdir().unwrap();
+    let people = crate::people::testing::open(&directory.path().join("people.sqlite"));
+    let created = person(&people, "Current identity");
+    let writer = people.store.write();
+    let (sender, receiver) = std::sync::mpsc::channel();
+    let observed = std::thread::scope(|scope| {
+        scope.spawn(|| sender.send(people.global_people()).unwrap());
+        let observed = receiver.recv_timeout(std::time::Duration::from_secs(2));
+        drop(writer);
+        observed
+    })
+    .expect("catalog read waited for migration/writer admission")
+    .unwrap();
+    assert_eq!(observed, [created]);
+}
+
+#[test]
 fn persisted_edge_faces_can_be_loaded_confirmed_and_edited() {
     let temp = tempfile::tempdir().unwrap();
     let folder = temp.path().canonicalize().unwrap();
@@ -469,39 +487,6 @@ fn retrieval_uses_only_confirmed_explicit_references_and_preserves_rejections() 
 }
 
 #[test]
-fn migration_merges_explicit_history_links_but_not_equal_names() {
-    let people = crate::people::testing::in_memory();
-    {
-        let c = people.store.write();
-        crate::people::repo::manual::insert_historical_person(
-            &c,
-            "history",
-            "姓名",
-            "/reference.jpg",
-            "1:1",
-        )
-        .unwrap();
-        for (id, folder) in [("a", "/a"), ("b", "/b"), ("c", "/c")] {
-            crate::people::repo::manual::insert_folder_person(&c, id, folder).unwrap();
-            crate::people::repo::manual::reset_identity(&c, id, folder, "姓名", 1).unwrap();
-        }
-        crate::people::repo::manual::upsert_historical_link(&c, "a", "history").unwrap();
-        crate::people::repo::manual::upsert_historical_link(&c, "b", "history").unwrap();
-    }
-    let catalog = people.global_people().unwrap();
-    assert_eq!(catalog.len(), 2);
-    assert!(catalog.iter().any(|p| p.id == "history"));
-    assert!(catalog.iter().any(|p| p.id == "legacy:c"));
-    assert_eq!(people.global_people().unwrap(), catalog);
-    assert_eq!(
-        crate::people::repo::manual::list_folder_people(&people.store.read(), "/a")
-            .unwrap()
-            .len(),
-        1
-    );
-}
-
-#[test]
 fn geometry_change_withdraws_reference_and_person_tag_but_preserves_manual_tag() {
     let temp = tempfile::tempdir().unwrap();
     let folder = temp.path().canonicalize().unwrap();
@@ -602,59 +587,6 @@ fn geometry_change_withdraws_reference_and_person_tag_but_preserves_manual_tag()
             tag
         )
         .unwrap()
-    );
-}
-
-#[test]
-fn conflicting_legacy_links_keep_exclusions_and_original_decisions() {
-    let temp = tempfile::tempdir().unwrap();
-    let folder = temp.path().canonicalize().unwrap();
-    let people = crate::people::testing::in_memory();
-    let tuple = manual(&people, &folder, "legacy", Some([0.1, 0.1, 0.2, 0.2]), None);
-    {
-        let c = people.store.write();
-        crate::people::repo::manual::insert_historical_person(
-            &c,
-            "history",
-            "姓名",
-            &tuple.asset_path.to_string_lossy(),
-            &tuple.source_revision,
-        )
-        .unwrap();
-        for (id, decision) in [
-            ("a", PersonReviewDecision::Belongs),
-            ("b", PersonReviewDecision::DoesNotBelong),
-        ] {
-            crate::people::repo::manual::insert_folder_person(&c, id, &folder.to_string_lossy())
-                .unwrap();
-            crate::people::repo::manual::upsert_historical_link(&c, id, "history").unwrap();
-            crate::people::repo::manual::upsert_review_decision(&c, &tuple.id, id, decision, 1)
-                .unwrap();
-        }
-    }
-    let w = people.folder_people_workspace(&folder).unwrap();
-    assert_eq!(people.global_people().unwrap().len(), 1);
-    assert_eq!(w.known_count, 0);
-    assert_eq!(w.unknown_count, 1);
-    assert!(
-        w.groups
-            .iter()
-            .any(|g| g.person_id.as_deref() == Some("history")
-                && g.members[0].decision == Some(PersonReviewDecision::DoesNotBelong))
-    );
-    assert_eq!(
-        crate::people::repo::manual::list_reviews(
-            &people.store.read(),
-            &folder.to_string_lossy(),
-            "a"
-        )
-        .unwrap()[0]
-            .decision,
-        PersonReviewDecision::Belongs
-    );
-    assert_eq!(
-        people.folder_people_workspace(&folder).unwrap().revision,
-        w.revision
     );
 }
 

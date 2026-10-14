@@ -158,7 +158,6 @@ impl People {
             return Err(failure("请输入有效的人物姓名"));
         }
         let payload = payload("savePerson", input)?;
-        self.initialize_global_people()?;
         let mut c = self.store.write();
         let tx = c.transaction().map_err(StoreError::from)?;
         if let Some(result) = replay(&tx, &input.request_id, &payload)? {

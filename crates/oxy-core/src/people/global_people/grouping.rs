@@ -21,7 +21,6 @@ impl People {
         {
             return Err(failure("请选择人物并使用 0–1 范围的候选相似度"));
         }
-        self.initialize_global_people()?;
         let folder = input.folder_path.canonicalize()?;
         let (_, encoder, space) = crate::people::clusters::parameters()?;
         let (people, refs) = {

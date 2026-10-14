@@ -11,6 +11,19 @@ use crate::tags::types::{CustomTag, CustomTagId};
 use rusqlite::{Connection, OptionalExtension, params};
 use std::collections::{HashMap, HashSet};
 
+pub(crate) fn source_asset_paths(
+    connection: &Connection,
+    kind: &str,
+    source: &str,
+) -> Result<Vec<String>, StoreError> {
+    let mut statement = connection.prepare(
+        "SELECT DISTINCT asset_path FROM asset_tag_sources WHERE source_kind=?1 AND source_id=?2",
+    )?;
+    Ok(statement
+        .query_map(params![kind, source], |row| row.get("asset_path"))?
+        .collect::<Result<_, _>>()?)
+}
+
 /// One asset row in the pending XMP mirror write queue.
 pub fn enqueue_sync(connection: &Connection, paths: &[String]) -> Result<(), StoreError> {
     for path in paths {

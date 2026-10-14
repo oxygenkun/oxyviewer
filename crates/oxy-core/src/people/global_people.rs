@@ -34,76 +34,6 @@ struct Suggestions {
     notice: Option<String>,
 }
 
-fn migrate(c: &Connection) -> Result<(), PeopleError> {
-    // Retain all legacy facts/events. Only explicit historical links merge identities.
-    for p in crate::people::repo::manual::list_historical_people(c)? {
-        db::insert_person(c, &p.id, &p.display_name)?;
-        db::migrate_tag(c, &p.id)?;
-    }
-    let legacy = db::legacy_subjects(c)?;
-    for p in &legacy {
-        let id = p
-            .history_id
-            .clone()
-            .unwrap_or_else(|| format!("legacy:{}", p.id));
-        db::insert_person(c, &id, &p.name)?;
-        for old in crate::people::repo::manual::list_reviews(c, &p.folder, &p.id)? {
-            let previous = db::reviews(c, Some(&p.folder))?
-                .into_iter()
-                .find(|r| r.instance_id == old.instance.id && r.person_id == id);
-            let decision = match previous {
-                Some(r) if r.decision != old.decision => {
-                    if r.decision == PersonReviewDecision::DoesNotBelong
-                        || old.decision == PersonReviewDecision::DoesNotBelong
-                    {
-                        PersonReviewDecision::DoesNotBelong
-                    } else {
-                        PersonReviewDecision::Deferred
-                    }
-                }
-                _ => old.decision,
-            };
-            db::review(c, &old.instance.id, &id, decision)?;
-            if decision != PersonReviewDecision::Belongs {
-                db::remove_reference(c, &id, &old.instance.id)?;
-            }
-        }
-        for instance in db::legacy_references(c, &p.id)? {
-            if db::reviews(c, Some(&p.folder))?.iter().any(|r| {
-                r.instance_id == instance
-                    && r.person_id == id
-                    && r.decision == PersonReviewDecision::Belongs
-            }) {
-                db::add_reference(c, &id, &instance)?;
-            }
-        }
-        db::mark_migrated(c, &p.id, &id)?;
-    }
-    if !legacy.is_empty() {
-        let mut targets = BTreeMap::<String, HashSet<String>>::new();
-        for r in db::reviews(c, None)?
-            .into_iter()
-            .filter(|r| r.decision != PersonReviewDecision::DoesNotBelong)
-        {
-            targets
-                .entry(r.instance_id)
-                .or_default()
-                .insert(r.person_id);
-        }
-        let tuples = db::tuples(c, None)?;
-        for (instance, people) in targets {
-            if people.len() == 1
-                && tuples
-                    .iter()
-                    .any(|t| t.id == instance && t.person_id.is_none())
-            {
-                db::target(c, &instance, people.iter().next().expect("one identity"))?;
-            }
-        }
-    }
-    Ok(())
-}
-
 fn automatic_tuple(m: &PersonClusterMember) -> Result<PersonTuple, PeopleError> {
     Ok(PersonTuple {
         id: format!(
@@ -415,18 +345,7 @@ impl People {
             }),
         )
     }
-    pub fn initialize_global_people(&self) -> Result<(), PeopleError> {
-        if !db::migration_needed(&self.store.read())? {
-            return Ok(());
-        }
-        let mut c = self.store.write();
-        let tx = c.transaction().map_err(StoreError::from)?;
-        migrate(&tx)?;
-        tx.commit().map_err(StoreError::from)?;
-        Ok(())
-    }
     pub fn global_people(&self) -> Result<Vec<GlobalPerson>, PeopleError> {
-        self.initialize_global_people()?;
         Ok(db::catalog(&self.store.read())?)
     }
     pub fn global_person_gallery(
@@ -435,7 +354,6 @@ impl People {
         offset: u32,
         limit: u32,
     ) -> Result<GlobalPersonGallery, PeopleError> {
-        self.initialize_global_people()?;
         let mut c = self.store.read();
         let tx = c.transaction().map_err(StoreError::from)?;
         let (total, folder_count) = db::confirmed_gallery_counts(&tx, person)?;
@@ -453,7 +371,6 @@ impl People {
         offset: u32,
         limit: u32,
     ) -> Result<GlobalPersonFolders, PeopleError> {
-        self.initialize_global_people()?;
         let mut c = self.store.read();
         let tx = c.transaction().map_err(StoreError::from)?;
         let (_, total) = db::confirmed_gallery_counts(&tx, person)?;
@@ -465,7 +382,6 @@ impl People {
         &self,
         folder: &Path,
     ) -> Result<FolderPeopleWorkspace, PeopleError> {
-        self.initialize_global_people()?;
         workspace(&self.store.read(), folder)
     }
     pub fn filter_assets_by_tuple(

@@ -9,33 +9,19 @@ pub fn reconcile_global_person_sources(
     connection: &Connection,
     person: &str,
 ) -> Result<(), StoreError> {
-    use rusqlite::{OptionalExtension, params};
     let source = format!("global:{person}");
-    let legacy = {
-        let mut s = connection
-            .prepare("SELECT subject_id FROM global_person_migrations WHERE person_id=?1")?;
-        s.query_map([person], |r| r.get::<_, String>("subject_id"))?
-            .collect::<Result<Vec<_>, _>>()?
-    };
-    let paths = {
-        let mut s=connection.prepare("SELECT DISTINCT i.asset_path FROM global_person_reviews r JOIN person_manual_instances i ON i.id=r.instance_id WHERE r.person_id=?1 UNION SELECT asset_path FROM asset_tag_sources WHERE source_kind='person' AND (source_id=?2 OR source_id IN(SELECT subject_id FROM global_person_migrations WHERE person_id=?1))")?;
-        s.query_map(params![person, source], |r| {
-            r.get::<_, String>("asset_path")
-        })?
-        .collect::<Result<Vec<_>, _>>()?
-    };
+    let paths = crate::people::repo::global::review_asset_paths(connection, person)?
+        .into_iter()
+        .chain(crate::tags::repo::source_asset_paths(
+            connection,
+            PERSON_SOURCE,
+            &source,
+        )?)
+        .collect::<std::collections::BTreeSet<_>>();
     for path in paths {
-        let desired:Option<i64>=connection.query_row("SELECT tag_id FROM global_person_tags t WHERE person_id=?1 AND tag_id IS NOT NULL AND EXISTS(SELECT 1 FROM global_person_reviews r JOIN person_manual_instances i ON i.id=r.instance_id WHERE r.person_id=?1 AND r.decision='belongs' AND i.asset_path=?2 AND i.needs_review=0) AND NOT EXISTS(SELECT 1 FROM person_tag_overrides o WHERE o.historical_person_id=?1 AND o.asset_path=?2 AND o.suppressed=1)",params![person,path],|r|r.get("tag_id")).optional()?;
+        let desired = crate::people::repo::global::person_source_tag(connection, person, &path)?;
         let mut affected =
             crate::tags::repo::source_tag_ids_of(connection, &path, PERSON_SOURCE, &source)?;
-        for old in &legacy {
-            affected.extend(crate::tags::repo::source_tag_ids_of(
-                connection,
-                &path,
-                PERSON_SOURCE,
-                old,
-            )?);
-        }
         if let Some(tag) = desired {
             affected.insert(tag);
         }
@@ -47,9 +33,6 @@ pub fn reconcile_global_person_sources(
             })
             .collect::<Result<HashMap<_, _>, _>>()?;
         crate::tags::repo::delete_sources_of(connection, &path, PERSON_SOURCE, &source)?;
-        for old in &legacy {
-            crate::tags::repo::delete_sources_of(connection, &path, PERSON_SOURCE, old)?;
-        }
         if let Some(tag) = desired {
             crate::tags::repo::insert_source(connection, &path, tag, PERSON_SOURCE, &source)?;
         }

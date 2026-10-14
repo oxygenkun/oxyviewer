@@ -93,8 +93,6 @@ crate::storage::table::tables! {
         PRIMARY KEY(historical_person_id,asset_path)";
     user create global_people =
         "id TEXT PRIMARY KEY, display_name TEXT NOT NULL, revision INTEGER NOT NULL DEFAULT 1";
-    user create global_person_migrations =
-        "subject_id TEXT PRIMARY KEY, person_id TEXT NOT NULL REFERENCES global_people(id)";
     user create global_person_reviews =
         "instance_id TEXT NOT NULL REFERENCES person_manual_instances(id), person_id TEXT NOT NULL REFERENCES global_people(id),
          decision TEXT NOT NULL CHECK(decision IN ('pending','belongs','doesNotBelong','deferred')),

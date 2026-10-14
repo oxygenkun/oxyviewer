@@ -32,7 +32,7 @@ SQLite admission 被阻塞时仍可观察队列并停止。
 
 应用类型已移到功能的 types 模块，contracts 只导出对外契约。repository 也跟随
 Library、Tags 和 People；跨功能资产移动、删除、人物标签贡献及根目录恢复进入具名
-workflow。49 个表声明在功能的 schema 模块中，storage 汇总它们的分类与创建/清理顺序。
+workflow。48 个表声明在功能的 schema 模块中，storage 汇总它们的分类与创建/清理顺序。
 
 序列化契约通过固定版本的 [ts-rs](https://docs.rs/ts-rs/12.0.1/ts_rs/) 生成
 `apps/desktop/src/generated/contracts.ts`，由 `pnpm contracts:check` 检查漂移。
@@ -89,6 +89,11 @@ PersonService 拥有模型状态、下载与导入、operation 预留/取消、�
 不再预留新 operation；取消后仍等待原 worker 展开，才允许下一次运行。检测采用
 继续校验源身份与当前 producer，失效检测不产生人工事实。DirectML 的真实文件夹
 吞吐验证已从 desktop 测试移到 core，仍需实际模型与 release 环境并显式运行。
+
+全局人物目录不再在读路径迁移旧 folder/historical 身份。旧迁移入口、映射表声明、
+历史参考/标签回填和来源别名清理已移除；目录读取只使用当前全局身份记录。
+人物与标签的来源查询分别在各自 repository，workflow 在事务内组合结果，保留
+手工和 sidecar 来源。旧身份 API 与未使用前端组件仍待退役，不能据此宣布兼容清理完成。
 
 默认数据和缓存路径使用 `core-v2` 子目录，custom cache 也有独立的版本子目录。
 Store 只接收本核心的 application ID/schema version，或尚未创建表的空文件。

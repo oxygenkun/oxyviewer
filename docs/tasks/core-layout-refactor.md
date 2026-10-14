@@ -168,6 +168,13 @@ resource leases, cancellation and stale-publication semantics.
   detection rejection without manual writes. Core's 281 tests / 12 ignored,
   desktop's 5 tests and strict workspace Clippy pass; the moved native benchmark
   remains unrun and is not GPU qualification evidence.
+- Removed the global catalog's legacy identity migration entry, mapping-table
+  declaration, historical reference/tag backfills and migrated-source aliases.
+  Current identity reads no longer acquire the writer. Person/tag source queries
+  moved to their owning repositories. Two compatibility-only migration tests
+  retired; a new disk-store test proves catalog reads complete while the writer
+  is held. Core's 280 tests / 12 ignored, desktop's 5 tests and strict workspace
+  Clippy pass. Legacy identity APIs/UI and their tables still require retirement.
 - Next: move remaining desktop use-case coordination and person SQL,
   remove legacy person identity paths and finish ownership/docs/tooling gates,
   then complete final release/performance qualification.

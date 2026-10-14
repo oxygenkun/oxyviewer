@@ -220,7 +220,6 @@ mod tests {
                  INSERT INTO person_manual_instances(id, folder_path, asset_path, source_revision)
                    VALUES ('instance-1', '/folder', '/photo.jpg', '1:1');
                  INSERT INTO global_people(id,display_name) VALUES ('global-1','Ada');
-                 INSERT INTO global_person_migrations VALUES ('person-1','global-1');
                  INSERT INTO global_person_reviews VALUES ('instance-1','global-1','belongs',1);
                  INSERT INTO global_person_targets VALUES ('instance-1','global-1');
                  INSERT INTO global_person_references VALUES ('global-1','instance-1');

@@ -1,7 +1,25 @@
-//! Statements only. Identity migration, review and matching policy live in oxy-people.
+//! Statements only; global identity, review and matching policy live beside this repository.
 use crate::people::types::{GlobalPerson, GlobalPersonFolder, PersonReviewDecision, PersonTuple};
 use crate::storage::StoreError;
 use rusqlite::{Connection, OptionalExtension, params};
+
+pub(crate) fn review_asset_paths(
+    connection: &Connection,
+    person: &str,
+) -> Result<Vec<String>, StoreError> {
+    let mut statement = connection.prepare("SELECT DISTINCT i.asset_path FROM global_person_reviews r JOIN person_manual_instances i ON i.id=r.instance_id WHERE r.person_id=?1")?;
+    Ok(statement
+        .query_map([person], |row| row.get("asset_path"))?
+        .collect::<Result<_, _>>()?)
+}
+
+pub(crate) fn person_source_tag(
+    connection: &Connection,
+    person: &str,
+    path: &str,
+) -> Result<Option<i64>, StoreError> {
+    Ok(connection.query_row("SELECT tag_id FROM global_person_tags t WHERE person_id=?1 AND tag_id IS NOT NULL AND EXISTS(SELECT 1 FROM global_person_reviews r JOIN person_manual_instances i ON i.id=r.instance_id WHERE r.person_id=?1 AND r.decision='belongs' AND i.asset_path=?2 AND i.needs_review=0)", params![person,path], |row| row.get("tag_id")).optional()?)
+}
 
 pub fn catalog(c: &Connection) -> Result<Vec<GlobalPerson>, StoreError> {
     let mut s =
@@ -49,44 +67,6 @@ pub fn bump(c: &Connection, id: &str) -> Result<(), StoreError> {
 
 pub fn set_tag(c: &Connection, person: &str, tag: Option<i64>) -> Result<(), StoreError> {
     c.execute("INSERT INTO global_person_tags(person_id,tag_id) VALUES(?1,?2) ON CONFLICT(person_id) DO UPDATE SET tag_id=excluded.tag_id",params![person,tag])?;
-    Ok(())
-}
-pub fn migrate_tag(c: &Connection, person: &str) -> Result<(), StoreError> {
-    c.execute("INSERT OR IGNORE INTO global_person_tags(person_id,tag_id) SELECT historical_person_id,CASE WHEN enabled=1 THEN tag_id ELSE NULL END FROM person_tag_links WHERE historical_person_id=?1",[person])?;
-    Ok(())
-}
-
-pub struct LegacySubject {
-    pub folder: String,
-    pub id: String,
-    pub history_id: Option<String>,
-    pub name: String,
-}
-pub fn migration_needed(c: &Connection) -> Result<bool, StoreError> {
-    Ok(c.query_row("SELECT EXISTS(SELECT 1 FROM folder_people p WHERE NOT EXISTS(SELECT 1 FROM global_person_migrations m WHERE m.subject_id=p.id)) OR EXISTS(SELECT 1 FROM historical_people h WHERE NOT EXISTS(SELECT 1 FROM global_people g WHERE g.id=h.id)) AS needed",[],|r|r.get("needed"))?)
-}
-pub fn legacy_subjects(c: &Connection) -> Result<Vec<LegacySubject>, StoreError> {
-    let mut s=c.prepare("SELECT p.id,p.folder_path,l.historical_person_id,COALESCE(h.display_name,p.display_name,'未命名人物') AS name FROM folder_people p LEFT JOIN folder_historical_links l ON l.subject_id=p.id LEFT JOIN historical_people h ON h.id=l.historical_person_id WHERE NOT EXISTS(SELECT 1 FROM global_person_migrations m WHERE m.subject_id=p.id) ORDER BY p.id")?;
-    Ok(s.query_map([], |r| {
-        Ok(LegacySubject {
-            folder: r.get("folder_path")?,
-            id: r.get("id")?,
-            history_id: r.get("historical_person_id")?,
-            name: r.get("name")?,
-        })
-    })?
-    .collect::<Result<_, _>>()?)
-}
-pub fn legacy_references(c: &Connection, subject: &str) -> Result<Vec<String>, StoreError> {
-    let mut s = c.prepare("SELECT instance_id FROM person_references WHERE subject_id=?1")?;
-    Ok(s.query_map([subject], |r| r.get("instance_id"))?
-        .collect::<Result<_, _>>()?)
-}
-pub fn mark_migrated(c: &Connection, subject: &str, person: &str) -> Result<(), StoreError> {
-    c.execute(
-        "INSERT INTO global_person_migrations(subject_id,person_id) VALUES(?1,?2)",
-        params![subject, person],
-    )?;
     Ok(())
 }
 pub fn event(c: &Connection, id: &str) -> Result<Option<(String, String)>, StoreError> {
