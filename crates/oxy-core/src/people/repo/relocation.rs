@@ -98,10 +98,3 @@ pub fn rebind_detections(
     connection.execute("UPDATE person_instances_cache SET asset_path=?2,folder_path=?3,source_revision=?5 WHERE asset_path=?1 AND source_revision=?4", params![source,destination,folder,old_revision,new_revision])?;
     Ok(())
 }
-
-pub fn subjects(connection: &Connection, folder: &str) -> Result<Vec<String>, StoreError> {
-    let mut statement = connection.prepare("SELECT id FROM folder_people WHERE folder_path=?1")?;
-    Ok(statement
-        .query_map([folder], |row| row.get("id"))?
-        .collect::<Result<_, _>>()?)
-}

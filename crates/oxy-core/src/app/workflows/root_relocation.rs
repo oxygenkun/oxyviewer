@@ -91,16 +91,13 @@ pub(crate) fn commit(
                 &folder,
                 &destination.to_string_lossy(),
             )?;
-            for subject in crate::people::repo::relocation::subjects(
-                &transaction,
-                &destination.to_string_lossy(),
-            )? {
-                crate::app::workflows::person_tags::reconcile_person_sources_for_subject(
-                    &transaction,
-                    &subject,
-                )?;
-            }
         }
+    }
+    for person in crate::people::repo::global::catalog(&transaction)? {
+        crate::app::workflows::person_tags::reconcile_global_person_sources(
+            &transaction,
+            &person.id,
+        )?;
     }
     crate::library::repo::replace_root(
         &transaction,
@@ -329,6 +326,11 @@ mod tests {
                 [],
             )
             .unwrap();
+            db.execute(
+                "INSERT INTO global_person_tags(person_id,tag_id) VALUES('person',1)",
+                [],
+            )
+            .unwrap();
             for name in ["same", "changed", "missing"] {
                 let file = old.join(format!("{name}.jpg"));
                 fs::write(&file, name).unwrap();
@@ -343,6 +345,7 @@ mod tests {
                 )
                 .unwrap();
                 db.execute("INSERT INTO asset_tag_sources(asset_path,tag_id,source_kind,source_id) VALUES(?1,1,'manual','')", [file.to_string_lossy().as_ref()]).unwrap();
+                db.execute("INSERT INTO asset_tag_sources(asset_path,tag_id,source_kind,source_id) VALUES(?1,1,'person','global:person')", [file.to_string_lossy().as_ref()]).unwrap();
             }
         }
         let new = dir.path().join("new");
@@ -396,7 +399,11 @@ mod tests {
                         |row| row.get("count"),
                     )
                     .unwrap();
-                assert_eq!(count, 3, "{table}");
+                assert_eq!(
+                    count,
+                    if table == "asset_tag_sources" { 4 } else { 3 },
+                    "{table}"
+                );
             }
         }
         // Removing an unavailable list entry must not delete annotations.
