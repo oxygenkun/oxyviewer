@@ -5,6 +5,7 @@ pub mod preview;
 pub(crate) mod projections;
 pub(crate) mod repo;
 pub(crate) mod schema;
+pub mod service;
 pub mod types;
 
 use crate::files::FsCatalog;

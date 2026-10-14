@@ -12,10 +12,6 @@ use std::path::PathBuf;
 use tauri::{Emitter, State};
 
 #[tauri::command]
-#[expect(
-    clippy::too_many_arguments,
-    reason = "Tauri injects app/state; the optional history scope preserves the existing preview IPC"
-)]
 pub(crate) async fn get_preview(
     request_id: String,
     path: PathBuf,
@@ -23,42 +19,20 @@ pub(crate) async fn get_preview(
     priority: PreviewPriority,
     rank: Option<u32>,
     cross_folder: Option<bool>,
-    app: tauri::AppHandle,
     state: State<'_, AppState>,
 ) -> Result<oxy_core::contracts::ImageProjection, String> {
-    let runtime = state.runtime.clone();
-    let preview_queue = state.preview_queue.clone();
-    let selection = (level == RenderLevel::Full).then(|| preview_queue.select_full(&path));
-    let preview_dir = state.cache.preview_dir();
-    let projection = tauri::async_runtime::spawn_blocking(move || {
-        let request = PreviewRequest {
-            selection,
-            request_id,
-            path,
-            preview_dir,
-            level,
-            priority,
-            rank: rank.unwrap_or_default(),
-        };
-        let (projection, receiver) = if cross_folder.unwrap_or(false) {
-            preview_queue.request_history(&runtime, request)
-        } else {
-            preview_queue.request(&runtime, request)
-        }?;
-        let _ = app.emit(
-            oxy_core::resources::preview::IMAGE_PROJECTION_UPDATED_EVENT,
-            projection,
-        );
-        receiver
-            .recv()
-            .map_err(|error| format!("preview queue stopped: {error}"))?
-    })
-    .await
-    .map_err(|error| error.to_string())??;
-    if projection.result.is_none() {
-        return Err("ready image projection has no artifact".into());
-    }
-    Ok(projection)
+    let service = state.resource_service.clone();
+    let prepared = service.prepare_preview(oxy_core::resources::service::PreviewInput {
+        request_id,
+        path,
+        level,
+        priority,
+        rank: rank.unwrap_or_default(),
+        cross_folder: cross_folder.unwrap_or(false),
+    })?;
+    tauri::async_runtime::spawn_blocking(move || service.resolve_preview(prepared))
+        .await
+        .map_err(|error| error.to_string())?
 }
 
 #[tauri::command]
@@ -171,15 +145,10 @@ pub(crate) async fn update_cache_settings(
 pub(crate) async fn clear_preview_cache(
     state: State<'_, AppState>,
 ) -> Result<CacheSettings, String> {
-    let cache = state.cache.clone();
-    let preview_queue = state.preview_queue.clone();
-    tauri::async_runtime::spawn_blocking(move || {
-        let settings = cache.clear()?;
-        preview_queue.invalidate_all();
-        Ok(settings)
-    })
-    .await
-    .map_err(|error| error.to_string())?
+    let service = state.resource_service.clone();
+    tauri::async_runtime::spawn_blocking(move || service.clear_preview_cache())
+        .await
+        .map_err(|error| error.to_string())?
 }
 
 #[tauri::command]

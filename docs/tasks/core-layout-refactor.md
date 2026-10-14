@@ -220,6 +220,13 @@ resource leases, cancellation and stale-publication semantics.
   sidebar/review styles and query keys while retaining live canvas/folder layout.
   Frontend check, 413 tests and production build, 5 desktop tests and strict
   workspace Clippy pass. Core legacy APIs/types/tables still require retirement.
+- ResourceService now owns generic preview preparation/resolution, scope choice,
+  typed initial projection publication and explicit preview-clear invalidation.
+  Full selection is captured before blocking dispatch; preparation does no source
+  I/O and render work stays in the owned queue. A headless test proves delayed old
+  admission cannot replace the new selection and shutdown rejects preparation.
+  All 284 core tests / 12 ignored and strict workspace Clippy pass. HEIF delivery
+  orchestration and final release/real-media qualification remain outstanding.
 - Next: move remaining desktop use-case coordination and person transactions,
   remove legacy person identity paths and finish ownership/docs/tooling gates,
   then complete final release/performance qualification.

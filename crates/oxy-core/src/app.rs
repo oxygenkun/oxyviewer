@@ -16,6 +16,7 @@ use crate::{
     resources::{
         DebugSnapshotCache, LibraryIndexQueue, cache::CacheManager,
         directory_tree::DirectoryTreeQueue, metadata::MetadataQueue, preview::PreviewQueue,
+        service::ResourceService,
     },
     runtime::CoreRuntime,
     storage::Store,
@@ -66,6 +67,7 @@ pub struct OxyApp {
     pub metadata_service: Arc<MetadataService>,
     pub metadata_queue: MetadataQueue,
     pub preview_queue: PreviewQueue,
+    pub resource_service: Arc<ResourceService>,
     pub debug_snapshots: Arc<DebugSnapshotCache>,
     pub directory_tree_queue: DirectoryTreeQueue,
     pub library_index_queue: LibraryIndexQueue,
@@ -141,6 +143,11 @@ impl OxyApp {
             cache.clone(),
         );
         let jobs = Arc::new(JobRegistry::default());
+        let resource_service = Arc::new(ResourceService {
+            runtime: runtime.clone(),
+            queue: preview_queue.clone(),
+            cache: cache.clone(),
+        });
         let metadata_service = Arc::new(MetadataService {
             runtime: runtime.clone(),
             files: files.clone(),
@@ -211,6 +218,7 @@ impl OxyApp {
                 metadata_service,
                 metadata_queue,
                 preview_queue,
+                resource_service,
                 debug_snapshots: Default::default(),
                 directory_tree_queue,
                 library_index_queue,

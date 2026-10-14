@@ -121,6 +121,11 @@ storage 及表声明宏仅在 core 内部可见，桌面和外部调用方通过
 测试使用；它们继续验证按声明逆序清理且保留 user/marker 表。产品设置中的预览清理
 仍只清理当前版本的预览文件，未扩展为 SQLite 清理。
 
+ResourceService 负责普通预览的选择、请求范围、投影事件与结果等待，以及显式预览
+清理后的失效。Full selection 在派发 blocking 工作前取得，避免较旧请求晚入队时
+重新选中旧照片。准备阶段不读取源文件；解析与等待在 blocking executor，解码仍由
+原受控队列完成。HEIF 会话的呈现选择和回调编排仍待继续迁入此服务。
+
 默认数据和缓存路径使用 `core-v2` 子目录，custom cache 也有独立的版本子目录。
 Store 只接收本核心的 application ID/schema version，或尚未创建表的空文件。
 打开已有文件先做只读检查，未识别的旧库或未来版本不会被升级、重建或 checkpoint。
