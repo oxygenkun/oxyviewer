@@ -8,6 +8,20 @@ use crate::storage::schema::{rebuildable_tables, tables, user_owned_tables};
 use std::path::Path;
 
 #[test]
+fn index_policy_delegates_statements_to_its_repository() {
+    let source = include_str!("index.rs")
+        .split("#[cfg(test)]")
+        .next()
+        .unwrap();
+    for verb in ["SELECT ", "INSERT INTO ", "UPDATE ", "DELETE FROM "] {
+        assert!(
+            !source.contains(verb),
+            "index SQL belongs in library::repo::index: {verb}"
+        );
+    }
+}
+
+#[test]
 fn no_module_writes_tables_owned_by_the_other_namespace() {
     let source_root = Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("src")
@@ -15,7 +29,7 @@ fn no_module_writes_tables_owned_by_the_other_namespace() {
     let offenders = namespace_offenders(&source_root.join("user"), user_owned_tables())
         .into_iter()
         .chain(namespace_offenders(
-            &source_root.join("cache"),
+            &source_root.join("repo/index.rs"),
             rebuildable_tables(),
         ))
         .collect::<Vec<_>>();
@@ -72,8 +86,15 @@ fn namespace_offenders(directory: &Path, owned: impl Iterator<Item = &'static st
         .collect();
 
     let mut offenders = Vec::new();
-    for entry in std::fs::read_dir(directory).expect("namespace directory must be readable") {
-        let path = entry.expect("directory entry").path();
+    let paths = if directory.is_file() {
+        vec![directory.to_owned()]
+    } else {
+        std::fs::read_dir(directory)
+            .expect("namespace must be readable")
+            .map(|entry| entry.expect("directory entry").path())
+            .collect()
+    };
+    for path in paths {
         if path.extension().and_then(|ext| ext.to_str()) != Some("rs") {
             continue;
         }

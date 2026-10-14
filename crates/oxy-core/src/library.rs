@@ -8,9 +8,9 @@ mod service;
 pub mod types;
 pub use service::LibraryService;
 
-mod cache;
-pub(crate) use cache::index::forget_root;
-pub use cache::index::{IndexProgress, IndexStage, IndexStats};
+mod index;
+pub use index::{IndexProgress, IndexStage, IndexStats};
+pub(crate) use repo::index::forget_root;
 #[cfg(test)]
 mod audit;
 mod user;

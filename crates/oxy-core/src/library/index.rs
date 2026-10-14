@@ -5,17 +5,16 @@
 //! in these tables.
 
 use crate::browse::types::{
-    AssetQuery, AssetSort, AssetSummary, DirectorySearchMatch, DirectorySummary, Page,
-    SortDirection,
+    AssetQuery, AssetSummary, DirectorySearchMatch, DirectorySummary, Page,
 };
-use crate::library::repo::has_completed_index;
+use crate::library::repo::index::{
+    self as repo, has_completed_directory_index, has_completed_index,
+};
 use crate::library::{
     DEFAULT_PAGE_SIZE, INDEX_WRITE_BATCH_SIZE, INDEX_WRITE_TIME_SLICE, Library, LibraryError,
     MAX_PAGE_SIZE,
 };
-use oxy_media::types::AssetKind;
 use parking_lot::MutexGuard;
-use rusqlite::{Connection, OptionalExtension, Transaction, params};
 use std::{
     cmp::Ordering,
     collections::{BinaryHeap, HashSet},
@@ -29,39 +28,6 @@ use std::{
 /// Removing a root is a user decision, but only the cache namespace may delete
 /// cache rows. Callers in [`crate::library::user`] go through this function so a
 /// cross-namespace delete shows up as a named call instead of raw SQL.
-pub(crate) fn forget_root(
-    transaction: &Transaction<'_>,
-    root: &str,
-) -> Result<(), rusqlite::Error> {
-    transaction.execute(
-        "DELETE FROM indexed_roots WHERE root_path = ?1",
-        params![root],
-    )?;
-    transaction.execute(
-        "DELETE FROM indexed_directory_roots WHERE root_path = ?1",
-        params![root],
-    )?;
-    transaction.execute(
-        "DELETE FROM indexed_assets WHERE root_path = ?1",
-        params![root],
-    )?;
-    transaction.execute(
-        "DELETE FROM indexed_directories WHERE root_path = ?1",
-        params![root],
-    )?;
-    transaction.execute(
-        "DELETE FROM indexed_asset_search WHERE rowid IN (
-           SELECT search_rowid FROM indexed_asset_search_keys WHERE root_path = ?1
-         )",
-        params![root],
-    )?;
-    transaction.execute(
-        "DELETE FROM indexed_asset_search_keys WHERE root_path = ?1",
-        params![root],
-    )?;
-    Ok(())
-}
-
 #[derive(Debug, Eq, PartialEq)]
 struct IndexQueueEntry {
     depth: usize,
@@ -190,11 +156,7 @@ impl Library {
         let root = root.to_string_lossy();
         let mut reader = self.read_connection();
         let connection = reader.transaction()?;
-        let registered = connection.query_row(
-            "SELECT EXISTS(SELECT 1 FROM library_roots WHERE path = ?1) AS registered",
-            params![root],
-            |row| row.get::<_, bool>("registered"),
-        )?;
+        let registered = crate::library::repo::contains_root(&connection, &root)?;
         Ok(registered && !has_completed_index(&connection, &root)?)
     }
 
@@ -254,89 +216,24 @@ impl Library {
             .page_size
             .unwrap_or(DEFAULT_PAGE_SIZE)
             .clamp(1, MAX_PAGE_SIZE);
-        let kind = query.kind.map(kind_name);
-        let direction = if matches!(query.direction, SortDirection::Descending) {
-            "DESC"
-        } else {
-            "ASC"
-        };
-        let order = match query.sort {
-            AssetSort::Name => "a.name COLLATE NOCASE",
-            AssetSort::Modified => "a.modified_at_ms",
-            AssetSort::Size => "a.size_bytes",
-            AssetSort::Kind => "a.kind",
-        };
         let search = query
             .search
             .as_deref()
             .map(str::trim)
             .filter(|value| !value.is_empty());
-        let (total, sql, search_expression) = if let Some(search) = search {
-            let expression = fts_expression(search);
-            let total = connection.query_row(
-                "SELECT COUNT(*) AS total
-                 FROM indexed_assets a
-                 JOIN indexed_asset_search s ON s.path = a.path AND s.root_path = a.root_path
-                 WHERE s.root_path = ?1
-                   AND indexed_asset_search MATCH ?2
-                   AND (?3 IS NULL OR a.kind = ?3)",
-                params![root, expression, kind],
-                |row| row.get::<_, usize>("total"),
-            )?;
-            (
-                total,
-                format!(
-                    "SELECT a.id, a.path, a.name, a.extension, a.kind,
-                            a.size_bytes, a.modified_at_ms, a.has_sidecar
-                     FROM indexed_assets a
-                     JOIN indexed_asset_search s ON s.path = a.path AND s.root_path = a.root_path
-                     WHERE s.root_path = ?1
-                       AND indexed_asset_search MATCH ?2
-                       AND (?3 IS NULL OR a.kind = ?3)
-                     ORDER BY {order} {direction}, a.name {direction}
-                     LIMIT ?4 OFFSET ?5"
-                ),
-                Some(expression),
-            )
-        } else {
-            let directory = directory.to_string_lossy();
-            let total = connection.query_row(
-                "SELECT COUNT(*) AS total FROM indexed_assets a
-                 WHERE a.root_path = ?1 AND a.parent_path = ?2
-                   AND (?3 IS NULL OR a.kind = ?3)",
-                params![root, directory, kind],
-                |row| row.get::<_, usize>("total"),
-            )?;
-            (
-                total,
-                format!(
-                    "SELECT a.id, a.path, a.name, a.extension, a.kind,
-                            a.size_bytes, a.modified_at_ms, a.has_sidecar
-                     FROM indexed_assets a
-                     WHERE a.root_path = ?1 AND a.parent_path = ?2
-                       AND (?3 IS NULL OR a.kind = ?3)
-                     ORDER BY {order} {direction}, a.name {direction}
-                     LIMIT ?4 OFFSET ?5"
-                ),
-                None,
-            )
-        };
-        let mut statement = connection.prepare(&sql)?;
-        let items = if let Some(expression) = search_expression {
-            statement
-                .query_map(
-                    params![root, expression, kind, page_size, offset],
-                    asset_from_row,
-                )?
-                .collect::<Result<Vec<_>, _>>()?
-        } else {
-            statement
-                .query_map(
-                    params![root, directory.to_string_lossy(), kind, page_size, offset],
-                    asset_from_row,
-                )?
-                .collect::<Result<Vec<_>, _>>()?
-        };
+        let (total, items) = repo::asset_page(
+            &connection,
+            repo::AssetPageRequest {
+                root: &root,
+                directory: &directory.to_string_lossy(),
+                search,
+                kind: query.kind,
+                direction: query.direction,
+                sort: query.sort,
+                limit: page_size,
+                offset,
+            },
+        )?;
         let end = offset.saturating_add(items.len());
         Ok(Some(Page {
             items,
@@ -356,20 +253,7 @@ impl Library {
         if !has_completed_directory_index(&connection, &root)? {
             return Ok(None);
         }
-        let mut statement = connection.prepare(
-            "SELECT path, name, has_children FROM indexed_directories
-             WHERE root_path = ?1 AND parent_path = ?2
-             ORDER BY name COLLATE NOCASE, name",
-        )?;
-        let directories = statement
-            .query_map(params![root, parent.to_string_lossy()], |row| {
-                Ok(DirectorySummary {
-                    path: PathBuf::from(row.get::<_, String>("path")?),
-                    name: row.get("name")?,
-                    has_children: row.get("has_children")?,
-                })
-            })?
-            .collect::<Result<Vec<_>, _>>()?;
+        let directories = repo::list_directories(&connection, &root, parent)?;
         Ok(Some(directories))
     }
 
@@ -388,27 +272,7 @@ impl Library {
         if !has_completed_directory_index(&connection, &root_text)? {
             return Ok(None);
         }
-        let mut statement = connection.prepare(
-            "SELECT path, name, has_children FROM indexed_directories
-             WHERE root_path = ?1 AND name LIKE '%' || ?2 || '%' COLLATE NOCASE
-             ORDER BY
-               CASE
-                 WHEN name = ?2 COLLATE NOCASE THEN 0
-                 WHEN name LIKE ?2 || '%' COLLATE NOCASE THEN 1
-                 ELSE 2
-               END,
-               name COLLATE NOCASE,
-               path DESC",
-        )?;
-        let directories = statement
-            .query_map(params![root_text, search], |row| {
-                Ok(DirectorySummary {
-                    path: PathBuf::from(row.get::<_, String>("path")?),
-                    name: row.get("name")?,
-                    has_children: row.get("has_children")?,
-                })
-            })?
-            .collect::<Result<Vec<_>, _>>()?;
+        let directories = repo::search_directories(&connection, &root_text, search)?;
         Ok(Some(
             directories
                 .into_iter()
@@ -424,14 +288,8 @@ impl Library {
         let root = root.canonicalize().unwrap_or_else(|_| root.to_owned());
         let mut connection = self.write();
         let transaction = connection.transaction()?;
-        transaction.execute(
-            "DELETE FROM indexed_roots WHERE root_path = ?1",
-            params![root.to_string_lossy()],
-        )?;
-        transaction.execute(
-            "DELETE FROM indexed_directory_roots WHERE root_path = ?1",
-            params![root.to_string_lossy()],
-        )?;
+        repo::forget_asset_completion(&transaction, &root)?;
+        repo::forget_directory_completion(&transaction, &root)?;
         transaction.commit()?;
         Ok(())
     }
@@ -549,22 +407,18 @@ impl Library {
         {
             let mut connection = self.write();
             let transaction = connection.transaction()?;
-            if !root_is_registered(&transaction, &root.to_string_lossy())? {
+            if !crate::library::repo::contains_root(&transaction, &root.to_string_lossy())? {
                 return Ok(());
             }
             // The parent was inserted optimistically when its own parent was
             // scanned. Once this level has been visited, its child status is
             // authoritative and can be corrected without another filesystem read.
-            transaction.execute(
-                "UPDATE indexed_directories
-                 SET has_children = ?3, scan_id = ?4
-                 WHERE root_path = ?1 AND path = ?2",
-                params![
-                    root.to_string_lossy(),
-                    parent.to_string_lossy(),
-                    !directories.is_empty(),
-                    scan_id,
-                ],
+            repo::update_directory_status(
+                &transaction,
+                root,
+                parent,
+                !directories.is_empty(),
+                scan_id,
             )?;
             transaction.commit()?;
             // Hand the writer to an existing waiter before starting another batch.
@@ -578,32 +432,17 @@ impl Library {
             let mut connection = self.write();
             let started = Instant::now();
             let transaction = connection.transaction()?;
-            if !root_is_registered(&transaction, &root.to_string_lossy())? {
+            if !crate::library::repo::contains_root(&transaction, &root.to_string_lossy())? {
                 return Ok(());
             }
             {
-                let mut statement = transaction.prepare_cached(
-                    "INSERT INTO indexed_directories(
-                       root_path, path, parent_path, name, has_children, scan_id
-                     ) VALUES (?1, ?2, ?3, ?4, ?5, ?6)
-                     ON CONFLICT(root_path, path) DO UPDATE SET
-                       root_path=excluded.root_path, parent_path=excluded.parent_path,
-                       name=excluded.name, has_children=excluded.has_children,
-                       scan_id=excluded.scan_id",
-                )?;
+                let mut statement = repo::directory_insert(&transaction)?;
                 for (processed, directory) in batch.iter().enumerate() {
                     if processed > 0 && started.elapsed() >= INDEX_WRITE_TIME_SLICE {
                         break;
                     }
                     offset += 1;
-                    statement.execute(params![
-                        root.to_string_lossy(),
-                        directory.path.to_string_lossy(),
-                        parent.to_string_lossy(),
-                        directory.name,
-                        directory.has_children,
-                        scan_id,
-                    ])?;
+                    repo::write_directory(&mut statement, root, parent, directory, scan_id)?;
                 }
             }
             transaction.commit()?;
@@ -626,90 +465,23 @@ impl Library {
             let mut connection = self.write();
             let started = Instant::now();
             let transaction = connection.transaction()?;
-            if !root_is_registered(&transaction, &root.to_string_lossy())? {
+            if !crate::library::repo::contains_root(&transaction, &root.to_string_lossy())? {
                 return Ok(());
             }
             {
-                let mut mark_unchanged = transaction.prepare_cached(
-                    "UPDATE indexed_assets SET scan_id = ?11
-                     WHERE root_path = ?1 AND path = ?2 AND parent_path = ?3
-                       AND id = ?4 AND name = ?5 AND extension = ?6 AND kind = ?7
-                       AND modified_at_ms = ?8 AND size_bytes = ?9
-                       AND has_sidecar = ?10",
-                )?;
-                let mut upsert = transaction.prepare_cached(
-                    "INSERT INTO indexed_assets(
-                       root_path, path, parent_path, id, name, extension, kind,
-                       modified_at_ms, size_bytes, has_sidecar, scan_id
-                     ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)
-                     ON CONFLICT(root_path, path) DO UPDATE SET
-                       root_path=excluded.root_path, parent_path=excluded.parent_path,
-                       id=excluded.id, name=excluded.name, extension=excluded.extension,
-                       kind=excluded.kind, modified_at_ms=excluded.modified_at_ms,
-                       size_bytes=excluded.size_bytes, has_sidecar=excluded.has_sidecar,
-                       scan_id=excluded.scan_id",
-                )?;
-                let mut insert_search_key = transaction.prepare_cached(
-                    "INSERT INTO indexed_asset_search_keys(root_path, path) VALUES (?1, ?2)
-                     ON CONFLICT(root_path, path) DO NOTHING",
-                )?;
-                let mut search_key = transaction.prepare_cached(
-                    "SELECT search_rowid FROM indexed_asset_search_keys
-                     WHERE root_path = ?1 AND path = ?2",
-                )?;
-                let mut insert_search = transaction.prepare_cached(
-                    "INSERT OR REPLACE INTO indexed_asset_search(rowid, path, root_path, name, directory)
-                     VALUES (?1, ?2, ?3, ?4, ?5)",
-                )?;
+                let mut statements = repo::AssetStatements::new(&transaction)?;
                 for (processed, asset) in batch.iter().enumerate() {
                     if processed > 0 && started.elapsed() >= INDEX_WRITE_TIME_SLICE {
                         break;
                     }
                     offset += 1;
-                    let values = params![
-                        root.to_string_lossy(),
-                        asset.path.to_string_lossy(),
-                        parent.to_string_lossy(),
-                        asset.id,
-                        asset.name,
-                        asset.extension,
-                        kind_name(asset.kind),
-                        asset.modified_at_ms,
-                        asset.size_bytes,
-                        asset.has_sidecar,
-                        scan_id,
-                    ];
-                    if mark_unchanged.execute(values)? > 0 {
+                    if statements.mark_unchanged(root, parent, scan_id, asset)? {
                         continue;
                     }
-                    upsert.execute(params![
-                        root.to_string_lossy(),
-                        asset.path.to_string_lossy(),
-                        parent.to_string_lossy(),
-                        asset.id,
-                        asset.name,
-                        asset.extension,
-                        kind_name(asset.kind),
-                        asset.modified_at_ms,
-                        asset.size_bytes,
-                        asset.has_sidecar,
-                        scan_id,
-                    ])?;
-                    insert_search_key.execute(params![
-                        root.to_string_lossy(),
-                        asset.path.to_string_lossy()
-                    ])?;
-                    let search_rowid: i64 = search_key.query_row(
-                        params![root.to_string_lossy(), asset.path.to_string_lossy()],
-                        |row| row.get("search_rowid"),
-                    )?;
-                    insert_search.execute(params![
-                        search_rowid,
-                        asset.path.to_string_lossy(),
-                        root.to_string_lossy(),
-                        asset.name,
-                        parent.to_string_lossy(),
-                    ])?;
+                    statements.upsert(root, parent, scan_id, asset)?;
+                    statements.insert_search_key(root, asset)?;
+                    let search_rowid = statements.search_rowid(root, asset)?;
+                    statements.insert_search(root, parent, asset, search_rowid)?;
                 }
             }
             transaction.commit()?;
@@ -722,15 +494,8 @@ impl Library {
     pub(crate) fn next_scan_id(&self) -> Result<i64, LibraryError> {
         let mut connection = self.write();
         let transaction = connection.transaction()?;
-        let scan_id = transaction.query_row(
-            "SELECT next_scan_id FROM library_index_sequence WHERE id = 1",
-            [],
-            |row| row.get("next_scan_id"),
-        )?;
-        transaction.execute(
-            "UPDATE library_index_sequence SET next_scan_id = next_scan_id + 1 WHERE id = 1",
-            [],
-        )?;
+        let scan_id = repo::read_scan_id(&transaction)?;
+        repo::advance_scan_id(&transaction)?;
         transaction.commit()?;
         Ok(scan_id)
     }
@@ -743,21 +508,11 @@ impl Library {
     ) -> Result<bool, LibraryError> {
         let mut connection = self.write();
         let transaction = connection.transaction()?;
-        if !root_is_registered(&transaction, &root.to_string_lossy())? {
+        if !crate::library::repo::contains_root(&transaction, &root.to_string_lossy())? {
             return Ok(false);
         }
-        transaction.execute(
-            "DELETE FROM indexed_directories WHERE root_path = ?1 AND scan_id != ?2",
-            params![root.to_string_lossy(), scan_id],
-        )?;
-        transaction.execute(
-            "INSERT INTO indexed_directory_roots(root_path, indexed_at, directory_count)
-             VALUES (?1, unixepoch(), ?2)
-             ON CONFLICT(root_path) DO UPDATE SET
-               indexed_at=excluded.indexed_at,
-               directory_count=excluded.directory_count",
-            params![root.to_string_lossy(), directory_count],
-        )?;
+        repo::forget_old_directories(&transaction, root, scan_id)?;
+        repo::complete_directory_index(&transaction, root, directory_count)?;
         transaction.commit()?;
         Ok(true)
     }
@@ -771,72 +526,16 @@ impl Library {
     ) -> Result<(), LibraryError> {
         let mut connection = self.write();
         let transaction = connection.transaction()?;
-        if !root_is_registered(&transaction, &root.to_string_lossy())? {
+        if !crate::library::repo::contains_root(&transaction, &root.to_string_lossy())? {
             return Ok(());
         }
-        transaction.execute(
-            "DELETE FROM indexed_asset_search WHERE rowid IN (
-               SELECT k.search_rowid FROM indexed_asset_search_keys k
-               JOIN indexed_assets a ON a.root_path = k.root_path AND a.path = k.path
-               WHERE a.root_path = ?1 AND a.scan_id != ?2
-             )",
-            params![root.to_string_lossy(), scan_id],
-        )?;
-        transaction.execute(
-            "DELETE FROM indexed_asset_search_keys WHERE root_path = ?1 AND path IN (
-               SELECT path FROM indexed_assets WHERE root_path = ?1 AND scan_id != ?2
-             )",
-            params![root.to_string_lossy(), scan_id],
-        )?;
-        transaction.execute(
-            "DELETE FROM indexed_assets WHERE root_path = ?1 AND scan_id != ?2",
-            params![root.to_string_lossy(), scan_id],
-        )?;
-        transaction.execute(
-            "INSERT INTO indexed_roots(root_path, indexed_at, asset_count, directory_count)
-             VALUES (?1, unixepoch(), ?2, ?3)
-             ON CONFLICT(root_path) DO UPDATE SET
-               indexed_at=excluded.indexed_at,
-               asset_count=excluded.asset_count,
-               directory_count=excluded.directory_count",
-            params![root.to_string_lossy(), asset_count, directory_count],
-        )?;
+        repo::forget_old_search_rows(&transaction, root, scan_id)?;
+        repo::forget_old_search_keys(&transaction, root, scan_id)?;
+        repo::forget_old_assets(&transaction, root, scan_id)?;
+        repo::complete_asset_index(&transaction, root, asset_count, directory_count)?;
         transaction.commit()?;
         Ok(())
     }
-}
-
-pub(crate) fn has_completed_directory_index(
-    connection: &Connection,
-    root: &str,
-) -> Result<bool, rusqlite::Error> {
-    connection
-        .query_row(
-            "SELECT 1 FROM indexed_directory_roots WHERE root_path = ?1",
-            params![root],
-            |_| Ok(true),
-        )
-        .optional()
-        .map(|value| value.unwrap_or(false))
-}
-
-fn root_is_registered(transaction: &Transaction<'_>, root: &str) -> Result<bool, rusqlite::Error> {
-    transaction
-        .query_row(
-            "SELECT 1 FROM library_roots WHERE path = ?1",
-            params![root],
-            |_| Ok(true),
-        )
-        .optional()
-        .map(|value| value.unwrap_or(false))
-}
-
-pub(crate) fn fts_expression(search: &str) -> String {
-    search
-        .split_whitespace()
-        .map(|token| format!("\"{}\"*", token.replace('"', "\"\"")))
-        .collect::<Vec<_>>()
-        .join(" AND ")
 }
 
 fn directory_ancestors(root: &Path, directory: &Path) -> Vec<DirectorySummary> {
@@ -857,45 +556,6 @@ fn directory_ancestors(root: &Path, directory: &Path) -> Vec<DirectorySummary> {
             }
         })
         .collect()
-}
-
-fn kind_name(kind: AssetKind) -> &'static str {
-    match kind {
-        AssetKind::Raw => "raw",
-        AssetKind::Jpeg => "jpeg",
-        AssetKind::Heif => "heif",
-        AssetKind::Png => "png",
-        AssetKind::Tiff => "tiff",
-        AssetKind::Webp => "webp",
-    }
-}
-
-fn parse_kind(value: &str) -> Result<AssetKind, rusqlite::Error> {
-    match value {
-        "raw" => Ok(AssetKind::Raw),
-        "jpeg" => Ok(AssetKind::Jpeg),
-        "heif" => Ok(AssetKind::Heif),
-        "png" => Ok(AssetKind::Png),
-        "tiff" => Ok(AssetKind::Tiff),
-        "webp" => Ok(AssetKind::Webp),
-        _ => Err(rusqlite::Error::InvalidQuery),
-    }
-}
-
-pub(crate) fn asset_from_row(row: &rusqlite::Row<'_>) -> Result<AssetSummary, rusqlite::Error> {
-    Ok(AssetSummary {
-        id: row.get("id")?,
-        path: PathBuf::from(row.get::<_, String>("path")?),
-        name: row.get("name")?,
-        extension: row.get("extension")?,
-        kind: parse_kind(&row.get::<_, String>("kind")?)?,
-        size_bytes: row.get("size_bytes")?,
-        modified_at_ms: row.get("modified_at_ms")?,
-        has_sidecar: row.get("has_sidecar")?,
-        rating: None,
-        color_label: None,
-        pick_label: None,
-    })
 }
 
 #[cfg(test)]

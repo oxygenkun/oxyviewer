@@ -4,7 +4,8 @@
 //! derived, and no cache clear or re-index reaches these rows.
 
 use crate::storage::StoreError;
-use rusqlite::{Connection, OptionalExtension, params};
+pub(crate) mod index;
+use rusqlite::{Connection, params};
 use std::collections::HashSet;
 
 /// Adds a root after the ones already there, ignoring one that exists.
@@ -73,32 +74,4 @@ pub fn replace_root(
         params![source, destination],
     )?;
     Ok(())
-}
-
-pub(crate) fn directory_assets(
-    connection: &Connection,
-    root: &std::path::Path,
-    directory: &std::path::Path,
-) -> Result<Vec<crate::browse::types::AssetSummary>, StoreError> {
-    let mut statement = connection.prepare("SELECT id,path,name,extension,kind,size_bytes,modified_at_ms,has_sidecar FROM indexed_assets WHERE root_path=?1 AND parent_path=?2")?;
-    Ok(statement
-        .query_map(
-            params![root.to_string_lossy(), directory.to_string_lossy()],
-            super::cache::index::asset_from_row,
-        )?
-        .collect::<Result<_, _>>()?)
-}
-
-pub(crate) fn has_completed_index(
-    connection: &Connection,
-    root: &str,
-) -> Result<bool, rusqlite::Error> {
-    connection
-        .query_row(
-            "SELECT 1 FROM indexed_roots WHERE root_path = ?1",
-            params![root],
-            |_| Ok(true),
-        )
-        .optional()
-        .map(|value| value.unwrap_or(false))
 }

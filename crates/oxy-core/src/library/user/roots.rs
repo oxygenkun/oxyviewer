@@ -8,7 +8,7 @@
 //! user chose, a canonical path, and a removal that also drops the index rows
 //! derived from it.
 
-use crate::library::{Library, LibraryError, cache::index::forget_root};
+use crate::library::{Library, LibraryError, repo::index::forget_root};
 use std::{
     collections::HashSet,
     path::{Path, PathBuf},

@@ -153,7 +153,13 @@ resource leases, cancellation and stale-publication semantics.
   invalidation explicitly. The latency example uses the public headless host.
   All 277 core tests / 5 desktop tests pass, followed by the refined ownership
   audit. Strict workspace Clippy includes the updated public-use-case example.
-- Next: distribute index SQL, move remaining desktop use-case coordination,
+- Library indexing now has a policy module and adjacent index repository. The
+  cache wrapper directory is gone. Typed query parameters and cached statement
+  bundles preserve the existing SQL and transaction preparation granularity;
+  policy retains generation, unchanged-row decisions, writer budgets and fair
+  unlock. All 277 core / 5 desktop tests pass, followed by 24 library tests
+  including the new policy SQL audit; strict workspace Clippy passes.
+- Next: move remaining desktop use-case coordination and person SQL,
   remove legacy person identity paths and finish ownership/docs/tooling gates,
   then complete final release/performance qualification.
 

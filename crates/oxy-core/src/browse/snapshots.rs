@@ -342,15 +342,16 @@ impl BrowseSnapshots {
                 if state.assets.is_none() && !has_snapshot_record {
                     let mut reader = self.store.read();
                     let transaction = reader.transaction()?;
-                    if crate::library::repo::has_completed_index(
+                    if crate::library::repo::index::has_completed_index(
                         &transaction,
                         &root.to_string_lossy(),
                     )? {
-                        state.assets = Some(Arc::new(crate::library::repo::directory_assets(
-                            &transaction,
-                            root,
-                            directory,
-                        )?));
+                        state.assets =
+                            Some(Arc::new(crate::library::repo::index::directory_assets(
+                                &transaction,
+                                root,
+                                directory,
+                            )?));
                     }
                 }
                 state.loaded = true;

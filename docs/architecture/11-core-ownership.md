@@ -78,6 +78,12 @@ BrowseSnapshots 拥有目录快照、校验与持久化 worker，语句在 `brow
 恢复 workflow 显式接收 browse 句柄。退出分别唤醒 foreground gate、停止并等待快照
 持久化排空。浏览延迟 example 改为调用 OxyApp/BrowseService 的公开用例。
 
+资料库索引政策在 `library::index`，语句、分页 SQL、FTS 转义和 row 适配在
+`library::repo::index`。事务范围、扫描代次、近期快照复用、每批 256 项/8ms 的
+writer 预算以及 fair unlock 仍由政策层控制；repo 不打开事务。事务内缓存的预编译
+语句按原粒度复用，未修改资产只更新代次，不重复写 FTS。原 cache 包装目录已移除，
+源审计同时限制索引 repository 写入 cache/marker 表和政策模块携带 SQL。
+
 默认数据和缓存路径使用 `core-v2` 子目录，custom cache 也有独立的版本子目录。
 Store 只接收本核心的 application ID/schema version，或尚未创建表的空文件。
 打开已有文件先做只读检查，未识别的旧库或未来版本不会被升级、重建或 checkpoint。
