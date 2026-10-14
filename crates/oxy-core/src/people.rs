@@ -4,7 +4,9 @@
 
 pub(crate) mod repo;
 pub(crate) mod schema;
+mod service;
 pub mod types;
+pub use service::PersonService;
 
 pub mod alignment;
 pub mod clusters;

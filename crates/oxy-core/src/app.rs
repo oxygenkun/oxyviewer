@@ -12,7 +12,7 @@ use crate::{
     jobs::JobRegistry,
     library::{Library, LibraryService},
     metadata::{BurstScanner, MetadataFacade, MetadataService, provider::ProviderManager},
-    people::{People, execution::operations::PersonOperations},
+    people::{People, PersonService, execution::operations::PersonOperations},
     resources::{
         DebugSnapshotCache, LibraryIndexQueue, cache::CacheManager,
         directory_tree::DirectoryTreeQueue, metadata::MetadataQueue, preview::PreviewQueue,
@@ -56,6 +56,7 @@ pub struct OxyApp {
     pub tag_sync: Arc<TagXmpSync>,
     pub browse: Arc<BrowseService>,
     pub people: Arc<People>,
+    pub person_service: Arc<PersonService>,
     pub person_operations: Arc<PersonOperations>,
     pub person_model_dir: PathBuf,
     pub cache: Arc<CacheManager>,
@@ -108,6 +109,14 @@ impl OxyApp {
         )?);
         let files = Arc::new(FsCatalog::default());
         let person_operations = Arc::new(PersonOperations::default());
+        let person_service = Arc::new(PersonService {
+            people: people.clone(),
+            files: files.clone(),
+            person_operations: person_operations.clone(),
+            runtime: runtime.clone(),
+            person_model_dir: person_model_dir.clone(),
+            cache: cache.clone(),
+        });
         let stopping_foreground = library.foreground.clone();
         let stopping_snapshots = snapshots.clone();
         let stopping_people = person_operations.clone();
@@ -192,6 +201,7 @@ impl OxyApp {
                 tag_sync,
                 browse,
                 people,
+                person_service,
                 person_operations,
                 person_model_dir,
                 cache,

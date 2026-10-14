@@ -159,6 +159,15 @@ resource leases, cancellation and stale-publication semantics.
   policy retains generation, unchanged-row decisions, writer budgets and fair
   unlock. All 277 core / 5 desktop tests pass, followed by 24 library tests
   including the new policy SQL audit; strict workspace Clippy passes.
+- PersonService now owns model inventory/install, operation reservation and
+  cancellation, detection adoption, clustering and analysis/grouping launch.
+  Desktop analysis commands only adapt the core service. The ignored installed
+  DirectML/real-folder verification moved to core, eliminating desktop's DB
+  constructor usage. Three headless tests prove invalid/stopped admission,
+  cancellation retaining exclusive ownership until worker exit, and stale
+  detection rejection without manual writes. Core's 281 tests / 12 ignored,
+  desktop's 5 tests and strict workspace Clippy pass; the moved native benchmark
+  remains unrun and is not GPU qualification evidence.
 - Next: move remaining desktop use-case coordination and person SQL,
   remove legacy person identity paths and finish ownership/docs/tooling gates,
   then complete final release/performance qualification.

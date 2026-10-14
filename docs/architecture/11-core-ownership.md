@@ -84,6 +84,12 @@ writer 预算以及 fair unlock 仍由政策层控制；repo 不打开事务。�
 语句按原粒度复用，未修改资产只更新代次，不重复写 FTS。原 cache 包装目录已移除，
 源审计同时限制索引 repository 写入 cache/marker 表和政策模块携带 SQL。
 
+PersonService 拥有模型状态、下载与导入、operation 预留/取消、检测采用、聚类与
+文件夹分析/分组编排。模型和分析 worker 使用 CoreRuntime/PersonOperations，停止后
+不再预留新 operation；取消后仍等待原 worker 展开，才允许下一次运行。检测采用
+继续校验源身份与当前 producer，失效检测不产生人工事实。DirectML 的真实文件夹
+吞吐验证已从 desktop 测试移到 core，仍需实际模型与 release 环境并显式运行。
+
 默认数据和缓存路径使用 `core-v2` 子目录，custom cache 也有独立的版本子目录。
 Store 只接收本核心的 application ID/schema version，或尚未创建表的空文件。
 打开已有文件先做只读检查，未识别的旧库或未来版本不会被升级、重建或 checkpoint。

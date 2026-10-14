@@ -1,9 +1,9 @@
 //! Real-fixture Release verification of the same media/domain adapters as IPC.
-use oxy_core::contracts::{
+use crate::contracts::{
     BeginPersonAnalysis, FeatureModality, PersonAnalysisTask, PersonOperationState,
     PersonOperationStatus,
 };
-use oxy_core::people::{
+use crate::people::{
     People,
     environment::{catalog, directml},
     execution::{
@@ -33,7 +33,7 @@ fn operation() -> Arc<PersonOperation> {
 
 fn serial(
     people: &People,
-    files: &oxy_core::files::FsCatalog,
+    files: &crate::files::FsCatalog,
     session: &str,
     request: &BeginPersonAnalysis,
     models: &mut OnnxFaceModels,
@@ -42,11 +42,11 @@ fn serial(
 ) {
     struct Sink<'a>(&'a People);
     impl AnalysisTaskSink for Sink<'_> {
-        type Error = oxy_core::people::PeopleError;
+        type Error = crate::people::PeopleError;
         fn enqueue(
             &mut self,
             id: &str,
-            tasks: &[oxy_core::contracts::PersonAnalysisTaskInput],
+            tasks: &[crate::contracts::PersonAnalysisTaskInput],
         ) -> Result<usize, Self::Error> {
             self.0.enqueue_person_analysis_tasks(id, tasks)
         }
@@ -59,7 +59,7 @@ fn serial(
     .unwrap();
     people.seal_person_analysis_tasks(&run.run_id).unwrap();
     let detector_fingerprint =
-        oxy_core::people::stage_fingerprint(&manifest, catalog::DETECTOR).unwrap();
+        crate::people::stage_fingerprint(&manifest, catalog::DETECTOR).unwrap();
     let feature_space = manifest
         .stages
         .iter()
@@ -126,7 +126,7 @@ fn serial(
 }
 
 fn prepare(
-    files: &oxy_core::files::FsCatalog,
+    files: &crate::files::FsCatalog,
     media: &oxy_media::AnalysisInputService,
     task: &PersonAnalysisTask,
     work: &PersonOperation,
@@ -152,7 +152,7 @@ fn directml_pipeline_real_folder() {
     let scratch = tempfile::tempdir().unwrap();
     let photos = scratch.path().join("photos");
     std::fs::create_dir(&photos).unwrap();
-    let sources = oxy_core::files::scan_assets_with_progress(&source, |_| {}).unwrap();
+    let sources = crate::files::scan_assets_with_progress(&source, |_| {}).unwrap();
     let mut jpegs: Vec<_> = sources
         .into_iter()
         .filter(|asset| {
@@ -168,10 +168,10 @@ fn directml_pipeline_real_folder() {
         let path = &jpegs[index * (jpegs.len() - 1) / 15].path;
         std::fs::copy(path, photos.join(path.file_name().unwrap())).unwrap();
     }
-    let files = oxy_core::files::FsCatalog::default();
+    let files = crate::files::FsCatalog::default();
     let session = files.open_folder(&photos).unwrap();
     let folder_path = photos.canonicalize().unwrap();
-    let library = oxy_core::library::Library::open(&scratch.path().join("test.sqlite")).unwrap();
+    let library = crate::library::Library::open(&scratch.path().join("test.sqlite")).unwrap();
     let people = People::new(library.store());
     let media = oxy_media::AnalysisInputService::new(&scratch.path().join("cache")).unwrap();
     let work = operation();
@@ -179,7 +179,7 @@ fn directml_pipeline_real_folder() {
     let mut models = directml::load_models(&root, &work).unwrap();
     eprintln!("ORT DirectML model setup: {:?}", started.elapsed());
     let manifest = catalog::manifest();
-    let fingerprint = oxy_core::people::pipeline_fingerprint(&manifest).unwrap();
+    let fingerprint = crate::people::pipeline_fingerprint(&manifest).unwrap();
     let mut results = Vec::new();
     for round in 0..3 {
         for parallel in if round % 2 == 0 {
@@ -224,11 +224,10 @@ fn directml_pipeline_real_folder() {
             }
             let ms = started.elapsed().as_secs_f64() * 1000.;
             eprintln!("{mode} round={round}: {ms:.2} ms / 16 photos, persisted 32 steps");
-            let producer =
-                oxy_core::people::stage_fingerprint(&manifest, catalog::DETECTOR).unwrap();
+            let producer = crate::people::stage_fingerprint(&manifest, catalog::DETECTOR).unwrap();
             let mut counts = Vec::new();
-            for asset in oxy_core::files::scan_assets_with_progress(&folder_path, |_| {}).unwrap() {
-                let revision = oxy_core::files::observe_file(&asset.path)
+            for asset in crate::files::scan_assets_with_progress(&folder_path, |_| {}).unwrap() {
+                let revision = crate::files::observe_file(&asset.path)
                     .unwrap()
                     .revision_id();
                 counts.push(
