@@ -1,6 +1,6 @@
-# Completed Implementation Plans
+# Completed and Superseded Plans
 
-These plans are retained as historical implementation records. Use the linked
+These plans are retained as historical implementation or superseded design records. Use the linked
 current design or research report for present behavior.
 
 - [JPEG quality and scroll performance](jpg-quality-and-scroll-performance.md):
@@ -12,3 +12,7 @@ current design or research report for present behavior.
 - [oxy-media facade simplification](oxy-media-lib-refactor.md): completed;
   current module boundaries are in
   [media refactoring](../../architecture/07-media-refactoring.md).
+
+- [Store, repository, and domain split](store-repository-split-plan.md): earlier
+  stages retained as history; remaining E/P organization is superseded by the
+  [four-package architecture](../../ARCHITECTURE.md).

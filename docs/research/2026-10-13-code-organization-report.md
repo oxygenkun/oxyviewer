@@ -90,7 +90,7 @@ bili-sync 读取了公开仓库的实际源码，固定参考提交为 [`c900777
 
 `commands/folder.rs::list_assets` 同时协调 files、metadata、library、tags、people，再进行筛选和分页。`commands/people_analysis.rs` 还包含运行预留、模型状态组合、下载和分析启动流程。
 
-因此，仅把小 crate 合并，却继续把用例和调度留在 Tauri 内，无法解决主要的组织问题。源码入口：[`jobs/preview.rs`](../../apps/desktop/src-tauri/src/jobs/preview.rs)、[`commands/folder.rs`](../../apps/desktop/src-tauri/src/commands/folder.rs)、[`commands/people_analysis.rs`](../../apps/desktop/src-tauri/src/commands/people_analysis.rs)。
+因此，仅把小 crate 合并，却继续把用例和调度留在 Tauri 内，无法解决主要的组织问题。源码入口：`apps/desktop/src-tauri/src/jobs/preview.rs`（基线 `595a46b`）、[`commands/folder.rs`](../../apps/desktop/src-tauri/src/commands/folder.rs)、[`commands/people_analysis.rs`](../../apps/desktop/src-tauri/src/commands/people_analysis.rs)。
 
 ### 4.3 共享类型包放在依赖图最底部，影响面过大
 
@@ -102,13 +102,13 @@ bili-sync 读取了公开仓库的实际源码，固定参考提交为 [`c900777
 
 标签和人物政策在各自 crate，SQL 在 `oxy-store::repo`；跨功能行为落到 `repo/cross.rs`。例如人物确认是否贡献标签、同目录与跨目录移动后的不同处理，阅读时必须来回切换业务与集中存储层。
 
-当前契约明确允许这些跨域存储操作，这不是把现状判为违规。问题是：当领域被强制设为互不依赖的兄弟 crate 后，应用真实需要的协作只能绕到存储层或 Tauri 层。新设计应直接给这种协作一个应用用例层。见 [`repo/cross.rs`](../../crates/oxy-store/src/repo/cross.rs)。
+当前契约明确允许这些跨域存储操作，这不是把现状判为违规。问题是：当领域被强制设为互不依赖的兄弟 crate 后，应用真实需要的协作只能绕到存储层或 Tauri 层。新设计应直接给这种协作一个应用用例层。见 `crates/oxy-store/src/repo/cross.rs`（基线 `595a46b`）。
 
 ### 4.5 继续既有拆分计划，会延续当前组织成本
 
 现有计划记载 A–D 已完成，E、P 未开始；P 还计划新增 `oxy-preview`。本报告同意应把 preview 队列移出 Tauri，但建议移入 `oxy-core::resources`，不新增 package。E 所表达的 SQL 分层需求则改由 feature 内的 repository 模块解决。
 
-这两项应在选定新架构后重新规划，不能同时沿着相反方向实施。见 [`store-repository-split-plan.md`](../tasks/store-repository-split-plan.md)。
+这两项应在选定新架构后重新规划，不能同时沿着相反方向实施。见 [`store-repository-split-plan.md`](../archive/plans/store-repository-split-plan.md)。
 
 ## 5. 目标依赖图
 

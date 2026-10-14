@@ -40,8 +40,8 @@ DebugQueueSnapshot
       pendingCount?, assetCount?, directoryCount?
 ```
 
-The shared serialized types live in `oxy-domain`; matching TypeScript types
-live in `apps/desktop/src/types.ts`. Queue implementations expose snapshot
+The serialized types live in `oxy-core::resources::types`; generated TypeScript types
+live in `apps/desktop/src/generated/contracts.ts`. Queue implementations expose snapshot
 methods while holding their existing locks, and `CoalescingPriorityQueue`
 visits only logical pending entries rather than stale heap nodes.
 

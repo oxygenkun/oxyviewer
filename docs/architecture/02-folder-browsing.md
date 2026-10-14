@@ -45,7 +45,7 @@ flowchart TD
 ```
 
 这阻止前端仅通过构造路径就越过用户打开的根目录。session 只存于内存，应用重启后失效；
-但用户在左侧打开的根目录由 `oxy-library` 持久化。下次启动时前端读取这些根目录并重新建立
+但用户在左侧打开的根目录由 `oxy-core::library` 持久化。下次启动时前端读取这些根目录并重新建立
 session，同时恢复每个根目录最后浏览的子路径。根目录可独立添加和移除，也允许父目录与子目录
 同时存在。
 
@@ -85,14 +85,14 @@ session，同时恢复每个根目录最后浏览的子路径。根目录可独�
 直接长期缓存整个文件夹的 `Vec<Tag>`。
 
 当前识别的类型：RAW（ARW、CR2、CR3、NEF、DNG、RAF、RW2、ORF）、JPEG、HEIF/HEIC/HIF、
-PNG、TIFF 和 WebP。唯一事实来源是 `oxy-fs` 的 `kind_for_extension`；格式支持成熟度另见
+PNG、TIFF 和 WebP。唯一事实来源是 `oxy-media::types::AssetKind` 的扩展名分类；格式支持成熟度另见
 [FORMAT_SUPPORT.md](../FORMAT_SUPPORT.md)。
 
 ## 4. 内存快照
 
-2026-09-05 起，普通浏览由 `oxy-library::browsing` 管理 `(root, directory)` 快照。
-`directory_snapshots` 保存完整列表 JSON（包括空目录），不依赖根索引完成标记；已完成的旧根
-索引可为首次迁移提供列表。JSON 解析与排序仍有 O(n) / O(n log n) 成本，十万文件须单独实测。
+2026-09-05 起，普通浏览由 `oxy-core::browse::snapshots` 管理 `(root, directory)` 快照。
+`directory_snapshots` 保存完整列表 JSON（包括空目录），不依赖根索引完成标记；已完成的当前根
+索引可为初次快照提供已有摘要。JSON 解析与排序仍有 O(n) / O(n log n) 成本，十万文件须单独实测。
 进程内复用 `Arc<Vec<AssetSummary>>`，同目录并发冷请求只扫描一次。重启先读本地列表，再由
 最多一个后台核对任务完整枚举；成功原子替换，错误保留旧列表并显示状态。
 
@@ -155,7 +155,7 @@ stateDiagram-v2
 
 ## 5. 持久目录索引
 
-显式加入侧边栏的根目录会在 `open_folder` 返回后启动后台索引。`oxy-library` 每次只允许一个根
+显式加入侧边栏的根目录会在 `open_folder` 返回后启动后台索引。`oxy-core::library` 每次只允许一个根
 目录扫描，并把工作拆成目录优先的两个阶段：
 
 1. 第一阶段按层次优先遍历目录，只 upsert `indexed_directories`；完整目录树记录成功后清理旧目录、发布独立的目录完成标记和事件，此时文件夹搜索立即可用；
@@ -263,7 +263,7 @@ flowchart TD
 
 ## 9. 目录树路径
 
-`oxy-fs::FsCatalog` 按 session 持有带单调 revision 的 `DirectoryTreeSnapshot`。快照记录节点的
+`oxy-core::files::FsCatalog` 按 session 持有带单调 revision 的 `DirectoryTreeSnapshot`。快照记录节点的
 展开状态，以及 `children = None`（尚未加载）和 `children = []`（已确认叶子）的区别。React
 只发送展开、折叠或刷新意图，并拒绝覆盖较新 revision 的迟到响应，不再为每个节点维护独立
 的展开状态或目录查询。
@@ -336,8 +336,8 @@ hasChildren，不自动展开节点。后台任务仍服从图片浏览让行门
 重叠，也不能已经有资料库记录。本操作不合并两套独立标注。源根目录与其他已注册
 根目录重叠时，需先移除重复的列表项。
 
-`oxy-library::plan_root_relocation` / `relocate_root` 编排恢复，`oxy-store::repo::cross::relocation`
-持有跨标签与人物表的语句。提交时重新生成预览并核对，随后在同一事务中迁移用户路径、
+`oxy-core::library::LibraryService` 编排恢复，`app::workflows::root_relocation`
+拥有共同事务并调用各功能 repository。提交时重新生成预览并核对，随后在同一事务中迁移用户路径、
 人物作用域、标签来源和根目录顺序，撤销旧人物分析任务的发布资格，清理旧浏览索引。
 事务结束前再检查目标文件版本。任何冲突均回滚，用户标注不因缺失或缓存失效被删除。
 人物实例 ID、审阅和参考关系保留；无法验证的实例设置 `needs_review`，历史事件保持原记录。

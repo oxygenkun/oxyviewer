@@ -11,7 +11,7 @@ Sony HIF 的带边 JPEG thumbnail 与 full 使用相同的显示画布和对焦�
 
 ## 公开契约
 
-在 `oxy-domain::PreviewResult` 和对应 TypeScript 类型增加可选字段：
+在 `oxy-media::types::PreviewResult` 和对应 TypeScript 类型增加可选字段：
 
 ```ts
 interface PreviewGeometry {

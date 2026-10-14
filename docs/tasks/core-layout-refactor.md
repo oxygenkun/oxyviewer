@@ -14,20 +14,20 @@ resource leases, cancellation and stale-publication semantics.
 - [x] Workspace contains desktop, oxy-core, oxy-media and oxy-metadata-parser.
 - [x] Media owns its types and decode controls, and depends only on the parser
       among workspace packages; parser remains independent.
-- [ ] Core owns application services, filesystem safety, browsing/query
+- [x] Core owns application services, filesystem safety, browsing/query
       composition, tags, people, metadata editing, scheduling and persistence.
-- [ ] Feature repositories and schema declarations live next to their owner;
+- [x] Feature repositories and schema declarations live next to their owner;
       storage owns mechanisms and typed cache clearing, not domain policy.
-- [ ] Named workflows own cross-feature writes and transaction policy.
-- [ ] Tauri only adapts commands/events/protocols/window capabilities. Core
+- [x] Named workflows own cross-feature writes and transaction policy.
+- [x] Tauri only adapts commands/events/protocols/window capabilities. Core
       owns service assembly, workers and shutdown without a Tauri dependency.
-- [ ] Old packages, forwarding APIs and legacy identity/schema compatibility
+- [x] Old packages, forwarding APIs and legacy identity/schema compatibility
       paths are removed; new data uses an isolated versioned directory.
 - [x] Frontend IPC types are generated from the explicit Rust contracts and
       checked for drift; demo behavior follows the final commands.
 - [ ] Build tooling, CI, benchmarks and authoritative architecture documents
       reflect the final ownership rules.
-- [ ] Focused behavior/integration tests, Rust checks and frontend checks pass.
+- [x] Focused behavior/integration tests, Rust checks and frontend checks pass.
 - [ ] Release WebView and real media performance are compared with the baseline;
       incremental build costs are measured for feature/type/media edits.
 
@@ -302,9 +302,13 @@ resource leases, cancellation and stale-publication semantics.
   to browse::tree_queue, and retained diagnostic samples to resources::diagnostics.
   These implementations are crate-private and their algorithms are unchanged.
   All 286 core tests / 13 ignored and strict workspace Clippy pass.
-- Next: move remaining desktop use-case coordination and person transactions,
-  remove legacy person identity paths and finish ownership/docs/tooling gates,
-  then complete final release/performance qualification.
+- Final contracts-feature workspace checks pass: 786 Rust tests, 29 ignored,
+  strict all-targets Clippy and generated contract drift. Frontend check,
+  413 tests across 70 files and production build pass. These checks do not
+  replace native release/real-media performance qualification.
+- Next: finish current documentation/tooling review, then run the final native
+  release comparison, real RAW/JPEG/HIF and analysis qualification, and measure
+  incremental check/build costs against the original baseline.
 
 Keep this checklist current. A four-package manifest alone does not complete
 the refactor; every ownership and behavioral gate above must be verified.

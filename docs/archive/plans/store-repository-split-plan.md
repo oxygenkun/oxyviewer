@@ -1,5 +1,9 @@
 # Store, repository, and domain split
 
+Status: superseded by the [four-package core layout](../../ARCHITECTURE.md) on
+2026-10-14. Stages E/P are cancelled as organization goals. This document records
+the earlier design; its crate/SQL ownership rules are historical, not current.
+
 ## Goal
 
 Separate three concerns that `oxy-library` currently holds in one crate:

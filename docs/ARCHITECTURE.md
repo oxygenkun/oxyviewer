@@ -1,326 +1,110 @@
-# OxyViewer 架构设计
+# OxyViewer 架构
 
-本分支正在实施四个 package 的组织重构。已实现的装配、读取边界和队列生命周期以
-[应用核心归属](architecture/11-core-ownership.md) 为准；下文尚待更新的旧 crate 名称
-对应 core 内的功能模块，不再代表独立 package。剩余迁移见
-[实施清单](tasks/core-layout-refactor.md)。
+OxyViewer 按一个应用核心和少数独立技术库组织。当前 Rust workspace 有四个 package；
+应用功能在 `oxy-core` 内按状态、规则和用例归属划分模块。媒体和解析器保留独立构建边界。
+最后核对：2026-10-14。重构实现与验收状态见[实施清单](tasks/core-layout-refactor.md)。
 
-资源加载与状态归属遵循
-[ADR 0008](adr/0008-rust-owned-resource-projections.md)：Rust 持有带版本的权威资源投影和
-优先级队列，React 只镜像已提交 revision。该规则同时适用于 metadata 与 image，目录首屏
-仍只返回便宜摘要。
-
-本文是 OxyViewer 架构文档的入口。它先给出一张完整地图，再把读者带到各个专题。
-即使你没有 Rust 或 Tauri 经验，也可以从本页开始；如果你已经熟悉桌面应用开发，
-可以直接跳到感兴趣的实现章节。
-
-> 文档描述的是当前仓库中的实现。尚未实现的能力会明确标记为“规划中”，不会把路线图
-> 当成现状。最后核对日期：2026-09-04。
-
-## 1. 一句话理解 OxyViewer
-
-OxyViewer 是一个“React 界面 + Rust 本地能力”的桌面照片浏览器：
-
-- React 负责界面、交互、可见区域判断，以及同步显示 Rust 发布的权威状态；
-- Tauri 把 Web 界面装进原生桌面窗口，并提供 JavaScript 调用 Rust 的桥梁；
-- Rust 负责文件系统访问、图片解码、缓存、元数据和 SQLite；
-- 原始照片始终留在本机；预览与派生索引可重建，SQLite 中的身份、审阅、标签和根目录等
-  用户事实必须保留，不能通过缓存清理删除。
-
-最重要的产品约束是：**打开文件夹不能等待递归导入、全量索引或图片解码。**
-打开后先返回便宜的文件摘要，缩略图、详情和索引按需延后。这一决策记录在
-[ADR 0001](adr/0001-no-blocking-import.md) 中。
-
-## 2. 阅读路线
-
-| 目标 | 建议阅读 |
-| --- | --- |
-| 10 分钟建立整体认识 | 本页第 3～8 节 |
-| 第一次接触 Rust/Tauri | [01：Rust 与 Tauri 运行时](architecture/01-rust-tauri-runtime.md) |
-| 理解打开文件夹为什么快 | [02：文件夹浏览与分页](architecture/02-folder-browsing.md) |
-| 理解缩略图、RAW、HEIF | [03：统一预览流水线](architecture/03-preview-pipeline.md) |
-| 深入 HEIF 全分辨率显示 | [04：HEIF 完整 JPEG 与旧瓦片协议](architecture/04-heif-tile-session.md) |
-| 理解状态、SQLite、元数据 | [05：状态、数据与安全边界](architecture/05-data-and-state.md) |
-| 准备新增功能或格式 | [06：扩展、调试与验证](architecture/06-extension-guide.md) |
-| 查一个类型或命令属于哪里 | [架构索引](architecture/README.md) |
-
-推荐按 `本页 → 01 → 02 → 03` 阅读。04～06 是按需深入章节。
-
-## 3. 先补三个基础概念
-
-### 3.1 Rust crate 是什么
-
-crate 可以先理解成一个“有清晰公共接口的 Rust 包”。本仓库把不同职责拆到多个 crate，
-例如 `oxy-fs` 只关心文件系统，`oxy-media` 只关心媒体解码。crate 之间通过 Rust 类型和
-函数调用协作，不是通过网络通信，也不是多个后台进程。
-
-### 3.2 Tauri 是什么
-
-Tauri 应用包含两部分：
-
-1. 一个系统 WebView，运行 React/TypeScript；
-2. 一个本地 Rust 进程，拥有文件系统和原生 API 权限。
-
-前端使用 `invoke("command_name", args)` 调用带 `#[tauri::command]` 的 Rust 函数。
-参数和返回值会被序列化，效果类似调用本机 API，但没有 HTTP 服务器。
-
-### 3.3 IPC 是什么
-
-IPC 是 Inter-Process Communication，这里泛指前端 WebView 与 Rust 之间的通信边界。
-OxyViewer 通过三种通道传递不同数据：
-
-| 通道 | 方向 | 适合传递 | 当前示例 |
-| --- | --- | --- | --- |
-| Tauri command | 前端请求，Rust 返回 | 小型结构化数据 | 文件页、详情、预览路径 |
-| Tauri event | Rust 主动通知前端 | 状态和事件元数据 | HEIF 瓦片已就绪 |
-| 自定义协议 | 前端按 URL 读取 Rust 数据 | 二进制内容 | `oxy-media://...` RGBA/JPEG 瓦片 |
-
-关键规则是：**图片字节不放进 JSON command 返回值。** 普通预览返回文件 URL；HEIF
-全分辨率像素通过自定义协议读取。这样避免大块二进制被 JSON 编码、复制和占用主线程。
-
-## 4. 系统全景
+## 依赖和运行边界
 
 ```mermaid
 flowchart LR
-    subgraph uiLayer["React WebView"]
-        reactUi["组件与交互"]
-        queryState["分页查询与只读投影镜像"]
-    end
-
-    subgraph bridgeLayer["Tauri 边界"]
-        commands["Commands"]
-        events["Events"]
-        mediaProtocol["oxy-media 自定义协议"]
-        appState["AppState"]
-        resourceCoordinator["资源状态与优先级队列"]
-    end
-
-    subgraph coreLayer["Rust 领域能力"]
-        domain["oxy-domain 契约"]
-        fsCrate["oxy-fs 文件浏览"]
-        mediaCrate["oxy-media 图片解码"]
-        metadataCrate["oxy-metadata 元数据"]
-        libraryCrate["oxy-library 本地资料库"]
-        peopleCrate["oxy-people 人物"]
-        runtimeCrate["oxy-runtime 作业状态"]
-        tagsCrate["oxy-tags 标签"]
-        storeCrate["oxy-store 存储与 schema"]
-    end
-
-    subgraph localData["本机资源"]
-        photoFiles[("照片与 XMP")]
-        previewCache[("预览缓存")]
-        sqliteDb[("SQLite")]
-        nativeDecoders["LibRaw、libheif、ImageIO、FFmpeg"]
-    end
-
-    reactUi --> queryState
-    queryState --> commands
-    events --> reactUi
-    mediaProtocol --> reactUi
-    commands --> appState
-    appState --> resourceCoordinator
-    resourceCoordinator --> events
-    appState --> fsCrate
-    resourceCoordinator --> mediaCrate
-    resourceCoordinator --> metadataCrate
-    appState --> libraryCrate
-    appState --> tagsCrate
-    appState --> peopleCrate
-    appState --> runtimeCrate
-    domain --> commands
-    domain --> fsCrate
-    domain --> mediaCrate
-    fsCrate --> photoFiles
-    metadataCrate --> photoFiles
-    mediaCrate --> photoFiles
-    mediaCrate --> previewCache
-    mediaCrate --> nativeDecoders
-    libraryCrate --> sqliteDb
-    tagsCrate --> sqliteDb
-    peopleCrate --> sqliteDb
-    mediaCrate --> events
-    mediaCrate --> mediaProtocol
+    UI[React WebView] --> Desktop[Tauri 适配]
+    Desktop --> Core[oxy-core 应用核心]
+    Desktop --> Media[oxy-media 二进制协议与媒体类型]
+    Core --> Media
+    Media --> Parser[oxy-metadata-parser]
 ```
 
-这是一款单机应用，不是微服务系统。图中的“层”表示代码和权限边界，而不是需要独立部署
-的服务。Rust crates 最终链接进同一个 Tauri 应用进程。
+桌面适配 commands、类型化事件、二进制协议和窗口能力；应用规则、事务、排队、缓存
+协调及后台任务归 core。Core 不依赖 Tauri。Media 不依赖 SQLite、人物或桌面，parser
+不依赖其他 workspace package。没有旧包名的 forwarding 层。
 
-## 5. 仓库结构与职责
+前端通过 command 交换小型结构化数据，通过 event 镜像已提交状态，通过自定义协议
+读取媒体内容。图片字节不经 JSON IPC。资源状态继续遵循
+[ADR 0008](adr/0008-rust-owned-resource-projections.md)：Rust 是带版本投影的权威拥有方。
 
-```text
-apps/desktop/src/             React 前端
-apps/desktop/src-tauri/       Tauri 启动、命令、状态和协议注册
-crates/oxy-domain/            跨 Rust/TypeScript 边界的公共数据契约
-crates/oxy-fs/                文件发现、会话、分页、路径校验、文件操作
-crates/oxy-media/             尺寸读取、预览生成、RAW/HEIF/native adapters
-crates/oxy-metadata-parser/   进程内 EXIF/XMP/IPTC/ICC/MakerNote 解析器
-crates/oxy-metadata/          元数据归一化、sidecar 与可选 ExifTool 能力边界
-crates/oxy-library/           资料库数据含义：收藏夹与可重建的浏览/索引/投影缓存
-crates/oxy-people/            人物身份、审阅、历史、参考、身份驱动的标签投影，以及可重建的检测/特征/分析缓存
-crates/oxy-runtime/           作业 ID、优先级和取消标记
-crates/oxy-store/             SQLite 文件、连接、事务、全部表声明、全部语句与 schema 迁移
-crates/oxy-tags/              标签词汇、赋值与 XMP 镜像的规则
-docs/adr/                     重要且难以逆转的架构决策
-```
+## 应用模块
 
-各层的“允许做什么”和“不能做什么”：
-
-| 模块 | 主要职责 | 不应承担 |
-| --- | --- | --- |
-| React | 展示、交互、虚拟列表、可见性、只读状态镜像 | 直接访问本机文件系统或持有目录/资源权威状态 |
-| `src-tauri` | 参数转换、状态装配、阻塞任务转交、事件发布 | 承载可复用业务算法 |
-| `oxy-domain` | 可序列化契约和共享词汇 | 文件 IO、解码、数据库操作 |
-| `oxy-fs` | 安全路径、非递归扫描、分页、文件操作 | UI 状态、图片解码 |
-| `oxy-media` | 解码、预览、缓存、HEIF 会话 | React/Tauri 组件逻辑 |
-| `oxy-metadata-parser` | 解析图片容器与通用/私有元数据标签 | UI 投影、sidecar 写入、启动外部进程 |
-| `oxy-metadata` | XMP/ExifTool 策略；通用 EXIF、图片格式与厂商 MakerNotes 分层归一化 | 任意文件浏览、跨厂商复用私有标签数值表 |
-| `oxy-library` | 资料库数据含义：收藏夹，以及浏览、索引、资源投影各自的行为规则 | 存储机制(连接、WAL、事务、表声明、schema 迁移)；标签词汇(那是 `oxy-tags`)与人物规则(那是 `oxy-people`) |
-| `oxy-people` | 人物身份、审阅、历史、参考、身份↔标签投影决策，以及检测/特征/分析运行的可重建缓存 | 存储机制(连接、WAL、事务、表声明、schema 迁移)；标签词汇；Tauri 命令与具体推理框架 |
-| `oxy-runtime` | 后台作业的通用控制词汇 | 具体媒体算法 |
-| `oxy-store` | SQLite 文件、连接与 WAL 读连接、事务、表声明、全部语句(`repo`)与 schema 迁移 | 照片、标签、人物的业务规则(标签成环、审阅 revision) |
-| `oxy-tags` | 标签词汇、层级不变量、赋值来源、XMP 镜像，以及文件移动/复制/删除后的标签状态 | 人物规则、存储机制(不得依赖 `rusqlite`) |
-
-领域 crate 之间互不依赖：`oxy-library`、`oxy-tags`、`oxy-people` 各自持有同一个
-`oxy_store::Store`，需要对方的数据时调用 `oxy-store::repo` 的语句，而不是调用对方。
-跨两个领域的语句——包括「文件移动了」和「文件没了」这两个动作——集中在
-`oxy-store/src/repo/cross.rs`。应用层是组合根：`src-tauri` 打开一次 `Store`，再构造
-`Library::with_store`、`Tags::new`、`People::new`。测试可以跨到兄弟 crate（`oxy-tags`
-的 `[dev-dependencies]` 就是这样，用来证明身份的主张会落成 `person` 标签来源），但生产
-依赖不能跨。
-
-## 6. 三条最重要的运行路径
-
-### 6.1 打开文件夹
-
-```mermaid
-sequenceDiagram
-    participant User
-    participant ReactApp
-    participant TauriCommand
-    participant FsCatalog
-    participant LocalDisk
-
-    User->>ReactApp: 选择文件夹
-    ReactApp->>TauriCommand: open_folder(path)
-    TauriCommand->>FsCatalog: 建立受限会话
-    FsCatalog->>LocalDisk: canonicalize 根路径
-    FsCatalog-->>ReactApp: FolderSession
-    ReactApp->>TauriCommand: list_assets(cursor = 0)
-    TauriCommand->>FsCatalog: 请求当前目录第一页
-    FsCatalog->>LocalDisk: 非递归读取直接子项
-    FsCatalog-->>ReactApp: Page of AssetSummary
-    ReactApp-->>User: 先渲染文件摘要
-```
-
-`open_folder` 本身不递归扫描，也不生成缩略图。第一次 `list_assets` 会建立当前目录的
-内存快照，再按查询条件排序、过滤和切页。后续页复用快照。详见
-[02：文件夹浏览与分页](architecture/02-folder-browsing.md)。
-
-### 6.2 普通预览和 RAW 预览
-
-```mermaid
-flowchart LR
-    thumbnail["网格 / filmstrip 请求 thumbnail"] --> thumbnailQueue["thumbnail 队列 + CPU 数 worker"]
-    loupe["当前放大镜请求 full"] --> fullQueue["loupe 队列 + 2 个 worker"]
-    thumbnailQueue --> embedded["优先内嵌小图 / 格式回退"]
-    fullQueue --> full["完整 artifact / HEIF tile session"]
-    embedded --> display["显示已就绪资源"]
-    full --> display
-    selection["切换选中图片"] --> cancel["取消旧 full，移除旧 pending"]
-    cancel --> fullQueue
-```
-
-两组队列和解码 gate 独立。放大镜直接启动 full，只复用已有 thumbnail 作底图；
-缩略图无需等待 full。切图在源探测前登记 selection epoch 并取消旧工作，
-FFmpeg 子进程和 LibRaw 开发可在执行中响应取消。无中断接口的 native API 返回后
-丢弃旧结果，不强杀 Rust 线程。详见 [03：统一预览流水线](architecture/03-preview-pipeline.md)。
-
-### 6.3 HEIF 全分辨率显示
-
-HEIF 在放大镜中先保留内嵌 JPEG 作为临时底图。完整 JPEG 缓存未命中时，macOS 通过 ImageIO
-直接生成完整 JPEG 并以文件 URL 加载；Windows/Linux 启动 Canvas session，用 full-resolution
-tiles 渐进覆盖底图，并在瓦片发布后异步写入完整 JPEG。再次进入同一照片时各平台都直接读取缓存。
-
-具体协议与缓存策略记录于 [04：HEIF 渐进瓦片与完整 JPEG 缓存](architecture/04-heif-tile-session.md) 和
-[ADR 0004](adr/0004-heif-full-resolution-sessions.md)。
-
-## 7. 为什么这样设计
-
-### 7.1 立即打开，而不是先导入
-
-照片目录可能包含十万文件。递归扫描、元数据提取和缩略图生成都可能耗时数秒到数分钟。
-因此打开路径只建立会话，浏览路径只扫描当前目录，昂贵工作由可见性和选择状态触发。
-
-### 7.2 把阻塞工作移出异步/UI 线程
-
-文件枚举、图片解码和 SQLite 调用不是浏览器式的异步网络 IO。Tauri command 对这些操作
-使用 `spawn_blocking`，避免卡住负责处理窗口与其他 command 的异步运行时线程。前端又用
-虚拟列表控制实际挂载的缩略图数量，两个边界共同保护响应速度。
-
-### 7.3 缓存不是事实来源
-
-生成预览和 SQLite 资产记录都可以重建。真实照片、用户明确写入的 XMP，以及用户选择的
-资料库根目录才是需要保护的数据。缓存版本进入文件名计算，算法变化后旧缓存会自然失效。
-
-### 7.4 薄 Tauri 层
-
-Tauri command 只负责：取状态、校验/转换参数、把阻塞工作转移到线程池、调用 crate、
-把错误转成 IPC 可传输形式。这样媒体和文件逻辑可以用普通 Rust 单元测试验证，不必启动窗口。
-
-## 8. 当前实现与规划边界
-
-| 能力 | 当前状态 |
+| 归属 | 职责和入口 |
 | --- | --- |
-| 当前目录非递归扫描、内存快照、分页 | 已实现 |
-| 排序、搜索、类型过滤、虚拟滚动 | 已实现 |
-| RAW `preview → full`（当前映射 4096 → full） | 已实现 |
-| Windows HIF 160×120 `preview` 底图 → 全分辨率瓦片 | 已实现 |
-| Rust 资源 projection 队列和后端解码门 | 已实现；full/thumbnail 独立队列与 worker，同源合并，切图取消旧 full |
-| metadata/image projection SQLite 重启缓存 | 已实现；WAL 事务 revision 拒绝迟到结果 |
-| 原生元数据读取与 XMP sidecar 写入 | 已实现；所有支持格式均为 sidecar-first；星级/颜色使用 `xmp:Rating`/`xmp:Label`，旗标使用 `digiKam:PickLabel`；ExifTool 只作解析失败兼容 fallback 或显式内嵌同步 |
-| SQLite 显式资料库根目录 | 已实现 |
-| SQLite 后台资产/目录索引与 FTS 搜索 | 已实现；按目录短事务更新，完成 generation 后清理旧行并重建 FTS |
-| 文件系统 watcher 和 `folder_delta` | 规划中 |
-| 设置 → 关于的版本、仓库、作者展示与手动更新检查 | 已实现；只在用户点击时查询固定的 GitHub Releases 端点，只报告不下载不安装（[ADR 0010](adr/0010-explicit-release-check.md)） |
-| 解码过程中的协作式取消 | 规划中 |
-| 10 万文件性能门槛实测 | 已完成首次 release E2E；约 2.3 秒，尚未达到 300 ms 目标 |
+| core::app | OxyApp 装配、路径、命名跨功能 workflows |
+| core::runtime / jobs | worker 准入、停止、事件、优先级与 foreground gate |
+| core::browse | BrowseService、分页、条件组合、目录快照、目录树调度 |
+| core::files | 路径/会话安全、文件发现、FileService 与操作恢复 |
+| core::library | LibraryService、用户根目录、索引政策和调度 |
+| core::tags | 词汇、层级、独立赋值来源、持久 XMP 镜像 |
+| core::people | PersonService、全局身份/tuple/审阅/参考、派生分析与模型环境 |
+| core::metadata | MetadataService、应用元数据解释、sidecar 编辑、提供者任务 |
+| core::resources | ResourceService、预览/metadata 队列、投影、缓存协调与诊断 |
+| core::storage | 私有 SQLite/WAL、表声明机制、schema 注册与版本检查 |
+| media | 源事实、原生标签、表示选择、解码、像素、产物、资源 registry/lease |
+| parser | 独立 EXIF/XMP/IPTC/ICC/MakerNote 和容器解析 |
 
-更细的进度以 [ROADMAP.md](ROADMAP.md) 为准；性能目标与历史测量见
-[PERFORMANCE.md](PERFORMANCE.md)。
+简单功能不需要机械地创建 types/service/repo/schema 四个文件。用例入口必须能完整阅读；
+避免巨型 App、通用 cross repository 或为了一个函数再加转发层。
 
-## 9. 架构不变量
+## 装配与退出
 
-修改代码时应优先保护以下约束：
+`OxyApp::open(AppPaths)` 打开一个 Store，装配共享功能服务与资源状态。Tauri setup
+只取得平台路径、接入事件和注册窗口。Headless 宿主使用相同 core 服务。
 
-1. 打开文件夹不能触发递归导入或同步索引。
-2. 首屏只依赖便宜、可分页的文件摘要。
-3. 图片字节不能通过 JSON IPC 返回。
-4. 解码、预览和大量文件 IO 不能阻塞 UI/异步执行线程。
-5. 公共 IPC 契约放在 `oxy-domain`，Rust serde 字段使用 camelCase 对齐 TypeScript。
-6. Tauri 层保持薄，复用逻辑进入对应 crate。
-7. 源照片不依赖缓存存活；SQLite 资产索引和预览文件必须可重建。
-8. 文件操作必须经过 `oxy-fs` 的安全边界。
-9. 新媒体路径必须尊重优先级、缓存版本和取消语义。
-10. 出站网络请求必须由用户显式触发、指向编译期固定的项目地址，并且不得自动下载或安装可执行内容。
+CoreRuntime 登记分析、文件、编辑、提供者和队列 worker。停止拒绝新工作/事件、取消
+协作任务、释放等待者、唤醒 gates，并等待退出；目录快照另有明确排空/join 机制。
+已经进入不可中断 native 调用的工作自行展开，截止时间到达返回超时，不假称退出。
+详见[核心归属与生命周期](architecture/11-core-ownership.md)。
 
-## 10. 从哪里看代码
+## 持久化与事务
 
-| 想回答的问题 | 起点 |
-| --- | --- |
-| 前端怎样调用 Rust | `apps/desktop/src/lib/api.ts` |
-| command 在哪里实现/注册 | `apps/desktop/src-tauri/src/commands/*.rs` / `apps/desktop/src-tauri/src/lib.rs` |
-| IPC 数据长什么样 | `crates/oxy-domain/src/lib.rs` |
-| 文件夹如何限制在根目录内 | `crates/oxy-fs/src/lib.rs` 的 `FsCatalog` |
-| 预览怎样选择解码器 | `crates/oxy-media/src/lib.rs` 的 `preview` |
-| HEIF 瓦片怎样管理 | `crates/oxy-media/src/heif_service.rs` |
-| 组件怎样渐进升级图片 | `apps/desktop/src/components/browsing/Thumbnail.tsx` |
-| HEIF Canvas 怎样取瓦片 | `apps/desktop/src/components/loupe/HeifTileCanvas.tsx` |
-| UI 请求与选择状态 | `apps/desktop/src/App.tsx`、`store.ts` |
+单个 SQLite 文件便于跨功能动作共同提交。每个功能拥有自己的 repo 和 schema；storage
+只管理共享机制。Repo 不开启事务、不决定规则。人物审阅/标框/标签、文件动作和根恢复
+由具名 workflow 确定跨功能事务范围，再调用拥有方的操作。
 
-前端 `src/` 按域分层：`src/components/<域>/` 与 `src/lib/<域>/` 各自平铺，只有
-`App.tsx`、`main.tsx`、`store.ts`、`types.ts`、`lib/api.ts`、`lib/i18n.ts` 留在顶层。
-跨目录导入统一用 `@/` 前缀（`@` 在 `vite.config.ts` 与 `tsconfig.app.json` 中指向 `src/`），
-同目录导入保持 `./`。
+每张表声明 `user/cache/marker` 分类。姓名、人工框、决定、参考、历史、标签、根目录和
+恢复记录属于用户事实；检测、向量、建议、索引、快照和投影可重建。清缓存与重新分析
+不能删除用户事实。产品预览清理仍只处理当前预览文件。
 
-继续阅读：[架构专题索引](architecture/README.md)。
+数据与缓存隔离在 `core-v2`，当前 SQLite schema 为 2。旧/未知/未来的非空库在 writer
+打开前只读拒绝，不升级、不删库、不 checkpoint。当前格式的未来升级必须明确保护用户
+声明。[schema 切换记录](tasks/core-schema-retirement.md)说明这次不兼容边界。
+
+文件系统和 SQLite 无法共同原子提交。FileService 先检查路径/sidecar，再逐文件记录
+prepared/filesApplied 与版本证明；资料提交失败保留恢复记录，证明不匹配要求检查，
+不会自动重复文件动作。根恢复重绑经过来源证明的事实，未匹配事实保留并标记需核对。
+
+## 主要用户路径
+
+打开目录返回廉价、非递归、分页的摘要，索引/元数据/预览延后执行。BrowseService
+组合标签、metadata 和当前人物 tuple 条件后分页；多个人物实例不会重复一张照片。
+普通浏览不加载模型、不等待递归索引或解码。
+
+PersonService 使用全局身份；文件夹人物组是 tuple 的投影。机器建议不自动建立人工
+归属。审阅、排除、参考和 revision 独立；几何修改撤回失效参考与人物贡献，保留手工
+来源。跨功能事务包含幂等 payload/result 和持久镜像任务，提交后才唤醒 TagXmpSync。
+
+ResourceService 在 blocking 派发前捕获 full selection，拥有预览范围、缓存/产物/
+原生会话选择、事件和失效。Media 执行受控解码，维护 native gates、产物 generation、
+registry 与 lease。取消、同源合并、提级保留等待者和迟到结果拒绝继续有效。
+
+元数据原生读取和归一化归 media；应用解释、同名 XMP 优先级和编辑归 core。部分批量
+写入成功后仍刷新已写文件。ExifTool 配置/安装/观察和人物模型任务有 core worker 归属。
+
+## 契约和扩展
+
+对外 serde 类型定义在真实拥有方，应用类型由 contracts 显式导出。固定版本 ts-rs
+生成 TypeScript；`pnpm contracts:check` 检查漂移。Frontend API 和 browser demo 维护
+同一命令语义，界面派生模型继续在前端定义。
+
+新增标签规则通常修改 tags 和其测试；人物算法修改 people；格式/解码修改 media/parser。
+新增契约才扩展 exporter 和桌面适配。模块可见性、命名工作流、行为测试与源码审计替代
+旧应用 crate 之间的包依赖限制。[扩展指南](architecture/06-extension-guide.md)列出步骤。
+
+## 专题与验收
+
+- [浏览与分页](architecture/02-folder-browsing.md)
+- [预览管线](architecture/03-preview-pipeline.md)、[HEIF 会话](architecture/04-heif-tile-session.md)
+- [数据与安全](architecture/05-data-and-state.md)、[人物工作流](PERSON_WORKFLOW.md)
+- [性能不变量](PERFORMANCE_INVARIANTS.md)、[预算](PERFORMANCE.md)、[正式 E2E](PERF_E2E.md)
+- [专题索引](architecture/README.md)、[构建与检查](../CONTRIBUTING.md)
+
+行为测试、正式 WebView/真实媒体比较和增量构建测量分别提供不同证据；本地 Windows
+通过不能代表其他平台已验证。当前具体结果与剩余门槛以实施清单和 dated research 为准。

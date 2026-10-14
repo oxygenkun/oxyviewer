@@ -73,15 +73,28 @@ Grid / Loupe 共用后端按整目录快照进行的实例过滤，与原有文�
 
 当前单目录上限 5000 个人脸，匿名聚类稠密矩阵加候选边最坏约 200 MB，不含应用其他内存。定向寻找跳过两两矩阵。发布前重新核对源版本、当前运行、参考和证据，取消或陈旧任务不能覆盖更新的结果。
 
-## 存储、迁移与标签
+## 存储与标签
 
-`oxy-domain` 定义序列化契约，`oxy-people` 拥有策略与事务，`oxy-store` 拥有 SQLite/schema/repository，Tauri 只组合后台任务。前端命令统一在 `api.ts`。
+序列化契约在 `oxy-core::people::types`，经 contracts 生成 TypeScript；人物规则、repo
+和 schema 相邻。geometry/review/tag 的跨功能共同事务由 app::workflows 拥有，
+PersonService 负责完整用例和成功提交后的镜像调度。Tauri 只适配，前端命令仍在 api.ts。
 
-`global_people`、`global_person_migrations`、`global_person_reviews`、`global_person_targets`、`global_person_references`、`global_person_events`、`global_person_tags` 以及人工实例属于 `user`；检测、向量、运行账本、`global_person_suggestions` 与旧匿名快照属于 `cache`。清缓存保留所有姓名、人工框、归属、排除、参考和事件。
+全局人物、审阅、target、显式参考、payload/result 事件、tag 映射和人工 tuple 是 user。
+检测、向量、运行账本、建议及匿名快照是 cache。清缓存、重建索引与重新分析保留姓名、
+人工框、归属、排除、参考和事件。机器建议不建立人工决定。
 
-旧资料按明确的历史关联合并到全局 ID；仅同名不会自动合并。原文件夹身份、旧审阅与事件不删除，迁移映射阻止重复导入。同一全局人物的旧决定矛盾时保留明确排除，其他冲突转为暂缓；不以迁移顺序选择确认。没有历史关联的旧人物生成独立全局 ID。旧入口仍兼容，但主界面统一使用全局流程。
+旧 folder/historical 身份 API、映射、adoption、过滤和表声明已经退役。新状态隔离在
+core-v2，当前 schema 2；旧/未知/未来非空库只读拒绝，不迁移、不删除。不存在旧入口
+兼容或按同名合并。[切换记录](tasks/core-schema-retirement.md)说明中间版本的边界。
 
-人物绑定 tag 后，同一照片至少有一个有效已确认实例才贡献一次 `person` 来源。关闭映射、修框或撤销最后一个确认只撤下人物贡献，手工／sidecar 来源保持独立；有效标签变化沿用持久 XMP 队列。保留旧版逐照片的同步排除。同目录改名沿用既有实例迁移；跨目录文件移动仍需复核，不等同于人物跨目录复用。身份合并拆分、自动人体检索、未见场次阈值校准及 macOS 推理实机验证尚未完成。
+人物绑定 tag 后，同一照片至少有一个有效已确认实例才贡献一次 person 来源。关闭映射、
+修框或撤销最后一个确认只撤下人物贡献，手工/sidecar 来源保持独立。有效标签变化记录
+持久 XMP 任务；事务失败全部回滚，成功后唤醒受控镜像 worker。旧逐照片 suppression
+不属于新模型；通过当前明确决定和独立 tag 来源表达人工选择。
+
+同目录改名以强源身份/path rebase 证明重绑；匹配的参考与贡献继续有效，改变的来源保留
+人工事实但要求复核。跨目录移动仍需复核，不等同于身份跨目录复用。身份合并拆分、自动
+人体检索、跨场次阈值校准及 macOS 推理实机验证尚未完成。
 
 ## 验证与研究
 

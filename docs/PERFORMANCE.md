@@ -383,7 +383,7 @@ link in this document.
   329 ms (enumeration 280 ms, attributes 7 ms); reopened snapshot plus sorting
   29 ms; same-process paging 9 ms. These are not full startup, UI paint, cold
   NAS/server-cache measurements or qualification of the 100k-file release
-  budget. Reproduce: `cargo run -p oxy-library --example browse_latency -- <directory>`.
+  budget. Reproduce: `cargo run -p oxy-core --example browse_latency -- <directory>`.
   Regression coverage includes restart/offline, empty snapshots, incomplete
   indexing, coalesced reads, changed files/XMP, invalidation races and pinned
   paging. `scripts/browser/browse-startup.browser.js` verifies six App/IPC UI behaviors
@@ -425,7 +425,7 @@ link in this document.
   connection. Concurrency tests hold an uncommitted writer transaction while
   browsing completes and verify that cache reads also bypass the browsing lock.
   The manual on-disk debug benchmark
-  `cargo test -p oxy-library wal_interaction_latency_during_large_index -- --ignored --nocapture`
+  `cargo test -p oxy-core wal_interaction_latency_during_large_index -- --ignored --nocapture`
   sampled 200 foreground interactions during 50k synthetic background asset
   writes: combined visible-page/cache reads P95 0.56 ms / max 1.96 ms, resource
   revision writes P95 35.56 ms / max 53.64 ms. This is backend contention
@@ -441,7 +441,7 @@ link in this document.
   filesystem rescan; root removal and stale-generation cleanup remove both
   search records and keys. Migration, changed search terms, overlapping roots,
   and stale-file cleanup have regression coverage. The manual Rust benchmark
-  `cargo test -p oxy-library large_library_index_batch_latency -- --ignored --nocapture`
+  `cargo test -p oxy-core large_library_index_batch_latency -- --ignored --nocapture`
   measured the next 256 complete asset writes at 7.2 / 7.5 / 8.1 ms with
   1k / 10k / 50k records in a debug-build in-memory database. The prior SQL
   microbenchmark took 71 / 688 / 3457 ms for only the 256 missing-record deletes

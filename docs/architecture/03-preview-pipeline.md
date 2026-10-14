@@ -34,7 +34,7 @@ HEVC 解码器或操作系统预览服务。即使原文件可解码，也不应
 `pipeline::dispatcher` 直接按 `AssetKind + RenderLevel` 分派，再由格式 executor 选择后端与
 fallback。多个等级可以指向同一产物。
 
-后台分析通过 `oxy-domain::AnalysisRequirement` 声明模型需求，薄适配器 `AnalysisInputService` 将需求转换为 `MediaRequest` 并调用 `MediaService::prepare_pixels`。格式选择、缓存复用和解码由共用 media 管线负责；适配器仅校验模型最小源尺寸、转 RGB8 并将透明像素合成白底。UI 继续直接交付可显示的编码原图、生成 artifact 或渐进瓦片，不为统一接口强制经过 RGB。具体边界见本章末尾及 [人物输入契约](../PERSON_WORKFLOW.md)。
+后台分析通过 `oxy-media::types::AnalysisRequirement` 声明模型需求，薄适配器 `AnalysisInputService` 将需求转换为 `MediaRequest` 并调用 `MediaService::prepare_pixels`。格式选择、缓存复用和解码由共用 media 管线负责；适配器仅校验模型最小源尺寸、转 RGB8 并将透明像素合成白底。UI 继续直接交付可显示的编码原图、生成 artifact 或渐进瓦片，不为统一接口强制经过 RGB。具体边界见本章末尾及 [人物输入契约](../PERSON_WORKFLOW.md)。
 Windows RAW 的 codec 资格检查、可选扩展安装和重新显影流程见
 [Windows RAW 完整解析](../windows-raw.md)。
 最大 JPEG 选择会先补齐 LibRaw 未解析的候选尺寸（CR3 JPEG track），并补充 RW2
@@ -152,7 +152,7 @@ Grid 预取前后 6 行、filmstrip 前后 12 项。离开窗口的请求取消�
 Thumbnail 的有效位置取当前各 scope 中最重要的 `(tier, rank)`；没有 scope 时才使用剩余 consumer
 最重要的初始位置。Thumbnail consumer 不再建立独立 request-id scope，避免初始 visible 优先级
 压住更新后的 nearby 排序。Preview/full 保留原有 scope/consumer 合并规则。
-全量 `reconcile`、单项 `upsert(front/back)` 和 `release` 的通用实现位于 `oxy-runtime`。
+全量 `reconcile`、单项 `upsert(front/back)` 和 `release` 的通用实现位于 `oxy-core::jobs`。
 
 `sharedThumbnailRequests` 在前端按路径、资产 ID、格式、修改时间和文件大小共享进行中的
 thumbnail IPC。组件与预加载器各自取消订阅，最后一个订阅者离开后才取消共享请求；一个微任务
@@ -192,7 +192,7 @@ Full 命令在源文件探测之前登记 selection epoch；切换路径立即�
 ## 6. 第二层调度：后端 `DecodeGate`
 
 Rust `DecodeGate` 位于 `crates/oxy-media/src/decode_control.rs`，与 RAW full 独立锁、
-HEIF session 缓存写锁和同源锁表一起管理媒体资源准入；它不替代 `oxy-runtime` 的请求调度。
+HEIF session 缓存写锁和同源锁表一起管理媒体资源准入；它不替代 `oxy-core::jobs` 的请求调度。
 crate 根模块只负责稳定 API re-export；格式执行分别位于 `pipeline::raw`、
 `pipeline::heif::artifact` 和 `pipeline::system`，HEIF backend 策略位于
 `pipeline::heif::planner`，探测与回退执行集中在 `pipeline::heif`。`DecodeGate` 有三档优先级：
@@ -246,7 +246,7 @@ HEIF 完整文件 onLoad 后卸载下层 preview 组件；原有 tile 底图与�
 
 Tauri `get_preview` 的逻辑是：
 
-1. 通过 `oxy-fs` 取得 asset kind；
+1. 通过 `oxy-core::files` 取得 asset kind；
 2. 接收 `RenderLevel` 和 priority；
 3. 向 Rust `PreviewQueue` 提交或挂接同源请求；
 4. worker 调用 `oxy_media::preview(...)` 并把 artifact path 提交给 SQLite；
@@ -314,7 +314,7 @@ UI 保留当前已显示的底图，直到后续图片完成加载。
 
 ### 8.3 Sony 拍摄对焦区域
 
-`get_asset_details` 在线程池中通过 `oxy-metadata` 与项目内纯 Rust 统一解析器读取 Sony MakerNote
+`get_asset_details` 在线程池中通过 `oxy-core::metadata` 与项目内纯 Rust 统一解析器读取 Sony MakerNote
 `FocusLocation`/`FocusFrameSize`。ARW、JPEG、HEIF/HIF 只要带有这些字段，都通过同一个
 `FocusInfo` 小型结构返回；图片字节仍不经过 IPC。EXIF 方向会先应用到坐标，HEIF 缺少 EXIF
 方向而显示尺寸明确交换横竖轴时使用 Sony 常见的顺时针方向。前端再用当前真正显示的

@@ -72,8 +72,9 @@ Rust 通常使用 `snake_case`，TypeScript 通常使用 `camelCase`。两处转
 - domain struct 使用 `#[serde(rename_all = "camelCase")]`，所以 `root_path` 序列化为
   `rootPath`。
 
-公共结构变化时必须同时核对 `oxy-domain` 和 `apps/desktop/src/types.ts`。当前项目没有自动
-生成 TypeScript 类型，因此编译通过不代表跨语言结构一定一致。
+公共 serde 结构由真实 feature/media 拥有，应用 contracts 显式导出。固定 ts-rs
+生成 `apps/desktop/src/generated/contracts.ts`，通过 `pnpm contracts:check` 检查漂移；
+`types.ts` 只定义界面派生模型。Command、api.ts 和 demo 仍需一起核对行为。
 
 ## 3. Tauri command 应该多薄
 
@@ -85,7 +86,7 @@ Rust 通常使用 `snake_case`，TypeScript 通常使用 `camelCase`。两处转
 4. 调用某个 crate 的公共函数；
 5. 把错误转为前端可接收的字符串或结构化错误。
 
-媒体格式分派属于 `oxy-media`，路径安全属于 `oxy-fs`，SQLite 语句属于 `oxy-library`。
+媒体格式分派属于 `oxy-media`，路径安全属于 `oxy-core::files`，SQLite 语句属于各功能的内部 repo。
 如果一个 command 出现大量算法、文件遍历或格式分支，通常说明逻辑放错层了。
 
 ## 4. `AppState`：Rust 侧的依赖容器
@@ -189,9 +190,9 @@ Event 仍走序列化边界，所以只发送 session、坐标、尺寸、URL、
 后 `fetch` 该 URL，Rust 从 `HeifDecodeService` 的内存映射中取出 RGBA 或已编码 JPEG tile
 并返回。响应头携带内容类型、宽、高和 stride，响应 body 才是二进制图片数据。
 
-## 8. Domain 契约是边界语言
+## 8. 拥有方的契约是边界语言
 
-`oxy-domain` 不做 IO。它定义跨层都能理解的名词：
+应用契约由 owning feature 定义并经 `oxy-core::contracts` 导出；媒体事实由 media 定义。契约包括：
 
 ```mermaid
 flowchart TD
@@ -206,8 +207,7 @@ flowchart TD
     operation["FileOperation"] --> operationResult["FileOperationResult"]
 ```
 
-把契约集中在一个 crate 有两个好处：Tauri 不会定义一套重复模型，媒体/文件系统也不会
-各自发明不同的优先级和状态词汇。
+类型归属与实现一致，Tauri 不另定义重复模型；生成契约保持 Rust 与 TypeScript 对齐。
 
 ## 9. 浏览器 demo 与桌面模式
 

@@ -6,7 +6,7 @@
 ## 专题
 
 - [应用核心的装配、媒体读取与 worker 生命周期](11-core-ownership.md)：四个 package
-  重构中已实现的当前边界，以及尚未完成的迁移范围。
+  当前四包的服务、工作流、资源状态和生命周期边界。
 
 1. [Rust 与 Tauri 运行时](01-rust-tauri-runtime.md)
    - Rust crate、所有权、`Arc`、锁、异步与阻塞任务
@@ -49,8 +49,8 @@
 
 | 概念 | Rust 实现 | TypeScript 实现 |
 | --- | --- | --- |
-| IPC 契约 | `crates/oxy-domain/src/lib.rs` | `apps/desktop/src/types.ts` |
-| 文件夹会话 | `crates/oxy-fs/src/lib.rs` | `apps/desktop/src/lib/api.ts` |
+| IPC 契约 | `crates/oxy-core/src/contracts.rs` / feature types | `apps/desktop/src/generated/contracts.ts` / UI derived types |
+| 文件夹会话 | `crates/oxy-core/src/files.rs` / browse | `apps/desktop/src/lib/api.ts` |
 | Command 实现/注册 | `apps/desktop/src-tauri/src/commands/*.rs` / `apps/desktop/src-tauri/src/lib.rs` | `invoke(...)` wrappers in `api.ts` |
 | 分页请求 | `FsCatalog::list_assets` | `useInfiniteQuery` in `App.tsx` |
 | 渲染等级 | `pipeline::dispatcher` / `oxy_media::preview` | `renderPlan` |
@@ -58,7 +58,7 @@
 | 调试队列观测 | `get_debug_queue_snapshot` | debug-only, read-only scheduler snapshots; see [`DEBUG_QUEUE_OBSERVABILITY.md`](../DEBUG_QUEUE_OBSERVABILITY.md) |
 | HEIF 完整图 | `start_heif_full` / `HeifDecodeService` | `HeifTileCanvas` 消费 Rust 决定的 artifact 或 tiles |
 | 资源 projection 状态 | `MetadataQueue` / `PreviewQueue` / SQLite | Zustand 只读镜像 |
-| 原生元数据解析 | `oxy-metadata-parser` + `oxy-metadata` | `AssetDetails` / projection types |
+| 原生元数据解析 | `oxy-metadata-parser` + `oxy-media::metadata` / core::metadata | `AssetDetails` / projection types |
 | UI 请求生命周期 | 不适用 | React Query |
 | UI 交互状态 | 不适用 | Zustand `useWorkspaceStore` |
 | 资料库 | `oxy-library::Library` | library query in `App.tsx` |

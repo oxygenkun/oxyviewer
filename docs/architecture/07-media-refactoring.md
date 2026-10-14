@@ -28,7 +28,7 @@ Sony 160px 快速表示目前被应用于所有 HEIF 的 thumbnail/preview，后
    全尺寸相机 JPEG 不等于 RAW 显影结果，尺寸更大不自动代表缓存可替代。
 8. 不把完整解码后切块交付报告为原生 tile 解码，不把原生 API 报告为已证明的硬件加速。
 9. 取消应终止计划，不触发 fallback；区分不支持、不可用、损坏、IO 和取消，保留尝试诊断。
-10. 公共序列化契约放 `oxy-domain`；通用作业语义复用 `oxy-runtime`；Tauri 保持薄。
+10. 序列化契约由真实拥有方定义：媒体类型在 media，应用类型在 core feature；通用作业在 core::jobs，Tauri 保持薄。
 11. 先在一个 crate 内整理，避免提前引入插件框架、巨型 decoder trait 或每厂商一个 crate。
     Rust 模块用 `foo.rs` + `foo/`，不用 `mod.rs`，遵循 [Rust 风格](../RUST_STYLE.md)。
 

@@ -127,6 +127,11 @@ when intentionally regenerating application icons.
 - `tests/fixtures`: camera fixtures and the HIF/RAW fixture metadata; restored
   outside git, see [tests/fixtures/README.md](tests/fixtures/README.md)
 
+Public core service entry points are assembled by `OxyApp`; feature-owned
+repositories/schema stay private, and named workflows own cross-feature writes.
+State uses the isolated `core-v2` namespace and schema 2. Unknown/older databases
+are rejected read-only; use fresh isolated state for refactor verification.
+
 Read `docs/ARCHITECTURE.md` before making a cross-layer change. The focused
 guides under `docs/architecture` describe the main runtime and extension paths.
 

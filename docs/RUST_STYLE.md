@@ -8,8 +8,8 @@ Run these commands from the repository root before submitting Rust changes:
 
 ```bash
 cargo fmt --all --check
-cargo clippy --workspace --all-targets -- -D warnings
-cargo test --workspace
+cargo clippy --workspace --all-targets --features oxy-core/contracts -- -D warnings
+cargo test --workspace --features oxy-core/contracts
 ```
 
 CI runs the same checks. `-D warnings` covers compiler warnings in addition to

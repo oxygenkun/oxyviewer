@@ -28,13 +28,13 @@ The main release blockers are:
   audit records, optimistic revision checks and SQLite reopen persistence.
 - [x] Shared Grid/Loupe person-state filtering before backend paging, plus global
   identity and explicit reference-gallery management. See [People workflow](PERSON_WORKFLOW.md).
-- [x] Manual historical identity linking and basic tag source accounting with
-  explicit Person tag synchronization.
+- [x] Global identities, explicit references and independent tag-source accounting
+  with committed Person tag synchronization. Legacy history linking is retired.
 - [~] Rebuildable, versioned feature-space cache and exhaustive sqlite-vec
   threshold query are implemented, including current-source eligibility before
   paging. Pipeline manifest validation and dependency-scoped stage
   fingerprinting have started in
-  `oxy-people`; HTTPS streaming and offline import share checksum, cancellation,
+  `oxy-core::people`; HTTPS streaming and offline import share checksum, cancellation,
   and atomic installation. A pinned research catalog, explicit download/import
   commands and Windows x64 detection/embedding worker now connect to the
   People sidebar. Global candidate retrieval is wired; wider resource qualification remains open.
@@ -49,9 +49,9 @@ The main release blockers are:
   incremental jobs and calibrated cross-session matching remain later stages.
 - [~] Analysis run state persists generations, idempotent start/cancel,
   small task batches, stage order, and transactional feature/progress commits
-  fenced by generation, task key, claim token, and a fresh `oxy-fs` source
-  observation. Explicit restart requeue invalidates old claims. `oxy-people`
-  now performs a fresh non-recursive `oxy-fs` scan and enrolls per-asset stages
+  fenced by generation, task key, claim token, and a fresh `oxy-core::files` source
+  observation. Explicit restart requeue invalidates old claims. `oxy-core::people`
+  now performs a fresh non-recursive `oxy-core::files` scan and enrolls per-asset stages
   in bounded batches. Explicit starts, a bounded prepare/infer/persist pipeline, cancellation and progress
   IPC are wired; automatic restart recovery remains open.
 - [~] Automatic instance cache commits normalized detection evidence with task

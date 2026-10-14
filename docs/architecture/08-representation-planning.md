@@ -83,7 +83,7 @@ JPEG 原 `selection.rs` 和 HEIF 原 `backend.rs` 分别由对应 planner 取代
 
 仅判断“足够清晰”不够。全分辨率图片也足够清晰，但不适合成为整目录缩略图的浏览器输入。
 
-当前代码使用以下模型，公共序列化类型集中在 `oxy-domain/src/lib.rs`，不另拆小文件：
+当前模型由最低真实拥有方定义：媒体表示与 PreviewResult 在 `oxy-media::types`，应用请求/投影在 core::resources::types，经显式 exporter 生成 TypeScript：
 
 | 模型 | 含义 |
 | --- | --- |
@@ -205,7 +205,7 @@ MPF preview 分别为 1616×1080 与 1620×1080。全部文件的主图方向为
 | `oxy-media/src/backends/libjpeg.rs` 与 `backends/libjpeg/` | 参数化 IDCT 解码、系数拼接及安全 FFI；不拥有 HEIF 缓存或输出文件 |
 | `oxy-media/src/pipeline/jpeg.rs` | 执行计划、尝试回退、复用 ArtifactCache 和 registry |
 | 现有 `backends/`、`presentation.rs`、`cache/encode.rs` | 解码、方向、色彩、缩放、编码；按实际功能需要提取共享函数 |
-| `oxy-fs` | 继续负责源身份与文件观察；不移入媒体质量规则 |
+| `oxy-core::files` / `oxy-media::SourceRevision` | 应用路径安全与媒体源事实分别拥有；不把应用目录策略放入媒体质量规则 |
 
 模块名为规划位置，不是当前已经存在的 API。优先复用现有 IFD 解析和 reader，避免第二份 TIFF parser。
 不给每个 vendor 建 executor，不引入插件框架或巨型 decoder trait。新 vendor 若遵循标准 MPF，
@@ -297,7 +297,7 @@ PNG/WebP 在 native 生成保留 alpha 的小 PNG，既有 TIFF/HEIF 小图入�
 - 明确 JPEG profile 的命名与独立策略，补 JPEG grid/loupe 方法身份及资源选择回归；不为
   其他 vendor 复制 React 分支，也不改变浏览器 demo 的无原生环境行为。
 - 性能诊断在 `PreviewDiagnostics` 中添加可选 `sourceReadBytes`、`sourceReadCalls`、`probeMs`，
-  配合既有 backend/totalMs 区分提取路径与总耗时。新增序列化字段统一放 oxy-domain 并同步 TS。
+  配合既有 backend/totalMs 区分提取路径与总耗时。新增序列化字段放入真实 owning types，并刷新生成 TS。
   诊断按需采集、每请求汇总，不能逐步同步打印或同步写 localStorage。
 
 ## 9. 首批接受标准
