@@ -8,6 +8,7 @@ use crate::browse::types::{
     AssetQuery, AssetSort, AssetSummary, DirectorySearchMatch, DirectorySummary, Page,
     SortDirection,
 };
+use crate::library::repo::has_completed_index;
 use crate::library::{
     DEFAULT_PAGE_SIZE, INDEX_WRITE_BATCH_SIZE, INDEX_WRITE_TIME_SLICE, Library, LibraryError,
     MAX_PAGE_SIZE,
@@ -509,7 +510,8 @@ impl Library {
             }
             self.foreground.wait_for_background();
             let assets = if let Some(assets) =
-                self.validated_directory_assets(root, directory, index_started)
+                self.snapshots
+                    .validated_directory_assets(root, directory, index_started)
             {
                 assets
             } else {
@@ -802,20 +804,6 @@ impl Library {
         transaction.commit()?;
         Ok(())
     }
-}
-
-pub(crate) fn has_completed_index(
-    connection: &Connection,
-    root: &str,
-) -> Result<bool, rusqlite::Error> {
-    connection
-        .query_row(
-            "SELECT 1 FROM indexed_roots WHERE root_path = ?1",
-            params![root],
-            |_| Ok(true),
-        )
-        .optional()
-        .map(|value| value.unwrap_or(false))
 }
 
 pub(crate) fn has_completed_directory_index(

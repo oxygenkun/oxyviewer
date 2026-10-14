@@ -4,8 +4,8 @@ use super::{
     types::{FileOperation, FileOperationRecovery, FileOperationResult},
 };
 use crate::{
-    app::workflows::file_action, library::Library, resources::metadata::MetadataQueue,
-    runtime::CoreRuntime, storage::Store, tags::xmp_sync::TagXmpSync,
+    app::workflows::file_action, resources::metadata::MetadataQueue, runtime::CoreRuntime,
+    storage::Store, tags::xmp_sync::TagXmpSync,
 };
 use serde::{Deserialize, Serialize};
 use std::{
@@ -15,7 +15,7 @@ use std::{
 
 pub struct FileService {
     pub(crate) store: Arc<Store>,
-    pub(crate) library: Arc<Library>,
+    pub(crate) snapshots: Arc<crate::browse::snapshots::BrowseSnapshots>,
     pub(crate) files: Arc<FsCatalog>,
     pub(crate) metadata: MetadataQueue,
     pub(crate) preview: crate::resources::preview::PreviewQueue,
@@ -168,7 +168,7 @@ impl FileService {
             self.preview.invalidate_directory(parent);
             // Rebuildable state must not make a completed user action look
             // failed; it can be reconstructed by the next browse request.
-            let _ = self.library.invalidate_directory_snapshots(parent);
+            let _ = self.snapshots.invalidate_directory_snapshots(parent);
         }
     }
 }

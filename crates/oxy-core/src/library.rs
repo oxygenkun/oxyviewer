@@ -1,4 +1,4 @@
-//! Registered library roots and their derived index and browsing state.
+//! Registered library roots and their derived index.
 //! User facts survive cache clearing. The feature owns its declarations and
 //! statements; shared SQLite mechanisms live in storage.
 
@@ -9,7 +9,6 @@ pub mod types;
 pub use service::LibraryService;
 
 mod cache;
-pub use cache::browsing::DirectoryRead;
 pub(crate) use cache::index::forget_root;
 pub use cache::index::{IndexProgress, IndexStage, IndexStats};
 #[cfg(test)]
@@ -34,8 +33,6 @@ pub(crate) const INDEX_WRITE_TIME_SLICE: Duration = Duration::from_millis(8);
 
 #[derive(Debug, Error)]
 pub enum LibraryError {
-    #[error("directory snapshot changed; reload the first page")]
-    StaleDirectorySnapshot,
     #[error(transparent)]
     Store(#[from] crate::storage::StoreError),
     #[error(transparent)]
@@ -52,37 +49,18 @@ pub enum LibraryError {
     InvalidRelocation(String),
 }
 
-/// The photo library: the roots the user added and the derived state over one
-/// SQLite store.
-///
-/// The storage mechanism lives in [`oxy_store`]; this crate owns what the data
-/// *means*. It holds the [`Store`], the in-memory directory snapshots, the
-/// rebuildable index bookkeeping, and the schedule that decides whether a scan
-/// may run — and nothing about the file format, the WAL setup, or the pragmas.
-///
-/// The store is shared rather than owned: the application opens the file once
-/// and gives it to every domain crate, so none of them wraps the others. Tags
-/// live in [`oxy_tags`] and people in `oxy_people`, which is why nothing named
-/// `tag` and nothing named `person` is left here.
+/// Registered roots and their index over the application store. OxyApp supplies
+/// the browse snapshot handle and shared foreground gate, so indexing can reuse
+/// recently validated summaries without owning snapshot policy or persistence.
 pub struct Library {
     store: Arc<Store>,
-    directory_snapshots: cache::browsing::DirectorySnapshots,
-    pub foreground: crate::jobs::ForegroundGate,
+    pub(crate) snapshots: Arc<crate::browse::snapshots::BrowseSnapshots>,
+    pub foreground: Arc<crate::jobs::ForegroundGate>,
     indexing_roots: Mutex<HashSet<PathBuf>>,
     pub(crate) index_gate: Mutex<()>,
 }
 
 impl Library {
-    pub(crate) fn stop_background(&self) {
-        self.foreground.stop();
-        self.directory_snapshots.stop();
-    }
-
-    pub(crate) fn shutdown_background(&self, timeout: Duration) -> bool {
-        self.foreground.stop();
-        self.directory_snapshots.shutdown(timeout)
-    }
-
     /// The write connection. Domain modules hold it for the duration of a write.
     pub(crate) fn write(&self) -> MutexGuard<'_, Connection> {
         self.store.write()
@@ -93,13 +71,6 @@ impl Library {
         self.store.read()
     }
 
-    /// The shared write connection, for tests that drive the snapshot
-    /// persistence worker directly.
-    #[cfg(test)]
-    fn shared_connection(&self) -> Arc<Mutex<Connection>> {
-        self.store.shared_connection()
-    }
-
     /// Opens the library over the store at `path`.
     ///
     /// The store creates the file, enables WAL, registers the vector extension,
@@ -107,28 +78,36 @@ impl Library {
     /// about the schema is decided here, so a storage version bump cannot be
     /// something this constructor forgets to run.
     pub fn open(path: &Path) -> Result<Self, LibraryError> {
-        Ok(Self::with_store(Arc::new(Store::open(path)?)))
+        Ok(Self::from_store(Arc::new(Store::open(path)?)))
     }
 
     /// Opens a library that lives only in this process.
     pub fn in_memory() -> Result<Self, LibraryError> {
-        Ok(Self::with_store(Arc::new(Store::in_memory()?)))
+        Ok(Self::from_store(Arc::new(Store::in_memory()?)))
     }
 
-    /// Builds the library over a store the caller already holds.
-    ///
-    /// This is the constructor a composition root uses: one file, one
-    /// [`Store`], and one handle per domain crate over it. [`Library::open`]
-    /// remains the shorter form for a caller that owns the file alone.
-    pub fn with_store(store: Arc<Store>) -> Self {
-        let directory_snapshots =
-            cache::browsing::DirectorySnapshots::new(store.shared_connection());
+    /// Standalone harnesses share an isolated snapshot handle and foreground
+    /// gate over this store. OxyApp supplies its own assembled handles.
+    fn from_store(store: Arc<Store>) -> Self {
+        let foreground = Arc::new(crate::jobs::ForegroundGate::default());
+        let snapshots = Arc::new(crate::browse::snapshots::BrowseSnapshots::new(
+            store.clone(),
+            foreground.clone(),
+        ));
+        Self::with_store(store, snapshots, foreground)
+    }
+
+    pub(crate) fn with_store(
+        store: Arc<Store>,
+        snapshots: Arc<crate::browse::snapshots::BrowseSnapshots>,
+        foreground: Arc<crate::jobs::ForegroundGate>,
+    ) -> Self {
         Self {
             store,
-            directory_snapshots,
+            snapshots,
             indexing_roots: Mutex::new(HashSet::new()),
             index_gate: Mutex::new(()),
-            foreground: crate::jobs::ForegroundGate::default(),
+            foreground,
         }
     }
 
@@ -713,6 +692,7 @@ mod tests {
                     // file afterwards proves the asset phase reused that exact
                     // generation instead of enumerating the directory again.
                     library
+                        .snapshots
                         .browse_directory(&canonical_root, directory, |_| {})
                         .unwrap();
                     std::fs::remove_file(&photo).unwrap();

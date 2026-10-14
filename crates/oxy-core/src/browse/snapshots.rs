@@ -1,4 +1,26 @@
-use super::{Library, LibraryError};
+//! Browse-owned snapshots, validation and persistence lifetime.
+use crate::storage::Store;
+
+pub(crate) struct BrowseSnapshots {
+    store: Arc<Store>,
+    directory_snapshots: DirectorySnapshots,
+    foreground: Arc<crate::jobs::ForegroundGate>,
+}
+
+#[derive(Debug, thiserror::Error)]
+pub(crate) enum BrowseError {
+    #[error("directory snapshot changed; reload the first page")]
+    StaleDirectorySnapshot,
+    #[error(transparent)]
+    Sqlite(#[from] rusqlite::Error),
+    #[error(transparent)]
+    Store(#[from] crate::storage::StoreError),
+    #[error(transparent)]
+    Io(#[from] std::io::Error),
+    #[error(transparent)]
+    Filesystem(#[from] crate::files::FsError),
+}
+
 use crate::browse::{repo, types::AssetSummary};
 use parking_lot::Mutex;
 use rusqlite::Connection;
@@ -122,12 +144,7 @@ impl DirectorySnapshots {
         }
     }
 
-    /// Drops every in-memory snapshot. Used when the persisted cache is wiped,
-    /// so a surviving slot cannot serve rows that were just deleted.
-    pub(crate) fn invalidate_all(&self) {
-        self.slots.lock().clear();
-    }
-
+    /// Waits for accepted persistence work to drain after stopping admission.
     pub(crate) fn shutdown(&self, timeout: Duration) -> bool {
         self.persistence.runtime.shutdown(timeout)
     }
@@ -225,7 +242,22 @@ fn record_persistence_error(slot: &Slot, item: &PersistenceItem, error: String) 
     }
 }
 
-impl Library {
+impl BrowseSnapshots {
+    pub(crate) fn new(store: Arc<Store>, foreground: Arc<crate::jobs::ForegroundGate>) -> Self {
+        let directory_snapshots = DirectorySnapshots::new(store.shared_connection());
+        Self {
+            store,
+            directory_snapshots,
+            foreground,
+        }
+    }
+    pub(crate) fn stop(&self) {
+        self.directory_snapshots.stop();
+    }
+    pub(crate) fn shutdown(&self, timeout: Duration) -> bool {
+        self.directory_snapshots.shutdown(timeout)
+    }
+
     pub(crate) fn validated_directory_assets(
         &self,
         root: &Path,
@@ -236,7 +268,7 @@ impl Library {
             .validated_assets(root, directory, not_older_than)
     }
 
-    fn directory_slot(&self, root: &Path, directory: &Path) -> Result<Arc<Slot>, LibraryError> {
+    fn directory_slot(&self, root: &Path, directory: &Path) -> Result<Arc<Slot>, BrowseError> {
         if !directory.starts_with(root)
             || directory
                 .components()
@@ -255,22 +287,23 @@ impl Library {
 
     /// Reads an independently completed directory. Only a cold miss touches
     /// the volume. Concurrent requests share one scan and one in-memory list.
-    pub fn browse_directory(
+    #[cfg(test)]
+    pub(crate) fn browse_directory(
         &self,
         root: &Path,
         directory: &Path,
         report: impl FnMut(crate::files::ScanProgress),
-    ) -> Result<DirectoryRead, LibraryError> {
+    ) -> Result<DirectoryRead, BrowseError> {
         self.browse_directory_revision(root, directory, None, report)
     }
 
-    pub fn browse_directory_revision(
+    pub(crate) fn browse_directory_revision(
         &self,
         root: &Path,
         directory: &Path,
         revision: Option<u64>,
         report: impl FnMut(crate::files::ScanProgress),
-    ) -> Result<DirectoryRead, LibraryError> {
+    ) -> Result<DirectoryRead, BrowseError> {
         let slot = self.directory_slot(root, directory)?;
         {
             let mut state = slot.state.lock();
@@ -295,10 +328,10 @@ impl Library {
                         snapshot_serialize_ms: 0,
                         snapshot_persist_ms: 0,
                     })
-                    .ok_or(LibraryError::StaleDirectorySnapshot);
+                    .ok_or(BrowseError::StaleDirectorySnapshot);
             }
             if !state.loaded {
-                let json = repo::load_snapshot(&self.read_connection(), root, directory)?;
+                let json = repo::load_snapshot(&self.store.read(), root, directory)?;
                 let has_snapshot_record =
                     json.is_some() || self.has_ancestor_snapshot_tombstone(root, directory)?;
                 state.assets = json
@@ -307,9 +340,9 @@ impl Library {
                 // Reuse a current completed index when no snapshot or explicit
                 // invalidation record exists; this keeps an offline open cheap.
                 if state.assets.is_none() && !has_snapshot_record {
-                    let mut reader = self.read_connection();
+                    let mut reader = self.store.read();
                     let transaction = reader.transaction()?;
-                    if crate::library::cache::index::has_completed_index(
+                    if crate::library::repo::has_completed_index(
                         &transaction,
                         &root.to_string_lossy(),
                     )? {
@@ -362,7 +395,7 @@ impl Library {
         let assets = self.scan_browse_directory(root, directory, report)?;
         let publish = self.publish_directory(root, directory, &slot, epoch, assets.clone())?;
         if !publish.published {
-            return Err(LibraryError::StaleDirectorySnapshot);
+            return Err(BrowseError::StaleDirectorySnapshot);
         }
         let state = slot.state.lock();
         if state
@@ -370,7 +403,7 @@ impl Library {
             .as_ref()
             .is_none_or(|current| !Arc::ptr_eq(current, &assets))
         {
-            return Err(LibraryError::StaleDirectorySnapshot);
+            return Err(BrowseError::StaleDirectorySnapshot);
         }
         Ok(DirectoryRead {
             assets,
@@ -389,7 +422,7 @@ impl Library {
         root: &Path,
         directory: &Path,
         mut report: impl FnMut(crate::files::ScanProgress),
-    ) -> Result<Arc<Vec<AssetSummary>>, LibraryError> {
+    ) -> Result<Arc<Vec<AssetSummary>>, BrowseError> {
         report(crate::files::ScanProgress {
             resolving: true,
             ..Default::default()
@@ -416,7 +449,7 @@ impl Library {
         slot: &Arc<Slot>,
         epoch: u64,
         assets: Arc<Vec<AssetSummary>>,
-    ) -> Result<SnapshotPublish, LibraryError> {
+    ) -> Result<SnapshotPublish, BrowseError> {
         let fence = slot.persistence_fence.lock();
         let revision = {
             let mut state = slot.state.lock();
@@ -462,13 +495,13 @@ impl Library {
 
     /// A single background directory scan at a time. Failed scans retain the
     /// last complete snapshot. Epoch fencing prevents refresh from reviving it.
-    pub fn revalidate_directory(
+    pub(crate) fn revalidate_directory(
         &self,
         root: &Path,
         directory: &Path,
         epoch: u64,
         mut report: impl FnMut(crate::files::ScanProgress),
-    ) -> Result<bool, LibraryError> {
+    ) -> Result<bool, BrowseError> {
         let _background = self.directory_snapshots.background_scan.lock();
         self.foreground.wait_for_background();
         let slot = self.directory_slot(root, directory)?;
@@ -495,11 +528,11 @@ impl Library {
         result
     }
 
-    pub fn has_directory_snapshot(
+    pub(crate) fn has_directory_snapshot(
         &self,
         root: &Path,
         directory: &Path,
-    ) -> Result<bool, LibraryError> {
+    ) -> Result<bool, BrowseError> {
         if self
             .directory_slot(root, directory)?
             .state
@@ -509,14 +542,10 @@ impl Library {
         {
             return Ok(true);
         }
-        Ok(repo::has_snapshot(
-            &self.read_connection(),
-            root,
-            directory,
-        )?)
+        Ok(repo::has_snapshot(&self.store.read(), root, directory)?)
     }
 
-    pub(crate) fn invalidate_snapshot_root(&self, root: &Path) -> Result<(), LibraryError> {
+    pub(crate) fn invalidate_snapshot_root(&self, root: &Path) -> Result<(), BrowseError> {
         let slots = self.directory_snapshots.slots.lock();
         let matching = slots
             .iter()
@@ -541,7 +570,7 @@ impl Library {
             state.validating = false;
             state.error = None;
         }
-        repo::forget_root(&self.write(), root)?;
+        repo::forget_root(&self.store.write(), root)?;
         Ok(())
     }
 
@@ -549,8 +578,8 @@ impl Library {
         &self,
         root: &Path,
         directory: &Path,
-    ) -> Result<bool, LibraryError> {
-        let connection = self.read_connection();
+    ) -> Result<bool, BrowseError> {
+        let connection = self.store.read();
         let tombstones = repo::tombstones(&connection, root)?;
         Ok(tombstones
             .iter()
@@ -559,7 +588,10 @@ impl Library {
 
     /// Explicit refresh and file operations invalidate both memory and disk,
     /// including descendant snapshots when a folder was moved or deleted.
-    pub fn invalidate_directory_snapshots(&self, directory: &Path) -> Result<(), LibraryError> {
+    pub(crate) fn invalidate_directory_snapshots(
+        &self,
+        directory: &Path,
+    ) -> Result<(), BrowseError> {
         let directory = directory
             .canonicalize()
             .unwrap_or_else(|_| directory.to_owned());
@@ -587,7 +619,7 @@ impl Library {
             state.validating = false;
             state.error = None;
         }
-        let mut connection = self.write();
+        let mut connection = self.store.write();
         let mut paths = repo::paths(&connection)?;
         paths.extend(slots.keys().cloned());
         let registered_roots = crate::library::repo::list_roots(&connection)?
@@ -614,12 +646,13 @@ impl Library {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::library::Library;
     use rusqlite::params;
 
     #[test]
     fn snapshot_policy_delegates_statements_to_owning_repositories() {
-        let source = include_str!("browsing.rs")
-            .split("#[cfg(test)]")
+        let source = include_str!("snapshots.rs")
+            .split("\n#[cfg(test)]\nmod tests {")
             .next()
             .unwrap();
         for verb in ["SELECT ", "INSERT INTO ", "UPDATE ", "DELETE FROM "] {
@@ -645,10 +678,11 @@ mod tests {
         let root = volume.path().canonicalize().unwrap();
         fs::write(root.join("one.jpg"), "photo").unwrap();
         let library = Library::in_memory().unwrap();
-        let slot = library.directory_slot(&root, &root).unwrap();
+        let slot = library.snapshots.directory_slot(&root, &root).unwrap();
         let assets = Arc::new(crate::files::scan_index_assets(&root).unwrap());
         let connection = library.write();
         library
+            .snapshots
             .publish_directory(&root, &root, &slot, 0, assets)
             .unwrap();
         let mut persistence_is_waiting = false;
@@ -663,7 +697,10 @@ mod tests {
         let (read_tx, read_rx) = mpsc::channel();
         thread::scope(|scope| {
             scope.spawn(|| {
-                let read = library.browse_directory(&root, &root, |_| {}).unwrap();
+                let read = library
+                    .snapshots
+                    .browse_directory(&root, &root, |_| {})
+                    .unwrap();
                 read_tx.send(read.source).unwrap();
             });
             assert_eq!(
@@ -686,9 +723,10 @@ mod tests {
             .write()
             .execute("DROP TABLE directory_snapshots", [])
             .unwrap();
-        let slot = library.directory_slot(&root, &root).unwrap();
+        let slot = library.snapshots.directory_slot(&root, &root).unwrap();
         let assets = Arc::new(crate::files::scan_index_assets(&root).unwrap());
         let publish = library
+            .snapshots
             .publish_directory(&root, &root, &slot, 0, assets.clone())
             .unwrap();
         assert!(publish.published);
@@ -700,7 +738,10 @@ mod tests {
             thread::sleep(std::time::Duration::from_millis(5));
         }
         assert!(slot.state.lock().persistence_error.is_some());
-        let read = library.browse_directory(&root, &root, |_| {}).unwrap();
+        let read = library
+            .snapshots
+            .browse_directory(&root, &root, |_| {})
+            .unwrap();
         assert!(Arc::ptr_eq(&read.assets, &assets));
         assert_eq!(read.source, "memory");
         assert!(read.error.is_none());
@@ -719,7 +760,7 @@ mod tests {
                 params![root.to_string_lossy(), root.to_string_lossy()],
             )
             .unwrap();
-        let slot = library.directory_slot(&root, &root).unwrap();
+        let slot = library.snapshots.directory_slot(&root, &root).unwrap();
         let assets = Arc::new(crate::files::scan_index_assets(&root).unwrap());
         {
             let mut state = slot.state.lock();
@@ -739,7 +780,7 @@ mod tests {
             });
         }
 
-        persist_pending_snapshots(&library.shared_connection(), &slot);
+        persist_pending_snapshots(&library.snapshots.store.shared_connection(), &slot);
 
         let json: String = library
             .write()
@@ -765,13 +806,14 @@ mod tests {
         fs::write(root.join("two.jpg"), "two").unwrap();
         let latest_assets = Arc::new(crate::files::scan_index_assets(&root).unwrap());
         let library = Library::open(&database).unwrap();
-        let slot = library.directory_slot(&root, &root).unwrap();
+        let slot = library.snapshots.directory_slot(&root, &root).unwrap();
         let mut state = slot.state.lock();
         state.assets = Some(latest_assets.clone());
         state.loaded = true;
         state.validated = true;
         state.revision = 2;
         library
+            .snapshots
             .directory_snapshots
             .enqueue(
                 slot.clone(),
@@ -785,6 +827,7 @@ mod tests {
             )
             .unwrap();
         library
+            .snapshots
             .directory_snapshots
             .enqueue(
                 slot.clone(),
@@ -803,6 +846,7 @@ mod tests {
         fs::rename(&root, volume.path().join("offline")).unwrap();
         let cached = Library::open(&database)
             .unwrap()
+            .snapshots
             .browse_directory(&root, &root, |_| panic!("must restore the queued snapshot"))
             .unwrap();
         assert_eq!(cached.assets.len(), 2);
@@ -820,23 +864,31 @@ mod tests {
         let database = cache.path().join("library.sqlite");
         let library = Library::open(&database).unwrap();
         library.add_root(&root).unwrap();
-        let first = library.browse_directory(&root, &child, |_| {}).unwrap();
+        let first = library
+            .snapshots
+            .browse_directory(&root, &child, |_| {})
+            .unwrap();
         assert_eq!(first.source, "filesystem");
         assert!(library.root_needs_index(&root).unwrap());
         drop(library);
         fs::rename(&child, root.join("offline")).unwrap();
         let library = Library::open(&database).unwrap();
         let cached = library
+            .snapshots
             .browse_directory(&root, &child, |_| panic!("must not scan the volume"))
             .unwrap();
         assert_eq!(cached.assets.as_ref(), first.assets.as_ref());
         assert!(cached.needs_validation);
         assert!(
             library
+                .snapshots
                 .revalidate_directory(&root, &child, cached.epoch, |_| {})
                 .is_err()
         );
-        let retained = library.browse_directory(&root, &child, |_| {}).unwrap();
+        let retained = library
+            .snapshots
+            .browse_directory(&root, &child, |_| {})
+            .unwrap();
         assert_eq!(retained.assets.len(), 1);
         assert!(retained.error.is_some());
         assert!(!retained.needs_validation);
@@ -850,10 +902,12 @@ mod tests {
         let database = cache.path().join("library.sqlite");
         Library::open(&database)
             .unwrap()
+            .snapshots
             .browse_directory(&root, &root, |_| {})
             .unwrap();
         let read = Library::open(&database)
             .unwrap()
+            .snapshots
             .browse_directory(&root, &root, |_| panic!("empty is cached"))
             .unwrap();
         assert!(read.assets.is_empty());
@@ -869,20 +923,28 @@ mod tests {
         fs::write(root.join("old.jpg"), "old").unwrap();
         Library::open(&database)
             .unwrap()
+            .snapshots
             .browse_directory(&root, &root, |_| {})
             .unwrap();
         fs::remove_file(root.join("old.jpg")).unwrap();
         fs::write(root.join("new.jpg"), "new").unwrap();
         fs::write(root.join("new.xmp"), "sidecar").unwrap();
         let library = Library::open(&database).unwrap();
-        let read = library.browse_directory(&root, &root, |_| {}).unwrap();
+        let read = library
+            .snapshots
+            .browse_directory(&root, &root, |_| {})
+            .unwrap();
         assert_eq!(read.assets[0].name, "old.jpg");
         assert!(
             library
+                .snapshots
                 .revalidate_directory(&root, &root, read.epoch, |_| {})
                 .unwrap()
         );
-        let updated = library.browse_directory(&root, &root, |_| {}).unwrap();
+        let updated = library
+            .snapshots
+            .browse_directory(&root, &root, |_| {})
+            .unwrap();
         assert_eq!(updated.assets.len(), 1);
         assert_eq!(updated.assets[0].name, "new.jpg");
         assert!(updated.assets[0].has_sidecar);
@@ -899,6 +961,7 @@ mod tests {
             for _ in 0..8 {
                 scope.spawn(|| {
                     library
+                        .snapshots
                         .browse_directory(&root, &root, |progress| {
                             if !progress.reading_attributes && !progress.resolving {
                                 scans.fetch_add(1, Ordering::Relaxed);
@@ -916,7 +979,10 @@ mod tests {
         let volume = tempdir().unwrap();
         let root = volume.path().canonicalize().unwrap();
         let library = Library::in_memory().unwrap();
-        let first = library.browse_directory(&root, &root, |_| {}).unwrap();
+        let first = library
+            .snapshots
+            .browse_directory(&root, &root, |_| {})
+            .unwrap();
         let (entered_tx, entered_rx) = mpsc::channel();
         let (resume_tx, resume_rx) = mpsc::channel();
         thread::scope(|scope| {
@@ -925,6 +991,7 @@ mod tests {
             let background = scope.spawn(move || {
                 let mut first_callback = true;
                 library_ref
+                    .snapshots
                     .revalidate_directory(root_ref, root_ref, first.epoch, |_| {
                         if first_callback {
                             first_callback = false;
@@ -937,9 +1004,15 @@ mod tests {
             entered_rx
                 .recv_timeout(std::time::Duration::from_secs(5))
                 .unwrap();
-            library.invalidate_directory_snapshots(&root).unwrap();
+            library
+                .snapshots
+                .invalidate_directory_snapshots(&root)
+                .unwrap();
             let _foreground = library.foreground.enter();
-            library.browse_directory(&root, &root, |_| {}).unwrap();
+            library
+                .snapshots
+                .browse_directory(&root, &root, |_| {})
+                .unwrap();
             drop(_foreground);
             resume_tx.send(()).unwrap();
             assert!(!background.join().unwrap());
@@ -957,14 +1030,19 @@ mod tests {
         library.add_root(&root).unwrap();
         library.index_root(&root).unwrap();
         let read = library
+            .snapshots
             .browse_directory(&root, &root, |_| panic!("reuse existing index"))
             .unwrap();
         assert_eq!(read.assets.len(), 1);
-        library.invalidate_directory_snapshots(&root).unwrap();
+        library
+            .snapshots
+            .invalidate_directory_snapshots(&root)
+            .unwrap();
         drop(library);
         fs::remove_file(root.join("old.jpg")).unwrap();
         let read = Library::open(&database)
             .unwrap()
+            .snapshots
             .browse_directory(&root, &root, |_| {})
             .unwrap();
         assert!(read.assets.is_empty());
@@ -988,6 +1066,7 @@ mod tests {
         fs::remove_file(nested.join("stale.jpg")).unwrap();
         fs::write(nested.join("current.jpg"), "new").unwrap();
         library
+            .snapshots
             .invalidate_directory_snapshots(&destination)
             .unwrap();
         drop(library);
@@ -1003,7 +1082,10 @@ mod tests {
             )
             .unwrap();
         assert!(tombstone.is_empty());
-        let read = library.browse_directory(&root, &nested, |_| {}).unwrap();
+        let read = library
+            .snapshots
+            .browse_directory(&root, &nested, |_| {})
+            .unwrap();
         assert_eq!(read.source, "filesystem");
         assert_eq!(read.assets.len(), 1);
         assert_eq!(read.assets[0].name, "current.jpg");
@@ -1018,6 +1100,7 @@ mod tests {
         let _index = library.index_gate.lock();
         assert!(
             library
+                .snapshots
                 .browse_directory(&root, &root, |_| {})
                 .unwrap()
                 .assets
@@ -1033,11 +1116,13 @@ mod tests {
         let library = Library::in_memory().unwrap();
         assert!(
             library
+                .snapshots
                 .browse_directory(&root, &root.join("../outside"), |_| {})
                 .is_err()
         );
         assert!(
             library
+                .snapshots
                 .browse_directory(&root, root.parent().unwrap(), |_| {})
                 .is_err()
         );
@@ -1052,13 +1137,31 @@ mod tests {
         let library = Library::in_memory().unwrap();
         library.add_root(&root).unwrap();
         library.add_root(&child).unwrap();
-        library.browse_directory(&root, &child, |_| {}).unwrap();
-        library.browse_directory(&child, &child, |_| {}).unwrap();
+        library
+            .snapshots
+            .browse_directory(&root, &child, |_| {})
+            .unwrap();
+        library
+            .snapshots
+            .browse_directory(&child, &child, |_| {})
+            .unwrap();
+        library.snapshots.invalidate_snapshot_root(&root).unwrap();
         library.remove_root(&root).unwrap();
-        assert!(!library.has_directory_snapshot(&root, &child).unwrap());
-        assert!(library.has_directory_snapshot(&child, &child).unwrap());
+        assert!(
+            !library
+                .snapshots
+                .has_directory_snapshot(&root, &child)
+                .unwrap()
+        );
+        assert!(
+            library
+                .snapshots
+                .has_directory_snapshot(&child, &child)
+                .unwrap()
+        );
         assert_eq!(
             library
+                .snapshots
                 .browse_directory(&child, &child, |_| panic!("child remains cached"))
                 .unwrap()
                 .source,
@@ -1077,10 +1180,14 @@ mod tests {
         }
         Library::open(&database)
             .unwrap()
+            .snapshots
             .browse_directory(&root, &root, |_| {})
             .unwrap();
         let library = Library::open(&database).unwrap();
-        let original = library.browse_directory(&root, &root, |_| {}).unwrap();
+        let original = library
+            .snapshots
+            .browse_directory(&root, &root, |_| {})
+            .unwrap();
         let query = crate::browse::types::AssetQuery {
             page_size: Some(1),
             ..Default::default()
@@ -1091,25 +1198,38 @@ mod tests {
         );
         fs::write(root.join("a.jpg"), "new").unwrap();
         library
+            .snapshots
             .revalidate_directory(&root, &root, original.epoch, |_| {})
             .unwrap();
         let next = library
+            .snapshots
             .browse_directory_revision(&root, &root, Some(original.revision), |_| {})
             .unwrap();
         assert_eq!(
             crate::files::page_assets(&next.assets, &query, 1).items[0].name,
             "c.jpg"
         );
-        let latest = library.browse_directory(&root, &root, |_| {}).unwrap();
+        let latest = library
+            .snapshots
+            .browse_directory(&root, &root, |_| {})
+            .unwrap();
         assert_ne!(latest.revision, original.revision);
         assert_eq!(
             crate::files::page_assets(&latest.assets, &query, 0).items[0].name,
             "a.jpg"
         );
-        library.invalidate_directory_snapshots(&root).unwrap();
+        library
+            .snapshots
+            .invalidate_directory_snapshots(&root)
+            .unwrap();
         assert!(matches!(
-            library.browse_directory_revision(&root, &root, Some(original.revision), |_| {}),
-            Err(LibraryError::StaleDirectorySnapshot)
+            library.snapshots.browse_directory_revision(
+                &root,
+                &root,
+                Some(original.revision),
+                |_| {}
+            ),
+            Err(BrowseError::StaleDirectorySnapshot)
         ));
     }
 }

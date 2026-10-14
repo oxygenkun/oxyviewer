@@ -145,7 +145,15 @@ resource leases, cancellation and stale-publication semantics.
   carries no inline SQL. All 277 core tests, including snapshot regressions and
   the added source ownership audit, and strict workspace Clippy pass. Snapshot
   handle/lifecycle ownership is still the next step.
-- Next: distribute browsing SQL, move remaining desktop use-case coordination,
+- BrowseSnapshots now owns memory snapshots, validation and persistence lifetime.
+  OxyApp assembles one shared handle and foreground gate. Library retains an
+  internal reference only so indexing can reuse fresh validated summaries; its
+  public browsing/invalidation forwarding methods and unused global-clear method
+  are removed. LibraryService, file actions and root recovery call browse
+  invalidation explicitly. The latency example uses the public headless host.
+  All 277 core tests / 5 desktop tests pass, followed by the refined ownership
+  audit. Strict workspace Clippy includes the updated public-use-case example.
+- Next: distribute index SQL, move remaining desktop use-case coordination,
   remove legacy person identity paths and finish ownership/docs/tooling gates,
   then complete final release/performance qualification.
 

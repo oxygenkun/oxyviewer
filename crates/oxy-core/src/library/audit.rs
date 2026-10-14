@@ -1,22 +1,8 @@
-//! The source-level audit of the cache/user namespace boundary.
-//!
-//! The *data*-level audit — every table has a class, and a cache clear leaves
-//! every user-owned table with its rows — lives in `crate::storage::schema`, next to
-//! the declarations it checks. What cannot live there is this one: a check that
-//! the modules of one namespace do not write the other namespace's tables.
-//! That is a property of this crate's layout, so it is asserted here.
-//!
-//! A module may read across the boundary — the index looks up which roots
-//! exist — but never write: every cross-namespace write goes through a named
-//! function on the owning module, so it shows up in review as a call instead of
-//! hiding inside a SQL string.
-//!
-//! Once the remaining domains become separate crates this test is expected to
-//! disappear: a crate that cannot name another domain's tables cannot write
-//! them either, and the guarantee moves from a grep to the compiler. The tag
-//! and person namespaces already left that way, which is why `src/user` and
-//! `src/cache` are now down to the roots and the browsing/index/projection
-//! state this audit still guards.
+//! Source audit of library root policy and its rebuildable index.
+//! Schema audits preserve all user facts during cache clearing. These checks
+//! additionally prevent index statements from writing user-owned tables and
+//! require root policy to delegate its statements to the library repository.
+//! Feature modules share one crate, so these source checks remain necessary.
 
 use crate::storage::schema::{rebuildable_tables, tables, user_owned_tables};
 use std::path::Path;
@@ -44,7 +30,7 @@ fn no_module_writes_tables_owned_by_the_other_namespace() {
 /// `the owning feature repository`.
 ///
 /// The audit above catches a write to the *other* namespace. This one catches a
-/// statement that should not be in this crate at all: naming a repository
+/// statement that should not be in the policy module: naming a repository
 /// function keeps the SQL of one domain in exactly one place to read and
 /// change. Tests still set rows up directly, which is their business, so the
 /// check stops at the test module.

@@ -80,7 +80,16 @@ impl OxyApp {
             Store::open(&paths.data_dir.join("oxyviewer.sqlite"))
                 .map_err(|error| error.to_string())?,
         );
-        let library = Arc::new(Library::with_store(store.clone()));
+        let foreground = Arc::new(crate::jobs::ForegroundGate::default());
+        let snapshots = Arc::new(crate::browse::snapshots::BrowseSnapshots::new(
+            store.clone(),
+            foreground.clone(),
+        ));
+        let library = Arc::new(Library::with_store(
+            store.clone(),
+            snapshots.clone(),
+            foreground,
+        ));
         let projections = Arc::new(crate::resources::projections::ResourceProjections::new(
             store.clone(),
         ));
@@ -99,10 +108,12 @@ impl OxyApp {
         )?);
         let files = Arc::new(FsCatalog::default());
         let person_operations = Arc::new(PersonOperations::default());
-        let stopping_library = library.clone();
+        let stopping_foreground = library.foreground.clone();
+        let stopping_snapshots = snapshots.clone();
         let stopping_people = person_operations.clone();
         runtime.on_stop(move || {
-            stopping_library.stop_background();
+            stopping_foreground.stop();
+            stopping_snapshots.stop();
             stopping_people.cancel_current();
         });
         let directory_tree_queue =
@@ -130,6 +141,7 @@ impl OxyApp {
         });
         let library_index_queue = LibraryIndexQueue::new(library.clone(), files.clone());
         let library_service = Arc::new(LibraryService {
+            snapshots: snapshots.clone(),
             library: library.clone(),
             cache: cache.clone(),
             index: library_index_queue.clone(),
@@ -143,7 +155,7 @@ impl OxyApp {
         ));
         let file_service = Arc::new(FileService {
             store,
-            library: library.clone(),
+            snapshots: snapshots.clone(),
             files: files.clone(),
             metadata: metadata_queue.clone(),
             preview: preview_queue.clone(),
@@ -152,6 +164,7 @@ impl OxyApp {
             gate: Default::default(),
         });
         let browse = Arc::new(BrowseService {
+            snapshots,
             projections,
             files: files.clone(),
             library: library.clone(),
@@ -206,8 +219,9 @@ impl OxyApp {
         if !self.runtime.shutdown(timeout) {
             return false;
         }
-        self.library
-            .shutdown_background(deadline.saturating_duration_since(std::time::Instant::now()))
+        self.browse
+            .snapshots
+            .shutdown(deadline.saturating_duration_since(std::time::Instant::now()))
     }
 }
 

@@ -25,6 +25,7 @@ use std::{
 pub struct BrowseService {
     pub(crate) files: Arc<FsCatalog>,
     pub(crate) library: Arc<Library>,
+    pub(crate) snapshots: Arc<super::snapshots::BrowseSnapshots>,
     pub(crate) projections: Arc<crate::resources::projections::ResourceProjections>,
     pub(crate) metadata: MetadataFacade,
     pub(crate) tags: Arc<Tags>,
@@ -83,6 +84,7 @@ impl BrowseService {
         let files = self.files.clone();
         let metadata = self.metadata.clone();
         let library = self.library.clone();
+        let snapshots = self.snapshots.clone();
         let tags = self.tags.clone();
         let people = self.people.clone();
         {
@@ -124,7 +126,7 @@ impl BrowseService {
             }
             let mut last_report = Instant::now();
             let mut scanning = false;
-            let read = library
+            let read = snapshots
                 .browse_directory_revision(&root, &directory, snapshot_revision, |scan| {
                     if !scanning {
                         progress.cache_ms = started.elapsed().as_millis() as u64;
@@ -211,13 +213,12 @@ impl BrowseService {
             progress.elapsed_ms = started.elapsed().as_millis() as u64;
             let _ = app.publish(CoreEvent::DirectoryBrowseProgress(progress.clone()));
             if read.needs_validation {
-                let library = library.clone();
                 let mut background = progress.clone();
                 let _ = app.clone().spawn_blocking(move || {
                     let started = Instant::now();
                     let mut last_report = Instant::now();
                     let result =
-                        library.revalidate_directory(&root, &directory, read.epoch, |scan| {
+                        snapshots.revalidate_directory(&root, &directory, read.epoch, |scan| {
                             background.stage = "validating".into();
                             background.discovered_count = scan.discovered_count;
                             background.enumeration_ms = scan.enumeration_ms;
@@ -308,12 +309,12 @@ impl BrowseService {
             return Err("application is shutting down".into());
         }
         let files = self.files.clone();
-        let library = self.library.clone();
+        let snapshots = self.snapshots.clone();
         let (session_id, directory) = 'resolved: {
             let root = files
                 .session_root(&session_id)
                 .map_err(|error| error.to_string())?;
-            if library
+            if snapshots
                 .has_directory_snapshot(&root, &directory)
                 .map_err(|error| error.to_string())?
             {
@@ -368,7 +369,7 @@ impl BrowseService {
             return Err("application is shutting down".into());
         }
         let files = self.files.clone();
-        let library = self.library.clone();
+        let snapshots = self.snapshots.clone();
         let (tree, root, resolved_directory) = {
             let root = files
                 .session_root(&session_id)
@@ -376,7 +377,7 @@ impl BrowseService {
             let resolved_directory = files
                 .session_directory(&session_id, directory.as_deref())
                 .map_err(|error| error.to_string())?;
-            library
+            snapshots
                 .invalidate_directory_snapshots(&resolved_directory)
                 .map_err(|error| error.to_string())?;
             let tree = files

@@ -3,7 +3,7 @@
 //! A root exists only because the user pointed OxyViewer at it. Nothing in
 //! this module is rebuilt by a scan, and removing a root is a user decision
 //! that never cascades into identifiers, reviews, or tags. The table declares
-//! itself `user` in `crate::storage::schema::user`, which is what keeps a cache
+//! itself `user` in `crate::library::schema`, which is what keeps a cache
 //! clear away from it; what stays here is what a root *means*: an order the
 //! user chose, a canonical path, and a removal that also drops the index rows
 //! derived from it.
@@ -26,7 +26,6 @@ impl Library {
         // has been moved or disconnected. In that case the exact persisted path
         // is still safe to remove.
         let path = path.canonicalize().unwrap_or_else(|_| path.to_path_buf());
-        self.invalidate_snapshot_root(&path)?;
         let root = path.to_string_lossy();
         let mut connection = self.write();
         let transaction = connection.transaction()?;

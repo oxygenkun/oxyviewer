@@ -15,6 +15,7 @@ use std::{
 
 pub struct LibraryService {
     pub(crate) library: Arc<Library>,
+    pub(crate) snapshots: Arc<crate::browse::snapshots::BrowseSnapshots>,
     pub(crate) cache: Arc<CacheManager>,
     pub(crate) index: LibraryIndexQueue,
     pub(crate) runtime: CoreRuntime,
@@ -31,8 +32,12 @@ impl LibraryService {
     }
 
     pub fn remove_root(&self, path: &Path) -> Result<Vec<PathBuf>, String> {
+        let path = path.canonicalize().unwrap_or_else(|_| path.to_owned());
+        self.snapshots
+            .invalidate_snapshot_root(&path)
+            .map_err(|error| error.to_string())?;
         self.library
-            .remove_root(path)
+            .remove_root(&path)
             .map_err(|error| error.to_string())?;
         self.roots()
     }
@@ -80,7 +85,8 @@ impl LibraryService {
             .iter()
             .map(|source| (source.canonical_path.clone(), source.revision_id.clone()))
             .collect::<Vec<_>>();
-        root_relocation::commit(&self.library, plan, &proofs).map_err(|error| error.to_string())?;
+        root_relocation::commit(&self.library, &self.snapshots, plan, &proofs)
+            .map_err(|error| error.to_string())?;
         let report = root_relocation::reuse_root_artifacts(&cache, plan, &sources);
         self.index
             .schedule(self.runtime.clone(), report.root_path.clone());

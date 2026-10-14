@@ -24,12 +24,17 @@ pub(crate) fn preview(
 
 pub(crate) fn commit(
     library: &Library,
+    snapshots: &crate::browse::snapshots::BrowseSnapshots,
     expected: &RootRelocationPlan,
     cached: &[(PathBuf, String)],
 ) -> Result<(), LibraryError> {
     let _index = library.index_gate.lock();
-    library.invalidate_snapshot_root(&expected.old_root)?;
-    library.invalidate_snapshot_root(&expected.new_root)?;
+    snapshots
+        .invalidate_snapshot_root(&expected.old_root)
+        .map_err(|error| invalid(&error.to_string()))?;
+    snapshots
+        .invalidate_snapshot_root(&expected.new_root)
+        .map_err(|error| invalid(&error.to_string()))?;
     let mut connection = library.write();
     let transaction = connection.transaction()?;
     let current = plan(&transaction, &expected.old_root, &expected.new_root, cached)?;
@@ -362,7 +367,7 @@ mod tests {
                 status
             );
         }
-        commit(&library, &plan, &proofs).unwrap();
+        commit(&library, &library.snapshots, &plan, &proofs).unwrap();
         drop(library);
         let library = Library::open(&dir.path().join("library.db")).unwrap();
         assert_eq!(library.roots().unwrap(), std::slice::from_ref(&new));
@@ -410,7 +415,7 @@ mod tests {
         let (_dir, library, old, new, proofs) = fixture();
         let plan = preview(&library, &old, &new, &proofs).unwrap();
         library.write().execute_batch("CREATE TRIGGER test_abort_relocation BEFORE UPDATE OF asset_path ON person_manual_instances WHEN OLD.id='same' BEGIN SELECT RAISE(ABORT,'test failure'); END;").unwrap();
-        assert!(commit(&library, &plan, &proofs).is_err());
+        assert!(commit(&library, &library.snapshots, &plan, &proofs).is_err());
         assert_eq!(library.roots().unwrap(), std::slice::from_ref(&old));
         let paths = queries::asset_paths(&library.read_connection()).unwrap();
         assert!(paths.iter().all(|path| Path::new(path).starts_with(&old)));
@@ -430,7 +435,7 @@ mod tests {
             }
         }
         let plan = preview(&library, &old, &new, &proofs).unwrap();
-        commit(&library, &plan, &proofs).unwrap();
+        commit(&library, &library.snapshots, &plan, &proofs).unwrap();
         let db = library.read_connection();
         for table in ["person_instances_cache", "person_features_cache"] {
             let (path, revision): (String, String) = db
@@ -464,11 +469,11 @@ mod tests {
         let (_dir, library, old, new, proofs) = fixture();
         let plan = preview(&library, &old, &new, &proofs).unwrap();
         fs::write(new.join("same.jpg"), "modified after preview").unwrap();
-        assert!(commit(&library, &plan, &proofs).is_err());
+        assert!(commit(&library, &library.snapshots, &plan, &proofs).is_err());
         assert_eq!(library.roots().unwrap(), std::slice::from_ref(&old));
         let current = preview(&library, &old, &new, &proofs).unwrap();
         library.add_root(&new).unwrap();
-        assert!(commit(&library, &current, &proofs).is_err());
+        assert!(commit(&library, &library.snapshots, &current, &proofs).is_err());
         let path: String = library
             .read_connection()
             .query_row(
