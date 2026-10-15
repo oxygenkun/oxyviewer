@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { AssetSummary, ImageProjection } from "@/types";
+import { isAssetDragActive } from "@/lib/assets/assetDragSession";
 
 const mocks = vi.hoisted(() => ({
   invoke: vi.fn(),
@@ -24,7 +25,7 @@ vi.mock("@/lib/diagnostics/previewDebug", () => ({
   beginPreviewDebug: mocks.beginPreviewDebug,
 }));
 
-import { deletePaths, generatedPreview, heifTileUrl, startHeifFull } from "./api";
+import { deletePaths, generatedPreview, heifTileUrl, startAssetDrag, startHeifFull } from "./api";
 import {
   acceptImageProjection,
   clearImageProjections,
@@ -43,6 +44,54 @@ const asset: AssetSummary = {
   modifiedAtMs: 1,
   hasSidecar: false,
 };
+
+describe("native file drag", () => {
+  afterEach(() => {
+    mocks.invoke.mockReset();
+    vi.unstubAllGlobals();
+  });
+
+  it("passes only original paths to the desktop command", async () => {
+    vi.stubGlobal("window", { __TAURI_INTERNALS__: {} });
+    const paths = ["/photos/照片 one.HIF", "/photos/two.NEF"];
+    await startAssetDrag(paths);
+    expect(mocks.invoke).toHaveBeenCalledExactlyOnceWith("start_asset_drag", { paths, previewPath: paths[0] });
+    expect(isAssetDragActive()).toBe(false);
+  });
+
+  it("rejects local file drag in the browser demo", async () => {
+    vi.stubGlobal("window", {});
+    await expect(startAssetDrag(["/photos/one.jpg"])).rejects.toThrow("desktop app");
+    expect(mocks.invoke).not.toHaveBeenCalled();
+  });
+
+  it("holds the outbound fence until native completion and uses the grabbed photo for feedback", async () => {
+    vi.stubGlobal("window", { __TAURI_INTERNALS__: {} });
+    let complete!: () => void;
+    mocks.invoke.mockImplementation(() => new Promise<void>((resolve) => { complete = resolve; }));
+    const paths = ["/photos/first.HIF", "/photos/grabbed.NEF"];
+    const dragging = startAssetDrag(paths, paths[1]);
+    try {
+      expect(isAssetDragActive()).toBe(true);
+      expect(mocks.invoke).toHaveBeenCalledExactlyOnceWith("start_asset_drag", { paths, previewPath: paths[1] });
+      await expect(startAssetDrag(paths)).rejects.toThrow("already active");
+      expect(isAssetDragActive()).toBe(true);
+    } finally {
+      complete();
+      await dragging;
+    }
+    expect(isAssetDragActive()).toBe(false);
+  });
+
+  it("releases the outbound fence on native failure so future drags can proceed", async () => {
+    vi.stubGlobal("window", { __TAURI_INTERNALS__: {} });
+    mocks.invoke.mockRejectedValueOnce(new Error("native failure"));
+    await expect(startAssetDrag(["/photos/first.HIF"])).rejects.toThrow("native failure");
+    expect(isAssetDragActive()).toBe(false);
+    await startAssetDrag(["/photos/first.HIF"]);
+    expect(isAssetDragActive()).toBe(false);
+  });
+});
 
 function thumbnailProjection(resourceId: string, revision = 1): ImageProjection {
   return {

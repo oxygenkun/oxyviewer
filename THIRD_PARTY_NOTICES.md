@@ -13,6 +13,7 @@ license and copyright notice in binary distributions.
 
 | Component | Purpose | Intended integration |
 | --- | --- | --- |
+| drag 2.1.1 (CrabNebula) | Native file drag from Grid/Loupe to other applications | Pinned Cargo crate, distributed under its MIT option; source and checksum in Cargo.lock. Uses AppKit on macOS, OLE on Windows and GTK on Linux. Upstream copyright and license retained in `3rdpart/drag/LICENSE_MIT` and bundled under `licenses/drag` |
 | FFmpeg 9.0.1 | HEIF probing, HEVC decoding and JPEG/BMP tile output; on macOS/Linux also the HEVC decoder inside libheif | Unmodified pinned source, LGPL-2.1-or-later build with GPL/nonfree/version3 disabled; standalone `oxy-ffmpeg` / `oxy-ffprobe` programs plus a static library prefix that the application links into itself on macOS and Linux. License and build recipe bundled under `licenses/ffmpeg`, corresponding source attached to each GitHub Release |
 | LibRaw 0.22.2 | RAW preview extraction and decoding | Pinned upstream Git submodule, statically linked under the CDDL-1.0 option; release legal review pending |
 | OxyViewer metadata parser (SiftX fork at `fcf8e3d`) | Pure-Rust EXIF/XMP/IPTC/ICC/MakerNote reads | Modified image-only fork, statically linked under the MIT OR Apache-2.0 license; upstream notices retained |

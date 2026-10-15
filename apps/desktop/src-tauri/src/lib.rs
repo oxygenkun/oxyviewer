@@ -183,6 +183,7 @@ pub fn run() {
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
+            start_asset_drag,
             get_external_app_settings,
             update_external_app_settings,
             open_asset_with_application,

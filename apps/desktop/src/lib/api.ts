@@ -82,6 +82,7 @@ export async function cancelPersonOperation(operationId: string): Promise<void> 
 import { normalizeCustomTag } from "@/lib/assets/tagTree";
 import { retainMediaResource, releaseUnretainedMediaResource } from "@/lib/cache/mediaResourceLease";
 import { invoke } from "@tauri-apps/api/core";
+import { beginAssetDragSession } from "@/lib/assets/assetDragSession";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { getCurrentWebview } from "@tauri-apps/api/webview";
 import { open } from "@tauri-apps/plugin-dialog";
@@ -576,6 +577,16 @@ export async function openAssetWithApplication(path: string, appId: string): Pro
 export async function openAssetWithSystemDialog(path: string): Promise<ExternalOpenResult> {
   if (!isTauri()) throw new Error("Opening external applications requires the desktop app");
   return invoke("open_asset_with_system_dialog", { path });
+}
+
+export async function startAssetDrag(paths: string[], previewPath = paths[0]): Promise<void> {
+  if (!isTauri()) throw new Error("Dragging local files requires the desktop app");
+  const finish = beginAssetDragSession();
+  try {
+    await invoke("start_asset_drag", { paths, previewPath });
+  } finally {
+    finish();
+  }
 }
 
 export async function getAssetDetails(asset: AssetSummary): Promise<AssetDetails> {

@@ -4,6 +4,7 @@ import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import type { WindowDragEvent } from "@/types";
 import { useFolderDrop } from "./useFolderDrop";
+import { beginAssetDragSession } from "@/lib/assets/assetDragSession";
 
 // Exercise the native branch: jsdom has no Tauri, so the module is stubbed the
 // way the webview API behaves on the desktop.
@@ -108,4 +109,31 @@ it("hides the preview when the drag leaves the window", async () => {
   await emit({ type: "leave" });
   expect(overlay().dataset.visible).toBe("false");
   expect(dropped).toEqual([]);
+});
+
+it("suppresses import feedback throughout an outbound drag and ignores its late drop", async () => {
+  await emit({ type: "enter", paths: ["/external"], position: { x: 5, y: 5 } });
+  expect(overlay().dataset.visible).toBe("true");
+  let finish!: () => void;
+  await act(async () => { finish = beginAssetDragSession(); });
+  try {
+    expect(overlay().dataset.visible).toBe("false");
+    await emit({ type: "enter", paths: ["/photos/original.HIF"], position: { x: 5, y: 5 } });
+    const rendersDuringDrag = renders;
+    await emit({ type: "over", position: { x: 10, y: 10 } });
+    expect(renders).toBe(rendersDuringDrag);
+    await emit({ type: "leave" });
+    await emit({ type: "enter", paths: ["/photos/original.HIF"], position: { x: 5, y: 5 } });
+    expect(overlay().dataset.visible).toBe("false");
+    expect(dropped).toEqual([]);
+  } finally {
+    await act(async () => finish());
+  }
+  await emit({ type: "drop", paths: ["/photos/original.HIF"], position: { x: 5, y: 5 } });
+  expect(dropped).toEqual([]);
+  expect(overlay().dataset.visible).toBe("false");
+  await emit({ type: "enter", paths: ["/external/new-folder"], position: { x: 5, y: 5 } });
+  expect(overlay().dataset.visible).toBe("true");
+  await emit({ type: "drop", paths: ["/external/new-folder"], position: { x: 5, y: 5 } });
+  expect(dropped).toEqual([["/external/new-folder"]]);
 });

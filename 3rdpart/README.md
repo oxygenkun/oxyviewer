@@ -6,6 +6,7 @@ each component retains the upstream build system appropriate to its artifact.
 
 | Component | Pinned source | Integration |
 | --- | --- | --- |
+| drag 2.1.1 | Exact Cargo version in the desktop Cargo.toml and checksum in Cargo.lock | Native system file drag through AppKit, Windows OLE or GTK |
 | LibRaw 0.22.2 | `3rdpart/libraw` Git submodule | Static library linked into OxyViewer |
 | libjpeg-turbo 3.1.3 | `3rdpart/libjpeg-turbo` Git submodule | Static library linked into OxyViewer |
 | libheif 1.23.4 | URL and SHA-256 in `3rdpart/libheif/source.json`, built with the pinned FFmpeg decoder on macOS/Linux; the vcpkg curated registry at revision `0635f447edcc25f50645afade4e91a229a35fcdc` (libde265 decoder) on Windows | Static native library linked through `libheif-rs` |

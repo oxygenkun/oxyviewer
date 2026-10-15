@@ -27,6 +27,7 @@ use thiserror::Error;
 
 #[cfg(target_os = "macos")]
 mod bulk_attributes;
+pub mod drag;
 pub mod external_apps;
 mod identity;
 

@@ -6,6 +6,7 @@
       "../../../LICENSE-AGPL-3.0": "licenses/OxyViewer/LICENSE-AGPL-3.0",
       "../../../LICENSE-COMMERCIAL.md": "licenses/OxyViewer/LICENSE-COMMERCIAL.md",
       "../../../THIRD_PARTY_NOTICES.md": "licenses/OxyViewer/THIRD_PARTY_NOTICES.md",
+      "../../../3rdpart/drag/LICENSE_MIT": "licenses/drag/LICENSE_MIT",
       "resources/ffmpeg/COPYING.LGPLv2.1": "licenses/ffmpeg/COPYING.LGPLv2.1",
       "resources/ffmpeg/LICENSE.md": "licenses/ffmpeg/LICENSE.md",
       "resources/ffmpeg/README.md": "licenses/ffmpeg/README.md",

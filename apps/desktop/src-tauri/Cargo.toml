@@ -17,6 +17,7 @@ serde_json.workspace = true
 tauri-build = { version = "2", features = [] }
 
 [dependencies]
+drag = "=2.1.1"
 oxy-core = { path = "../../../crates/oxy-core" }
 tempfile.workspace = true
 oxy-media = { path = "../../../crates/oxy-media" }
@@ -27,6 +28,9 @@ tauri = { version = "2", features = [] }
 tauri-plugin-dialog = "2"
 tauri-plugin-log = "2"
 ureq = { version = "3.4", default-features = false, features = ["native-tls"] }
+
+[target.'cfg(target_os = "macos")'.dependencies]
+objc2-app-kit = { version = "=0.3.2", default-features = false, features = ["NSEvent"] }
 
 [target.'cfg(windows)'.dependencies]
 windows = { workspace = true, features = ["Win32_UI_Shell", "Win32_UI_WindowsAndMessaging"] }

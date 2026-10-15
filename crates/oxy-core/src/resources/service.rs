@@ -13,6 +13,7 @@ use oxy_media::types::{
 };
 use std::{path::PathBuf, sync::Arc};
 
+mod drag;
 mod heif;
 pub use heif::{HeifFullInput, PreparedHeifFull};
 

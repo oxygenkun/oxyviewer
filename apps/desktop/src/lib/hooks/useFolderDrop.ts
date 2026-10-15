@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { isTauri, onWindowDragDrop } from "@/lib/api";
 import { folderName } from "@/lib/browse/folderImport";
+import { isAssetDragActive, subscribeAssetDragSession } from "@/lib/assets/assetDragSession";
 
 export interface FolderDropState {
   visible: boolean;
@@ -33,7 +34,21 @@ export function useFolderDrop(onDrop: (paths: string[]) => void) {
     if (!isTauri()) return;
     let dispose: (() => void) | undefined;
     let cancelled = false;
+    let ignoreOutgoing = isAssetDragActive();
+    const unsubscribeDrag = subscribeAssetDragSession(() => {
+      if (!isAssetDragActive()) return;
+      ignoreOutgoing = true;
+      setDropState(HIDDEN_DROP);
+    });
     void onWindowDragDrop((event) => {
+      // The source window also receives native enter/over/drop notifications.
+      // Fence its own entire gesture, including terminal events delivered after
+      // the source callback. A fresh external enter starts the next gesture.
+      if (event.type === "enter" && !isAssetDragActive()) ignoreOutgoing = false;
+      if (isAssetDragActive() || ignoreOutgoing) {
+        if (event.type !== "over") setDropState(HIDDEN_DROP);
+        return;
+      }
       if (event.type === "enter") {
         setDropState({
           visible: true,
@@ -51,6 +66,7 @@ export function useFolderDrop(onDrop: (paths: string[]) => void) {
     });
     return () => {
       cancelled = true;
+      unsubscribeDrag();
       dispose?.();
     };
   }, []);

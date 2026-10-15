@@ -1,4 +1,5 @@
 pub mod control;
+pub mod drag_image;
 pub mod metadata;
 pub mod source;
 pub mod types;

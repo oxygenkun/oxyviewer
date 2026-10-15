@@ -7,7 +7,8 @@ import {
   gridRowForAsset,
   virtualAssetCount,
 } from "@/lib/assets/assetViewPosition";
-import { requestMetadata } from "@/lib/api";
+import { requestMetadata, startAssetDrag } from "@/lib/api";
+import { useAssetDrag } from "@/lib/hooks/useAssetDrag";
 import type { MessageKey } from "@/lib/i18n";
 import { useExternalAppSettings } from "@/lib/media/externalApps";
 import { AssetContextMenu, type AssetMenuTarget } from "./AssetContextMenu";
@@ -55,6 +56,7 @@ interface AssetCardProps {
   onSelect: (id: string, additive: boolean, range: boolean) => void;
   onContextMenu: (event: React.MouseEvent, asset: AssetSummary) => void;
   onOpen: (id: string) => void;
+  onAssetDrag: (asset: AssetSummary) => void;
   showMetadata: boolean;
   /** Burst this tile belongs to; collapsed groups expose only their first frame. */
   burst?: BurstGroup;
@@ -76,6 +78,7 @@ const AssetCard = memo(function AssetCard({
   onSelect,
   onContextMenu,
   onOpen,
+  onAssetDrag,
   showMetadata,
   burst,
   burstExpanded = false,
@@ -85,6 +88,7 @@ const AssetCard = memo(function AssetCard({
   collapseBurstText,
   onToggleBurst,
 }: AssetCardProps) {
+  const drag = useAssetDrag(asset, onAssetDrag);
   const expandedFromCollapsedAtRef = useRef(Number.NEGATIVE_INFINITY);
   const handleContextMenu = useCallback((event: React.MouseEvent) => {
     onContextMenu(event, asset);
@@ -112,6 +116,7 @@ const AssetCard = memo(function AssetCard({
     : "";
   return (
     <button
+      {...drag}
       className={`asset-card${selected ? " is-selected" : ""}${focused ? " is-active" : ""}${burstClassName}`}
       onClick={handleSelect}
       onDoubleClick={handleOpen}
@@ -146,6 +151,18 @@ const AssetCard = memo(function AssetCard({
 
 export function AssetBrowser(props: AssetBrowserProps) {
   const [contextMenu, setContextMenu] = useState<AssetMenuTarget>();
+  const [dragError, setDragError] = useState<string>();
+  const onAssetDrag = useCallback((asset: AssetSummary) => {
+    const state = useWorkspaceStore.getState();
+    const selected = new Set(state.selectedIds);
+    const targets = props.view === "grid" && selected.has(asset.id)
+      ? props.assets.filter((candidate) => selected.has(candidate.id))
+      : [asset];
+    if (!selected.has(asset.id)) state.select(asset.id);
+    setDragError(undefined);
+    void startAssetDrag(targets.map((target) => target.path), asset.path)
+      .catch((error: unknown) => setDragError(String(error)));
+  }, [props.assets, props.view]);
   const externalApps = useExternalAppSettings();
   const openSettings = useWorkspaceStore((state) => state.openSettings);
   const select = useWorkspaceStore((state) => state.select);
@@ -190,6 +207,7 @@ export function AssetBrowser(props: AssetBrowserProps) {
         isFetchingNextPage={props.isFetchingNextPage}
         keyboardSuppressed={Boolean(contextMenu) || Boolean(pendingTrash)}
         onAssetContextMenu={showContextMenu}
+        onAssetDrag={onAssetDrag}
         t={props.t}
       />
     );
@@ -199,12 +217,17 @@ export function AssetBrowser(props: AssetBrowserProps) {
         {...props}
         keyboardSuppressed={Boolean(contextMenu) || Boolean(pendingTrash)}
         onAssetContextMenu={showContextMenu}
+        onAssetDrag={onAssetDrag}
       />
     );
   }
 
   return (
     <>
+      {dragError ? <div className="search-query-error" role="alert">
+        {props.t("assetDragFailed")}: {dragError}
+        <button onClick={() => setDragError(undefined)}>{props.t("dismissNotice")}</button>
+      </div> : null}
       {content}
       {contextMenu ? <AssetContextMenu
         key={`${contextMenu.asset.id}:${contextMenu.x}:${contextMenu.y}`}
@@ -248,9 +271,11 @@ function VirtualGrid({
   t,
   keyboardSuppressed = false,
   onAssetContextMenu,
+  onAssetDrag,
 }: AssetBrowserProps & {
   keyboardSuppressed?: boolean;
   onAssetContextMenu: (event: React.MouseEvent, asset: AssetSummary) => void;
+  onAssetDrag: (asset: AssetSummary) => void;
 }) {
   const parentRef = useRef<HTMLDivElement>(null);
   const [width, setWidth] = useState(900);
@@ -488,6 +513,7 @@ function VirtualGrid({
                     selected={selectedIds.includes(asset.id)}
                     focused={activeId === asset.id}
                     onSelect={handleSelect}
+                    onAssetDrag={onAssetDrag}
                     onContextMenu={onAssetContextMenu}
                     onOpen={openAsset}
                     showMetadata={gridMetadataVisible}

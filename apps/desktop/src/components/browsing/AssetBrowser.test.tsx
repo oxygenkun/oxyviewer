@@ -20,6 +20,8 @@ const virtual = vi.hoisted(() => ({
 
 const api = vi.hoisted(() => ({
   scanBurstGroups: vi.fn(),
+  startAssetDrag: vi.fn(),
+  isTauri: vi.fn(() => true),
 }));
 const trashAssets = vi.fn();
 
@@ -51,6 +53,8 @@ vi.mock("@/lib/api", async (importOriginal) => {
     ...original,
     requestMetadata: vi.fn(() => Promise.resolve([])),
     scanBurstGroups: api.scanBurstGroups,
+    startAssetDrag: api.startAssetDrag,
+    isTauri: api.isTauri,
     reconcilePreviewSchedule: vi.fn(() => Promise.resolve()),
     releasePreviewSchedule: vi.fn(() => Promise.resolve()),
     upsertPreviewSchedule: vi.fn(() => Promise.resolve()),
@@ -125,6 +129,8 @@ beforeEach(() => {
   virtual.scrollToIndex.mockClear();
   api.scanBurstGroups.mockReset();
   api.scanBurstGroups.mockResolvedValue([]);
+  api.startAssetDrag.mockReset().mockResolvedValue(undefined);
+  api.isTauri.mockReturnValue(true);
   trashAssets.mockReset();
   useWorkspaceStore.setState({
     view: "grid",
@@ -138,6 +144,151 @@ beforeEach(() => {
   host = document.createElement("div");
   document.body.appendChild(host);
   root = createRoot(host);
+});
+
+async function pointer(target: HTMLElement, type: string, x: number, options: MouseEventInit = {}) {
+  const event = new MouseEvent(type, { bubbles: true, cancelable: true, clientX: x, buttons: 1, ...options });
+  Object.defineProperties(event, {
+    pointerId: { value: 1 }, isPrimary: { value: true }, pointerType: { value: "mouse" },
+  });
+  await act(async () => target.dispatchEvent(event));
+}
+
+function dragTarget(selector: string): HTMLElement {
+  const target = host.querySelector<HTMLElement>(selector)!;
+  let captured = false;
+  target.setPointerCapture = () => { captured = true; };
+  target.hasPointerCapture = () => captured;
+  target.releasePointerCapture = () => { captured = false; };
+  return target;
+}
+
+it("drags the selected original files in grid order without collapsing selection", async () => {
+  useWorkspaceStore.setState({ activeId: "a2", selectedIds: ["a2", "a0"] });
+  await render("grid");
+  const target = dragTarget('button[title="/demo/a2.jpg"]');
+  await pointer(target, "pointerdown", 10);
+  // Use the captured gesture when per-move button flags are absent.
+  await pointer(target, "pointermove", 20, { buttons: 0 });
+  await pointer(target, "pointermove", 40);
+  await act(async () => target.dispatchEvent(new MouseEvent("click", { bubbles: true, detail: 1 })));
+  expect(api.startAssetDrag).toHaveBeenCalledExactlyOnceWith(["/demo/a0.jpg", "/demo/a2.jpg"], "/demo/a2.jpg");
+  expect(useWorkspaceStore.getState().selectedIds).toEqual(["a2", "a0"]);
+  expect(target.hasPointerCapture(1)).toBe(false);
+  await act(async () => target.click()); // Keyboard activation has detail 0.
+  expect(useWorkspaceStore.getState().selectedIds).toEqual(["a2"]);
+});
+
+it("drags only an unselected photo and keeps the following click usable", async () => {
+  useWorkspaceStore.setState({ activeId: "a0", selectedIds: ["a0", "a1"] });
+  await render("grid");
+  const target = dragTarget('button[title="/demo/a2.jpg"]');
+  await pointer(target, "pointerdown", 10);
+  await pointer(target, "pointermove", 20);
+  expect(api.startAssetDrag).toHaveBeenCalledExactlyOnceWith(["/demo/a2.jpg"], "/demo/a2.jpg");
+  expect(useWorkspaceStore.getState().selectedIds).toEqual(["a2"]);
+  await pointer(target, "pointerdown", 10);
+  await pointer(target, "pointerup", 10);
+  await act(async () => target.dispatchEvent(new MouseEvent("click", { bubbles: true, ctrlKey: true })));
+  expect(useWorkspaceStore.getState().selectedIds).toEqual([]);
+});
+
+it("accepts the next photo click before drag completion and allows another drag immediately after", async () => {
+  let complete!: () => void;
+  api.startAssetDrag.mockImplementationOnce(() => new Promise<void>((resolve) => { complete = resolve; }));
+  await render("grid");
+  const source = dragTarget('button[title="/demo/a0.jpg"]');
+  await pointer(source, "pointerdown", 10);
+  await pointer(source, "pointermove", 20);
+  await pointer(source, "pointerup", 20);
+
+  const other = dragTarget('button[title="/demo/a1.jpg"]');
+  await pointer(other, "pointerdown", 10);
+  await pointer(other, "pointerup", 10);
+  await act(async () => other.dispatchEvent(new MouseEvent("click", { bubbles: true, detail: 1 })));
+  expect(useWorkspaceStore.getState().activeId).toBe("a1");
+  expect(useWorkspaceStore.getState().selectedIds).toEqual(["a1"]);
+  // A late click from the completed gesture must not undo the new selection.
+  await act(async () => source.dispatchEvent(new MouseEvent("click", { bubbles: true, detail: 1 })));
+  expect(useWorkspaceStore.getState().activeId).toBe("a1");
+
+  await act(async () => complete());
+  await pointer(source, "pointerdown", 10);
+  await pointer(source, "pointermove", 20);
+  expect(api.startAssetDrag).toHaveBeenCalledTimes(2);
+  expect(api.startAssetDrag).toHaveBeenLastCalledWith(["/demo/a0.jpg"], "/demo/a0.jpg");
+});
+
+it("ignores small motion, cancelled gestures, right clicks, and browser demo drags", async () => {
+  await render("grid");
+  const target = dragTarget('button[title="/demo/a0.jpg"]');
+  await pointer(target, "pointerdown", 10);
+  await pointer(target, "pointermove", 12);
+  await pointer(target, "pointercancel", 12);
+  await pointer(target, "pointermove", 30);
+  await pointer(target, "pointerdown", 10, { button: 2 });
+  await pointer(target, "pointermove", 30);
+  api.isTauri.mockReturnValue(false);
+  await pointer(target, "pointerdown", 10);
+  await pointer(target, "pointermove", 30);
+  expect(api.startAssetDrag).not.toHaveBeenCalled();
+});
+
+it("drags the current loupe original alone even when multiple grid photos were selected", async () => {
+  useWorkspaceStore.setState({ activeId: "a2", selectedIds: ["a0", "a2"] });
+  await render("loupe");
+  const target = dragTarget(".loupe__render");
+  await pointer(target, "pointerdown", 10);
+  await pointer(target, "pointermove", 20);
+  expect(api.startAssetDrag).toHaveBeenCalledExactlyOnceWith(["/demo/a2.jpg"], "/demo/a2.jpg");
+});
+
+it("keeps zoomed loupe panning and uses Alt-drag to export the original", async () => {
+  vi.stubGlobal("ResizeObserver", class extends ResizeObserverStub {
+    constructor(private callback: () => void) { super(); }
+    observe() { this.callback(); }
+  });
+  const style = document.createElement("style");
+  style.textContent = ".loupe__stage { padding: 0px; }";
+  document.head.appendChild(style);
+  const width = vi.spyOn(HTMLElement.prototype, "clientWidth", "get").mockReturnValue(900);
+  const height = vi.spyOn(HTMLElement.prototype, "clientHeight", "get").mockReturnValue(600);
+  try {
+    client.setQueryData(["asset-details", "a2"], { asset: assets[2], width: 6240, height: 4160 });
+    useWorkspaceStore.setState({ activeId: "a2", selectedIds: ["a2"] });
+    await render("loupe");
+    await act(async () => host.querySelector<HTMLButtonElement>('button[title="zoomIn"]')!.click());
+    const target = dragTarget(".loupe__render");
+    const stage = dragTarget(".loupe__stage");
+    expect(stage.classList.contains("is-zoomed")).toBe(true);
+    await pointer(target, "pointerdown", 10);
+    expect(stage.classList.contains("is-dragging")).toBe(true);
+    await pointer(target, "pointermove", 20);
+    expect(api.startAssetDrag).not.toHaveBeenCalled();
+    await pointer(target, "pointercancel", 20);
+    expect(stage.classList.contains("is-dragging")).toBe(false);
+    await pointer(target, "pointerdown", 10, { altKey: true });
+    await pointer(target, "pointermove", 20, { altKey: true });
+    expect(api.startAssetDrag).toHaveBeenCalledExactlyOnceWith(["/demo/a2.jpg"], "/demo/a2.jpg");
+    expect(stage.classList.contains("is-dragging")).toBe(false);
+  } finally {
+    style.remove();
+    width.mockRestore();
+    height.mockRestore();
+  }
+});
+
+it("shows native drag failures and permits another attempt", async () => {
+  api.startAssetDrag.mockRejectedValueOnce(new Error("File disappeared"));
+  await render("grid");
+  const target = dragTarget('button[title="/demo/a0.jpg"]');
+  await pointer(target, "pointerdown", 10);
+  await pointer(target, "pointermove", 20);
+  expect(host.querySelector('[role="alert"]')?.textContent).toContain("File disappeared");
+  await pointer(target, "pointerdown", 10);
+  await pointer(target, "pointermove", 20);
+  expect(api.startAssetDrag).toHaveBeenCalledTimes(2);
+  expect(host.querySelector('[role="alert"]')).toBeNull();
 });
 
 afterEach(async () => {

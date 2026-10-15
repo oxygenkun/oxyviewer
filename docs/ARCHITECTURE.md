@@ -23,6 +23,18 @@ flowchart LR
 读取媒体内容。图片字节不经 JSON IPC。资源状态继续遵循
 [ADR 0008](adr/0008-rust-owned-resource-projections.md)：Rust 是带版本投影的权威拥有方。
 
+跨应用文件拖拽使用桌面 `start_asset_drag(paths, previewPath)`：core::files 在 blocking 线程校验并
+去重原文件路径，桌面在主线程调用固定版本 `drag` 2.1.1 的系统拖拽接口，只提供 Copy。
+Grid 从已选图片开始拖动时携带当前选择，从未选图片开始则只携带该图；Loupe 只携带
+当前原图，适应窗口时直接拖动，放大后 Alt + 拖动，普通拖动继续平移。移动超过 6 个
+CSS 像素才启动。IPC 只传原文件路径；ResourceService 复用被抓取照片的缩略图队列、
+缓存、几何和 resource lease，Media 在 blocking 线程生成长边 128 像素的照片卡片，
+多选显示最多三层堆叠。预览不可用时使用照片占位卡片，不附带 XMP、不修改原文件或用户资料。
+Command 等待系统的 drop/cancel 回调才完成；前端在整个拖出期间屏蔽窗口自己的导入提示
+与导入动作，并丢弃同次手势迟到的 drop，新的外部 enter 恢复正常导入。
+取消或放回时跳过系统回弹动画，避免松手后的原生拖拽动画继续占用后续点击。
+浏览器演示不启动系统文件拖拽；原生失败可在图片区域关闭提示并重新尝试。
+
 ## 应用模块
 
 | 归属 | 职责和入口 |

@@ -38,6 +38,7 @@ import {
 import { LAYOUT_SIZE_LIMITS } from "@/lib/ui/layoutSizing";
 import { matchesAction } from "@/lib/ui/shortcuts";
 import { useMarkingShortcuts } from "@/lib/hooks/useMarkingShortcuts";
+import { useAssetDrag } from "@/lib/hooks/useAssetDrag";
 import { getAssetDetails } from "@/lib/api";
 import { focusRegionAnchor, mapFocusRegions } from "@/lib/ui/focusArea";
 import type { MessageKey } from "@/lib/i18n";
@@ -61,6 +62,7 @@ interface LoupeProps {
   isFetchingNextPage: boolean;
   keyboardSuppressed?: boolean;
   onAssetContextMenu: (event: React.MouseEvent, asset: AssetSummary) => void;
+  onAssetDrag: (asset: AssetSummary) => void;
   t: (key: MessageKey) => string;
 }
 
@@ -93,6 +95,7 @@ export function Loupe({
   isFetchingNextPage,
   keyboardSuppressed = false,
   onAssetContextMenu,
+  onAssetDrag,
   t,
 }: LoupeProps) {
   const activeId = useWorkspaceStore((state) => state.activeId);
@@ -121,6 +124,7 @@ export function Loupe({
   const dragRef = useRef<{ pointerId: number; start: Point; offset: Point } | undefined>(undefined);
   const navigatorDragRef = useRef<{ pointerId: number; last: Point } | undefined>(undefined);
   const [zoom, setZoom] = useState(1);
+  const assetDrag = useAssetDrag(active, onAssetDrag, zoom > 1);
   const [offset, setOffset] = useState<Point>({ x: 0, y: 0 });
   const [dragging, setDragging] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
@@ -495,7 +499,9 @@ export function Loupe({
           }}
         >
           <div
+            {...assetDrag}
             className="loupe__render"
+            title={t(zoom > 1 ? "assetDragZoomedHint" : "assetDragHint")}
             data-asset-id={active.id}
             style={{
               width: fittedImageSize.width ? fittedImageSize.width * zoom : undefined,
