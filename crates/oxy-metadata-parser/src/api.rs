@@ -1892,7 +1892,17 @@ fn emit_xmp_tags(xmp: &crate::xmp::XmpData, tags: &mut Vec<Tag>) {
             };
             // Only insert first occurrence (some files have duplicate properties)
             if !tags.iter().any(|t| t.group == "XMP" && t.name == name) {
-                tags.push(Tag::new("XMP", name, value));
+                let tag = match &prop.value {
+                    crate::xmp::XmpValue::OrderedArray(values)
+                    | crate::xmp::XmpValue::UnorderedArray(values) => Tag::with_typed(
+                        "XMP",
+                        name,
+                        value,
+                        crate::core::TagValue::StringArray(values.clone()),
+                    ),
+                    _ => Tag::new("XMP", name, value),
+                };
+                tags.push(tag);
             }
         }
     }
@@ -2103,7 +2113,7 @@ pub struct Tag {
     /// Display-ready value string.
     pub value: String,
     /// Raw typed value from the parser, if available.
-    /// Present for EXIF/TIFF tags; `None` for XMP, IPTC, PDF, ICC, etc.
+    /// Present for EXIF/TIFF values and exact XMP arrays; otherwise `None`.
     pub typed_value: Option<crate::core::TagValue>,
 }
 

@@ -91,6 +91,9 @@ reverse import so stale XML cannot restore a just-deleted tag. Sidecars remain t
 primary write target; explicit embedded sync copies both arrays into supported
 JPEG/HEIF/HIF files through ExifTool.
 
+Native XMP keyword arrays retain exact members, including commas and duplicate
+values, instead of splitting their display text.
+
 HEIF decoding uses libheif through `libheif-rs`; release packages must include a
 working HEVC decoder, which the pinned FFmpeg libraries provide on macOS/Linux
 and libde265 provides on Windows. libheif, libde265 and FFmpeg LGPL distribution

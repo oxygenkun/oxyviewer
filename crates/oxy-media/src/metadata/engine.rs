@@ -109,10 +109,8 @@ fn document_from_tags(
         copyright: value("XMP", "Rights")
             .or_else(|| value("XMP", "Copyright"))
             .map(str::to_owned),
-        keywords: value("XMP", "Subject").map(split_list).unwrap_or_default(),
-        hierarchical_keywords: value("XMP", "HierarchicalSubject")
-            .map(split_list)
-            .unwrap_or_default(),
+        keywords: xmp_list(tags, "Subject"),
+        hierarchical_keywords: xmp_list(tags, "HierarchicalSubject"),
     };
 
     let capture = crate::metadata::capture::from_tags(tags, path);
@@ -373,9 +371,42 @@ fn split_list(value: &str) -> Vec<String> {
         .collect()
 }
 
+fn xmp_list(tags: &[Tag], name: &str) -> Vec<String> {
+    tags.iter()
+        .find(|tag| tag.group == "XMP" && tag.name == name)
+        .map(|tag| match &tag.typed_value {
+            Some(TagValue::StringArray(values)) => values.clone(),
+            _ => split_list(&tag.value),
+        })
+        .unwrap_or_default()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn native_xmp_arrays_preserve_commas_unicode_and_duplicate_members() {
+        let tags = oxy_metadata_parser::xmp_tags(
+            r#"<x:xmpmeta xmlns:x="adobe:ns:meta/">
+<rdf:RDF xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#">
+<rdf:Description xmlns:dc="http://purl.org/dc/elements/1.1/"
+ xmlns:lr="http://ns.adobe.com/lightroom/1.0/">
+<dc:subject><rdf:Bag><rdf:li>中文,标签</rdf:li><rdf:li>alpha</rdf:li><rdf:li>中文,标签</rdf:li></rdf:Bag></dc:subject>
+<lr:hierarchicalSubject><rdf:Seq><rdf:li>People|Last, First</rdf:li><rdf:li>人物|甲</rdf:li></rdf:Seq></lr:hierarchicalSubject>
+</rdf:Description></rdf:RDF></x:xmpmeta>"#,
+        )
+        .unwrap();
+        let document = document_from_tags(&tags, Path::new("photo.jpg"), None);
+        assert_eq!(
+            document.editable.keywords,
+            ["中文,标签", "alpha", "中文,标签"]
+        );
+        assert_eq!(
+            document.editable.hierarchical_keywords,
+            ["People|Last, First", "人物|甲"]
+        );
+    }
 
     #[test]
     fn heif_counter_clockwise_rotation_orients_focus_coordinates() {

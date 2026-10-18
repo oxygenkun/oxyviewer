@@ -28,6 +28,8 @@ pub enum TagValue {
     Rational(u32, u32),
     SRational(i32, i32),
     Ascii(String),
+    /// Exact XMP array members, independent of their display separator.
+    StringArray(Vec<String>),
     Bytes(Vec<u8>),
     U16Array(Vec<u16>),
     U32Array(Vec<u32>),
@@ -133,6 +135,7 @@ impl TagValue {
                 }
             }
             TagValue::Ascii(s) => s.clone(),
+            TagValue::StringArray(values) => values.join(", "),
             TagValue::Bytes(b) => {
                 if b.len() <= 16 {
                     b.iter()
