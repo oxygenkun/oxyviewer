@@ -94,6 +94,13 @@ JPEG/HEIF/HIF files through ExifTool.
 Native XMP keyword arrays retain exact members, including commas and duplicate
 values, instead of splitting their display text.
 
+The inspector ExifTool prompt offers **Check again** after
+manual installation. Each check probes the provider again, including the running
+process's PATH, and continues the pending write only when the probe succeeds.
+An unsuccessful check keeps the prompt open and does not start a download or
+write. New PATH entries may require restarting OxyViewer; selecting the executable
+directly remains available.
+
 HEIF decoding uses libheif through `libheif-rs`; release packages must include a
 working HEVC decoder, which the pinned FFmpeg libraries provide on macOS/Linux
 and libde265 provides on Windows. libheif, libde265 and FFmpeg LGPL distribution

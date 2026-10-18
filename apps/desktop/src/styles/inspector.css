@@ -117,7 +117,7 @@
 .metadata-provider-dialog header button { padding: 3px; color: var(--muted); background: transparent; }
 .metadata-provider-dialog p { margin: 12px 0; color: var(--muted); font-size: 0.625rem; line-height: 1.6; }
 .metadata-provider-dialog > small { color: var(--muted); font-size: 0.5625rem; }
-.metadata-provider-dialog__actions { display: flex; gap: var(--space-2); margin-top: 16px; }
+.metadata-provider-dialog__actions { display: flex; flex-wrap: wrap; gap: var(--space-2); margin-top: 16px; }
 .metadata-provider-dialog__actions button {
   display: flex;
   align-items: center;

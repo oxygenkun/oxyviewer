@@ -1,6 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
-import { Circle, Download, FileCog, FolderSearch, Image, Star, X } from "lucide-react";
+import { Circle, Download, FileCog, FolderSearch, Image, RefreshCw, Star, X } from "lucide-react";
 import {
   chooseAndConfigureExiftool,
   getAssetDetails,
@@ -14,7 +14,7 @@ import {
   applyMetadataProjectionPatch,
   useMetadataProjectionStore,
 } from "@/lib/projection/metadataProjection";
-import { requiresExiftoolSetup } from "@/lib/projection/metadataProvider";
+import { requiresExiftoolSetup, type ExiftoolSetupAction } from "@/lib/projection/metadataProvider";
 import type { AssetSummary, MetadataPatch, PickLabel } from "@/types";
 import { formatBytes } from "@/components/browsing/AssetBrowser";
 import { PickFlagIcon } from "@/components/common/PickFlagIcon";
@@ -70,9 +70,8 @@ export function Inspector({ asset, selectedCount, selectedPaths, t }: InspectorP
     },
   });
   const providerSetup = useMutation({
-    mutationFn: (source: "download" | "select") => source === "download"
-      ? installExiftool()
-      : chooseAndConfigureExiftool(),
+    mutationFn: (source: ExiftoolSetupAction) => source === "check" ? getExiftoolStatus()
+      : source === "download" ? installExiftool() : chooseAndConfigureExiftool(),
     onSuccess: async (status) => {
       if (!status?.available || !syncPending) return;
       setSyncPending(false);
@@ -278,7 +277,12 @@ export function Inspector({ asset, selectedCount, selectedPaths, t }: InspectorP
               ><X size={14} /></button>
             </header>
             <p>{t("exiftoolRequiredBody")}</p>
-            {providerSetup.isPending ? <small>{t("installingExiftool")}</small> : null}
+            <p>{t("exiftoolManualInstallHint")}</p>
+            {providerSetup.isPending ? <small role="status">{t(providerSetup.variables === "check"
+              ? "checkingExiftool" : "installingExiftool")}</small> : null}
+            {providerSetup.isSuccess && providerSetup.variables === "check" && !providerSetup.data?.available ? (
+              <small className="metadata-error" role="status">{t("exiftoolNotFound")}</small>
+            ) : null}
             {providerSetup.isError ? (
               <small className="metadata-error">{String(providerSetup.error)}</small>
             ) : null}
@@ -292,6 +296,10 @@ export function Inspector({ asset, selectedCount, selectedPaths, t }: InspectorP
                 onClick={() => providerSetup.mutate("select")}
                 disabled={providerSetup.isPending}
               ><FolderSearch size={13} />{t("selectExiftool")}</button>
+              <button
+                onClick={() => providerSetup.mutate("check")}
+                disabled={providerSetup.isPending}
+              ><RefreshCw size={13} />{t("recheckExiftool")}</button>
               <button
                 onClick={() => setSyncPending(false)}
                 disabled={providerSetup.isPending}
