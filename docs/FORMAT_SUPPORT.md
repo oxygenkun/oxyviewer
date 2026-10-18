@@ -94,7 +94,29 @@ JPEG/HEIF/HIF files through ExifTool.
 Native XMP keyword arrays retain exact members, including commas and duplicate
 values, instead of splitting their display text.
 
-The inspector ExifTool prompt offers **Check again** after
+The folder context menu can write sidecars into every eligible JPEG/HEIF/HIF
+in that directory, across all pages and independently of the current selection
+or filters. It excludes subfolders, RAW, other formats and files without an XMP
+sidecar. The dialog offers ExifTool setup when needed, reports progress and
+per-file failures, unchanged and skipped counts. One core batch owns a reusable
+pool of at most two ExifTool sessions and continues after confirmed file errors
+without retrying them. Each session executes one file at a time; completion order
+can differ from input order. Paths resolving to an already admitted canonical
+target are skipped, retaining the first path's sidecar choice. Distinct entries
+with the same filesystem identity (hard links/case aliases) retain their own
+sidecars and execute in input order, without overlapping their writes.
+It compares the sidecar with native embedded values before writing; equal values
+leave the original bytes and timestamps untouched. Keyword arrays are replaced
+or cleared, including Unicode and comma-containing values, rather than appended.
+Loss of a writer's reply marks that file uncertain and stops new admission;
+other in-flight writes finish and retain their results. Remaining files stay
+unattempted; uncertain writes are never replayed automatically.
+Cancellation waits for in-flight native operations and stops subsequent writes;
+completed writes remain applied. Updated or uncertain files invalidate only their
+own metadata, and background summary refresh admission is batched. Newline or
+non-Unicode arguments use the regular argv transport instead of the line protocol.
+
+Both the folder dialog and inspector ExifTool prompt offer **Check again** after
 manual installation. Each check probes the provider again, including the running
 process's PATH, and continues the pending write only when the probe succeeds.
 An unsuccessful check keeps the prompt open and does not start a download or

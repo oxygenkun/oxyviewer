@@ -1,0 +1,153 @@
+{
+  "platform": "macOS arm64",
+  "provider": "ExifTool 13.55, configured executable",
+  "samplesBytes": [
+    7773136,
+    10031104,
+    10186752
+  ],
+  "method": "Three rounds of fresh independent copies; alternating baseline/core batch ordering; each changed batch followed by equal batch; no OS or NAS cache purge. Baseline reconstructs prior ExifTool writer only. Core times include admission, native comparison, session shutdown, and summary refresh admission; not Tauri/WebView or asynchronous summary completion.",
+  "runs": {
+    "local": {
+      "checks": {
+        "compressedImagePacketsUnchanged": true,
+        "equalSyncBytesAndMtimeUnchanged": true,
+        "sourceBytesUnchanged": true,
+        "sourceSidecarsUnchanged": true
+      },
+      "filesPerBatch": 3,
+      "trials": [
+        {
+          "changedMs": 503.77191700000003,
+          "equalMs": 502.239833,
+          "optimized": false,
+          "round": 0
+        },
+        {
+          "changedMs": 201.220125,
+          "equalMs": 3.298709,
+          "optimized": true,
+          "round": 0
+        },
+        {
+          "changedMs": 197.311583,
+          "equalMs": 3.340292,
+          "optimized": true,
+          "round": 1
+        },
+        {
+          "changedMs": 502.849458,
+          "equalMs": 497.716625,
+          "optimized": false,
+          "round": 1
+        },
+        {
+          "changedMs": 500.10420799999997,
+          "equalMs": 499.747792,
+          "optimized": false,
+          "round": 2
+        },
+        {
+          "changedMs": 202.025292,
+          "equalMs": 3.333625,
+          "optimized": true,
+          "round": 2
+        }
+      ]
+    },
+    "nas": {
+      "checks": {
+        "compressedImagePacketsUnchanged": true,
+        "equalSyncBytesAndMtimeUnchanged": true,
+        "sourceBytesUnchanged": true,
+        "sourceSidecarsUnchanged": true
+      },
+      "filesPerBatch": 3,
+      "trials": [
+        {
+          "changedMs": 1144.141875,
+          "equalMs": 876.8741669999999,
+          "optimized": false,
+          "round": 0
+        },
+        {
+          "changedMs": 906.820292,
+          "equalMs": 42.908750000000005,
+          "optimized": true,
+          "round": 0
+        },
+        {
+          "changedMs": 898.907791,
+          "equalMs": 44.941500000000005,
+          "optimized": true,
+          "round": 1
+        },
+        {
+          "changedMs": 1174.9552919999999,
+          "equalMs": 897.7885839999999,
+          "optimized": false,
+          "round": 1
+        },
+        {
+          "changedMs": 1151.3241659999999,
+          "equalMs": 914.9238339999999,
+          "optimized": false,
+          "round": 2
+        },
+        {
+          "changedMs": 903.376459,
+          "equalMs": 43.03525,
+          "optimized": true,
+          "round": 2
+        }
+      ]
+    }
+  },
+  "additionalNasConfirmationBeforeFinalCacheLayout": {
+    "checks": {
+      "compressedImagePacketsUnchanged": true,
+      "equalSyncBytesAndMtimeUnchanged": true,
+      "sourceBytesUnchanged": true,
+      "sourceSidecarsUnchanged": true
+    },
+    "filesPerBatch": 3,
+    "trials": [
+      {
+        "changedMs": 1202.9725,
+        "equalMs": 898.843958,
+        "optimized": false,
+        "round": 0
+      },
+      {
+        "changedMs": 904.370416,
+        "equalMs": 43.772958,
+        "optimized": true,
+        "round": 0
+      },
+      {
+        "changedMs": 970.223,
+        "equalMs": 42.972542000000004,
+        "optimized": true,
+        "round": 1
+      },
+      {
+        "changedMs": 1178.859375,
+        "equalMs": 914.463334,
+        "optimized": false,
+        "round": 1
+      },
+      {
+        "changedMs": 1157.4033749999999,
+        "equalMs": 913.766042,
+        "optimized": false,
+        "round": 2
+      },
+      {
+        "changedMs": 896.2642910000001,
+        "equalMs": 40.572875,
+        "optimized": true,
+        "round": 2
+      }
+    ]
+  }
+}

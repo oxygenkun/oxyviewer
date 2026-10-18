@@ -27,6 +27,25 @@ The [2026-10-15 sidecar validation](research/2026-10-15-sidecar-markings-validat
 records exact XMP parity and local release component timings; it does not qualify
 cold NAS or first-paint budgets.
 
+Explicit sidecar-to-embedded writes submit one core batch and use a bounded pool
+of two reusable ExifTool sessions. Native embedded values are compared before
+writing, equal files remain
+untouched, keyword lists replace existing values, and metadata invalidation is
+per path with bounded background refresh admission. The
+[concurrency validation](research/2026-10-16-embedded-metadata-concurrency-validation.md)
+compares 1/2/4 sessions on disposable SMB HIF copies: 36 changed writes took
+10.001 s with one session and 8.222 s with two (17.8% less). The default preserves
+cancellation and in-flight partial successes; four sessions had higher component
+file latency for limited extra batch throughput. In the earlier single-session
+[2026-10-16 release validation](research/2026-10-16-embedded-metadata-sync-validation.md),
+nine changed HIF writes on SMB took 2.709 s versus 3.470 s for the previous
+writer transport (21.9% less); nine unchanged checks took 0.131 s versus 2.690 s
+of redundant rewrites. These small warm samples exclude Tauri/WebView timing and
+do not promise the same speed on a loaded NAS. The
+[earlier diagnosis](research/2026-10-15-embedded-metadata-write-diagnosis.md)
+records highly variable SMB rewrite costs; local staging remains deferred until
+source proofs, recovery and attribute preservation are implemented in files.
+
 The [2026-10-14 core refactor qualification](research/2026-10-14-core-layout-refactor-validation.md)
 compares the original and four-package Windows Release WebView builds. Both pass
 12 media scenarios / 34 measured runs with real HIF and 16 distinct RAW files plus

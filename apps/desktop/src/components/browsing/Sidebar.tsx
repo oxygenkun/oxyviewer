@@ -4,6 +4,7 @@ import {
   ChevronRight,
   Copy,
   Crosshair,
+  FileInput,
   Folder,
   FolderOpen,
   GripVertical,
@@ -37,6 +38,8 @@ import type { FolderRestoreState } from "@/lib/browse/folderRestoration";
 import { isSameOrDescendantPath, platformFileManager } from "@/lib/browse/folderPaths";
 import type { DirectorySummary, DirectoryTreeNode, DirectoryTreeSnapshot, FolderSession } from "@/types";
 import { ConfirmTrashDialog } from "@/components/overlay/ConfirmTrashDialog";
+import { FolderMetadataSyncDialog } from "@/components/overlay/FolderMetadataSyncDialog";
+import { useFolderMetadataSync } from "@/lib/hooks/useFolderMetadataSync";
 import { FolderNameButton } from "./FolderNameButton";
 import { UnavailableFolder } from "./UnavailableFolder";
 import type { RootRelocationPlan } from "@/types";
@@ -306,6 +309,7 @@ export function Sidebar({
   t,
 }: SidebarProps) {
   const queryClient = useQueryClient();
+  const metadataSync = useFolderMetadataSync(t);
   const [searchOpen, setSearchOpen] = useState(false);
   const [peopleFoldersOpen, setPeopleFoldersOpen] = useState(false);
   const [personFolderShare, setPersonFolderShare] = useState(() => {
@@ -501,7 +505,7 @@ export function Sidebar({
       session,
       entry,
       x: Math.max(8, Math.min(event.clientX, window.innerWidth - 224)),
-      y: Math.max(8, Math.min(event.clientY, window.innerHeight - 132)),
+      y: Math.max(8, Math.min(event.clientY, window.innerHeight - 184)),
     });
   }, []);
 
@@ -920,6 +924,18 @@ export function Sidebar({
               </button>
               <div className="folder-context-menu__separator" />
               <button
+                role="menuitem"
+                onClick={() => {
+                  const { session, entry } = contextMenu;
+                  setContextMenu(undefined);
+                  void metadataSync.start(session, entry.path);
+                }}
+              >
+                <FileInput size={13} />
+                {t("folderMetadataSync")}
+              </button>
+              <div className="folder-context-menu__separator" />
+              <button
                 className="folder-context-menu__danger"
                 role="menuitem"
                 onClick={() => {
@@ -934,6 +950,14 @@ export function Sidebar({
             </div>,
             document.body,
           ) : null}
+
+          {metadataSync.state ? <FolderMetadataSyncDialog
+            state={metadataSync.state}
+            onSetup={source => void metadataSync.setup(source)}
+            onCancel={metadataSync.cancel}
+            onClose={metadataSync.close}
+            t={t}
+          /> : null}
 
           {pendingTrash ? (
             <ConfirmTrashDialog

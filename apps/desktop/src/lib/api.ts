@@ -112,6 +112,8 @@ import type {
   ImageProjection,
   LibraryIndexUpdate,
   ExiftoolStatus,
+  EmbeddedSyncProgress,
+  EmbeddedSyncResult,
   FileDeletionMode,
   MetadataPatch,
   MetadataProjection,
@@ -844,9 +846,62 @@ export async function retryTagXmpSync(): Promise<void> {
   await invoke("retry_tag_xmp_sync");
 }
 
+const demoEmbeddedListeners = new Set<(progress: EmbeddedSyncProgress) => void>();
+const demoEmbeddedJobs = new Map<string, { cancelled: boolean }>();
+const demoEmbeddedValues = new Map<string, string>();
+
+export async function onEmbeddedSyncProgress(callback: (progress: EmbeddedSyncProgress) => void): Promise<UnlistenFn> {
+  if (isTauri()) return listen<EmbeddedSyncProgress>("embedded-sync-progress", event => callback(event.payload));
+  demoEmbeddedListeners.add(callback);
+  return () => { demoEmbeddedListeners.delete(callback); };
+}
+
+export async function cancelMetadataSync(jobId: string): Promise<boolean> {
+  if (isTauri()) return invoke<boolean>("cancel_job", { jobId });
+  const job = demoEmbeddedJobs.get(jobId);
+  if (job) job.cancelled = true;
+  return Boolean(job);
+}
+
+export async function syncEmbeddedMetadataBatch(paths: string[], requestId: string): Promise<EmbeddedSyncResult> {
+  if (isTauri()) return invoke<EmbeddedSyncResult>("sync_metadata_to_embedded", { paths, requestId });
+  const unique = [...new Set(paths)];
+  const jobId = `demo-embedded-${requestId}`;
+  const job = { cancelled: false };
+  demoEmbeddedJobs.set(jobId, job);
+  const result: EmbeddedSyncResult = { jobId, total: unique.length, completed: 0, updated: 0,
+    unchanged: 0, skipped: 0, cancelled: false, failures: [] };
+  const publish = () => {
+    const progress: EmbeddedSyncProgress = { requestId, jobId, total: result.total,
+      completed: result.completed, updated: result.updated, unchanged: result.unchanged, skipped: result.skipped };
+    demoEmbeddedListeners.forEach(listener => listener(progress));
+  };
+  try {
+    publish();
+    for (const path of unique) {
+      await new Promise<void>(resolve => window.setTimeout(resolve, 0));
+      if (job.cancelled) { result.cancelled = true; break; }
+      const asset = demoAssets.find(candidate => candidate.path === path);
+      if (!asset) result.failures.push({ path, error: "Photo unavailable", uncertain: false });
+      else if (!asset.hasSidecar || asset.kind !== "jpeg" && asset.kind !== "heif") result.skipped += 1;
+      else {
+        const value = JSON.stringify([asset.rating ?? 0, asset.colorLabel ?? null,
+          asset.pickLabel ?? null, [...demoEffectiveTagIds(path)].sort()]);
+        if (demoEmbeddedValues.get(path) === value) result.unchanged += 1;
+        else { demoEmbeddedValues.set(path, value); result.updated += 1; }
+      }
+      result.completed += 1;
+      publish();
+    }
+    return result;
+  } finally { demoEmbeddedJobs.delete(jobId); }
+}
+
 export async function syncMetadataToEmbedded(paths: string[]): Promise<string> {
-  if (!isTauri()) return "demo-embedded-sync-job";
-  return invoke<string>("sync_metadata_to_embedded", { paths });
+  const result = await syncEmbeddedMetadataBatch(paths, crypto.randomUUID());
+  if (result.failures.length) throw new Error(result.failures.map(failure => `${failure.path}: ${failure.error}`).join("\n"));
+  if (result.cancelled || result.completed < result.total) throw new Error("Embedded metadata sync stopped before all files were processed");
+  return result.jobId;
 }
 
 export async function getExiftoolStatus(): Promise<ExiftoolStatus> {

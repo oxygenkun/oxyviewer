@@ -1,3 +1,6 @@
+mod embedded;
+mod embedded_batch;
+mod exiftool_session;
 pub mod provider;
 mod service;
 pub mod types;
@@ -474,25 +477,16 @@ impl MetadataFacade {
     }
 
     pub fn sync_metadata_to_embedded(&self, path: &Path) -> Result<PathBuf, MetadataError> {
-        if !sidecar_path(path).is_file() {
-            return Err(MetadataError::SidecarUnavailable(path.to_path_buf()));
-        }
-        let metadata = read_sidecar(path)?;
-        let patch = crate::metadata::types::MetadataPatch {
-            rating: Some(metadata.rating),
-            color_label: Some(metadata.color_label),
-            pick_label: Some(metadata.pick_label),
-            keywords: Some(metadata.keywords),
-            hierarchical_keywords: Some(metadata.hierarchical_keywords),
-            ..crate::metadata::types::MetadataPatch::default()
-        };
-        let executable = self.exiftool();
-        let updated = patch_embedded(path, &patch, executable.as_deref())?;
+        self.sync_embedded_file(path, &mut None, &|| false)
+            .map_err(|error| error.error)?;
+        Ok(path.to_path_buf())
+    }
+
+    pub(crate) fn invalidate_summary_path(&self, path: &Path) {
         self.summary_cache
             .write()
             .expect("metadata summary cache lock poisoned")
             .remove(path);
-        Ok(updated)
     }
 
     pub fn exiftool_version(&self) -> Result<String, MetadataError> {
@@ -782,11 +776,11 @@ fn string_value(value: Option<&Value>) -> Option<String> {
     }
 }
 
-fn patch_embedded(
+fn embedded_command(
     path: &Path,
     patch: &crate::metadata::types::MetadataPatch,
     exiftool: Option<&Path>,
-) -> Result<PathBuf, MetadataError> {
+) -> Result<Command, MetadataError> {
     let mut command = exiftool_command(exiftool);
     command.args(["-overwrite_original", "-P"]);
     let sony_hif = is_sony_hif(path);
@@ -797,13 +791,7 @@ fn patch_embedded(
     }
     add_patch_args(&mut command, patch, sony_hif)?;
     command.arg(path);
-    let output = exiftool_output(&mut command)?;
-    if !output.status.success() {
-        return Err(MetadataError::Read(
-            String::from_utf8_lossy(&output.stderr).trim().to_owned(),
-        ));
-    }
-    Ok(path.to_path_buf())
+    Ok(command)
 }
 
 fn add_patch_args(
@@ -850,9 +838,12 @@ fn add_patch_args(
 }
 
 fn add_exiftool_list_args(command: &mut Command, name: &str, values: &[String]) {
-    command.arg(format!("-{name}="));
-    for value in values {
-        command.arg(format!("-{name}+={value}"));
+    if values.is_empty() {
+        command.arg(format!("-{name}="));
+    } else {
+        for value in values {
+            command.arg(format!("-{name}={value}"));
+        }
     }
 }
 

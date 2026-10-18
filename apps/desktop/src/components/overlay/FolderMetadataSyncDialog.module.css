@@ -1,0 +1,11 @@
+.path { margin: 12px 0; overflow-wrap: anywhere; color: var(--text); font-size: 0.75rem; }
+.description, .status { color: var(--muted); font-size: 0.75rem; line-height: 1.6; }
+.status progress { display: block; width: 100%; margin-top: 12px; accent-color: var(--accent); }
+.actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: var(--space-2); margin-top: 16px; }
+.error { color: #e9aaa5; font-size: 0.75rem; overflow-wrap: anywhere; }
+.failures { margin-top: 12px; font-size: 0.75rem; }
+.failures summary { cursor: pointer; }
+.failures ul { max-height: 180px; overflow: auto; padding-left: 20px; }
+.failures li { margin-top: 8px; overflow-wrap: anywhere; }
+.failures strong, .failures span { display: block; }
+.failures span { color: var(--muted); }

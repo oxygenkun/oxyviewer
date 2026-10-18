@@ -8,6 +8,7 @@ use std::path::PathBuf;
 pub enum CoreEvent {
     ImageProjectionUpdated(Box<ImageProjection>),
     MetadataProjectionUpdated(MetadataProjection),
+    EmbeddedSyncProgress(crate::metadata::types::EmbeddedSyncProgress),
     AssetTagsUpdated(PathBuf),
     HeifTilePublished(Box<oxy_media::HeifTilePublication>),
     HeifStatusUpdated(HeifStatusEvent),

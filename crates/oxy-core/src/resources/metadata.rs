@@ -17,9 +17,9 @@ use crate::{events::CoreEvent, runtime::CoreRuntime};
 use oxy_media::types::{AssetKind, EditableMetadata};
 use std::{
     collections::HashMap,
-    path::PathBuf,
+    path::{Path, PathBuf},
     sync::{
-        Arc, Condvar, Mutex, RwLock,
+        Arc, Condvar, Mutex, RwLock, Weak,
         atomic::{AtomicU64, Ordering},
         mpsc::{self, Receiver, Sender},
     },
@@ -30,6 +30,7 @@ struct RequestKey {
     path: PathBuf,
     source_revision: String,
     generation: u64,
+    path_generation: u64,
 }
 
 struct Request {
@@ -42,10 +43,20 @@ struct Request {
 #[derive(Default)]
 struct WorkState {
     stopping: bool,
-    admission_locks: HashMap<RequestKey, Arc<Mutex<()>>>,
     pending: CoalescingPriorityQueue<RequestKey, Request, MetadataRequestPriority>,
     active: HashMap<RequestKey, Arc<Mutex<Request>>>,
     active_directory: Option<PathBuf>,
+}
+
+#[derive(Default)]
+struct PathState {
+    generation: u64,
+    gate: Weak<Mutex<()>>,
+}
+
+struct CachedDetails {
+    key: RequestKey,
+    result: AssetDetailsResult,
 }
 
 #[derive(Clone)]
@@ -56,8 +67,9 @@ pub struct MetadataQueue {
     /// Tags own a sidecar's keyword vocabulary and assignment sources.
     tags: Arc<Tags>,
     work: Arc<(Mutex<WorkState>, Condvar)>,
-    details: Arc<RwLock<HashMap<RequestKey, AssetDetailsResult>>>,
+    details: Arc<RwLock<HashMap<PathBuf, CachedDetails>>>,
     request_generation: Arc<AtomicU64>,
+    paths: Arc<Mutex<HashMap<PathBuf, PathState>>>,
 }
 
 impl MetadataQueue {
@@ -76,6 +88,7 @@ impl MetadataQueue {
             work: Arc::new((Mutex::new(WorkState::default()), Condvar::new())),
             details: Arc::new(RwLock::new(HashMap::new())),
             request_generation: Arc::new(AtomicU64::new(0)),
+            paths: Arc::new(Mutex::new(HashMap::new())),
         };
         let stop_work = Arc::clone(&queue.work);
         app.on_stop(move || {
@@ -175,7 +188,63 @@ impl MetadataQueue {
         self.details
             .write()
             .expect("metadata details lock poisoned")
-            .retain(|key, _| key.path.parent() != Some(directory));
+            .retain(|path, _| path.parent() != Some(directory));
+    }
+
+    /// Serialize admission/publication only for this path. The short map lock is
+    /// released before filesystem/SQLite work; unrelated paths remain independent.
+    fn with_path_gate<T>(&self, path: &Path, operation: impl FnOnce() -> T) -> T {
+        let gate = {
+            let mut paths = self.paths.lock().expect("metadata path state poisoned");
+            let state = paths.entry(path.to_owned()).or_default();
+            state.gate.upgrade().unwrap_or_else(|| {
+                let gate = Arc::new(Mutex::new(()));
+                state.gate = Arc::downgrade(&gate);
+                gate
+            })
+        };
+        let result = {
+            let _guard = gate.lock().expect("metadata path gate poisoned");
+            operation()
+        };
+        // Untouched paths need no permanent epoch entry. Keep changed epochs
+        // while old requests may still carry an earlier generation.
+        let mut paths = self.paths.lock().expect("metadata path state poisoned");
+        if Arc::strong_count(&gate) == 1
+            && paths.get(path).is_some_and(|state| state.generation == 0)
+        {
+            paths.remove(path);
+        }
+        result
+    }
+
+    fn path_generation(&self, path: &Path) -> u64 {
+        self.paths
+            .lock()
+            .expect("metadata path state poisoned")
+            .get(path)
+            .map_or(0, |state| state.generation)
+    }
+
+    fn is_current(&self, key: &RequestKey) -> bool {
+        key.generation == self.request_generation.load(Ordering::Relaxed)
+            && key.path_generation == self.path_generation(&key.path)
+    }
+
+    pub(crate) fn invalidate_path(&self, path: &Path) {
+        self.with_path_gate(path, || {
+            self.paths
+                .lock()
+                .expect("metadata path state poisoned")
+                .entry(path.to_owned())
+                .or_default()
+                .generation += 1;
+            self.metadata.invalidate_summary_path(path);
+            self.details
+                .write()
+                .expect("metadata details lock poisoned")
+                .remove(path);
+        });
     }
 
     /// Drops work that has not started for assets outside the directory the
@@ -229,14 +298,16 @@ impl MetadataQueue {
             path: asset.path.clone(),
             source_revision: source_revision.clone(),
             generation: self.request_generation.load(Ordering::Relaxed),
+            path_generation: self.path_generation(&asset.path),
         };
         let (sender, receiver) = mpsc::channel();
         if let Some(cached) = self
             .details
             .read()
             .expect("metadata details lock poisoned")
-            .get(&key)
-            .cloned()
+            .get(&key.path)
+            .filter(|cached| cached.key == key)
+            .map(|cached| cached.result.clone())
         {
             let _ = sender.send(cached);
             return Ok(receiver);
@@ -263,22 +334,12 @@ impl MetadataQueue {
             path: asset.path.clone(),
             source_revision,
             generation: self.request_generation.load(Ordering::Relaxed),
+            path_generation: self.path_generation(&asset.path),
         };
-        let gate = {
-            let mut work = self.work.0.lock().expect("metadata queue lock poisoned");
-            if work.stopping {
-                return Err("application is shutting down".into());
-            }
-            Arc::clone(work.admission_locks.entry(key.clone()).or_default())
-        };
-        let admission = gate.lock().expect("metadata admission lock poisoned");
-        let result = self.enqueue_admitted(app, asset, key.clone(), priority, detail_waiter);
-        drop(admission);
-        let mut work = self.work.0.lock().expect("metadata queue lock poisoned");
-        if Arc::strong_count(&gate) == 2 {
-            work.admission_locks.remove(&key);
-        }
-        result
+        let path = key.path.clone();
+        self.with_path_gate(&path, || {
+            self.enqueue_admitted(app, asset, key, priority, detail_waiter)
+        })
     }
 
     fn enqueue_admitted(
@@ -289,6 +350,22 @@ impl MetadataQueue {
         priority: MetadataRequestPriority,
         detail_waiter: Option<Sender<AssetDetailsResult>>,
     ) -> Result<MetadataProjection, String> {
+        if !self.is_current(&key) {
+            return Err("metadata request invalidated during admission".into());
+        }
+        if let Some(waiter) = &detail_waiter
+            && let Some(cached) = self
+                .details
+                .read()
+                .expect("metadata details lock poisoned")
+                .get(&key.path)
+                .filter(|cached| cached.key == key)
+                .map(|cached| cached.result.clone())
+        {
+            let projection = cached.metadata_projection.clone();
+            let _ = waiter.send(cached);
+            return Ok(projection);
+        }
         let mut work = self.work.0.lock().expect("metadata queue lock poisoned");
         if work.stopping {
             return Err("application is shutting down".into());
@@ -308,6 +385,7 @@ impl MetadataQueue {
                 active.detail_waiters.push(waiter);
                 active.priority = active.priority.max(priority);
             }
+            drop(work);
             return self
                 .metadata
                 .cached_projection(&asset)
@@ -319,6 +397,7 @@ impl MetadataQueue {
                 current.detail_waiters.extend(waiters);
             });
             debug_assert!(updated);
+            drop(work);
             return self
                 .metadata
                 .cached_projection(&asset)
@@ -356,7 +435,7 @@ impl MetadataQueue {
         };
         let mut work = self.work.0.lock().expect("metadata queue lock poisoned");
         if work.stopping
-            || key.generation != self.request_generation.load(Ordering::Relaxed)
+            || !self.is_current(&key)
             || work
                 .active_directory
                 .as_deref()
@@ -370,6 +449,168 @@ impl MetadataQueue {
         self.work.1.notify_one();
         let _ = app.publish(CoreEvent::MetadataProjectionUpdated(loading.clone()));
         Ok(loading)
+    }
+
+    fn requeue_waiters(&self, app: &CoreRuntime, key: &RequestKey, request: &Arc<Mutex<Request>>) {
+        let waiters = {
+            let mut work = self.work.0.lock().expect("metadata queue lock poisoned");
+            work.active.remove(key);
+            std::mem::take(
+                &mut request
+                    .lock()
+                    .expect("active metadata request lock poisoned")
+                    .detail_waiters,
+            )
+        };
+        if waiters.is_empty() || app.is_stopping() {
+            return;
+        }
+        let Ok(asset) = self.files.get_asset(&key.path) else {
+            return;
+        };
+        let revision = metadata_source_revision(&asset);
+        for waiter in waiters {
+            let _ = self.enqueue(
+                app,
+                asset.clone(),
+                revision.clone(),
+                MetadataRequestPriority::Selected,
+                Some(waiter),
+            );
+        }
+    }
+
+    fn process_request(
+        &self,
+        app: &CoreRuntime,
+        key: &RequestKey,
+        request: &Arc<Mutex<Request>>,
+    ) -> bool {
+        if !self.is_current(key) {
+            return false;
+        }
+        let (asset, observation, needs_details) = {
+            let request = request
+                .lock()
+                .expect("active metadata request lock poisoned");
+            (
+                request.asset.clone(),
+                request.observation.clone(),
+                !request.detail_waiters.is_empty(),
+            )
+        };
+        if !needs_details {
+            let read = self.metadata.read_editable_observation(&observation);
+            if !self.is_current(key) {
+                return false;
+            }
+            let candidate = match read {
+                Ok((editable, projection)) => {
+                    self.import_sidecar_tags(app, &asset, &editable);
+                    projection
+                }
+                Err(error) => self
+                    .metadata
+                    .fail_observation(&observation, error.to_string()),
+            };
+            if app.is_stopping() {
+                return true;
+            }
+            if !self.is_current(key) {
+                return false;
+            }
+            let projection = match self.projections.accept_metadata_projection(candidate) {
+                Ok(projection) => projection,
+                Err(error) => {
+                    eprintln!("failed to persist metadata projection: {error}");
+                    self.metadata
+                        .fail_observation(&observation, error.to_string())
+                }
+            };
+            if projection.error.as_deref() != Some("invalidated") {
+                let _ = app.publish(CoreEvent::MetadataProjectionUpdated(projection));
+            }
+            let should_upgrade = {
+                let mut work = self.work.0.lock().expect("metadata queue lock poisoned");
+                let should_upgrade = !request
+                    .lock()
+                    .expect("active metadata request lock poisoned")
+                    .detail_waiters
+                    .is_empty();
+                if !should_upgrade {
+                    work.active.remove(key);
+                }
+                should_upgrade
+            };
+            if !should_upgrade {
+                return true;
+            }
+        }
+
+        let dimensions = oxy_media::dimensions(&asset.path, asset.kind).ok();
+        let display_dimensions = dimensions.map(|value| (value.width, value.height));
+        let document = self
+            .metadata
+            .read_document_observation(&observation, display_dimensions);
+        if app.is_stopping() {
+            return true;
+        }
+        if !self.is_current(key) {
+            return false;
+        }
+        if let Ok((document, _)) = &document {
+            self.import_sidecar_tags(app, &asset, &document.editable);
+        }
+        let (document, candidate) = match document {
+            Ok((document, projection)) => (Ok(document), projection),
+            Err(error) => {
+                let projection = self
+                    .metadata
+                    .fail_observation(&observation, error.to_string());
+                (Err(error), projection)
+            }
+        };
+        let projection = match self.projections.accept_metadata_projection(candidate) {
+            Ok(projection) => projection,
+            Err(error) => {
+                eprintln!("failed to persist metadata projection: {error}");
+                self.metadata
+                    .fail_observation(&observation, error.to_string())
+            }
+        };
+        let details = build_asset_details(asset, dimensions, document);
+        let result = AssetDetailsResult {
+            details,
+            metadata_projection: projection.clone(),
+        };
+        self.details
+            .write()
+            .expect("metadata details lock poisoned")
+            .insert(
+                key.path.clone(),
+                CachedDetails {
+                    key: key.clone(),
+                    result: result.clone(),
+                },
+            );
+        if projection.error.as_deref() != Some("invalidated") {
+            let _ = app.publish(CoreEvent::MetadataProjectionUpdated(projection));
+        }
+        let waiters = {
+            let mut work = self.work.0.lock().expect("metadata queue lock poisoned");
+            let waiters = std::mem::take(
+                &mut request
+                    .lock()
+                    .expect("active metadata request lock poisoned")
+                    .detail_waiters,
+            );
+            work.active.remove(key);
+            waiters
+        };
+        for waiter in waiters {
+            let _ = waiter.send(result.clone());
+        }
+        true
     }
 
     fn spawn_worker(&self, app: CoreRuntime) {
@@ -400,116 +641,10 @@ impl MetadataQueue {
                     let Some((key, request)) = request else {
                         continue;
                     };
-                    let (asset, observation, needs_details) = {
-                        let request = request
-                            .lock()
-                            .expect("active metadata request lock poisoned");
-                        (
-                            request.asset.clone(),
-                            request.observation.clone(),
-                            !request.detail_waiters.is_empty(),
-                        )
-                    };
-                    if !needs_details {
-                        let candidate = match queue.metadata.read_editable_observation(&observation)
-                        {
-                            Ok((editable, projection)) => {
-                                queue.import_sidecar_tags(&app, &asset, &editable);
-                                projection
-                            }
-                            Err(error) => queue
-                                .metadata
-                                .fail_observation(&observation, error.to_string()),
-                        };
-                        if app.is_stopping() {
-                            return;
-                        }
-                        let projection =
-                            match queue.projections.accept_metadata_projection(candidate) {
-                                Ok(projection) => projection,
-                                Err(error) => {
-                                    eprintln!("failed to persist metadata projection: {error}");
-                                    queue
-                                        .metadata
-                                        .fail_observation(&observation, error.to_string())
-                                }
-                            };
-                        if projection.error.as_deref() != Some("invalidated") {
-                            let _ = app.publish(CoreEvent::MetadataProjectionUpdated(projection));
-                        }
-                        let should_upgrade = {
-                            let mut work =
-                                queue.work.0.lock().expect("metadata queue lock poisoned");
-                            let should_upgrade = !request
-                                .lock()
-                                .expect("active metadata request lock poisoned")
-                                .detail_waiters
-                                .is_empty();
-                            if !should_upgrade {
-                                work.active.remove(&key);
-                            }
-                            should_upgrade
-                        };
-                        if !should_upgrade {
-                            continue;
-                        }
-                    }
-
-                    let dimensions = oxy_media::dimensions(&asset.path, asset.kind).ok();
-                    let display_dimensions = dimensions.map(|value| (value.width, value.height));
-                    let document = queue
-                        .metadata
-                        .read_document_observation(&observation, display_dimensions);
-                    if app.is_stopping() {
-                        return;
-                    }
-                    if let Ok((document, _)) = &document {
-                        queue.import_sidecar_tags(&app, &asset, &document.editable);
-                    }
-                    let (document, candidate) = match document {
-                        Ok((document, projection)) => (Ok(document), projection),
-                        Err(error) => {
-                            let projection = queue
-                                .metadata
-                                .fail_observation(&observation, error.to_string());
-                            (Err(error), projection)
-                        }
-                    };
-                    let projection = match queue.projections.accept_metadata_projection(candidate) {
-                        Ok(projection) => projection,
-                        Err(error) => {
-                            eprintln!("failed to persist metadata projection: {error}");
-                            queue
-                                .metadata
-                                .fail_observation(&observation, error.to_string())
-                        }
-                    };
-                    let details = build_asset_details(asset, dimensions, document);
-                    let result = AssetDetailsResult {
-                        details,
-                        metadata_projection: projection.clone(),
-                    };
-                    queue
-                        .details
-                        .write()
-                        .expect("metadata details lock poisoned")
-                        .insert(key.clone(), result.clone());
-                    if projection.error.as_deref() != Some("invalidated") {
-                        let _ = app.publish(CoreEvent::MetadataProjectionUpdated(projection));
-                    }
-                    let waiters = {
-                        let mut work = queue.work.0.lock().expect("metadata queue lock poisoned");
-                        let waiters = std::mem::take(
-                            &mut request
-                                .lock()
-                                .expect("active metadata request lock poisoned")
-                                .detail_waiters,
-                        );
-                        work.active.remove(&key);
-                        waiters
-                    };
-                    for waiter in waiters {
-                        let _ = waiter.send(result.clone());
+                    let current = queue
+                        .with_path_gate(&key.path, || queue.process_request(&app, &key, &request));
+                    if !current {
+                        queue.requeue_waiters(&app, &key, &request);
                     }
                 }
             })
@@ -619,6 +754,78 @@ fn metadata_for_details(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn invalidated_pending_details_are_reobserved_and_waiters_are_released() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("photo.jpg");
+        image::RgbImage::new(8, 8).save(&path).unwrap();
+        let runtime = CoreRuntime::default();
+        let files = Arc::new(FsCatalog::default());
+        let metadata = MetadataFacade::default();
+        metadata
+            .patch_metadata(
+                &path,
+                AssetKind::Jpeg,
+                &crate::metadata::types::MetadataPatch {
+                    rating: Some(Some(1)),
+                    ..crate::metadata::types::MetadataPatch::default()
+                },
+            )
+            .unwrap();
+        let store = Arc::new(crate::storage::Store::in_memory().unwrap());
+        let projections = Arc::new(ResourceProjections::new(Arc::clone(&store)));
+        let queue = MetadataQueue::new(
+            runtime.clone(),
+            Arc::clone(&files),
+            metadata.clone(),
+            Arc::clone(&projections),
+            Arc::new(Tags::new(store)),
+        );
+        let asset = files.get_asset(&path).unwrap();
+        let key = RequestKey {
+            path: path.clone(),
+            source_revision: metadata_source_revision(&asset),
+            generation: 0,
+            path_generation: 0,
+        };
+        let observation =
+            metadata.observe_asset_at(&asset, projections.next_resource_revision().unwrap());
+        metadata
+            .patch_metadata(
+                &path,
+                AssetKind::Jpeg,
+                &crate::metadata::types::MetadataPatch {
+                    rating: Some(Some(5)),
+                    ..crate::metadata::types::MetadataPatch::default()
+                },
+            )
+            .unwrap();
+        let (sender, receiver) = mpsc::channel();
+        {
+            let mut work = queue.work.0.lock().unwrap();
+            work.pending.push_or_merge(
+                key,
+                Request {
+                    asset,
+                    observation,
+                    detail_waiters: vec![sender],
+                    priority: MetadataRequestPriority::Selected,
+                },
+                MetadataRequestPriority::Selected,
+                |_, _| unreachable!(),
+            );
+            queue.invalidate_path(&path);
+        }
+        assert_eq!(queue.request_generation.load(Ordering::Relaxed), 0);
+        queue.work.1.notify_one();
+        let result = receiver
+            .recv_timeout(std::time::Duration::from_secs(3))
+            .unwrap();
+        assert_eq!(result.details.metadata.rating, Some(5));
+        assert_eq!(result.metadata_projection.rating, Some(5));
+        assert!(runtime.shutdown(std::time::Duration::from_secs(3)));
+    }
 
     #[test]
     fn summaries_import_sidecar_markings_and_tags_without_native_image_metadata() {
@@ -790,10 +997,9 @@ mod tests {
         let deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
         loop {
             if queue
-                .work
-                .0
+                .paths
                 .try_lock()
-                .is_ok_and(|work| !work.admission_locks.is_empty())
+                .is_ok_and(|paths| paths.values().any(|state| state.gate.strong_count() > 0))
             {
                 break;
             }

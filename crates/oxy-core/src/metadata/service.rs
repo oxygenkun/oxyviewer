@@ -2,7 +2,7 @@
 use super::{
     MetadataFacade,
     provider::{ExiftoolStatus, ProviderManager},
-    types::{AssetDetailsResult, MetadataPatch},
+    types::{AssetDetailsResult, EmbeddedSyncOptions, EmbeddedSyncResult, MetadataPatch},
 };
 use crate::{
     files::FsCatalog,
@@ -14,7 +14,6 @@ use crate::{
     },
     runtime::CoreRuntime,
 };
-use oxy_media::types::AssetKind;
 use std::{
     path::PathBuf,
     sync::{
@@ -31,6 +30,7 @@ pub struct MetadataService {
     pub(crate) jobs: Arc<JobRegistry>,
     pub(crate) provider: Arc<ProviderManager>,
     pub(crate) provider_mutation: Mutex<()>,
+    pub(crate) embedded_mutation: Mutex<()>,
 }
 
 enum ProviderWork {
@@ -41,7 +41,6 @@ enum ProviderWork {
 
 enum Edit {
     Patch(MetadataPatch),
-    Embedded,
 }
 
 struct EditingJob {
@@ -136,8 +135,36 @@ impl MetadataService {
     pub fn sync_to_embedded(
         self: &Arc<Self>,
         paths: Vec<PathBuf>,
-    ) -> Result<Receiver<Result<JobId, String>>, String> {
-        self.start_edit(paths, Edit::Embedded)
+        request_id: String,
+    ) -> Result<Receiver<Result<EmbeddedSyncResult, String>>, String> {
+        self.sync_to_embedded_with_options(paths, request_id, EmbeddedSyncOptions::default())
+    }
+
+    /// Explicit limits support controlled qualification on a particular volume.
+    /// Desktop callers use the bounded default through `sync_to_embedded`.
+    pub fn sync_to_embedded_with_options(
+        self: &Arc<Self>,
+        paths: Vec<PathBuf>,
+        request_id: String,
+        options: EmbeddedSyncOptions,
+    ) -> Result<Receiver<Result<EmbeddedSyncResult, String>>, String> {
+        if !(1..=4).contains(&options.concurrency) {
+            return Err("embedded metadata concurrency must be between 1 and 4".into());
+        }
+        let job = EditingJob {
+            registry: Arc::clone(&self.jobs),
+            ticket: self.jobs.register(JobPriority::SelectedMetadata),
+        };
+        let service = Arc::clone(self);
+        let (sender, receiver) = mpsc::channel();
+        self.runtime
+            .spawn_named("metadata-embedded-batch".into(), move || {
+                let result = service.run_embedded_batch(paths, request_id, &job.ticket, options);
+                drop(job);
+                let _ = sender.send(Ok(result));
+            })
+            .map_err(|error| error.to_string())?;
+        Ok(receiver)
     }
 
     fn start_edit(
@@ -180,19 +207,13 @@ impl MetadataService {
                             .patch_metadata(&asset.path, asset.kind, patch)
                             .map_err(|error| error.to_string())?;
                     }
-                    Edit::Embedded if asset.kind == AssetKind::Raw => continue,
-                    Edit::Embedded => {
-                        self.metadata
-                            .sync_metadata_to_embedded(&asset.path)
-                            .map_err(|error| error.to_string())?;
-                    }
                 }
                 // The file write has already succeeded. Invalidate it even if
                 // a later member of this batch fails or shutdown intervenes.
                 if let Some(parent) = asset.path.parent() {
                     self.files.invalidate_directory(parent);
-                    self.queue.invalidate_directory(parent);
                 }
+                self.queue.invalidate_path(&asset.path);
                 changed.push(asset.path);
             }
             Ok(())
@@ -210,7 +231,228 @@ impl MetadataService {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{AppPaths, OxyApp};
+    use crate::{AppPaths, OxyApp, events::CoreEvent};
+    use oxy_media::types::AssetKind;
+    use std::time::{Duration, Instant};
+
+    #[test]
+    fn embedded_batch_deduplicates_continues_errors_and_skips_equal_without_a_provider() {
+        let directory = tempfile::tempdir().unwrap();
+        let (app, events) = OxyApp::open(AppPaths::from_roots(
+            directory.path().join("state"),
+            directory.path().join("cache"),
+        ))
+        .unwrap();
+        let mut photos = Vec::new();
+        for name in ["a.jpg", "b.jpg"] {
+            let path = directory.path().join(name);
+            image::RgbImage::new(8, 8).save(&path).unwrap();
+            app.metadata_service
+                .metadata
+                .patch_metadata(&path, AssetKind::Jpeg, &MetadataPatch::default())
+                .unwrap();
+            photos.push(path);
+        }
+        app.metadata_service
+            .metadata
+            .set_exiftool(Some(directory.path().join("missing-provider")));
+        let raw = directory.path().join("raw.arw");
+        std::fs::write(&raw, b"raw").unwrap();
+        let result = app
+            .metadata_service
+            .sync_to_embedded(
+                vec![
+                    photos[0].clone(),
+                    directory.path().join("missing.jpg"),
+                    photos[1].clone(),
+                    photos[0].clone(),
+                    raw,
+                ],
+                "request".into(),
+            )
+            .unwrap()
+            .recv()
+            .unwrap()
+            .unwrap();
+        assert_eq!(result.total, 4);
+        assert_eq!(result.completed, 4);
+        assert_eq!(result.updated, 0);
+        assert_eq!(result.unchanged, 2);
+        assert_eq!(result.skipped, 1);
+        assert_eq!(result.failures.len(), 1);
+        assert!(!result.failures[0].uncertain);
+        assert!(!app.jobs.cancel(&result.job_id));
+        let progress = events
+            .try_iter()
+            .filter_map(|event| match event {
+                CoreEvent::EmbeddedSyncProgress(value) => Some(value),
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(progress.len(), 5);
+        assert!(
+            progress
+                .iter()
+                .all(|event| event.request_id == "request" && event.job_id == result.job_id)
+        );
+        assert_eq!(progress.last().unwrap().completed, 4);
+        assert!(app.shutdown(Duration::from_secs(3)));
+        assert!(
+            app.metadata_service
+                .sync_to_embedded(photos, "after-stop".into())
+                .is_err()
+        );
+    }
+
+    #[test]
+    fn waiting_embedded_batch_cancels_and_remains_owned_until_its_worker_exits() {
+        let directory = tempfile::tempdir().unwrap();
+        let photo = directory.path().join("a.jpg");
+        image::RgbImage::new(8, 8).save(&photo).unwrap();
+        let before = std::fs::read(&photo).unwrap();
+        let (app, events) = OxyApp::open(AppPaths::from_roots(
+            directory.path().join("state"),
+            directory.path().join("cache"),
+        ))
+        .unwrap();
+        let guard = app.metadata_service.embedded_mutation.lock().unwrap();
+        let receiver = app
+            .metadata_service
+            .sync_to_embedded(vec![photo.clone()], "cancel".into())
+            .unwrap();
+        let job_id = loop {
+            if let CoreEvent::EmbeddedSyncProgress(progress) =
+                events.recv_timeout(Duration::from_secs(3)).unwrap()
+            {
+                break progress.job_id;
+            }
+        };
+        assert!(app.jobs.cancel(&job_id));
+        assert!(!app.shutdown(Duration::ZERO));
+        drop(guard);
+        let result = receiver
+            .recv_timeout(Duration::from_secs(3))
+            .unwrap()
+            .unwrap();
+        assert!(result.cancelled);
+        assert_eq!(result.completed, 0);
+        assert_eq!(std::fs::read(photo).unwrap(), before);
+        assert!(app.shutdown(Duration::from_secs(3)));
+    }
+
+    #[test]
+    fn editing_one_path_preserves_other_cached_details() {
+        let directory = tempfile::tempdir().unwrap();
+        let a = directory.path().join("a.jpg");
+        let b = directory.path().join("b.jpg");
+        image::RgbImage::new(8, 8).save(&a).unwrap();
+        image::RgbImage::new(8, 8).save(&b).unwrap();
+        let (app, _) = OxyApp::open(AppPaths::from_roots(
+            directory.path().join("state"),
+            directory.path().join("cache"),
+        ))
+        .unwrap();
+        app.metadata_service.details(a.clone()).unwrap();
+        let before = app.metadata_service.details(b.clone()).unwrap();
+        app.metadata_service
+            .patch(
+                vec![a.clone()],
+                MetadataPatch {
+                    rating: Some(Some(4)),
+                    ..MetadataPatch::default()
+                },
+            )
+            .unwrap()
+            .recv()
+            .unwrap()
+            .unwrap();
+        let after = app.metadata_service.details(b).unwrap();
+        assert_eq!(
+            before.metadata_projection.state_revision,
+            after.metadata_projection.state_revision
+        );
+        assert_eq!(
+            app.metadata_service
+                .details(a)
+                .unwrap()
+                .details
+                .metadata
+                .rating,
+            Some(4)
+        );
+        assert!(app.shutdown(Duration::from_secs(3)));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn active_exiftool_is_not_reported_joined_at_the_shutdown_deadline() {
+        use std::os::unix::fs::PermissionsExt;
+        let directory = tempfile::tempdir().unwrap();
+        let photo = directory.path().join("a.jpg");
+        image::RgbImage::new(8, 8).save(&photo).unwrap();
+        let (app, _) = OxyApp::open(AppPaths::from_roots(
+            directory.path().join("state"),
+            directory.path().join("cache"),
+        ))
+        .unwrap();
+        app.metadata_service
+            .metadata
+            .patch_metadata(
+                &photo,
+                AssetKind::Jpeg,
+                &MetadataPatch {
+                    rating: Some(Some(4)),
+                    ..MetadataPatch::default()
+                },
+            )
+            .unwrap();
+        let executable = directory.path().join("fake-exiftool");
+        let entered = directory.path().join("entered");
+        let release = directory.path().join("release");
+        std::fs::write(
+            &executable,
+            format!(
+                r#"#!/bin/sh
+while IFS= read -r arg; do
+  case "$arg" in
+    -stay_open) IFS= read -r flag; [ "$flag" = False ] && exit 0 ;;
+    -execute*)
+      id=${{arg#-execute}}
+      touch '{}'
+      while [ ! -f '{}' ]; do sleep 0.01; done
+      printf 'oxy-status-%s:0\n' "$id" >&2
+      printf '{{ready%s}}\n' "$id"
+      ;;
+  esac
+done
+"#,
+                entered.display(),
+                release.display()
+            ),
+        )
+        .unwrap();
+        std::fs::set_permissions(&executable, std::fs::Permissions::from_mode(0o755)).unwrap();
+        app.metadata_service.metadata.set_exiftool(Some(executable));
+        let receiver = app
+            .metadata_service
+            .sync_to_embedded(vec![photo], "active".into())
+            .unwrap();
+        let deadline = Instant::now() + Duration::from_secs(3);
+        while !entered.is_file() {
+            assert!(Instant::now() < deadline);
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        assert!(!app.shutdown(Duration::ZERO));
+        std::fs::write(release, b"finish").unwrap();
+        assert!(
+            receiver
+                .recv_timeout(Duration::from_secs(3))
+                .unwrap()
+                .unwrap()
+                .cancelled
+        );
+        assert!(app.shutdown(Duration::from_secs(3)));
+    }
 
     #[test]
     fn provider_work_is_owned_and_waiting_install_cannot_start_after_shutdown() {

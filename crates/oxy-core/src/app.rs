@@ -143,6 +143,7 @@ impl OxyApp {
             jobs: jobs.clone(),
             provider: metadata_provider,
             provider_mutation: Default::default(),
+            embedded_mutation: Default::default(),
         });
         let library_index_queue = LibraryIndexQueue::new(library.clone(), files.clone());
         let queue_diagnostics = Arc::new(QueueDiagnostics {

@@ -1,0 +1,28 @@
+{
+  "platform": "macOS Release WKWebView",
+  "storage": "SMB, disposable copies",
+  "files": 12,
+  "cancelled": {
+    "updated": 2,
+    "unchanged": 0,
+    "failures": 0,
+    "unattemptedBytesUnchanged": 10
+  },
+  "resume": {
+    "updated": 10,
+    "unchanged": 2,
+    "failures": 0
+  },
+  "repeat": {
+    "updated": 0,
+    "unchanged": 12,
+    "failures": 0
+  },
+  "checks": {
+    "originalsAndSourceSidecarsUnchanged": true,
+    "cancelledUnattemptedBytesUnchanged": true,
+    "resumePreservesAlreadyWrittenBytesAndMtime": true,
+    "repeatPreservesAllBytesAndMtime": true,
+    "compressedImagePacketsUnchanged": true
+  }
+}

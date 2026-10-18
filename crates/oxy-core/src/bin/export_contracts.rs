@@ -44,6 +44,9 @@ fn main() -> Result<(), Box<dyn Error>> {
     register::<oxy_core::contracts::DirectoryTreeSnapshot>(&mut types, &cfg);
     register::<oxy_media::types::DisplayDimensions>(&mut types, &cfg);
     register::<oxy_media::types::EditableMetadata>(&mut types, &cfg);
+    register::<oxy_core::contracts::EmbeddedSyncFailure>(&mut types, &cfg);
+    register::<oxy_core::contracts::EmbeddedSyncProgress>(&mut types, &cfg);
+    register::<oxy_core::contracts::EmbeddedSyncResult>(&mut types, &cfg);
     register::<oxy_media::types::EncodedDimensions>(&mut types, &cfg);
     register::<oxy_core::metadata::provider::ExiftoolStatus>(&mut types, &cfg);
     register::<oxy_core::contracts::ExternalAppSettings>(&mut types, &cfg);

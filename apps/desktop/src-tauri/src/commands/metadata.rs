@@ -1,6 +1,7 @@
 use crate::state::AppState;
 use oxy_core::contracts::{
-    AssetDetailsResult, JobId, MetadataPatch, MetadataProjection, MetadataRequestPriority,
+    AssetDetailsResult, EmbeddedSyncResult, JobId, MetadataPatch, MetadataProjection,
+    MetadataRequestPriority,
 };
 use oxy_core::metadata::provider::ExiftoolStatus;
 use std::path::PathBuf;
@@ -46,9 +47,10 @@ pub(crate) async fn patch_metadata(
 #[tauri::command]
 pub(crate) async fn sync_metadata_to_embedded(
     paths: Vec<PathBuf>,
+    request_id: String,
     state: State<'_, AppState>,
-) -> Result<JobId, String> {
-    let receiver = state.metadata_service.sync_to_embedded(paths)?;
+) -> Result<EmbeddedSyncResult, String> {
+    let receiver = state.metadata_service.sync_to_embedded(paths, request_id)?;
     tauri::async_runtime::spawn_blocking(move || {
         receiver.recv().map_err(|error| error.to_string())?
     })

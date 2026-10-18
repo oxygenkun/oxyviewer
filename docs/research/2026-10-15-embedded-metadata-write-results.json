@@ -1,0 +1,720 @@
+{
+  "date": "2026-10-15",
+  "platform": "macOS arm64, mounted SMB share",
+  "exiftoolVersion": "13.55",
+  "directory": {
+    "hifCount": 1545,
+    "sidecarCount": 146,
+    "eligibleBytes": 1153916312
+  },
+  "sampleSizesBytes": [
+    7773136,
+    10031104,
+    10186752
+  ],
+  "cachePolicy": "OS and SMB caches were not forcibly cleared; server load was uncontrolled",
+  "timingScope": "Direct ExifTool/component prototypes on isolated copies; excludes production IPC, core queues and WebView",
+  "explicitFsync": false,
+  "sourceSamplesVerifiedUnchanged": 3,
+  "sourceChecksumsUnchanged": true,
+  "metadataFieldsVerified": [
+    "rating",
+    "color label",
+    "pick label",
+    "subject",
+    "hierarchicalSubject"
+  ],
+  "compressedImagePayloadIntegrityVerified": false,
+  "versionProbe": {
+    "count": 7,
+    "medianMs": 64.29,
+    "minMs": 56.478,
+    "maxMs": 85.386,
+    "totalMs": 461.062,
+    "valuesMs": [
+      72.169,
+      85.386,
+      65.313,
+      64.29,
+      56.737,
+      60.689,
+      56.478
+    ]
+  },
+  "initialNasSourceReadMs": [
+    1086.087,
+    506.983,
+    1789.834
+  ],
+  "sequential": {
+    "local": {
+      "oneShot": {
+        "write": {
+          "count": 9,
+          "medianMs": 178.985,
+          "minMs": 169.794,
+          "maxMs": 218.914,
+          "totalMs": 1660.22,
+          "valuesMs": [
+            195.663,
+            170.882,
+            218.914,
+            178.985,
+            195.523,
+            185.002,
+            172.429,
+            173.028,
+            169.794
+          ]
+        },
+        "sameValues": {
+          "count": 3,
+          "medianMs": 172.96,
+          "minMs": 165.456,
+          "maxMs": 173.816,
+          "totalMs": 512.232,
+          "valuesMs": [
+            165.456,
+            173.816,
+            172.96
+          ]
+        },
+        "sameValuesRewritten": 3,
+        "sessionWarmupMs": null,
+        "metadataVerified": 3,
+        "finalKeywordCounts": [
+          4,
+          4,
+          4
+        ]
+      },
+      "stayOpen": {
+        "write": {
+          "count": 9,
+          "medianMs": 12.873,
+          "minMs": 11.122,
+          "maxMs": 114.044,
+          "totalMs": 224.245,
+          "valuesMs": [
+            114.044,
+            17.268,
+            18.974,
+            11.122,
+            13.141,
+            12.873,
+            11.448,
+            12.789,
+            12.586
+          ]
+        },
+        "sameValues": {
+          "count": 3,
+          "medianMs": 12.704,
+          "minMs": 10.487,
+          "maxMs": 12.783,
+          "totalMs": 35.974,
+          "valuesMs": [
+            10.487,
+            12.704,
+            12.783
+          ]
+        },
+        "sameValuesRewritten": 3,
+        "sessionWarmupMs": 67.8234999650158,
+        "metadataVerified": 3,
+        "finalKeywordCounts": [
+          4,
+          4,
+          4
+        ]
+      },
+      "stayOpenReplaceLists": {
+        "write": {
+          "count": 9,
+          "medianMs": 13.511,
+          "minMs": 10.936,
+          "maxMs": 122.967,
+          "totalMs": 229.47,
+          "valuesMs": [
+            122.967,
+            13.072,
+            13.511,
+            10.936,
+            13.098,
+            13.773,
+            12.092,
+            15.734,
+            14.286
+          ]
+        },
+        "sameValues": {
+          "count": 3,
+          "medianMs": 13.292,
+          "minMs": 13.107,
+          "maxMs": 16.013,
+          "totalMs": 42.412,
+          "valuesMs": [
+            13.292,
+            13.107,
+            16.013
+          ]
+        },
+        "sameValuesRewritten": 3,
+        "sessionWarmupMs": 54.884166980627924,
+        "metadataVerified": 3,
+        "finalKeywordCounts": [
+          1,
+          1,
+          1
+        ]
+      }
+    },
+    "nas": {
+      "oneShot": {
+        "write": {
+          "count": 9,
+          "medianMs": 2928.851,
+          "minMs": 325.613,
+          "maxMs": 4088.991,
+          "totalMs": 20385.36,
+          "valuesMs": [
+            2928.851,
+            3042.51,
+            339.326,
+            1016.903,
+            1109.354,
+            325.613,
+            3453.037,
+            4080.775,
+            4088.991
+          ]
+        },
+        "sameValues": {
+          "count": 3,
+          "medianMs": 4435.23,
+          "minMs": 3577.274,
+          "maxMs": 6613.681,
+          "totalMs": 14626.184,
+          "valuesMs": [
+            3577.274,
+            4435.23,
+            6613.681
+          ]
+        },
+        "sameValuesRewritten": 3,
+        "sessionWarmupMs": null,
+        "metadataVerified": 3,
+        "finalKeywordCounts": [
+          4,
+          4,
+          4
+        ]
+      },
+      "stayOpen": {
+        "write": {
+          "count": 9,
+          "medianMs": 2513.108,
+          "minMs": 1288.796,
+          "maxMs": 3435.147,
+          "totalMs": 22179.776,
+          "valuesMs": [
+            1321.999,
+            1288.796,
+            2662.531,
+            2513.108,
+            2342.362,
+            3307.401,
+            1884.888,
+            3435.147,
+            3423.545
+          ]
+        },
+        "sameValues": {
+          "count": 3,
+          "medianMs": 155.748,
+          "minMs": 140.745,
+          "maxMs": 157.475,
+          "totalMs": 453.968,
+          "valuesMs": [
+            140.745,
+            157.475,
+            155.748
+          ]
+        },
+        "sameValuesRewritten": 3,
+        "sessionWarmupMs": 90.48379195155576,
+        "metadataVerified": 3,
+        "finalKeywordCounts": [
+          4,
+          4,
+          4
+        ]
+      },
+      "stayOpenReplaceLists": {
+        "write": {
+          "count": 9,
+          "medianMs": 3945.12,
+          "minMs": 152.72,
+          "maxMs": 7241.357,
+          "totalMs": 31581.074,
+          "valuesMs": [
+            570.979,
+            152.72,
+            749.615,
+            3945.12,
+            7241.357,
+            5396.093,
+            6086.438,
+            4412.879,
+            3025.872
+          ]
+        },
+        "sameValues": {
+          "count": 3,
+          "medianMs": 1608.435,
+          "minMs": 1604.946,
+          "maxMs": 2409.488,
+          "totalMs": 5622.869,
+          "valuesMs": [
+            1608.435,
+            2409.488,
+            1604.946
+          ]
+        },
+        "sameValuesRewritten": 3,
+        "sessionWarmupMs": 81.86500001465902,
+        "metadataVerified": 3,
+        "finalKeywordCounts": [
+          1,
+          1,
+          1
+        ]
+      }
+    }
+  },
+  "stagingSequential": {
+    "stages": [
+      {
+        "sourceStatMs": 0.043832988012582064,
+        "nasReadAndLocalCopyMs": 361.9219589745626,
+        "localExiftoolMs": 150.5288750049658,
+        "nasUploadMs": 901.9343749969266,
+        "nasFinalizeMs": 165.9727080259472,
+        "totalMs": 1580.4017499904148
+      },
+      {
+        "sourceStatMs": 317.79874995118007,
+        "nasReadAndLocalCopyMs": 463.47850002348423,
+        "localExiftoolMs": 29.7772089834325,
+        "nasUploadMs": 1054.6537500340492,
+        "nasFinalizeMs": 881.2646250007674,
+        "totalMs": 2746.9728339929134
+      },
+      {
+        "sourceStatMs": 4.747874976601452,
+        "nasReadAndLocalCopyMs": 15.852332988288254,
+        "localExiftoolMs": 31.749584013596177,
+        "nasUploadMs": 1582.5697079999372,
+        "nasFinalizeMs": 340.90366697637364,
+        "totalMs": 1975.8231669547968
+      },
+      {
+        "sourceStatMs": 4.062458989210427,
+        "nasReadAndLocalCopyMs": 80.05833299830556,
+        "localExiftoolMs": 16.49975002510473,
+        "nasUploadMs": 87.08191697951406,
+        "nasFinalizeMs": 24.681375012733042,
+        "totalMs": 212.38383400486782
+      },
+      {
+        "sourceStatMs": 1.8563329940661788,
+        "nasReadAndLocalCopyMs": 98.62904198234901,
+        "localExiftoolMs": 19.069749978370965,
+        "nasUploadMs": 122.01370805269107,
+        "nasFinalizeMs": 23.46929197665304,
+        "totalMs": 265.03812498413026
+      },
+      {
+        "sourceStatMs": 1.8750830204226077,
+        "nasReadAndLocalCopyMs": 103.93304203171283,
+        "localExiftoolMs": 18.95999995758757,
+        "nasUploadMs": 111.1543329898268,
+        "nasFinalizeMs": 26.91304200561717,
+        "totalMs": 262.835500005167
+      },
+      {
+        "sourceStatMs": 0.8059170213527977,
+        "nasReadAndLocalCopyMs": 74.88408300559968,
+        "localExiftoolMs": 16.580083989538252,
+        "nasUploadMs": 83.98624998517334,
+        "nasFinalizeMs": 23.297500039916486,
+        "totalMs": 199.55383404158056
+      },
+      {
+        "sourceStatMs": 0.24966703495010734,
+        "nasReadAndLocalCopyMs": 96.49899997748435,
+        "localExiftoolMs": 22.564749990124255,
+        "nasUploadMs": 104.02783303288743,
+        "nasFinalizeMs": 21.41141699394211,
+        "totalMs": 244.75266702938825
+      },
+      {
+        "sourceStatMs": 1.995124970562756,
+        "nasReadAndLocalCopyMs": 103.08591701323166,
+        "localExiftoolMs": 18.111374985892326,
+        "nasUploadMs": 181.38175003696233,
+        "nasFinalizeMs": 27.18504099175334,
+        "totalMs": 331.7592079984024
+      }
+    ],
+    "sessionWarmupMs": 92.25554199656472,
+    "summary": {
+      "sourceStatMs": {
+        "count": 9,
+        "medianMs": 1.875,
+        "minMs": 0.044,
+        "maxMs": 317.799,
+        "totalMs": 333.435,
+        "valuesMs": [
+          0.044,
+          317.799,
+          4.748,
+          4.062,
+          1.856,
+          1.875,
+          0.806,
+          0.25,
+          1.995
+        ]
+      },
+      "nasReadAndLocalCopyMs": {
+        "count": 9,
+        "medianMs": 98.629,
+        "minMs": 15.852,
+        "maxMs": 463.479,
+        "totalMs": 1398.342,
+        "valuesMs": [
+          361.922,
+          463.479,
+          15.852,
+          80.058,
+          98.629,
+          103.933,
+          74.884,
+          96.499,
+          103.086
+        ]
+      },
+      "localExiftoolMs": {
+        "count": 9,
+        "medianMs": 19.07,
+        "minMs": 16.5,
+        "maxMs": 150.529,
+        "totalMs": 323.841,
+        "valuesMs": [
+          150.529,
+          29.777,
+          31.75,
+          16.5,
+          19.07,
+          18.96,
+          16.58,
+          22.565,
+          18.111
+        ]
+      },
+      "nasUploadMs": {
+        "count": 9,
+        "medianMs": 122.014,
+        "minMs": 83.986,
+        "maxMs": 1582.57,
+        "totalMs": 4228.804,
+        "valuesMs": [
+          901.934,
+          1054.654,
+          1582.57,
+          87.082,
+          122.014,
+          111.154,
+          83.986,
+          104.028,
+          181.382
+        ]
+      },
+      "nasFinalizeMs": {
+        "count": 9,
+        "medianMs": 26.913,
+        "minMs": 21.411,
+        "maxMs": 881.265,
+        "totalMs": 1535.099,
+        "valuesMs": [
+          165.973,
+          881.265,
+          340.904,
+          24.681,
+          23.469,
+          26.913,
+          23.298,
+          21.411,
+          27.185
+        ]
+      },
+      "totalMs": {
+        "count": 9,
+        "medianMs": 265.038,
+        "minMs": 199.554,
+        "maxMs": 2746.973,
+        "totalMs": 7819.521,
+        "valuesMs": [
+          1580.402,
+          2746.973,
+          1975.823,
+          212.384,
+          265.038,
+          262.836,
+          199.554,
+          244.753,
+          331.759
+        ]
+      }
+    },
+    "originalChecksumsUnchanged": true
+  },
+  "stagingPaired": {
+    "stages": [
+      {
+        "sourceStatMs": 0.043832988012582064,
+        "nasReadAndLocalCopyMs": 4.514041997026652,
+        "localExiftoolMs": 120.89399999240413,
+        "nasUploadMs": 89.17333302088082,
+        "nasFinalizeMs": 19.216416985727847,
+        "totalMs": 233.84162498405203,
+        "pairedOneShotMs": 290.92516703531146,
+        "stagedWasSecond": true
+      },
+      {
+        "sourceStatMs": 0.10637502418830991,
+        "nasReadAndLocalCopyMs": 4.857040999922901,
+        "localExiftoolMs": 14.533541980199516,
+        "nasUploadMs": 101.09779197955504,
+        "nasFinalizeMs": 21.510332997422665,
+        "totalMs": 142.10508298128843,
+        "pairedOneShotMs": 306.9705829839222,
+        "stagedWasSecond": false
+      },
+      {
+        "sourceStatMs": 0.03354198997840285,
+        "nasReadAndLocalCopyMs": 5.097208020742983,
+        "localExiftoolMs": 15.034541953355074,
+        "nasUploadMs": 102.13591705542058,
+        "nasFinalizeMs": 19.407665997277945,
+        "totalMs": 141.70887501677498,
+        "pairedOneShotMs": 309.9531250190921,
+        "stagedWasSecond": true
+      },
+      {
+        "sourceStatMs": 1.7680409946478903,
+        "nasReadAndLocalCopyMs": 76.91354199778289,
+        "localExiftoolMs": 12.400500010699034,
+        "nasUploadMs": 86.18729200679809,
+        "nasFinalizeMs": 20.959165995009243,
+        "totalMs": 198.22854100493714,
+        "pairedOneShotMs": 280.3022079751827,
+        "stagedWasSecond": false
+      },
+      {
+        "sourceStatMs": 0.0464579788967967,
+        "nasReadAndLocalCopyMs": 98.17766700871289,
+        "localExiftoolMs": 15.248208015691489,
+        "nasUploadMs": 111.99866700917482,
+        "nasFinalizeMs": 19.107542000710964,
+        "totalMs": 244.57854201318696,
+        "pairedOneShotMs": 305.9127079905011,
+        "stagedWasSecond": true
+      },
+      {
+        "sourceStatMs": 0.07675000233575702,
+        "nasReadAndLocalCopyMs": 98.5457919887267,
+        "localExiftoolMs": 14.745499996934086,
+        "nasUploadMs": 106.80504201445729,
+        "nasFinalizeMs": 22.9737909976393,
+        "totalMs": 243.14687500009313,
+        "pairedOneShotMs": 306.7606670083478,
+        "stagedWasSecond": false
+      },
+      {
+        "sourceStatMs": 0.03804202424362302,
+        "nasReadAndLocalCopyMs": 73.53262498509139,
+        "localExiftoolMs": 10.60229103313759,
+        "nasUploadMs": 85.003542015329,
+        "nasFinalizeMs": 25.165249942801893,
+        "totalMs": 194.3417500006035,
+        "pairedOneShotMs": 293.0663749575615,
+        "stagedWasSecond": true
+      },
+      {
+        "sourceStatMs": 1.7518330132588744,
+        "nasReadAndLocalCopyMs": 102.80841699568555,
+        "localExiftoolMs": 14.37599997734651,
+        "nasUploadMs": 108.48729201825336,
+        "nasFinalizeMs": 25.150040979497135,
+        "totalMs": 252.57358298404142,
+        "pairedOneShotMs": 323.2224999810569,
+        "stagedWasSecond": false
+      },
+      {
+        "sourceStatMs": 0.03870803629979491,
+        "nasReadAndLocalCopyMs": 99.95629196055233,
+        "localExiftoolMs": 13.627833046484739,
+        "nasUploadMs": 107.77933395002037,
+        "nasFinalizeMs": 23.518333036918193,
+        "totalMs": 244.92050003027543,
+        "pairedOneShotMs": 310.96791703021154,
+        "stagedWasSecond": true
+      }
+    ],
+    "paired": true,
+    "oneShotMs": [
+      290.92516703531146,
+      306.9705829839222,
+      309.9531250190921,
+      280.3022079751827,
+      305.9127079905011,
+      306.7606670083478,
+      293.0663749575615,
+      323.2224999810569,
+      310.96791703021154
+    ],
+    "sessionWarmupMs": 58.48404101561755,
+    "summary": {
+      "sourceStatMs": {
+        "count": 9,
+        "medianMs": 0.046,
+        "minMs": 0.034,
+        "maxMs": 1.768,
+        "totalMs": 3.904,
+        "valuesMs": [
+          0.044,
+          0.106,
+          0.034,
+          1.768,
+          0.046,
+          0.077,
+          0.038,
+          1.752,
+          0.039
+        ]
+      },
+      "nasReadAndLocalCopyMs": {
+        "count": 9,
+        "medianMs": 76.914,
+        "minMs": 4.514,
+        "maxMs": 102.808,
+        "totalMs": 564.403,
+        "valuesMs": [
+          4.514,
+          4.857,
+          5.097,
+          76.914,
+          98.178,
+          98.546,
+          73.533,
+          102.808,
+          99.956
+        ]
+      },
+      "localExiftoolMs": {
+        "count": 9,
+        "medianMs": 14.534,
+        "minMs": 10.602,
+        "maxMs": 120.894,
+        "totalMs": 231.462,
+        "valuesMs": [
+          120.894,
+          14.534,
+          15.035,
+          12.401,
+          15.248,
+          14.745,
+          10.602,
+          14.376,
+          13.628
+        ]
+      },
+      "nasUploadMs": {
+        "count": 9,
+        "medianMs": 102.136,
+        "minMs": 85.004,
+        "maxMs": 111.999,
+        "totalMs": 898.668,
+        "valuesMs": [
+          89.173,
+          101.098,
+          102.136,
+          86.187,
+          111.999,
+          106.805,
+          85.004,
+          108.487,
+          107.779
+        ]
+      },
+      "nasFinalizeMs": {
+        "count": 9,
+        "medianMs": 21.51,
+        "minMs": 19.108,
+        "maxMs": 25.165,
+        "totalMs": 197.009,
+        "valuesMs": [
+          19.216,
+          21.51,
+          19.408,
+          20.959,
+          19.108,
+          22.974,
+          25.165,
+          25.15,
+          23.518
+        ]
+      },
+      "totalMs": {
+        "count": 9,
+        "medianMs": 233.842,
+        "minMs": 141.709,
+        "maxMs": 252.574,
+        "totalMs": 1895.445,
+        "valuesMs": [
+          233.842,
+          142.105,
+          141.709,
+          198.229,
+          244.579,
+          243.147,
+          194.342,
+          252.574,
+          244.921
+        ]
+      },
+      "pairedOneShotMs": {
+        "count": 9,
+        "medianMs": 306.761,
+        "minMs": 280.302,
+        "maxMs": 323.222,
+        "totalMs": 2728.081,
+        "valuesMs": [
+          290.925,
+          306.971,
+          309.953,
+          280.302,
+          305.913,
+          306.761,
+          293.066,
+          323.222,
+          310.968
+        ]
+      }
+    },
+    "originalChecksumsUnchanged": true
+  },
+  "pairedTotalTimeReductionPercent": 30.521
+}

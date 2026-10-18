@@ -10,6 +10,58 @@ use std::path::PathBuf;
 mod burst;
 pub use burst::*;
 
+/// Host-side execution policy; not an IPC payload or persisted user setting.
+#[derive(Debug, Clone, Copy)]
+pub struct EmbeddedSyncOptions {
+    /// Each lane owns one ExifTool session. Accepted range is 1..=4.
+    pub concurrency: usize,
+}
+
+impl Default for EmbeddedSyncOptions {
+    fn default() -> Self {
+        Self { concurrency: 2 }
+    }
+}
+
+/// One file whose embedded sync did not complete successfully. An uncertain
+/// result may already have changed the file and must never be retried implicitly.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[cfg_attr(feature = "contracts", derive(ts_rs::TS))]
+#[serde(rename_all = "camelCase")]
+pub struct EmbeddedSyncFailure {
+    pub path: PathBuf,
+    pub error: String,
+    pub uncertain: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[cfg_attr(feature = "contracts", derive(ts_rs::TS))]
+#[serde(rename_all = "camelCase")]
+pub struct EmbeddedSyncResult {
+    pub job_id: crate::jobs::types::JobId,
+    pub total: usize,
+    pub completed: usize,
+    pub updated: usize,
+    pub unchanged: usize,
+    pub skipped: usize,
+    pub cancelled: bool,
+    pub failures: Vec<EmbeddedSyncFailure>,
+}
+
+/// Small per-file updates; the command's final result remains authoritative.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[cfg_attr(feature = "contracts", derive(ts_rs::TS))]
+#[serde(rename_all = "camelCase")]
+pub struct EmbeddedSyncProgress {
+    pub request_id: String,
+    pub job_id: crate::jobs::types::JobId,
+    pub total: usize,
+    pub completed: usize,
+    pub updated: usize,
+    pub unchanged: usize,
+    pub skipped: usize,
+}
+
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 #[cfg_attr(feature = "contracts", derive(ts_rs::TS))]
 #[serde(rename_all = "camelCase")]

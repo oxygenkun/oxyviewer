@@ -32,6 +32,9 @@ pub(crate) fn forward(app: AppHandle, events: Receiver<CoreEvent>) {
                     CoreEvent::MetadataProjectionUpdated(value) => {
                         let _ = app.emit("metadata-projection-updated", value);
                     }
+                    CoreEvent::EmbeddedSyncProgress(value) => {
+                        let _ = app.emit("embedded-sync-progress", value);
+                    }
                     CoreEvent::AssetTagsUpdated(path) => {
                         let _ = app.emit("asset-tags-updated", path);
                     }

@@ -58,6 +58,8 @@ Media 拥有 SourceRevision、DecodeControl、native gates、表示规划、产�
 同源 admission、取消、提级保留等待者、generation、租约和迟到结果拒绝语义。
 
 Metadata admission 的数据库工作在 queue 锁外执行，I/O 后再查停止/目录/generation。
+单路径 gate 串行该路径的 admission、读取发布和精确失效；全局 map 锁不跨 I/O。
+逐图编辑只推进该路径 epoch，保留其他照片的详情；旧详情等待者重新观察源后入队。
 索引仍复用近期验证摘要和缓存预编译语句；未修改资产只写 generation，不重复写 FTS。
 独立 projection reader 不与浏览 reader/writer 合并成一个全局锁。
 
@@ -71,6 +73,18 @@ BrowseSnapshots 另拥有持久化 worker，排空已接受写入并 join。Meta
 检查取消，部分成功仍刷新。ExifTool 配置/安装串行操作共享目标，状态观察独立；等待
 安装 gate 的 worker 停止后不开始下载。人物取消保留 operation 独占直到 worker 退出。
 已经进入 native 调用的工作自行展开，deadline 到达报告 timeout，不伪称线程已终止。
+
+内嵌写回的 core coordinator 默认拥有两路 writer，各自持有一个 ExifTool 子进程、
+两个 pipe reader 和编号请求，逐文件确认 stdout ready 与 stderr status。dispatcher
+按输入顺序观察路径、排除重复 canonical target，通过无缓冲 channel 准入；相同文件
+identity 的不同目录项使用先后完成凭据维持输入顺序，等待期间响应取消。queue 锁
+不跨文件操作。runtime worker 退出前由 scoped owner join dispatcher、所有 writer
+及其 session。丢失确认停止全批新准入，其他在途文件仍收集结果，不自动重放。
+取消停止后续文件，等待所有在途 native 写入展开；shutdown deadline 不把它们伪报为 joined。
+Host-side EmbeddedSyncOptions 支持 1–4 路的显式受限验证，desktop 使用两路默认值，
+不新增持久设置或 IPC 参数。
+NativeMetadataReader 在 media 读取真实内嵌值以判定未变化，不能使用叠加了侧车的投影。
+parser 保留 XMP 数组的精确元素，media 归一化时不再按显示逗号拆分真实数组。
 
 ## 契约和证据
 

@@ -4,9 +4,23 @@ This directory contains dated experiments, measurements, diagnoses, and local
 qualification evidence. Reports state their fixture, platform, cache, and
 measurement limits; they do not define current product behavior by themselves.
 
+- [2026-10-16: bounded embedded-metadata write concurrency](2026-10-16-embedded-metadata-concurrency-validation.md)
+  — 1/2/4-session component and release core SMB comparisons, directory-read
+  contention, two-session default, cancellation/partial successes, and visible
+  macOS Release WKWebView cancel/resume/unchanged checks on NAS copies.
+
+- [2026-10-16: embedded metadata batch and unchanged-skip validation](2026-10-16-embedded-metadata-sync-validation.md)
+  — implemented batching, exact XMP lists and per-path invalidation; release
+  core comparison on local/SMB HIF copies and visible macOS WebView checks.
+
 - [2026-10-15: sidecar markings and keyword validation](2026-10-15-sidecar-markings-validation.md)
   — real HIF/XMP parity, direct-summary release timings, background tag import
   and visible macOS WebView checks.
+
+- [2026-10-15: NAS embedded-metadata write diagnosis and optimization proposal](2026-10-15-embedded-metadata-write-diagnosis.md)
+  — real HIF copies, process reuse versus SMB rewrite costs, duplicate keyword
+  reproduction, and paired local-staging measurements; phase one is implemented
+  in the subsequent validation above, while local staging remains deferred.
 
 - [2026-10-14: four-package core refactor implementation and qualification](2026-10-14-core-layout-refactor-validation.md)
   — completed ownership changes, Windows Release WebView/real media and DirectML comparisons,
