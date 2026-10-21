@@ -652,10 +652,8 @@ mod tests {
 
     #[test]
     fn snapshot_policy_delegates_statements_to_owning_repositories() {
-        let source = include_str!("snapshots.rs")
-            .split("\n#[cfg(test)]\nmod tests {")
-            .next()
-            .unwrap();
+        let source = include_str!("snapshots.rs").replace("\r\n", "\n");
+        let source = source.split("\n#[cfg(test)]\nmod tests {").next().unwrap();
         for verb in ["SELECT ", "INSERT INTO ", "UPDATE ", "DELETE FROM "] {
             assert!(
                 !source.contains(verb),

@@ -160,7 +160,15 @@ mod tests {
         let plain = dir.path().join("照片 A.jpg");
         std::fs::write(&plain, b"original").unwrap();
         let canonical = std::fs::canonicalize(&plain).unwrap();
-        assert_eq!(application_path(&canonical).as_ref(), plain);
+        let compatible = application_path(&canonical);
+        assert_eq!(
+            compatible.as_ref(),
+            legacy_path_candidate(&canonical).unwrap()
+        );
+        assert_eq!(
+            std::fs::canonicalize(compatible.as_ref()).unwrap(),
+            canonical
+        );
         let special = std::fs::canonicalize(dir.path())
             .unwrap()
             .join("照片 A.jpg.");
