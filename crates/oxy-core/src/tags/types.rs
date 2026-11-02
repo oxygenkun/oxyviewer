@@ -13,6 +13,12 @@ pub struct CustomTag {
     pub name: String,
     pub path: String,
     pub sort_order: i64,
+    /// Number of distinct images currently carrying this tag.
+    #[cfg_attr(feature = "contracts", ts(optional))]
+    pub usage_count: Option<i64>,
+    /// Latest assignment time among images currently carrying this tag.
+    #[cfg_attr(feature = "contracts", ts(optional))]
+    pub last_used_at: Option<i64>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]

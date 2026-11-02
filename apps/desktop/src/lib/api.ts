@@ -694,6 +694,14 @@ export async function onAssetTagsUpdated(callback: (path: string) => void): Prom
   return listen<string>("asset-tags-updated", (event) => callback(event.payload));
 }
 
+/** The mirror queue publishes its own snapshots, so the shell need not poll it. */
+export async function onTagSyncStatusChanged(
+  callback: (status: TagSyncStatus) => void,
+): Promise<UnlistenFn> {
+  if (!isTauri()) return () => {};
+  return listen<TagSyncStatus>("tag-sync-status-changed", (event) => callback(event.payload));
+}
+
 export async function onImageProjectionUpdated(
   callback: (projection: ImageProjection) => void,
 ): Promise<UnlistenFn> {
@@ -735,10 +743,19 @@ export async function listCustomTags(): Promise<CustomTag[]> {
   return (await invoke<CustomTag[]>("list_custom_tags")).map(normalizeCustomTag);
 }
 
+function demoTagUsageCount(tagId: number): number {
+  return [...demoAssetTags.keys()].filter((path) => demoEffectiveTagIds(path).has(tagId)).length;
+}
+
+const demoTagLastUsed = new Map<number, number>();
+
 export async function getAssetTagAssignments(paths: string[]): Promise<AssetTagAssignment[]> {
   if (!isTauri()) {
     return demoTags.map((tag) => ({
-      tag: { ...tag },
+      tag: { ...tag,
+        usageCount: demoTagUsageCount(tag.id),
+        lastUsedAt: demoTagLastUsed.get(tag.id),
+      },
       assignedCount: paths.filter((path) => demoEffectiveTagIds(path).has(tag.id)).length,
       assetCount: paths.length,
     }));
@@ -826,6 +843,7 @@ export async function deleteCustomTag(id: number): Promise<TagDeleteImpact> {
 
 export async function setAssetCustomTag(paths: string[], tagId: number, assigned: boolean): Promise<void> {
   if (!isTauri()) {
+    if (assigned && paths.length) demoTagLastUsed.set(tagId, Date.now());
     for (const path of paths) {
       const ids = demoAssetTags.get(path) ?? new Set<number>();
       if (assigned) ids.add(tagId); else ids.delete(tagId);

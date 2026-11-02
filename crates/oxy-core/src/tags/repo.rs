@@ -235,8 +235,13 @@ pub fn source_kinds(
 pub fn list_tags(connection: &Connection) -> Result<Vec<CustomTag>, StoreError> {
     let rows = {
         let mut statement = connection.prepare(
-            "SELECT id, parent_id, name, sort_order
-             FROM custom_tags ORDER BY parent_id, sort_order, name COLLATE NOCASE, id",
+            "SELECT t.id, t.parent_id, t.name, t.sort_order,
+                    COALESCE(u.usage_count, 0) AS usage_count, u.last_used_at
+             FROM custom_tags t LEFT JOIN (
+                 SELECT tag_id, COUNT(*) AS usage_count, MAX(assigned_at) AS last_used_at
+                 FROM asset_tags GROUP BY tag_id
+             ) u ON u.tag_id = t.id
+             ORDER BY t.parent_id, t.sort_order, t.name COLLATE NOCASE, t.id",
         )?;
         statement
             .query_map([], |row| {
@@ -245,23 +250,29 @@ pub fn list_tags(connection: &Connection) -> Result<Vec<CustomTag>, StoreError> 
                     row.get::<_, Option<CustomTagId>>("parent_id")?,
                     row.get::<_, String>("name")?,
                     row.get::<_, i64>("sort_order")?,
+                    row.get::<_, i64>("usage_count")?,
+                    row.get::<_, Option<i64>>("last_used_at")?,
                 ))
             })?
             .collect::<Result<Vec<_>, _>>()?
     };
     let names = rows
         .iter()
-        .map(|(id, parent_id, name, _)| (*id, (*parent_id, name.clone())))
+        .map(|(id, parent_id, name, _, _, _)| (*id, (*parent_id, name.clone())))
         .collect::<HashMap<_, _>>();
     Ok(rows
         .into_iter()
-        .map(|(id, parent_id, name, sort_order)| CustomTag {
-            id,
-            parent_id,
-            path: tag_path(id, &names),
-            name,
-            sort_order,
-        })
+        .map(
+            |(id, parent_id, name, sort_order, usage_count, last_used_at)| CustomTag {
+                id,
+                parent_id,
+                path: tag_path(id, &names),
+                name,
+                sort_order,
+                usage_count: Some(usage_count),
+                last_used_at,
+            },
+        )
         .collect())
 }
 

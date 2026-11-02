@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { AssetTagAssignment, CustomTag } from "@/types";
 import {
+  sortTagCandidates,
   descendantIds,
   embeddedOnlyTagPaths,
   ensureTagPath,
@@ -79,4 +80,18 @@ describe("hierarchical tag presentation", () => {
       ["People|Family", "Places|Tokyo"],
     )).toEqual(["Places|Tokyo", "camera-only"]);
   });
+});
+
+it("sorts candidates by global usage, recent assignment, and sibling names", () => {
+  const items = [
+    { tag: { id: 1, name: "B", path: "B", sortOrder: 0, usageCount: 10, lastUsedAt: 10 }, assignedCount: 0, assetCount: 1 },
+    { tag: { id: 2, name: "Z", path: "A|Z", parentId: 3, sortOrder: 0, usageCount: 2, lastUsedAt: 30 }, assignedCount: 1, assetCount: 1 },
+    { tag: { id: 3, name: "A", path: "A", sortOrder: 9 }, assignedCount: 0, assetCount: 1 },
+    { tag: { id: 4, name: "Aardvark", path: "Aardvark", sortOrder: 0 }, assignedCount: 0, assetCount: 1 },
+  ];
+  const ids = (mode: "tree" | "recent" | "mostUsed") => sortTagCandidates(items, mode).map(({ tag }) => tag.id);
+  expect(ids("tree")).toEqual([3, 2, 4, 1]);
+  expect(ids("recent")).toEqual([2, 1, 3, 4]);
+  expect(ids("mostUsed")).toEqual([1, 2, 3, 4]);
+  expect(items.map(({ tag }) => tag.id)).toEqual([1, 2, 3, 4]);
 });

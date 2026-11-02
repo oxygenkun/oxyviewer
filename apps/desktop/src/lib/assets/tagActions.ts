@@ -6,7 +6,7 @@ export const TAG_MUTATION_SCOPE = { id: "asset-tags" };
 
 export async function refreshTagQueries(queryClient: QueryClient): Promise<void> {
   await Promise.all([
-    "custom-tags", "asset-tag-assignments", "asset-tag-source-kinds", "tag-sync-status",
+    "custom-tags", "asset-tag-assignments", "tag-sync-status",
     "asset-details", "assets", "preload-assets", "progressive-metadata-assets",
   ].map((key) => queryClient.invalidateQueries({ queryKey: [key] })));
 }
@@ -20,7 +20,6 @@ export async function refreshImportedTagQueries(queryClient: QueryClient, paths:
       if (kind === "asset-tag-assignments") {
         return Array.isArray(targets) && targets.some((path) => paths.has(path));
       }
-      if (kind === "asset-tag-source-kinds") return typeof targets === "string" && paths.has(targets);
       if (kind === "assets") {
         const query = queryKey[3] as { tagIds?: number[] } | undefined;
         return Boolean(query?.tagIds?.length);

@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { AssetSummary } from "@/types";
+import { UNDO_WINDOW_MS } from "@/lib/ui/undoWindow";
 
 type PendingDeletion = {
   id: number;
@@ -32,7 +33,7 @@ export function useDeferredDeletion() {
       if (request) request.expired = true;
       setPending(current => current.map(request => request.id === id ? { ...request, expired: true } : request));
       void commit().finally(() => remove(id));
-    }, 5000);
+    }, UNDO_WINDOW_MS);
     const request = { id, assets, timer };
     requests.current.set(id, request);
     setPending(current => [...current, request]);

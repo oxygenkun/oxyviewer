@@ -1,5 +1,8 @@
+import { TagDeletionToasts } from "@/components/overlay/TagDeletionToasts";
+import { Toast } from "@/components/overlay/Toast";
+import { cancelPendingTagDeletions } from "@/lib/assets/tagDeletion";
 import { useDeferredDeletion } from "@/lib/hooks/useDeferredDeletion";
-import "@/components/overlay/DeletionToasts.css";
+import "@/components/overlay/Toast.css";
 import { GlobalPeoplePanel } from "@/components/people/GlobalPeoplePanel";
 import { PeopleLibrary } from "@/components/people/PeopleLibrary";
 import { resolvePersonFolder } from "@/lib/browse/openPersonFolder";
@@ -449,6 +452,7 @@ export function App({ perfScenario }: { perfScenario?: PerfScenario }) {
     return !projection || projection.status === "loading";
   });
   const deletion = useDeferredDeletion();
+  useEffect(() => cancelPendingTagDeletions, []);
   const assets = useMemo(
     () => progressivelyFilterMetadata
       ? filterAndSortAssets(progressivelyEnrichedAssets, query).filter(asset => !deletion.hiddenPaths.has(asset.path))
@@ -1213,13 +1217,12 @@ export function App({ perfScenario }: { perfScenario?: PerfScenario }) {
         itemCount={dropState.itemCount}
         t={t}
       />
-      <div className="deletion-toasts" aria-live="polite">
+      <div className="toaster" aria-live="polite">
+        <TagDeletionToasts t={t} />
         {deletion.pending.filter(request => !request.expired).map(request => (
-          <div className="deletion-toast" role="status" key={request.id}>
-            <span>{t("deletionPending").replace("{count}", String(request.assets.length))}</span>
-            <button type="button" onClick={() => deletion.undo(request.id)}>{t("undoDeletion")}</button>
-            <span className="deletion-toast__progress" aria-hidden="true" />
-          </div>
+          <Toast key={request.id} actionLabel={t("undoDeletion")} onAction={() => deletion.undo(request.id)}>
+            {t("deletionPending").replace("{count}", String(request.assets.length))}
+          </Toast>
         ))}
       </div>
       {settingsOpen ? <SettingsPanel t={t} activeAsset={assets.find((asset) => asset.id === activeId)} /> : null}

@@ -129,3 +129,25 @@ export function embeddedOnlyTagPaths(
 export function normalizeCustomTag(tag: Omit<CustomTag, "parentId"> & { parentId?: number | null }): CustomTag {
   return { ...tag, parentId: tag.parentId ?? undefined };
 }
+
+export type TagPickerSort = "recent" | "mostUsed" | "tree";
+
+/** Compare path segments so parents precede children and siblings stay together. */
+export function compareTagPaths(left: CustomTag, right: CustomTag): number {
+  const a = left.path.split("|");
+  const b = right.path.split("|");
+  for (let i = 0; i < Math.min(a.length, b.length); i++) {
+    const order = a[i].localeCompare(b[i], undefined, { numeric: true, sensitivity: "base" });
+    if (order) return order;
+  }
+  return a.length - b.length || left.id - right.id;
+}
+
+export function sortTagCandidates(assignments: AssetTagAssignment[], mode: TagPickerSort): AssetTagAssignment[] {
+  return [...assignments].sort((a, b) => {
+    const rank = mode === "recent"
+      ? (b.tag.lastUsedAt ?? 0) - (a.tag.lastUsedAt ?? 0)
+      : mode === "mostUsed" ? (b.tag.usageCount ?? 0) - (a.tag.usageCount ?? 0) : 0;
+    return rank || compareTagPaths(a.tag, b.tag);
+  });
+}

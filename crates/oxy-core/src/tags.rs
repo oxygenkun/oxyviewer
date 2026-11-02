@@ -479,6 +479,32 @@ mod tests {
     use super::*;
     use oxy_media::types::{AssetKind, PickLabel};
 
+    #[test]
+    fn vocabulary_usage_counts_images_and_preserves_assignment_times() {
+        let (tags, store) = in_memory_with_store();
+        let used = tags.create_custom_tag(None, "Used").unwrap();
+        let unused = tags.create_custom_tag(None, "Unused").unwrap();
+        let paths = [PathBuf::from("/a.jpg"), PathBuf::from("/b.jpg")];
+        tags.set_asset_tag(&paths, used.id, true).unwrap();
+        store.write().execute(
+            "UPDATE asset_tags SET assigned_at = CASE asset_path WHEN '/a.jpg' THEN 100 ELSE 200 END",
+            [],
+        ).unwrap();
+        tags.set_asset_tag(&paths, used.id, true).unwrap();
+        let vocabulary = tags.custom_tags().unwrap();
+        let stats = vocabulary.iter().find(|tag| tag.id == used.id).unwrap();
+        assert_eq!(stats.usage_count, Some(2));
+        assert_eq!(stats.last_used_at, Some(200));
+        let stats = vocabulary.iter().find(|tag| tag.id == unused.id).unwrap();
+        assert_eq!(stats.usage_count, Some(0));
+        assert_eq!(stats.last_used_at, None);
+        tags.set_asset_tag(&paths[1..], used.id, false).unwrap();
+        let vocabulary = tags.custom_tags().unwrap();
+        let stats = vocabulary.iter().find(|tag| tag.id == used.id).unwrap();
+        assert_eq!(stats.usage_count, Some(1));
+        assert_eq!(stats.last_used_at, Some(100));
+    }
+
     /// A vocabulary over a store nobody else keeps. The cases that drive a
     /// person identity, or that simulate a file written by an earlier build,
     /// reach for [`in_memory_with_store`] instead.

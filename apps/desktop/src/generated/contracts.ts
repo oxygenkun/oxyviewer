@@ -62,7 +62,15 @@ releaseMode: string | null,
  * camera did not report an index).
  */
 sequenceNumber: number | null, };
-export type CustomTag = { id: number, parentId: number | null, name: string, path: string, sortOrder: number, };
+export type CustomTag = { id: number, parentId: number | null, name: string, path: string, sortOrder: number,
+/**
+ * Number of distinct images currently carrying this tag.
+ */
+usageCount?: number,
+/**
+ * Latest assignment time among images currently carrying this tag.
+ */
+lastUsedAt?: number, };
 export type CustomTagId = number;
 export type DebugQueueItem = { key: string, path?: string | null, rootPath?: string | null, stage: string, priority: string, rank?: number | null, consumers: number, pendingCount?: number | null, assetCount?: number | null, directoryCount?: number | null, };
 export type DebugQueueSnapshot = { capturedAtUnixMs: number, workerWaitMicros: number, collectionMicros: number, staleQueues: Array<string>, queues: Array<DebugQueueState>, };

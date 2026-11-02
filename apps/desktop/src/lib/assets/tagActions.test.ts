@@ -7,12 +7,10 @@ it("refreshes imported tag vocabulary, affected assignments and tag filters only
   const changed = [
     ["custom-tags"], ["tag-sync-status"],
     ["asset-tag-assignments", ["/photos/a.HIF", "/photos/b.HIF"]],
-    ["asset-tag-source-kinds", "/photos/a.HIF", 1],
     ["assets", "session", "/photos", { tagIds: [1] }],
   ];
   const unchanged = [
     ["asset-tag-assignments", ["/photos/b.HIF"]],
-    ["asset-tag-source-kinds", "/photos/b.HIF", 1],
     ["assets", "session", "/photos", { minimumRating: 3 }],
     ["asset-details", "a"], ["preload-assets", "session", "/photos"],
   ];

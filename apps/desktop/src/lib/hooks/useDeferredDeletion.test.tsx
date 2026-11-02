@@ -4,6 +4,7 @@ import { createRoot } from "react-dom/client";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import type { AssetSummary } from "@/types";
 import { useDeferredDeletion } from "./useDeferredDeletion";
+import { UNDO_WINDOW_MS } from "@/lib/ui/undoWindow";
 
 let root: ReturnType<typeof createRoot>;
 let deletion: ReturnType<typeof useDeferredDeletion>;
@@ -20,11 +21,11 @@ afterEach(async () => {
   vi.useRealTimers();
   vi.unstubAllGlobals();
 });
-it("hides immediately and commits only after five seconds", async () => {
+it("hides immediately and commits only after the undo window", async () => {
   const commit = vi.fn().mockResolvedValue(undefined);
   await act(async () => deletion.enqueue([asset("a")], commit));
   expect(deletion.hiddenPaths.has("a")).toBe(true);
-  await act(async () => vi.advanceTimersByTime(4999));
+  await act(async () => vi.advanceTimersByTime(UNDO_WINDOW_MS - 1));
   expect(commit).not.toHaveBeenCalled();
   await act(async () => vi.advanceTimersByTime(1));
   expect(commit).toHaveBeenCalledTimes(1);

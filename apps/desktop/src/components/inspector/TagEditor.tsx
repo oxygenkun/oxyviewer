@@ -1,18 +1,19 @@
 import { createPortal } from "react-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
-  Check, FolderInput, Minus, MoreHorizontal, Pencil, Plus, RotateCcw, Search, Trash2, X,
+  Check, FolderInput, Minus, MoreHorizontal, Pencil, Plus, Search, Settings2, Trash2, X,
 } from "lucide-react";
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import {
-  createCustomTag, deleteCustomTag, getAssetTagAssignments, getAssetTagSourceKinds, getCustomTagDeleteImpact,
-  getTagSyncStatus, listCustomTags, retryTagXmpSync, setAssetCustomTag, updateCustomTag,
+  createCustomTag, deleteCustomTag, getAssetTagAssignments, getAssetTagSourceKinds,
+  listCustomTags, setAssetCustomTag, updateCustomTag,
 } from "@/lib/api";
 import type { MessageKey } from "@/lib/i18n";
-import { descendantIds, embeddedOnlyTagPaths, ensureTagPath, parseTagPath } from "@/lib/assets/tagTree";
+import { descendantIds, embeddedOnlyTagPaths, ensureTagPath, parseTagPath, sortTagCandidates, type TagPickerSort } from "@/lib/assets/tagTree";
 import { refreshTagQueries, TAG_MUTATION_SCOPE } from "@/lib/assets/tagActions";
+import { enqueueTagDeletion, hasPendingRemoval, pendingDeletedTagIds, useTagDeletions } from "@/lib/assets/tagDeletion";
 import { useWorkspaceStore } from "@/store";
-import type { CustomTag, TagDeleteImpact } from "@/types";
+import type { CustomTag } from "@/types";
 
 interface TagEditorProps {
   currentPath: string;
@@ -29,6 +30,15 @@ interface TagForm {
   tagId: number;
   parentId?: number;
   name: string;
+}
+
+const SORT_STORAGE_KEY = "oxyviewer.tag-picker-sort.v1";
+function readTagSort(): TagPickerSort {
+  try {
+    const value = localStorage.getItem(SORT_STORAGE_KEY);
+    if (value === "recent" || value === "mostUsed" || value === "tree") return value;
+  } catch { /* Preferences remain usable when storage is unavailable. */ }
+  return "tree";
 }
 
 const displayTagPath = (path: string) => path.replaceAll("|", " › ");
@@ -49,22 +59,23 @@ export function TagEditor({
   const [pickerPosition, setPickerPosition] = useState({ top: 23, right: 15 });
   const [open, setOpen] = useState(false);
   const [search, setSearch] = useState("");
-  const [creating, setCreating] = useState(false);
-  const [newPath, setNewPath] = useState("");
+  const [sort, setSort] = useState<TagPickerSort>(readTagSort);
+  const changeSort = (value: TagPickerSort) => {
+    setSort(value);
+    try { localStorage.setItem(SORT_STORAGE_KEY, value); } catch { /* Keep the session preference. */ }
+  };
   const [menuTagId, setMenuTagId] = useState<number>();
   const [form, setForm] = useState<TagForm>();
-  const [removeTarget, setRemoveTarget] = useState<CustomTag>();
-  const [deleteTarget, setDeleteTarget] = useState<CustomTag>();
+  const [hint, setHint] = useState<string>();
+  const pendingDeletions = useTagDeletions((state) => state.requests);
+  const deletedTagIds = useMemo(() => pendingDeletedTagIds(pendingDeletions), [pendingDeletions]);
+  const removedFromSelection = (tagId: number) =>
+    paths.length > 0 && paths.every((path) => hasPendingRemoval(pendingDeletions, path, tagId));
   const tagsQuery = useQuery({ queryKey: ["custom-tags"], queryFn: listCustomTags });
   const assignmentsQuery = useQuery({
     queryKey: ["asset-tag-assignments", paths, sidecarKeywords, sidecarHierarchicalKeywords],
     queryFn: () => getAssetTagAssignments(paths),
     enabled: paths.length > 0,
-  });
-  const syncQuery = useQuery({
-    queryKey: ["tag-sync-status"],
-    queryFn: getTagSyncStatus,
-    refetchInterval: (query) => query.state.data?.pendingCount ? 1_000 : false,
   });
   const assignments = assignmentsQuery.data ?? [];
   const assigned = assignments.filter((item) => item.assignedCount > 0);
@@ -77,11 +88,16 @@ export function TagEditor({
     [assigned, embeddedHierarchicalKeywords, embeddedKeywords],
   );
   const candidates = useMemo(() => {
-    const needle = search.trim().toLocaleLowerCase();
-    return [...assignments]
-      .filter(({ tag }) => !needle || tag.path.toLocaleLowerCase().includes(needle))
-      .sort((left, right) => left.tag.path.localeCompare(right.tag.path));
-  }, [assignments, search]);
+    const needle = parseTagPath(search).join("|").toLocaleLowerCase();
+    return sortTagCandidates(assignments, sort)
+      .filter(({ tag }) => !deletedTagIds.has(tag.id) && (!needle || tag.path.toLocaleLowerCase().includes(needle)));
+  }, [assignments, deletedTagIds, search, sort]);
+
+  const searchPath = parseTagPath(search).join("|");
+  const canCreate = tagsQuery.isSuccess && assignmentsQuery.isSuccess && searchPath.length > 0 &&
+    !(tagsQuery.data ?? []).some((tag) =>
+      tag.path.toLocaleLowerCase() === searchPath.toLocaleLowerCase() ||
+      (!searchPath.includes("|") && tag.name.toLocaleLowerCase() === searchPath.toLocaleLowerCase()));
 
   const refresh = () => refreshTagQueries(queryClient);
   const assignmentMutation = useMutation({
@@ -98,7 +114,6 @@ export function TagEditor({
     mutationFn: ({ path, tagId }: { path: string; tagId: number }) => setAssetCustomTag([path], tagId, false),
     onSuccess: async (_data, { tagId }) => {
       setLastTagId(tagId);
-      setRemoveTarget(undefined);
       await refresh();
     },
   });
@@ -112,8 +127,6 @@ export function TagEditor({
     },
     onSuccess: async (tag) => {
       setLastTagId(tag.id);
-      setCreating(false);
-      setNewPath("");
       setSearch("");
       await refresh();
     },
@@ -134,62 +147,67 @@ export function TagEditor({
       await refresh();
     },
   });
-  const impactQuery = useQuery({
-    queryKey: ["custom-tag-delete-impact", deleteTarget?.id],
-    queryFn: () => getCustomTagDeleteImpact(deleteTarget!.id),
-    enabled: Boolean(deleteTarget),
-  });
-  const sourceQuery = useQuery({
-    queryKey: ["asset-tag-source-kinds", currentPath, removeTarget?.id],
-    queryFn: () => getAssetTagSourceKinds(currentPath, removeTarget!.id),
-    enabled: Boolean(removeTarget),
-  });
   const deleteMutation = useMutation({
     scope: TAG_MUTATION_SCOPE,
     mutationFn: (id: number) => deleteCustomTag(id),
-    onSuccess: async (_data, id) => {
-      const lastTagId = useWorkspaceStore.getState().lastTagId;
-      if (lastTagId !== undefined && descendantIds(tagsQuery.data ?? [], id).has(lastTagId)) {
-        setLastTagId(undefined);
-      }
-      setDeleteTarget(undefined);
-      setMenuTagId(undefined);
-      await refresh();
-    },
   });
-  const retryMutation = useMutation({
-    mutationFn: retryTagXmpSync,
-    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["tag-sync-status"] }),
-  });
-  const busy = assignmentMutation.isPending || removeAssignmentMutation.isPending || createPathMutation.isPending ||
-    formMutation.isPending || deleteMutation.isPending;
-  const startCreating = () => {
-    setNewPath((current) => current || search.trim());
-    setCreating(true);
+  const busy = assignmentMutation.isPending || createPathMutation.isPending || formMutation.isPending;
+  const removeFromPhoto = async (tag: CustomTag) => {
+    setOpen(false);
     setMenuTagId(undefined);
+    let sources: string[];
+    try {
+      sources = await getAssetTagSourceKinds(currentPath, tag.id);
+    } catch (error) {
+      setHint(String(error));
+      return;
+    }
+    // Person contributions belong to the person review workflow; removal cannot withdraw them.
+    if (!sources.some((kind) => kind === "manual" || kind === "legacy" || kind === "sidecar")) {
+      setHint(t("tagPersonSourceHint"));
+      return;
+    }
+    setHint(undefined);
+    enqueueTagDeletion(
+      { kind: "assignment", tagPath: tag.path, tagIds: new Set([tag.id]), path: currentPath },
+      () => removeAssignmentMutation.mutateAsync({ path: currentPath, tagId: tag.id }),
+    );
+  };
+  const deleteTag = (tag: CustomTag) => {
+    const removed = descendantIds(tagsQuery.data ?? [], tag.id);
+    setMenuTagId(undefined);
+    setHint(undefined);
+    enqueueTagDeletion({ kind: "tag", tagPath: tag.path, tagIds: removed }, async () => {
+      await deleteMutation.mutateAsync(tag.id);
+      const lastTagId = useWorkspaceStore.getState().lastTagId;
+      if (lastTagId !== undefined && removed.has(lastTagId)) setLastTagId(undefined);
+      await refresh();
+    });
   };
   const closeQuickAdd = () => {
     setOpen(false);
-    setCreating(false);
     setForm(undefined);
     setMenuTagId(undefined);
-    setRemoveTarget(undefined);
   };
   useEffect(() => {
-    if (!open || deleteTarget || removeTarget) return;
+    if (!hint) return;
+    const timer = setTimeout(() => setHint(undefined), 8_000);
+    return () => clearTimeout(timer);
+  }, [hint]);
+  useEffect(() => {
+    if (!open) return;
     const dismissOnOutsidePointer = (event: PointerEvent) => {
       const target = event.target as Node;
       if (pickerRef.current?.contains(target) || quickAddButtonRef.current?.contains(target)) return;
       setOpen(false);
-      setCreating(false);
       setForm(undefined);
       setMenuTagId(undefined);
     };
     document.addEventListener("pointerdown", dismissOnOutsidePointer);
     return () => document.removeEventListener("pointerdown", dismissOnOutsidePointer);
-  }, [deleteTarget, open, removeTarget]);
+  }, [open]);
   useLayoutEffect(() => {
-    if (!open && !deleteTarget && !removeTarget) return;
+    if (!open) return;
     const updatePosition = () => {
       const button = quickAddButtonRef.current;
       if (button) {
@@ -209,12 +227,13 @@ export function TagEditor({
       window.removeEventListener("resize", updatePosition);
       document.removeEventListener("scroll", updatePosition, true);
     };
-  }, [deleteTarget, open, removeTarget]);
+  }, [open]);
 
   return (
     <div className="tag-editor">
       <div ref={chipsRef} className="tag-editor__chips">
-        {assigned.map(({ tag, assignedCount, assetCount }) => (
+        {assigned.filter(({ tag }) => !deletedTagIds.has(tag.id) && !removedFromSelection(tag.id))
+          .map(({ tag, assignedCount, assetCount }) => (
           <span
             key={tag.id}
             className={`tag-chip${assignedCount === assetCount ? "" : " is-mixed"}`}
@@ -223,10 +242,7 @@ export function TagEditor({
             <span>{displayTagPath(tag.path)}</span>
             <button
               className="tag-chip__delete"
-              onClick={() => {
-                setOpen(false);
-                setRemoveTarget(tag);
-              }}
+              onClick={() => void removeFromPhoto(tag)}
               aria-label={`${t("removeTagFromCurrent")} ${displayTagPath(tag.path)}`}
               disabled={busy}
             ><X /></button>
@@ -249,18 +265,9 @@ export function TagEditor({
         ><Plus />{t("quickAddTag")}</button>
       </div>
 
-      {syncQuery.data?.pendingCount ? (
-        <div className={`tag-sync-state${syncQuery.data.failedCount ? " is-error" : ""}`}>
-          <span>{syncQuery.data.failedCount ? t("tagSyncFailed") : t("tagSyncPending")}</span>
-          {syncQuery.data.failedCount ? (
-            <button onClick={() => retryMutation.mutate()} title={t("retry")}>
-              <RotateCcw size={9} />
-            </button>
-          ) : null}
-        </div>
-      ) : null}
+      {hint ? <small className="tag-editor__hint" role="status">{hint}</small> : null}
 
-      {createPortal(open && !deleteTarget && !removeTarget ? (
+      {createPortal(open ? (
         <div ref={pickerRef} className="tag-picker" style={pickerPosition} role="dialog" aria-label={t("quickAddTag")}>
           <div className="tag-picker__search">
             <Search />
@@ -270,6 +277,22 @@ export function TagEditor({
               placeholder={t("searchConfiguredTags")}
               autoFocus
             />
+            {canCreate ? (
+              <button className="tag-picker__create" aria-label={t("createAndAdd")}
+                title={`${t("createAndAdd")}: ${displayTagPath(searchPath)}`}
+                disabled={busy}
+                onClick={() => createPathMutation.mutate({ value: searchPath, paths })}
+              >{t("createTag")}</button>
+            ) : null}
+            <label className="tag-picker__settings" title={t("tagSort")}>
+              <Settings2 aria-hidden="true" />
+              <select aria-label={t("tagSort")} value={sort}
+                onChange={(event) => changeSort(event.target.value as TagPickerSort)}>
+                <option value="recent">{t("tagSortRecent")}</option>
+                <option value="mostUsed">{t("tagSortMostUsed")}</option>
+                <option value="tree">{t("tagSortTree")}</option>
+              </select>
+            </label>
             <button onClick={closeQuickAdd} aria-label={t("cancel")}><X /></button>
           </div>
           <div className="tag-picker__list">
@@ -291,7 +314,8 @@ export function TagEditor({
                     onClick={() => assignmentMutation.mutate({ paths, tagId: tag.id, value: !complete })}
                     disabled={busy}
                     title={displayTagPath(tag.path)}
-                  >{displayTagPath(tag.path)}</button>
+                    style={sort === "tree" && !search.trim() ? { paddingLeft: 4 + (tag.path.split("|").length - 1) * 12 } : undefined}
+                  >{sort === "tree" && !search.trim() ? tag.name : displayTagPath(tag.path)}</button>
                   <button
                     className="tag-candidate__menu"
                     onClick={() => setMenuTagId((current) => current === tag.id ? undefined : tag.id)}
@@ -301,29 +325,20 @@ export function TagEditor({
                     <div className="tag-row-menu" role="menu">
                       <button role="menuitem" onClick={() => setForm({ mode: "edit", tagId: tag.id, name: tag.name })}><Pencil />{t("renameTag")}</button>
                       <button role="menuitem" onClick={() => setForm({ mode: "move", tagId: tag.id, parentId: tag.parentId, name: tag.name })}><FolderInput />{t("moveTag")}</button>
-                      <button role="menuitem" className="is-danger" onClick={() => setDeleteTarget(tag)}><Trash2 />{t("deleteTag")}</button>
+                      <button role="menuitem" className="is-danger" onClick={() => deleteTag(tag)}><Trash2 />{t("deleteTag")}</button>
                     </div>
                   ) : null}
                 </div>
               );
             })}
-            {candidates.length === 0 ? <em>{t("noMatchingTags")}</em> : null}
+            {candidates.length === 0 ? (
+              <em>
+                {t("noMatchingTags")}
+                {canCreate ? <span className="tag-picker__hierarchy-hint">{t("tagHierarchyHint")}</span> : null}
+              </em>
+            ) : null}
           </div>
-          {creating ? (
-            <InlineCreateTag
-              value={newPath}
-              t={t}
-              pending={createPathMutation.isPending}
-              error={createPathMutation.error}
-              onChange={setNewPath}
-              onCancel={() => setCreating(false)}
-              onSave={() => createPathMutation.mutate({ value: newPath, paths })}
-            />
-          ) : (
-            <button className="tag-picker__create" onClick={startCreating}>
-              <Plus />{t("createTag")}
-            </button>
-          )}
+          {createPathMutation.error ? <small className="metadata-error" role="alert">{String(createPathMutation.error)}</small> : null}
           {form ? (
             <TagFormPanel
               form={form}
@@ -337,102 +352,12 @@ export function TagEditor({
             />
           ) : null}
         </div>
-      ) : removeTarget ? (
-        <div
-          className="tag-picker tag-picker--remove-confirmation"
-          style={pickerPosition}
-          role="dialog"
-          aria-label={t("removeTagFromCurrent")}
-        >
-          <div className="tag-remove-confirmation">
-            <span title={displayTagPath(removeTarget.path)}>
-              {t("removeTagFromCurrent")}
-            </span>
-            {sourceQuery.isLoading ? <small>{t("tagSourcesLoading")}</small> : sourceQuery.isError ? <small role="alert">{String(sourceQuery.error)}</small> : <small>
-              {t("tagSourcePrefix")}{(sourceQuery.data ?? []).map(kind => ({ legacy: t("tagSourceLegacy"), manual: t("tagSourceManual"), sidecar: t("tagSourceSidecar"), person: t("tagSourcePerson") })[kind as "legacy" | "manual" | "sidecar" | "person"] ?? kind).join("、") || t("tagSourceNone")}。
-              {sourceQuery.data?.includes("person") ? t("tagPersonSourceHint") : null}
-              {sourceQuery.data?.includes("sidecar") ? t("tagSidecarSourceHint") : null}
-            </small>}
-            <div>
-              <button onClick={() => setRemoveTarget(undefined)} disabled={removeAssignmentMutation.isPending}>
-                {t("cancel")}
-              </button>
-              <button
-                className="is-danger"
-                onClick={() => removeAssignmentMutation.mutate({ path: currentPath, tagId: removeTarget.id })}
-                disabled={removeAssignmentMutation.isPending || sourceQuery.isLoading || !sourceQuery.data?.some(kind => kind === "manual" || kind === "legacy" || kind === "sidecar")}
-              >{t("removeManualTag")}</button>
-            </div>
-          </div>
-        </div>
-      ) : deleteTarget ? (
-        <div className="tag-picker tag-picker--confirmation" style={pickerPosition} role="dialog" aria-label={t("tagDeleteTitle")}>
-          <DeletePanel
-            tag={deleteTarget}
-            impact={impactQuery.data}
-            t={t}
-            pending={deleteMutation.isPending}
-            onCancel={() => setDeleteTarget(undefined)}
-            onDelete={() => deleteMutation.mutate(deleteTarget.id)}
-          />
-        </div>
       ) : null, document.body)}
       {assignmentMutation.isError || removeAssignmentMutation.isError ? (
         <small className="metadata-error">
           {String(assignmentMutation.error ?? removeAssignmentMutation.error)}
         </small>
       ) : null}
-    </div>
-  );
-}
-
-function InlineCreateTag({ value, t, pending, error, onChange, onCancel, onSave }: {
-  value: string;
-  t: (key: MessageKey) => string;
-  pending: boolean;
-  error: Error | null;
-  onChange: (value: string) => void;
-  onCancel: () => void;
-  onSave: () => void;
-}) {
-  const panelRef = useRef<HTMLDivElement>(null);
-  const onCancelRef = useRef(onCancel);
-  const composingRef = useRef(false);
-  const segments = parseTagPath(value);
-  useEffect(() => {
-    onCancelRef.current = onCancel;
-  }, [onCancel]);
-  useEffect(() => {
-    const dismissOnOutsidePointer = (event: PointerEvent) => {
-      if (!panelRef.current?.contains(event.target as Node)) onCancelRef.current();
-    };
-    document.addEventListener("pointerdown", dismissOnOutsidePointer);
-    return () => document.removeEventListener("pointerdown", dismissOnOutsidePointer);
-  }, []);
-
-  return (
-    <div ref={panelRef} className="tag-picker__create-form">
-      <Plus aria-hidden="true" />
-      <input
-        value={value}
-        onChange={(event) => onChange(event.target.value)}
-        placeholder={t("tagPathExample")}
-        title={t("tagPathHint")}
-        autoFocus
-        onCompositionStart={() => { composingRef.current = true; }}
-        onCompositionEnd={() => { composingRef.current = false; }}
-        onKeyDown={(event) => {
-          if (event.key === "Escape") onCancel();
-          const composing = composingRef.current || event.nativeEvent.isComposing || event.keyCode === 229;
-          if (event.key === "Enter" && !composing && segments.length > 0) {
-            event.preventDefault();
-            onSave();
-          }
-        }}
-      />
-      <button onClick={onCancel} disabled={pending} aria-label={t("cancel")}><X /></button>
-      <button className="is-primary" onClick={onSave} disabled={pending || segments.length === 0} aria-label={t("createAndAdd")}><Check /></button>
-      {error ? <small className="metadata-error">{String(error)}</small> : null}
     </div>
   );
 }
@@ -484,29 +409,6 @@ function TagFormPanel({ form, tags, t, pending, error, onChange, onCancel, onSav
       <div>
         <button onClick={onCancel} disabled={pending}>{t("cancel")}</button>
         <button className="is-primary" onClick={onSave} disabled={pending || !form.name.trim()}>{t("save")}</button>
-      </div>
-    </div>
-  );
-}
-
-function DeletePanel({ tag, impact, t, pending, onCancel, onDelete }: {
-  tag: CustomTag;
-  impact?: TagDeleteImpact;
-  t: (key: MessageKey) => string;
-  pending: boolean;
-  onCancel: () => void;
-  onDelete: () => void;
-}) {
-  const body = t("tagDeleteBody")
-    .replace("{tags}", String(impact?.tagCount ?? "…"))
-    .replace("{assets}", String(impact?.assetCount ?? "…"));
-  return (
-    <div className="tag-edit-panel tag-delete-panel">
-      <strong>{t("tagDeleteTitle")}</strong>
-      <p><b>{displayTagPath(tag.path)}</b><br />{body}</p>
-      <div>
-        <button onClick={onCancel} disabled={pending}>{t("cancel")}</button>
-        <button className="is-danger" onClick={onDelete} disabled={pending || !impact}>{t("deleteTag")}</button>
       </div>
     </div>
   );

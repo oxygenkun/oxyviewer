@@ -67,7 +67,7 @@ FileService 统一显式 rename/copy/move/trash/permanent-delete。路径、名�
 sidecar 和 symlink 语义由 files 检查；这是安全操作边界，不代表 OS 级目录沙箱。
 调用涉及用户文件，不能把 SQLite cache policy 当成删除用户文件的许可。
 
-图片删除由前端先隐藏资源，底部 toast 提供 5 秒撤回窗口，期满才调用 FileService，
+图片删除由前端先隐藏资源，右下角 toast 提供 3 秒撤回窗口，期满才调用 FileService，
 沿用目录配置的垃圾桶或永久删除模式。每批独立计时；切目录不提前提交，组件卸载取消
 尚未提交的请求。撤回只取消请求并恢复显示，失败显示错误，不自动重试文件动作。
 
@@ -89,3 +89,32 @@ QueueDiagnostics 非阻塞读取五组队列并保留 busy 样本，不扫描目
 队列锁不包住 filesystem/SQLite I/O。详情见[性能不变量](../PERFORMANCE_INVARIANTS.md)。
 
 下一章：[扩展、调试与验证](06-extension-guide.md)。
+
+### Tag picker ordering
+
+The add-tag picker supports recent use, most annotated, and tree/name ordering.
+The search-row settings control saves the selected ordering locally across restarts.
+For a nonempty search without an exact tag name/path match, the search row offers
+one-click creation and assignment (including hierarchical paths); there is no
+separate creation footer. Creation errors preserve the search for retry.
+`CustomTag.usageCount` counts current effective image assignments globally;
+`lastUsedAt` is the latest `asset_tags.assigned_at` among those assignments
+(including imported and person-derived assignments). Removing assignments updates
+both projections; they are not a lifetime usage log. Neither projection changes
+the schema or user facts. Tree ordering compares path segments, keeps parents
+before descendants, and sorts siblings by name. Search matches full tag paths
+in every mode.
+
+### Deferred tag deletion
+
+Deleting a vocabulary entry and removing a tag from one photo are both deferred
+by three seconds behind an undo toast instead of a confirmation dialog, matching
+photo deletion. The pending entry hides the tag (its whole subtree for a
+vocabulary deletion) immediately; undo only clears the timer, so the original
+tag ids, sources and revisions survive. The write itself still runs through the
+tag mutation scope, so it stays serialized with other tag edits, and a pending
+request blocks a second deletion of the same tag or photo. Removal clears manual
+and sidecar sources only: person contributions belong to the person review
+workflow and keep the tag on the photo, which the inspector explains in place
+of the removal. Shutdown cancels deletions whose window has not expired, the
+same way deferred photo deletion is cancelled.
