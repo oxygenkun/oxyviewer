@@ -25,7 +25,6 @@ import { useWorkspaceStore } from "@/store";
 import { burstAdjustedTotal, useBurstGroups } from "@/lib/browse/burstGroups";
 import type { AssetSummary, BurstGroup, FileDeletionMode, ViewMode } from "@/types";
 import { AssetMetadataBadges } from "@/components/common/AssetMetadataBadges";
-import { ConfirmTrashDialog } from "@/components/overlay/ConfirmTrashDialog";
 import { Loupe } from "@/components/loupe/Loupe";
 import { Thumbnail } from "./Thumbnail";
 
@@ -167,7 +166,6 @@ export function AssetBrowser(props: AssetBrowserProps) {
   const openSettings = useWorkspaceStore((state) => state.openSettings);
   const select = useWorkspaceStore((state) => state.select);
   const dismissContextMenu = useCallback(() => setContextMenu(undefined), []);
-  const [pendingTrash, setPendingTrash] = useState<AssetSummary[]>();
   const showContextMenu = useCallback((event: React.MouseEvent, asset: AssetSummary) => {
     event.preventDefault();
     event.stopPropagation();
@@ -183,8 +181,8 @@ export function AssetBrowser(props: AssetBrowserProps) {
     const targets = selected.has(asset.id)
       ? props.assets.filter((candidate) => selected.has(candidate.id))
       : [asset];
-    setPendingTrash(targets.length ? targets : [asset]);
-  }, [props.assets]);
+    props.onTrashAssets(targets.length ? targets : [asset]);
+  }, [props.assets, props.onTrashAssets]);
 
   let content;
   if (props.assets.length === 0 && !(props.view === "loupe" && props.heldAsset)) {
@@ -205,7 +203,7 @@ export function AssetBrowser(props: AssetBrowserProps) {
         fetchNextPage={props.fetchNextPage}
         hasNextPage={props.hasNextPage}
         isFetchingNextPage={props.isFetchingNextPage}
-        keyboardSuppressed={Boolean(contextMenu) || Boolean(pendingTrash)}
+        keyboardSuppressed={Boolean(contextMenu)}
         onAssetContextMenu={showContextMenu}
         onAssetDrag={onAssetDrag}
         t={props.t}
@@ -215,7 +213,7 @@ export function AssetBrowser(props: AssetBrowserProps) {
     content = (
       <VirtualGrid
         {...props}
-        keyboardSuppressed={Boolean(contextMenu) || Boolean(pendingTrash)}
+        keyboardSuppressed={Boolean(contextMenu)}
         onAssetContextMenu={showContextMenu}
         onAssetDrag={onAssetDrag}
       />
@@ -244,20 +242,7 @@ export function AssetBrowser(props: AssetBrowserProps) {
         selectionCount={useWorkspaceStore.getState().selectedIds.length}
         onTrash={requestTrash}
       /> : null}
-      {pendingTrash ? (
-        <ConfirmTrashDialog
-          deletionMode={props.deletionMode}
-          itemCount={pendingTrash.length}
-          itemName={pendingTrash[0].name}
-          onCancel={() => setPendingTrash(undefined)}
-          onConfirm={() => {
-            const assets = pendingTrash;
-            setPendingTrash(undefined);
-            props.onTrashAssets(assets);
-          }}
-          t={props.t}
-        />
-      ) : null}
+
     </>
   );
 }

@@ -360,11 +360,7 @@ it("deletes the current multi-selection from the context menu", async () => {
     .find((button) => button.textContent === "deleteSelected".replace("{count}", "2"));
   expect(deleteButton?.textContent).toBe("deleteSelected");
   await act(async () => deleteButton?.click());
-  expect(document.querySelector('[role="alertdialog"]')?.textContent).toContain("trashConfirmMultipleBody");
-
-  const confirm = [...document.querySelectorAll<HTMLButtonElement>('[role="alertdialog"] button')]
-    .find((button) => button.textContent === "confirmTrash");
-  await act(async () => confirm?.click());
+  expect(document.querySelector('[role="alertdialog"]')).toBeNull();
   expect(trashAssets).toHaveBeenCalledWith([assets[1], assets[2]]);
 });
 

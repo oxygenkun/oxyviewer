@@ -67,6 +67,10 @@ FileService 统一显式 rename/copy/move/trash/permanent-delete。路径、名�
 sidecar 和 symlink 语义由 files 检查；这是安全操作边界，不代表 OS 级目录沙箱。
 调用涉及用户文件，不能把 SQLite cache policy 当成删除用户文件的许可。
 
+图片删除由前端先隐藏资源，底部 toast 提供 5 秒撤回窗口，期满才调用 FileService，
+沿用目录配置的垃圾桶或永久删除模式。每批独立计时；切目录不提前提交，组件卸载取消
+尚未提交的请求。撤回只取消请求并恢复显示，失败显示错误，不自动重试文件动作。
+
 文件系统和 SQLite 不同事务。每文件先记录 prepared，动作完成后记录 filesApplied 和
 PathProof；资料提交后才删除恢复记录。未知文件动作不得自动重做；DB-only recovery
 重验目标证明，部分批量成功保留。恢复记录是 user，清缓存保留它。

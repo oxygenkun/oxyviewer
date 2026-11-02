@@ -1,3 +1,5 @@
+import { useDeferredDeletion } from "@/lib/hooks/useDeferredDeletion";
+import "@/components/overlay/DeletionToasts.css";
 import { GlobalPeoplePanel } from "@/components/people/GlobalPeoplePanel";
 import { PeopleLibrary } from "@/components/people/PeopleLibrary";
 import { resolvePersonFolder } from "@/lib/browse/openPersonFolder";
@@ -446,16 +448,17 @@ export function App({ perfScenario }: { perfScenario?: PerfScenario }) {
     const projection = metadataRecords[asset.path];
     return !projection || projection.status === "loading";
   });
+  const deletion = useDeferredDeletion();
   const assets = useMemo(
     () => progressivelyFilterMetadata
-      ? filterAndSortAssets(progressivelyEnrichedAssets, query)
-      : cheapAssets,
-    [cheapAssets, progressivelyEnrichedAssets, progressivelyFilterMetadata, query],
+      ? filterAndSortAssets(progressivelyEnrichedAssets, query).filter(asset => !deletion.hiddenPaths.has(asset.path))
+      : cheapAssets.filter(asset => !deletion.hiddenPaths.has(asset.path)),
+    [cheapAssets, progressivelyEnrichedAssets, progressivelyFilterMetadata, query, deletion.hiddenPaths],
   );
   // Page and metadata commits are non-urgent; keep active scrolling ahead of
   // rebuilding the browser projection for a newly returned page.
   const deferredAssets = useDeferredValue(assets);
-  const displayedAssets = tupleFilter ? assets : deferredAssets;
+  const displayedAssets = useMemo(() => (tupleFilter ? assets : deferredAssets).filter(asset => !deletion.hiddenPaths.has(asset.path)), [tupleFilter, assets, deferredAssets, deletion.hiddenPaths]);
   const preloadCandidates = useMemo(() => {
     const listed = progressivelyFilterMetadata ? assets : cheapAssets;
     const visibleIds = new Set(listed.map((asset) => asset.id));
@@ -470,7 +473,7 @@ export function App({ perfScenario }: { perfScenario?: PerfScenario }) {
   useSidecarMetadata(JSON.stringify([activeSession?.id, currentPath, sidecarSnapshotRevision]), preloadCandidates);
   const total = progressivelyFilterMetadata
     ? assets.length
-    : resultData?.pages[0]?.total ?? 0;
+    : Math.max(0, (resultData?.pages[0]?.total ?? 0) - cheapAssets.filter(asset => deletion.hiddenPaths.has(asset.path)).length);
   const heldReviewAsset = globalPeople.enabled && globalPeople.heldAsset?.id === activeId ? globalPeople.heldAsset : undefined;
   const retainingReview = view === "loupe" && !!heldReviewAsset;
   const activeAsset = assets.find((asset) => asset.id === activeId) ?? heldReviewAsset;
@@ -899,11 +902,7 @@ export function App({ perfScenario }: { perfScenario?: PerfScenario }) {
         queryClient.cancelQueries({ queryKey: ["progressive-metadata-assets", activeSession?.id, currentPath] }),
       ]);
       const paths = targets.map((asset) => asset.path);
-      const removedIds = targets.map((asset) => asset.id);
       await deletePaths(paths, activeSession?.deletionMode ?? "trash");
-      const replacementId = replacementAssetIdAfterRemovals(assets, removedIds, activeId);
-      if (replacementId) select(replacementId);
-      else clearSelection();
       for (const asset of targets) queryClient.removeQueries({ queryKey: ["asset-render", asset.id] });
       for (const key of ["assets", "preload-assets", "progressive-metadata-assets"] as const) {
         queryClient.setQueriesData<InfiniteData<Page<AssetSummary>, unknown>>(
@@ -1094,7 +1093,12 @@ export function App({ perfScenario }: { perfScenario?: PerfScenario }) {
               ? progressiveWorkPending
               : assetsQuery.isFetchingNextPage}
             fetchNextPage={fetchNextAssetsPage}
-            onTrashAssets={(targets) => void handleTrashAssets(targets)}
+            onTrashAssets={(targets) => {
+              const replacementId = replacementAssetIdAfterRemovals(assets, targets.map(asset => asset.id), activeId);
+              deletion.enqueue(targets, () => handleTrashAssets(targets));
+              if (replacementId) select(replacementId);
+              else clearSelection();
+            }}
             onCopyAssetPath={(asset, relative) => void handleCopyPath(activeSession.rootPath, asset.path, relative)}
             onOpenExternal={handleOpenExternal}
             onOpenInFileManager={(path) => void handleOpenInFileManager(path)}
@@ -1209,6 +1213,15 @@ export function App({ perfScenario }: { perfScenario?: PerfScenario }) {
         itemCount={dropState.itemCount}
         t={t}
       />
+      <div className="deletion-toasts" aria-live="polite">
+        {deletion.pending.filter(request => !request.expired).map(request => (
+          <div className="deletion-toast" role="status" key={request.id}>
+            <span>{t("deletionPending").replace("{count}", String(request.assets.length))}</span>
+            <button type="button" onClick={() => deletion.undo(request.id)}>{t("undoDeletion")}</button>
+            <span className="deletion-toast__progress" aria-hidden="true" />
+          </div>
+        ))}
+      </div>
       {settingsOpen ? <SettingsPanel t={t} activeAsset={assets.find((asset) => asset.id === activeId)} /> : null}
       {perfScenario ? (
         <PerfHarness
