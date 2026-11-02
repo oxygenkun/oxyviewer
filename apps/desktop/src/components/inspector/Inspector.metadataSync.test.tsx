@@ -9,6 +9,9 @@ import { Inspector } from "./Inspector";
 const api = vi.hoisted(() => ({
   chooseAndConfigureExiftool: vi.fn(), getAssetDetails: vi.fn(), getExiftoolStatus: vi.fn(),
   installExiftool: vi.fn(), patchMetadata: vi.fn(), syncMetadataToEmbedded: vi.fn(),
+  getTagSyncStatus: vi.fn(async () => ({ pendingCount: 0, failedCount: 0, lastError: null })),
+  onTagSyncStatusChanged: vi.fn(async () => () => {}),
+  retryTagXmpSync: vi.fn(),
 }));
 vi.mock("@/lib/api", () => api);
 vi.mock("./TagEditor", () => ({ TagEditor: () => null }));
@@ -36,6 +39,8 @@ beforeEach(async () => {
     embeddedKeywords: [], embeddedHierarchicalKeywords: [], captureMetadata: {} });
   api.getExiftoolStatus.mockResolvedValue({ available: false });
   api.syncMetadataToEmbedded.mockResolvedValue("job");
+  api.getTagSyncStatus.mockResolvedValue({ pendingCount: 0, failedCount: 0, lastError: null });
+  api.onTagSyncStatusChanged.mockResolvedValue(() => {});
   client = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } });
   host = document.createElement("div"); document.body.append(host); root = createRoot(host);
   await act(async () => root.render(<QueryClientProvider client={client}>

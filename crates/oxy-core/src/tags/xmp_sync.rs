@@ -1,8 +1,8 @@
 //! One coalescing, application-owned worker for the durable tag mirror queue.
 use super::Tags;
 use crate::{
-    files::FsCatalog, metadata::MetadataFacade, metadata::types::MetadataPatch,
-    runtime::CoreRuntime,
+    events::CoreEvent, files::FsCatalog, metadata::MetadataFacade, metadata::types::MetadataPatch,
+    runtime::CoreRuntime, tags::types::TagSyncStatus,
 };
 use std::{
     collections::HashSet,
@@ -21,6 +21,8 @@ pub struct TagXmpSync {
     files: Arc<FsCatalog>,
     metadata: MetadataFacade,
     work: Mutex<Work>,
+    /// Only a changed snapshot becomes an event; a repeated drain stays quiet.
+    reported: Mutex<Option<TagSyncStatus>>,
 }
 
 impl TagXmpSync {
@@ -36,6 +38,7 @@ impl TagXmpSync {
             files,
             metadata,
             work: Mutex::new(Work::default()),
+            reported: Mutex::new(None),
         }
     }
 
@@ -72,9 +75,14 @@ impl TagXmpSync {
                 .lock()
                 .unwrap_or_else(std::sync::PoisonError::into_inner)
                 .requested = false;
+            // Announce the queued work before the drain and the emptied queue
+            // after it, so the shell can show and clear its pending row without
+            // polling for the state.
+            self.publish_status();
             if let Err(error) = self.drain() {
                 eprintln!("failed to run tag XMP sync: {error}");
             }
+            self.publish_status();
             let mut work = self
                 .work
                 .lock()
@@ -84,6 +92,24 @@ impl TagXmpSync {
                 return;
             }
         }
+    }
+
+    fn publish_status(&self) {
+        let Ok(status) = self.tags.tag_sync_status() else {
+            return;
+        };
+        let mut reported = self
+            .reported
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        if reported.as_ref() == Some(&status) {
+            return;
+        }
+        *reported = Some(status.clone());
+        drop(reported);
+        let _ = self
+            .runtime
+            .publish(CoreEvent::TagSyncStatusChanged(status));
     }
 
     fn drain(&self) -> Result<(), String> {
@@ -186,6 +212,43 @@ mod tests {
         drop(writer);
         assert!(runtime.shutdown(std::time::Duration::from_secs(2)));
         assert!(!sync.work.lock().unwrap().running);
+    }
+
+    #[test]
+    fn status_events_announce_the_queue_then_its_drain() {
+        use super::*;
+        use std::time::Duration;
+
+        let store = Arc::new(crate::storage::Store::in_memory().unwrap());
+        let (runtime, events) = CoreRuntime::channel();
+        let tags = Arc::new(Tags::new(store));
+        let sync = Arc::new(TagXmpSync::new(
+            runtime,
+            tags.clone(),
+            Arc::new(FsCatalog::default()),
+            MetadataFacade::default(),
+        ));
+        let tag = tags.create_custom_tag(None, "Nature").unwrap();
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("photo.HIF");
+        std::fs::write(&path, b"camera image bytes").unwrap();
+        tags.set_asset_tag(std::slice::from_ref(&path), tag.id, true)
+            .unwrap();
+        sync.schedule();
+
+        let mut queued = false;
+        let mut drained = false;
+        while !drained {
+            let Ok(event) = events.recv_timeout(Duration::from_secs(3)) else {
+                panic!("the mirror queue never reported an empty snapshot");
+            };
+            if let CoreEvent::TagSyncStatusChanged(status) = event {
+                if status.pending_count == 1 && status.failed_count == 0 {
+                    queued = true;
+                }
+                drained = queued && status.pending_count == 0 && status.failed_count == 0;
+            }
+        }
     }
 
     #[test]

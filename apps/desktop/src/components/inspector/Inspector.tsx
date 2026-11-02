@@ -19,6 +19,7 @@ import type { AssetSummary, MetadataPatch, PickLabel } from "@/types";
 import { formatBytes } from "@/components/browsing/AssetBrowser";
 import { PickFlagIcon } from "@/components/common/PickFlagIcon";
 import { TagEditor } from "./TagEditor";
+import { TagSyncIndicator } from "./TagSyncIndicator";
 
 interface InspectorProps {
   asset?: AssetSummary;
@@ -104,8 +105,13 @@ export function Inspector({ asset, selectedCount, selectedPaths, t }: InspectorP
   return (
     <aside className="inspector">
       <header className="inspector__header">
-        <div><strong>{t("inspector")}</strong><span>{selectedCount || "—"} {t("selected")}</span></div>
-        <FileCog size={16} />
+        <div className="inspector__header-title">
+          <strong>{t("inspector")}</strong><span>{selectedCount || "—"} {t("selected")}</span>
+        </div>
+        <div className="inspector__header-tools">
+          <TagSyncIndicator t={t} />
+          <FileCog size={16} />
+        </div>
       </header>
       {!asset ? (
         <div className="inspector__empty">
