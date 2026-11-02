@@ -240,10 +240,18 @@ impl Tags {
         }
         let path_strings = selection_paths(paths);
         for path in &path_strings {
-            // A hand assignment records a manual source; removing it drops that
-            // source. Either way the effective set is
-            // then re-derived from the sources that remain.
-            crate::tags::repo::replace_manual_source(&transaction, path, tag_id, assigned)?;
+            if assigned {
+                crate::tags::repo::insert_source(&transaction, path, tag_id, "manual", "")?;
+            } else {
+                // Explicit removal also withdraws imported keywords. Person
+                // contributions remain owned by the person review workflow.
+                crate::tags::repo::delete_sources_of_kinds(
+                    &transaction,
+                    path,
+                    tag_id,
+                    &["manual", "sidecar"],
+                )?;
+            }
             crate::tags::repo::reconcile_effective(&transaction, path, tag_id)?;
         }
         crate::tags::repo::enqueue_sync(&transaction, &path_strings)?;
@@ -738,6 +746,87 @@ mod tests {
                 .all(|row| row.assignments.is_empty())
         );
         assert!(tags.asset_tag_assignments_by_path(&[]).unwrap().is_empty());
+    }
+
+    #[test]
+    fn explicit_removal_withdraws_sidecar_and_manual_sources_but_keeps_person() {
+        for manual in [false, true] {
+            for person in [false, true] {
+                let (tags, store) = in_memory_with_store();
+                let asset = PathBuf::from("/photos/a.jpg");
+                tags.import_sidecar_tags(&asset, &["Family".into()], &["People|Family".into()])
+                    .unwrap();
+                let tag = tags
+                    .custom_tags()
+                    .unwrap()
+                    .into_iter()
+                    .find(|tag| tag.path == "People|Family")
+                    .unwrap();
+                let other = PathBuf::from("/photos/other.jpg");
+                tags.set_asset_tag(std::slice::from_ref(&other), tag.id, true)
+                    .unwrap();
+                if manual {
+                    tags.set_asset_tag(std::slice::from_ref(&asset), tag.id, true)
+                        .unwrap();
+                }
+                if person {
+                    repo::insert_source(
+                        &store.write(),
+                        &asset.to_string_lossy(),
+                        tag.id,
+                        "person",
+                        "person-1",
+                    )
+                    .unwrap();
+                }
+                tags.set_asset_tag(std::slice::from_ref(&asset), tag.id, false)
+                    .unwrap();
+                assert_eq!(
+                    tags.asset_tag_source_kinds(&asset, tag.id).unwrap(),
+                    if person { vec!["person"] } else { vec![] }
+                );
+                assert!(
+                    tags.custom_tags()
+                        .unwrap()
+                        .iter()
+                        .any(|item| item.id == tag.id)
+                );
+                assert!(
+                    repo::effective_assignment_present(
+                        &store.read(),
+                        &other.to_string_lossy(),
+                        tag.id
+                    )
+                    .unwrap()
+                );
+                let payload = tags.tag_xmp_payload(&asset).unwrap();
+                assert_eq!(payload.previous_hierarchical, ["People|Family"]);
+                assert_eq!(
+                    payload.hierarchical,
+                    if person {
+                        vec!["People|Family"]
+                    } else {
+                        vec![]
+                    }
+                );
+                assert!(tags.pending_tag_sync_paths().unwrap().contains(&asset));
+                // Stale metadata cannot restore the removed assignment while XMP is pending.
+                assert!(
+                    !tags
+                        .import_sidecar_tags(&asset, &["Family".into()], &["People|Family".into()])
+                        .unwrap()
+                );
+                if !person {
+                    tags.complete_tag_xmp_sync(&asset, &[], &[]).unwrap();
+                    tags.import_sidecar_tags(&asset, &[], &[]).unwrap();
+                    assert!(
+                        tags.asset_tag_source_kinds(&asset, tag.id)
+                            .unwrap()
+                            .is_empty()
+                    );
+                }
+            }
+        }
     }
 
     #[test]

@@ -360,7 +360,7 @@ export function TagEditor({
               <button
                 className="is-danger"
                 onClick={() => removeAssignmentMutation.mutate({ path: currentPath, tagId: removeTarget.id })}
-                disabled={removeAssignmentMutation.isPending || sourceQuery.isLoading || !sourceQuery.data?.some(kind => kind === "manual" || kind === "legacy")}
+                disabled={removeAssignmentMutation.isPending || sourceQuery.isLoading || !sourceQuery.data?.some(kind => kind === "manual" || kind === "legacy" || kind === "sidecar")}
               >{t("removeManualTag")}</button>
             </div>
           </div>

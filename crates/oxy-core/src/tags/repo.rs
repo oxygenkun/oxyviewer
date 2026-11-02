@@ -214,21 +214,6 @@ pub fn delete_sources_of_kinds(
     Ok(())
 }
 
-/// A hand assignment: record the manual source, or
-/// drop it when the user removes the tag by hand.
-pub fn replace_manual_source(
-    connection: &Connection,
-    asset_path: &str,
-    tag_id: CustomTagId,
-    assigned: bool,
-) -> Result<(), StoreError> {
-    if assigned {
-        insert_source(connection, asset_path, tag_id, "manual", "")
-    } else {
-        delete_sources_of_kinds(connection, asset_path, tag_id, &["manual"])
-    }
-}
-
 /// The reasons recorded for one pair, in a stable order.
 pub fn source_kinds(
     connection: &Connection,

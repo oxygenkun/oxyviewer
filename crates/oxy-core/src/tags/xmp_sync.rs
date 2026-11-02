@@ -189,6 +189,64 @@ mod tests {
     }
 
     #[test]
+    fn removal_updates_database_and_sidecar_without_restoring_the_tag() {
+        use super::*;
+        use crate::metadata::types::MetadataPatch;
+        use oxy_media::types::AssetKind;
+
+        for manual in [false, true] {
+            let directory = tempfile::tempdir().unwrap();
+            let path = directory.path().join("photo.HIF");
+            std::fs::write(&path, b"camera image bytes").unwrap();
+            let tags = Tags::new(Arc::new(crate::storage::Store::in_memory().unwrap()));
+            let files = FsCatalog::default();
+            let metadata = MetadataFacade::default();
+            metadata
+                .patch_metadata(
+                    &path,
+                    AssetKind::Heif,
+                    &MetadataPatch {
+                        keywords: Some(vec!["Family".into(), "Other".into()]),
+                        hierarchical_keywords: Some(vec!["People|Family".into(), "Other".into()]),
+                        rating: Some(Some(4)),
+                        ..MetadataPatch::default()
+                    },
+                )
+                .unwrap();
+            let current = metadata.read_metadata(&path, AssetKind::Heif).unwrap();
+            tags.import_sidecar_tags(&path, &current.keywords, &current.hierarchical_keywords)
+                .unwrap();
+            let tag = tags
+                .custom_tags()
+                .unwrap()
+                .into_iter()
+                .find(|tag| tag.path == "People|Family")
+                .unwrap();
+            if manual {
+                tags.set_asset_tag(std::slice::from_ref(&path), tag.id, true)
+                    .unwrap();
+                sync_path(&tags, &files, &metadata, &path).unwrap();
+            }
+            tags.set_asset_tag(std::slice::from_ref(&path), tag.id, false)
+                .unwrap();
+            sync_path(&tags, &files, &metadata, &path).unwrap();
+            let current = metadata.read_metadata(&path, AssetKind::Heif).unwrap();
+            assert_eq!(current.keywords, ["Other"]);
+            assert_eq!(current.hierarchical_keywords, ["Other"]);
+            assert_eq!(current.rating, Some(4));
+            tags.import_sidecar_tags(&path, &current.keywords, &current.hierarchical_keywords)
+                .unwrap();
+            assert!(
+                tags.asset_tag_source_kinds(&path, tag.id)
+                    .unwrap()
+                    .is_empty()
+            );
+            assert!(tags.pending_tag_sync_paths().unwrap().is_empty());
+            assert_eq!(std::fs::read(&path).unwrap(), b"camera image bytes");
+        }
+    }
+
+    #[test]
     fn replaces_only_values_managed_by_oxyviewer() {
         assert_eq!(
             merge_managed_values(

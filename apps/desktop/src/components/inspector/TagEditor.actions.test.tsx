@@ -3,7 +3,7 @@ import { notifyManager, QueryClient, QueryClientProvider } from "@tanstack/react
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
-import { createCustomTag, deleteCustomTag, getAssetTagAssignments, setAssetCustomTag } from "@/lib/api";
+import { createCustomTag, deleteCustomTag, getAssetTagAssignments, getAssetTagSourceKinds, setAssetCustomTag } from "@/lib/api";
 import { TAG_MUTATION_SCOPE } from "@/lib/assets/tagActions";
 import { useWorkspaceStore } from "@/store";
 import type { CustomTag } from "@/types";
@@ -144,4 +144,16 @@ it("clears the remembered child tag after its parent is deleted", async () => {
   await click(".tag-picker--confirmation .is-danger");
   await vi.waitFor(() => expect(useWorkspaceStore.getState().lastTagId).toBeUndefined());
   expect(deleteCustomTag).toHaveBeenCalledWith(1);
+});
+
+it.each([{ sources: ["sidecar"] }, { sources: ["manual", "sidecar"] }])("removes a tag with sources $sources from the current photo", async ({ sources }) => {
+  vi.mocked(getAssetTagSourceKinds).mockResolvedValueOnce(sources);
+  assigned.add(2);
+  await act(async () => { await client.invalidateQueries({ queryKey: ["asset-tag-assignments"] }); });
+  await vi.waitFor(() => expect(document.querySelector(".tag-editor__chips [aria-label='removeTagFromCurrent People › Family']")).not.toBeNull());
+  await click(".tag-editor__chips [aria-label='removeTagFromCurrent People › Family']");
+  await vi.waitFor(() => expect(document.querySelector<HTMLButtonElement>(".tag-remove-confirmation .is-danger")?.disabled).toBe(false));
+  await click(".tag-remove-confirmation .is-danger");
+  await vi.waitFor(() => expect(setAssetCustomTag).toHaveBeenCalledWith(["/demo/a.jpg"], 2, false));
+  await vi.waitFor(() => expect(document.querySelector(".tag-editor__chips [aria-label='removeTagFromCurrent People › Family']")).toBeNull());
 });
