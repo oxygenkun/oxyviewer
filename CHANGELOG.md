@@ -12,6 +12,52 @@ Each release lists the English notes first, followed by the Simplified Chinese n
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-11-04
+
+### Added
+
+- Added repeating the last tag on the current selection through a configurable shortcut.
+- Added native file dragging from the grid and the loupe, with grid multi-selection and Alt-drag from a zoomed photo.
+- Added folder-wide sidecar tag writeback with progress, cancellation, and per-file results.
+- Added the XMP mirror queue state to the inspector header, with a retry action when a write fails.
+- Added an undo toast for photo and tag deletion, replacing the confirmation panel with a three-second window that can be cancelled.
+- Added recent, most-used, and tree ordering to the tag picker, a remembered choice, and hierarchical tag creation from the search row.
+- Added a recheck action to the ExifTool setup prompt, so a manually installed binary is detected without restarting the app.
+- Sidecar ratings and tags are now read while browsing, so files with adjacent XMP keep their markings without a full rebuild.
+
+### Changed
+
+- Moved application state to the isolated `core-v2` data directory with schema 2. Library state written by 0.1.x is rejected read-only instead of migrated, so folders must be added again to rebuild the library.
+
+### Fixed
+
+- Fixed tag removal so manual and sidecar assignments are withdrawn together and the updated keywords are written back to XMP, while person contributions keep the tag.
+- Fixed XMP keyword arrays whose members contain commas, non-ASCII text, or duplicates being split into separate tags.
+- Fixed verified person identities detaching from their photos after a file rename.
+- Fixed person tag contributions being lost during library folder recovery.
+
+### 新增
+
+- 新增重复上一个标签的快捷键，可自定义并与当前选择联动。
+- 新增从网格与放大镜拖出原始文件，网格支持多选拖出，放大镜支持按住 Alt 拖出。
+- 新增整文件夹的 sidecar 标签回写，提供进度、取消与逐文件结果。
+- 新增信息面板标题栏的 XMP 同步队列状态，写入失败时可重试。
+- 新增照片与标签删除的撤销提示，以三秒可取消的窗口取代确认面板。
+- 新增标签选择器的最近使用、最常使用与树形排序，并记住选择；支持从搜索行创建层级标签。
+- 新增 ExifTool 安装提示中的重新检查操作，手动安装后无需重启即可识别。
+- 浏览时直接读取 sidecar 中的评分与标签，存在相邻 XMP 的文件无需重建即可显示标记。
+
+### 调整
+
+- 应用状态迁移到隔离的 `core-v2` 数据目录与 schema 2。0.1.x 写入的图库状态会被只读拒绝而不迁移，需要重新添加文件夹以重建图库。
+
+### 修复
+
+- 修复删除标签时仅移除部分来源的问题：现在同时撤回手动与 sidecar 赋值并回写 XMP，同时保留人物贡献的标签。
+- 修复 XMP 关键字数组成员包含逗号、非 ASCII 文本或重复项时被拆分为多个标签的问题。
+- 修复已验证的人物身份在文件重命名后与照片脱钩的问题。
+- 修复图库文件夹恢复过程中丢失人物标签贡献的问题。
+
 ## [0.1.5] - 2026-10-10
 
 ### Added
@@ -159,7 +205,8 @@ Each release lists the English notes first, followed by the Simplified Chinese n
 - 可重建的媒体与图库缓存，支持可配置的存储管理和队列诊断。
 - macOS 与 Linux 安装包，以及双语 Windows NSIS EXE 和便携 ZIP 包，内置固定版本的 FFmpeg 工具；对应的 FFmpeg 源码作为独立发布资源提供。
 
-[Unreleased]: https://github.com/oxygenkun/oxyviewer/compare/v0.1.5...HEAD
+[Unreleased]: https://github.com/oxygenkun/oxyviewer/compare/v0.2.0...HEAD
+[0.2.0]: https://github.com/oxygenkun/oxyviewer/compare/v0.1.5...v0.2.0
 [0.1.5]: https://github.com/oxygenkun/oxyviewer/compare/v0.1.4...v0.1.5
 [0.1.4]: https://github.com/oxygenkun/oxyviewer/compare/v0.1.3...v0.1.4
 [0.1.3]: https://github.com/oxygenkun/oxyviewer/compare/v0.1.2...v0.1.3
