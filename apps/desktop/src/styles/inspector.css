@@ -237,7 +237,7 @@
 
   &[data-state="pending"],
   &[data-state="error"] { opacity: 1; pointer-events: auto; }
-  &[data-state="pending"] svg { animation: tag-sync-spin 1.4s linear infinite; }
+  &[data-state="pending"] svg { animation: tag-sync-spin 1.4s linear infinite; transform-origin: center; }
   &[data-state="error"] { color: #d99b91; }
   &[data-state="error"]:hover { background: #2a2020; }
   &:focus-visible { outline: 1px solid var(--accent); }

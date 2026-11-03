@@ -118,3 +118,14 @@ and sidecar sources only: person contributions belong to the person review
 workflow and keep the tag on the photo, which the inspector explains in place
 of the removal. Shutdown cancels deletions whose window has not expired, the
 same way deferred photo deletion is cancelled.
+
+### Tag mirror status
+
+Every tag mutation wakes the coalescing `TagXmpSync` worker, and the worker
+publishes `CoreEvent::TagSyncStatusChanged` before and after each drain when the
+snapshot differs from the last one it reported. The desktop adapter forwards it
+as `tag-sync-status-changed`, so the shell mirrors the queue without polling.
+The indicator lives in the inspector header's fixed slot rather than the panel
+body: a state row inside the flow would push the tags section past the panel
+height, flash a scrollbar for the length of the write, and then retract it. A
+slow fallback poll remains for a listener that missed a snapshot.
