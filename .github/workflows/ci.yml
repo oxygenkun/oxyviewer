@@ -248,6 +248,12 @@ jobs:
       - name: Verify macOS app FFmpeg payload
         if: runner.os == 'macOS'
         run: node 3rdpart/ffmpeg/prepare.mjs --verify-bundle target/release/bundle/macos/OxyViewer.app
+      - name: Verify macOS app and DMG signatures
+        if: runner.os == 'macOS'
+        run: >-
+          node scripts/release/verify-macos-signatures.mjs
+          target/release/bundle/macos/OxyViewer.app
+          target/release/bundle/dmg/*.dmg
       - name: Build and verify Windows portable ZIP
         if: runner.os == 'Windows'
         shell: pwsh

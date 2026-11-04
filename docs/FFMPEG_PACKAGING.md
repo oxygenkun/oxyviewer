@@ -25,6 +25,15 @@ prepares these dependencies before `dev`, because Cargo links the pinned
 libheif and FFmpeg static prefixes. Only `build`/`bundle` merges the packaging
 overlay. Do not bypass this wrapper with `pnpm exec tauri` for release builds.
 Plain Cargo commands require `pnpm native:prepare` first on macOS and Linux.
+
+The packaging overlay sets macOS `signingIdentity` to `-`, so Tauri signs the
+embedded executables and the complete app bundle with an ad-hoc signature before
+creating the DMG. This seals the resources and avoids shipping only the linker's
+signature. It does not supply a Developer ID or Apple notarization; downloaded
+apps can still require a user override in Privacy & Security. Future Developer
+ID distribution can override the identity with `APPLE_SIGNING_IDENTITY` and use
+Tauri's notarization credentials.
+
 `pnpm ffmpeg:prepare` explicitly prepares and verifies the sidecars without
 building the application; `pnpm native:prepare` additionally installs the
 static prefix and the pinned libheif that links it on macOS and Linux.
@@ -140,7 +149,14 @@ the application; moving only the main executable produces an incomplete build.
 
 ```sh
 node 3rdpart/ffmpeg/prepare.mjs --verify-bundle target/release/bundle/macos/OxyViewer.app
+node scripts/release/verify-macos-signatures.mjs target/release/bundle/macos/OxyViewer.app target/release/bundle/dmg/*.dmg
 ```
+
+The signature check verifies the main executable, both sidecars and the complete
+app resource seal. It also mounts each finished DMG read-only and verifies its
+embedded app, then unmounts it even if verification fails. CI requires this check
+before uploading macOS artifacts; it checks signature integrity rather than
+Gatekeeper approval or notarization.
 
 The synthetic smoke test does not prove camera HEIF compatibility. Run real
 HIF regression tests using the installed pair and the private fixture:

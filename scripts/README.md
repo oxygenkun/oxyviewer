@@ -25,6 +25,9 @@ scenario and the code that runs it stay together.
 - `extract-release-notes.mjs` — prints the CHANGELOG section for a tag; CI
   redirects it to `release-notes.md`.
 - `package-windows-portable.ps1` — builds the Windows portable archive.
+- `verify-macos-signatures.mjs` — checks the app and its sidecars with
+  `codesign`, including the app inside a read-only mounted DMG. macOS only;
+  CI runs it before uploading packages.
 
 ### `browser/`
 

@@ -1,5 +1,8 @@
 {
   "bundle": {
+    "macOS": {
+      "signingIdentity": "-"
+    },
     "externalBin": ["binaries/oxy-ffmpeg", "binaries/oxy-ffprobe"],
     "resources": {
       "../../../LICENSE.md": "licenses/OxyViewer/LICENSE.md",
