@@ -233,7 +233,7 @@ mod tests {
     use super::*;
     use crate::{AppPaths, OxyApp, events::CoreEvent};
     use oxy_media::types::AssetKind;
-    use std::time::{Duration, Instant};
+    use std::time::Duration;
 
     #[test]
     fn embedded_batch_deduplicates_continues_errors_and_skips_equal_without_a_provider() {
@@ -387,6 +387,7 @@ mod tests {
     #[test]
     fn active_exiftool_is_not_reported_joined_at_the_shutdown_deadline() {
         use std::os::unix::fs::PermissionsExt;
+        use std::time::Instant;
         let directory = tempfile::tempdir().unwrap();
         let photo = directory.path().join("a.jpg");
         image::RgbImage::new(8, 8).save(&photo).unwrap();
