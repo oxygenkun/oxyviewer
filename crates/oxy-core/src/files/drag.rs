@@ -26,6 +26,16 @@ pub fn prepare_drag_paths(paths: Vec<PathBuf>) -> io::Result<Vec<PathBuf>> {
     Ok(result)
 }
 
+/// Run on a blocking worker. Offer Shell-compatible spellings only when they
+/// resolve to the same original, preserving verbatim-only names and volumes.
+#[cfg(windows)]
+pub fn shell_drag_paths(paths: &[PathBuf]) -> Vec<PathBuf> {
+    paths
+        .iter()
+        .map(|path| super::external_apps::application_path(path).into_owned())
+        .collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -55,5 +65,22 @@ mod tests {
         assert!(prepare_drag_paths(vec![PathBuf::from("relative.jpg")]).is_err());
         assert!(prepare_drag_paths(vec![directory.path().join("missing.jpg")]).is_err());
         assert!(prepare_drag_paths(vec![directory.path().to_owned()]).is_err());
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn shell_spelling_keeps_verbatim_only_originals_distinct() {
+        let directory = tempfile::tempdir().unwrap();
+        let root = std::fs::canonicalize(directory.path()).unwrap();
+        let plain = root.join("照片 one.jpg");
+        let special = root.join("照片 one.jpg.");
+        std::fs::write(&plain, b"plain").unwrap();
+        std::fs::write(&special, b"special").unwrap();
+        let paths = shell_drag_paths(&[plain.clone(), special.clone()]);
+        assert!(!paths[0].as_os_str().to_string_lossy().starts_with(r"\\?\"));
+        assert_eq!(std::fs::canonicalize(&paths[0]).unwrap(), plain);
+        assert_eq!(paths[1], special);
+        assert_eq!(std::fs::read(&paths[0]).unwrap(), b"plain");
+        assert_eq!(std::fs::read(&paths[1]).unwrap(), b"special");
     }
 }

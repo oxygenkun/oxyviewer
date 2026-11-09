@@ -115,7 +115,7 @@ fn windows_dialog(path: &Path) -> io::Result<ExternalOpenResult> {
 /// Shell applications commonly reject Rust's canonical verbatim Windows paths.
 /// Only use a legacy spelling when opening it resolves to the very same target.
 /// Blindly stripping the prefix can open a different file (e.g. trailing dots).
-fn application_path(path: &Path) -> Cow<'_, Path> {
+pub(super) fn application_path(path: &Path) -> Cow<'_, Path> {
     #[cfg(windows)]
     if let Some(candidate) = legacy_path_candidate(path)
         && let (Ok(original), Ok(legacy)) = (
