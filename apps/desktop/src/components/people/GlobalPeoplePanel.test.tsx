@@ -24,7 +24,12 @@ beforeEach(async () => {
   await act(async () => root.render(<QueryClientProvider client={client}><Harness /></QueryClientProvider>));
 });
 afterEach(async () => { await act(async () => root.unmount()); client.clear(); host.remove(); vi.clearAllMocks(); vi.unstubAllGlobals(); });
-async function target() { const field = host.querySelector<HTMLSelectElement>('[aria-label="实例指定人物"]')!; await act(async () => { field.value = "p"; field.dispatchEvent(new Event("change", { bubbles: true })); }); }
+async function target() {
+  const field = host.querySelector<HTMLButtonElement>('[aria-label="实例指定人物"]')!;
+  await act(async () => field.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowDown", bubbles: true, cancelable: true })));
+  const option = [...document.querySelectorAll<HTMLElement>('[role="menuitemradio"]')].find(item => item.textContent === person.displayName)!;
+  await act(async () => option.click());
+}
 it("transfers all tuples, including distinct people in the same photograph, only on explicit action", async () => {
   await target(); expect(api.review).not.toHaveBeenCalled(); await act(async () => button("整组转为待确认").click());
   expect(api.review).toHaveBeenCalledWith(data, data.groups[0].members, "p", "pending", false);
@@ -74,7 +79,7 @@ it("keeps an anonymous instance visible in its named group after direct confirma
   await act(async()=>host.querySelector<HTMLInputElement>('[aria-label="选择实例 2"]')!.click());
   await act(async()=>button("已确认").click());
   expect(host.querySelector('[aria-label="实例归属审阅"]')?.textContent).toContain("共享人物 · 实例归属");
-  expect(host.querySelector<HTMLSelectElement>('[aria-label="实例审阅过滤"]')?.value).toBe("all");
+  expect(host.querySelector('[aria-label="实例审阅过滤"]')?.textContent).toBe("全部实例");
   expect(host.querySelector('[aria-label="选择实例 1 面部"]')).not.toBeNull();
   expect(host.querySelector('[aria-label="选择实例 2 面部"]')).not.toBeNull();
 });
@@ -151,8 +156,10 @@ it("honors the decision filter and blocks batch confirmation when geometry needs
   const next = { ...data, groups: [{ ...data.groups[0], personId: 'p', members: [a, b] }] };
   await act(async () => client.setQueryData(['people-workspace', 'C:/photos'], next));
   await gridSelection([a.assetPath, b.assetPath]);
-  const filter = host.querySelector<HTMLSelectElement>('[aria-label="实例审阅过滤"]')!;
-  await act(async () => { filter.value = 'pending'; filter.dispatchEvent(new Event('change', { bubbles: true })); });
+  const filter = host.querySelector<HTMLButtonElement>('[aria-label="实例审阅过滤"]')!;
+  await act(async () => filter.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowDown", bubbles: true, cancelable: true })));
+  const pending = [...document.querySelectorAll<HTMLElement>('[role="menuitemradio"]')].find(item => item.textContent === "待确认")!;
+  await act(async () => pending.click());
   expect(host.querySelector('[aria-label="共享人物已选实例数"]')?.textContent).toBe('1');
   expect(button('批量确认为 共享人物').disabled).toBe(true);
   await act(async () => button('批量不属于').click());

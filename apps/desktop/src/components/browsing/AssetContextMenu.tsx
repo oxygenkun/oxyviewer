@@ -110,16 +110,16 @@ export function AssetContextMenu({ target, settings, settingsError, deletionMode
         }}>
         <ExternalLink size={13} /><span>{t("externalOpenWith")}</span><ChevronRight size={13} />
       </button>
-      <div className="asset-context-menu__separator" />
+      <div role="separator" />
       <button role="menuitem" onPointerEnter={closeSubmenu} onClick={() => run(() => onCopy(target.asset, true))}><Copy size={13} />{t("copyRelativePath")}</button>
       <button role="menuitem" onPointerEnter={closeSubmenu} onClick={() => run(() => onCopy(target.asset, false))}><Copy size={13} />{t("copyAbsolutePath")}</button>
       <button role="menuitem" onPointerEnter={closeSubmenu} onClick={() => run(() => onReveal(target.asset.path))}><FolderOpen size={13} />{t(managerLabels[platformFileManager()])}</button>
-      <div className="asset-context-menu__separator" />
-      <button role="menuitem" className="asset-context-menu__danger" onPointerEnter={closeSubmenu} onClick={() => run(() => onTrash(target.asset))}><Trash2 size={13} />{deleteLabel}</button>
+      <div role="separator" />
+      <button role="menuitem" data-variant="danger" onPointerEnter={closeSubmenu} onClick={() => run(() => onTrash(target.asset))}><Trash2 size={13} />{deleteLabel}</button>
     </div>
     {expanded ? <div ref={submenu} className="asset-context-menu asset-context-menu--external" role="menu" aria-label={t("externalOpenWith")} style={{ left: subPosition.x, top: subPosition.y }}>
       {settings?.apps.map((app) => <button key={app.id} role="menuitem" title={app.executablePath} onClick={() => run(() => onOpen(target.asset.path, app.id))}><ExternalLink size={13} /><span>{label(app.name)}</span></button>)}
-      {settings?.apps.length ? <div className="asset-context-menu__separator" /> : null}
+      {settings?.apps.length ? <div role="separator" /> : null}
       <button role="menuitem" onClick={() => run(() => onOpen(target.asset.path))}>{t("externalMore")}</button>
       {!settings?.apps.length || settingsError ? <button role="menuitem" onClick={() => run(onSettings)}>{t("externalConfigure")}</button> : null}
     </div> : null}

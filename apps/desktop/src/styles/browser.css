@@ -196,14 +196,7 @@
 .filterbar__colors button:hover { transform: scale(1.12); box-shadow: 0 0 0 1px #8d9498; }
 .filterbar__colors button.is-active { box-shadow: 0 0 0 2px #d7dad5; }
 .filterbar__sort { gap: 5px; padding-left: 12px; border-left: 1px solid var(--surface-hover); color: #666d73; }
-.filterbar__sort select {
-  border: 0;
-  outline: 0;
-  color: #92989d;
-  background: transparent;
-  font-size: 0.5625rem;
-}
-.filterbar__sort button { display: grid; place-items: center; padding: 4px; color: #737a80; background: transparent; }
+.filterbar__sort > button:last-child { display: grid; place-items: center; padding: 4px; color: var(--muted); background: transparent; }
 
 .asset-scroll { position: relative; min-height: 0; overflow: auto; scrollbar-color: var(--line-strong) transparent; scrollbar-width: thin; }
 .virtual-grid { position: relative; width: 100%; }
@@ -310,45 +303,7 @@
     color: #d7e7ef;
   }
 }
-.asset-context-menu {
-  position: fixed;
-  z-index: var(--layer-menu);
-  width: 216px;
-  padding: 4px;
-  border: 1px solid #3b4146;
-  border-radius: 5px;
-  background: #1b1e21;
-  box-shadow: var(--popover-shadow);
-
-  & button {
-    display: flex;
-    align-items: center;
-    gap: var(--space-3);
-    width: 100%;
-    padding: 7px 8px;
-    border-radius: 3px;
-    color: #c5c9cc;
-    background: transparent;
-    font-size: 0.625rem;
-    text-align: left;
-
-    &:is(:hover, :focus-visible) {
-      color: var(--text);
-      background: var(--surface-hover);
-      outline: none;
-    }
-
-    &.asset-context-menu__danger {
-      color: #e9aaa5;
-
-      &:is(:hover, :focus-visible) {
-        color: #fff1ef;
-        background: #713630;
-      }
-    }
-  }
-}
-.asset-context-menu__separator { height: 1px; margin: 3px 5px; background: var(--line-strong); }
+.asset-context-menu { position: fixed; width: 216px; }
 .asset-context-menu--external {
   width: max-content;
   min-width: min(216px, calc(100vw - 16px));

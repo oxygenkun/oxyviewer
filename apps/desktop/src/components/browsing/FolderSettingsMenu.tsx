@@ -34,7 +34,7 @@ export function FolderSettingsMenu({ open, onOpenChange, disabled, folderSort,
       <Ellipsis size={14} />
     </Menu.Trigger>
     <Menu.Portal>
-      <Menu.Content className={styles.content} aria-label={t("folderActions")}
+      <Menu.Content aria-label={t("folderActions")}
         side="right" align="start" sideOffset={6} collisionPadding={8} loop
         onCloseAutoFocus={() => setRestoredFocus(true)}
         onKeyDown={event => event.stopPropagation()}>
@@ -43,7 +43,7 @@ export function FolderSettingsMenu({ open, onOpenChange, disabled, folderSort,
             <span /><span>{t("folderSort")}</span><ChevronRight size={13} />
           </Menu.SubTrigger>
           <Menu.Portal>
-            <Menu.SubContent className={styles.content} aria-label={t("folderSort")}
+            <Menu.SubContent aria-label={t("folderSort")}
               sideOffset={4} collisionPadding={8} loop onKeyDown={event => event.stopPropagation()}>
               <Menu.RadioGroup value={folderSort} onValueChange={value => {
                 const option = SORT_OPTIONS.find(([sort]) => sort === value);
@@ -57,7 +57,7 @@ export function FolderSettingsMenu({ open, onOpenChange, disabled, folderSort,
             </Menu.SubContent>
           </Menu.Portal>
         </Menu.Sub>
-        <Menu.Separator className={styles.separator} />
+        <Menu.Separator />
         <Menu.CheckboxItem className={styles.item} checked={folderDragEnabled}
           onCheckedChange={onFolderDragEnabledChange}>
           <span className={styles.indicator}><Menu.ItemIndicator><Check size={13} /></Menu.ItemIndicator></span>

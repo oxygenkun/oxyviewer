@@ -24,7 +24,7 @@ export function Dialog({ open, onOpenChange, title, description, children,
     <Primitive.Portal>
       <Primitive.Overlay className={styles.overlay}>
         <Primitive.Content role={role}
-          className={[styles.content, className].filter(Boolean).join(" ")}
+          className={["ui-popover", styles.content, className].filter(Boolean).join(" ")}
           aria-describedby={description ? descriptionId : undefined}
           onOpenAutoFocus={event => {
             previousFocus.current = document.activeElement instanceof HTMLElement ? document.activeElement : null;

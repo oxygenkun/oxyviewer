@@ -922,7 +922,7 @@ export function Sidebar({
                 <FolderOpen size={13} />
                 {t(FILE_MANAGER_LABEL[platformFileManager()])}
               </button>
-              <div className="folder-context-menu__separator" />
+              <div role="separator" />
               <button
                 role="menuitem"
                 onClick={() => {
@@ -934,9 +934,9 @@ export function Sidebar({
                 <FileInput size={13} />
                 {t("folderMetadataSync")}
               </button>
-              <div className="folder-context-menu__separator" />
+              <div role="separator" />
               <button
-                className="folder-context-menu__danger"
+                data-variant="danger"
                 role="menuitem"
                 onClick={() => {
                   const { session, entry } = contextMenu;

@@ -12,7 +12,7 @@ export function Button({ variant = "secondary", size = "regular", loading = fals
   disabled, className, children, type = "button", ...props }: ButtonProps) {
   return <button {...props} type={type} disabled={disabled || loading}
     aria-busy={loading || undefined}
-    className={[styles.button, styles[variant], styles[size], className].filter(Boolean).join(" ")}>
+    className={["ui-button", styles.button, styles[variant], styles[size], className].filter(Boolean).join(" ")}>
     {loading ? <LoaderCircle size={14} className={styles.spinner} aria-hidden="true" /> : null}
     {children}
   </button>;

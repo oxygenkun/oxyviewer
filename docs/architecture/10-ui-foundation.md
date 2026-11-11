@@ -1,8 +1,28 @@
 # 前端基础控件与样式
 
-OxyViewer 保留原生 CSS，通过 `styles/foundation.css` 统一语义颜色、控件尺寸、
-间距、圆角和顶层浮层层级。普通控件采用紧凑规范；缩略图、画布与拖动区域的几何
-仍由业务组件管理。不要把不同用途的颜色或局部 stacking context 强行合并。
+OxyViewer 保留原生 CSS，通过 `styles/foundation.css` 统一语义颜色、字号、控件尺寸、
+间距、圆角和顶层浮层层级。`styles/controls.css` 提供低优先级的公共外观和交互状态。
+普通控件采用紧凑规范；缩略图、画布与拖动区域的几何仍由业务组件管理。
+不要把不同用途的颜色或局部 stacking context 强行合并。
+
+## 样式继承与扩展
+
+- 颜色、字号、圆角使用 foundation 中的语义变量。常规文字使用
+  `--font-size-body` / `--font-size-small`，选中态使用 `--surface-selected` /
+  `--line-selected`，不要在业务组件复制一套近似色值。
+- `Button` 自动带上公共 `ui-button` 样式；没有 class 的普通按钮也有相同默认外观。
+  input、textarea、原生 select 自动获得公共外观、焦点、错误和禁用状态。
+  有业务 class 的照片卡片、树行、画布按钮只共享字体、颜色继承、焦点与禁用规则，
+  不强制变成横向按钮布局。新增常规操作应使用 `Button` / `IconButton`。
+- `role="menu"` 和 menuitem / menuitemradio / menuitemcheckbox 自动获得同一套
+  菜单外观、悬停、键盘高亮、选中和禁用状态。分隔线使用 `role="separator"`，
+  危险操作使用 `data-variant="danger"`，普通浮层使用 `ui-popover`。
+  Portal 挂到 body 也能从根节点继承语义变量；菜单层位于对话框上方。
+- 默认外观与状态放在 `:where(...)` 中，避免选择器优先级压过组件变体。
+  功能 CSS 只定义布局和确有用途的差异，例如标签层级缩进、胶囊标签、快捷键键帽、
+  人物框和照片标记色；不要通过后代 button/input 选择器重定义整个控件主题。
+- 先扩展公共组件的语义变体，再考虑局部样式。新增控件应自动沿用现有外观和状态，
+  无需复制颜色、边框、字号、焦点或 disabled 规则。
 
 ## 公共组件
 
@@ -13,6 +33,11 @@ OxyViewer 保留原生 CSS，通过 `styles/foundation.css` 统一语义颜色�
 - `IconButton`：要求 label，为纯图标操作提供可访问名称。
 - `Field`：单个 input 的 label、hint、error、suffix，自动关联 id 与描述。
   多个选项仍应使用 fieldset；不要用它包装复合选择器。
+- `DropdownMenu`：复用 Radix 菜单原语，Content/SubContent 统一 Portal、边缘避让、
+  方向键循环和快捷键隔离；默认外观由语义 role 自动应用。
+- `Select`：单选设置菜单，支持文字或具名图标入口、当前选项标识、禁用选项、
+  键盘导航和关闭后焦点返回。options 与 value 保持类型一致，允许空字符串作为根级选项。
+  可提供 container，把嵌套菜单挂在所属浮层中，避免外层的点击外部处理误关闭。
 - `Dialog`：基于 `@radix-ui/react-dialog` 的受控模态窗口，提供标题、描述、
   焦点限制、初始焦点和关闭后焦点恢复。调用方必须明确是否允许点击背景关闭。
   键盘事件在弹窗内停止冒泡，避免触发背景快捷键；Escape 由 Radix 处理。
@@ -31,9 +56,11 @@ RAW 操作按钮。删除确认默认聚焦取消；点击背景、Escape、取�
 
 文件夹标题栏的更多操作使用 Radix Dropdown Menu，包含排序 RadioGroup 子菜单和
 拖动开关 CheckboxItem。定位、边缘避让、方向键导航和关闭后的焦点返回由 Radix 管理；
-菜单使用独立 CSS Module，键盘事件不冒泡到照片快捷键。
+菜单继承公共 role 样式，局部 CSS Module 只定义图标栏布局，键盘事件不冒泡到照片快捷键。
 
-设置窗口、人物管理与其他菜单尚未整体迁移到 Radix；后续按组件逐步接入，
+标签编辑的排序、改名/移动/删除菜单、工具栏排序和人物面板选择器使用公共菜单组件。
+标签、文件夹和照片右键菜单共享同一套外观；设置选项、人物操作使用公共 Button。
+设置窗口与人物管理的容器尚未整体迁移到 Radix；后续按组件逐步接入，
 不同时引入 Tailwind 或另一套成套视觉系统。
 
 ## 键盘与鼠标快捷键
@@ -65,6 +92,7 @@ WebView 若报告额外鼠标按钮，也按 `MBTN9` 起的编号处理。左／
 
 运行 CONTRIBUTING.md 中的 `pnpm check`、`pnpm test`、`pnpm build`。
 基础测试覆盖 loading 防重入、字段关联、Tab 循环、快捷键隔离及 Escape 焦点恢复；
+单选菜单覆盖空值、禁用选项、键盘选择、Portal、Escape 和焦点返回；
 AssetBrowser 测试覆盖确认删除的原有选择范围。
 UI 变更还应在浏览器检查背景关闭、Shift+Tab、长文件名和设置页的真实布局。
 

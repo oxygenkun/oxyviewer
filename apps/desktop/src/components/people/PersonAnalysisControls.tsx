@@ -1,3 +1,4 @@
+import { Button } from "../ui/Button";
 import { useEffect, useRef, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { cancelPersonOperation, downloadPersonModel, getPersonModels, getPersonOperation, importPersonModel } from "@/lib/api";
@@ -32,7 +33,7 @@ export function PersonAnalysisControls() {
   };
   return <section className={styles.panel} aria-label="人物识别">
     <div className={styles.actions}>
-      <button onClick={() => setManage(value => !value)} aria-expanded={manage}>管理模型</button>
+      <Button size="small" onClick={() => setManage(value => !value)} aria-expanded={manage}>管理模型</Button>
     </div>
     {!ready && !models.isLoading && manage ? <p>识别前请在“管理模型”中准备所需模型。</p> : null}
     {manage ? <div className={styles.models}>
@@ -43,8 +44,8 @@ export function PersonAnalysisControls() {
         {model.sourceUrl ? <a href={model.sourceUrl} target="_blank" rel="noreferrer">模型来源与说明</a> : null}
         {model.error ? <p role="alert">{model.error}</p> : null}
         {!model.installed ? <div className={styles.actions}>
-          <button disabled={!model.downloadAvailable || active || submitting} onClick={() => void perform(() => downloadPersonModel(model.id))}>下载</button>
-          {model.id !== "runtime" && model.id !== "demo" ? <button disabled={active || submitting} onClick={() => void perform(() => importPersonModel(model.id))}>导入 ONNX</button> : null}
+          <Button size="small" disabled={!model.downloadAvailable || active || submitting} onClick={() => void perform(() => downloadPersonModel(model.id))}>下载</Button>
+          {model.id !== "runtime" && model.id !== "demo" ? <Button size="small" disabled={active || submitting} onClick={() => void perform(() => importPersonModel(model.id))}>导入 ONNX</Button> : null}
         </div> : null}
       </div>)}
     </div> : null}
@@ -54,7 +55,7 @@ export function PersonAnalysisControls() {
       {active ? <progress max={status.total || 1} value={status.total ? status.completed : undefined} /> : null}
       {status.run ? <p>已完成 {status.run.completedTasks} / {status.run.totalTasks} 个步骤；失败 {status.run.failedTasks} 个</p> : null}
       {status.error ? <p role="alert">{status.error}</p> : null}
-      {active ? <button disabled={cancelRequested || submitting} onClick={() => void perform(async () => { await cancelPersonOperation(status.operationId); setCancelRequested(true); })}>{cancelRequested ? "正在取消…" : "取消任务"}</button> : null}
+      {active ? <Button size="small" disabled={cancelRequested || submitting} onClick={() => void perform(async () => { await cancelPersonOperation(status.operationId); setCancelRequested(true); })}>{cancelRequested ? "正在取消…" : "取消任务"}</Button> : null}
     </div> : null}
     {error || models.error || operation.error ? <p role="alert">{error ?? String(models.error ?? operation.error)}</p> : null}
   </section>;

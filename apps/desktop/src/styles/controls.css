@@ -1,0 +1,92 @@
+/* Low specificity defaults are shared by native elements, public UI components
+   and future controls. Feature styles own layout, never a second control theme. */
+:where(button) { border: 0; cursor: pointer; }
+:where(button:not([class]), .ui-button) {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-2);
+  padding: var(--space-1) var(--space-3);
+  border: 1px solid var(--line-control);
+  border-radius: var(--radius-control);
+  color: var(--text);
+  background: var(--surface-control);
+  font-size: var(--font-size-body);
+  line-height: 1.4;
+  cursor: pointer;
+  transition: background var(--transition-control), border-color var(--transition-control), color var(--transition-control);
+}
+:where(button:not([class]):hover:not(:disabled):not([data-disabled]), .ui-button:hover:not(:disabled):not([data-disabled])) { background: var(--surface-hover); }
+:where(button:disabled, [data-disabled]) { opacity: .45; cursor: default; }
+:where(button[aria-busy="true"]) { cursor: progress; }
+:where(button svg) { flex-shrink: 0; }
+
+:where(input:not([type="checkbox"]):not([type="radio"]):not([type="range"]):not([type="color"]), select, textarea) {
+  min-width: 0;
+  max-width: 100%;
+  min-height: var(--control-height);
+  padding: var(--space-1) var(--space-3);
+  border: 1px solid var(--line-control);
+  border-radius: var(--radius-control);
+  color: var(--text);
+  background: var(--surface-input);
+  font-size: var(--font-size-body);
+  line-height: 1.5;
+  transition: border-color var(--transition-control);
+}
+:where(input, textarea)::placeholder { color: var(--faint); }
+:where(input, textarea, select):focus-visible { border-color: var(--accent-dim); box-shadow: var(--focus-ring); }
+:where(input, textarea, select)[aria-invalid="true"] { border-color: var(--danger-border); }
+:where(input, textarea, select):disabled { opacity: .45; cursor: default; }
+:where(input[type="checkbox"], input[type="radio"], input[type="range"]) { accent-color: var(--accent); }
+:where(textarea) { resize: vertical; }
+
+/* Portalled controls inherit tokens from :root, regardless of their feature. */
+:where(.ui-popover, [role="menu"]) {
+  padding: var(--space-1);
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-panel);
+  color: var(--text);
+  background: var(--panel-raised);
+  box-shadow: var(--popover-shadow);
+  font-size: var(--font-size-body);
+  line-height: 1.5;
+}
+:where([role="menu"]) {
+  z-index: var(--layer-menu);
+  min-width: 168px;
+  max-width: calc(100vw - 16px);
+  max-height: var(--radix-dropdown-menu-content-available-height, calc(100dvh - 16px));
+  overflow-y: auto;
+  scrollbar-width: thin;
+}
+:where([role="menuitem"], [role="menuitemradio"], [role="menuitemcheckbox"]) {
+  display: flex;
+  align-items: center;
+  justify-content: flex-start;
+  gap: var(--space-3);
+  width: 100%;
+  min-height: var(--control-height);
+  padding: var(--space-2) var(--space-3);
+  border: 0;
+  border-radius: var(--radius-control);
+  color: inherit;
+  background: transparent;
+  font-size: inherit;
+  font-weight: 400;
+  text-align: left;
+  cursor: default;
+  outline: none;
+}
+:where(:is([role="menuitem"], [role="menuitemradio"], [role="menuitemcheckbox"]):is(:hover, :focus-visible, [data-highlighted], [data-state="open"]):not(:disabled):not([data-disabled])) {
+  color: var(--text);
+  background: var(--surface-hover);
+}
+:where(:is([role="menuitemradio"], [role="menuitemcheckbox"])[data-state="checked"]) { color: var(--accent); }
+:where([role="menuitem"][data-variant="danger"]) { color: var(--danger-text); }
+:where([role="menuitem"][data-variant="danger"]:is(:hover, :focus-visible, [data-highlighted])) { color: var(--danger-text); background: var(--danger-surface); }
+:where([role="menu"] [role="separator"]) { height: 1px; margin: var(--space-1); background: var(--line); }
+
+@media (prefers-reduced-motion: reduce) {
+  :root { --transition-control: 0s; }
+}

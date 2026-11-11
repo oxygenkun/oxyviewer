@@ -1,3 +1,4 @@
+import { Button } from "../ui/Button";
 import { RotateCcw } from "lucide-react";
 import { useEffect, useState } from "react";
 import type { MessageKey } from "@/lib/i18n";
@@ -105,9 +106,9 @@ export function ShortcutSettings({ t }: { t: (key: MessageKey) => string }) {
     <section className="settings-panel__section shortcut-settings">
       <div className="settings-panel__section-heading">
         <span className="settings-panel__label">{t("shortcutActions")}</span>
-        <button disabled={!customized} onClick={() => { setError(undefined); resetShortcuts(); }}>
+        <Button size="small" disabled={!customized} onClick={() => { setError(undefined); resetShortcuts(); }}>
           <RotateCcw size={14} /> {t("shortcutResetAll")}
-        </button>
+        </Button>
       </div>
       <p className="settings-panel__hint">{t("shortcutHint")}</p>
       <p className="settings-panel__hint">{t("shortcutMouseHint")}</p>
@@ -143,13 +144,13 @@ export function ShortcutSettings({ t }: { t: (key: MessageKey) => string }) {
                   );
                 })}
                 <div className="shortcut-settings__actions">
-                  <button
+                  <Button size="small"
                     aria-label={`${t("restoreDefault")} ${label}`}
                     disabled={isDefault}
                     onClick={() => { setError(undefined); resetShortcut(action); }}
                   >
                     {t("restoreDefault")}
-                  </button>
+                  </Button>
                 </div>
               </div>
             );

@@ -191,9 +191,9 @@ export function SettingsPanel({ t, activeAsset }: SettingsPanelProps) {
               <section className="settings-panel__section">
                 <span className="settings-panel__label">{t("modules")}</span>
                 <div className="settings-panel__options">
-                  <button aria-pressed={peopleModuleVisible} className={`settings-panel__option ${peopleModuleVisible ? "is-active" : ""}`} onClick={() => setPeopleModuleVisible(!peopleModuleVisible)}>
+                  <Button aria-pressed={peopleModuleVisible} className="settings-panel__option" onClick={() => setPeopleModuleVisible(!peopleModuleVisible)}>
                     <span>{t("showPeopleModule")}</span>{peopleModuleVisible ? <Check size={14} /> : null}
-                  </button>
+                  </Button>
                 </div>
                 <p className="settings-panel__hint">{t("showPeopleModuleHint")}</p>
               </section>
@@ -201,9 +201,9 @@ export function SettingsPanel({ t, activeAsset }: SettingsPanelProps) {
                 <span className="settings-panel__label">{t("language")}</span>
                 <div className="settings-panel__options">
                   {languages.map(({ value, label }) => (
-                    <button key={value} className={`settings-panel__option ${locale === value ? "is-active" : ""}`} onClick={() => setLocale(value)}>
+                    <Button key={value} aria-pressed={locale === value} className="settings-panel__option" onClick={() => setLocale(value)}>
                       <span>{label}</span>{locale === value ? <Check size={14} /> : null}
-                    </button>
+                    </Button>
                   ))}
                 </div>
               </section>
@@ -213,9 +213,9 @@ export function SettingsPanel({ t, activeAsset }: SettingsPanelProps) {
                   <span>{t("uiFontSize")}</span>
                   <div className="settings-panel__font-size-options">
                     {UI_FONT_SCALES.map((scale) => (
-                      <button key={scale} aria-label={`${t("uiFontSize")} ${Math.round(scale * 100)}%`} aria-pressed={uiFontScale === scale} className={uiFontScale === scale ? "is-active" : ""} onClick={() => setUiFontScale(scale)}>
+                      <Button size="small" variant="ghost" key={scale} aria-label={`${t("uiFontSize")} ${Math.round(scale * 100)}%`} aria-pressed={uiFontScale === scale} onClick={() => setUiFontScale(scale)}>
                         {Math.round(scale * 100)}%
-                      </button>
+                      </Button>
                     ))}
                   </div>
                 </div>
@@ -235,9 +235,9 @@ export function SettingsPanel({ t, activeAsset }: SettingsPanelProps) {
                     { enabled: gridMetadataVisible, label: t("showGridMetadata"), toggle: () => setGridMetadataVisible(!gridMetadataVisible) },
                     { enabled: loupeMetadataVisible, label: t("showLoupeMetadata"), toggle: () => setLoupeMetadataVisible(!loupeMetadataVisible) },
                   ].map(({ enabled, label, toggle }) => (
-                    <button key={label} aria-pressed={enabled} className={`settings-panel__option ${enabled ? "is-active" : ""}`} onClick={toggle}>
+                    <Button key={label} aria-pressed={enabled} className="settings-panel__option" onClick={toggle}>
                       <span>{label}</span>{enabled ? <Check size={14} /> : null}
-                    </button>
+                    </Button>
                   ))}
                 </div>
               </section>
@@ -245,9 +245,9 @@ export function SettingsPanel({ t, activeAsset }: SettingsPanelProps) {
                 <span className="settings-panel__label">{t("displaySharpening")}</span>
                 <div className="settings-panel__options">
                   {[{ enabled: true, label: t("standard") }, { enabled: false, label: t("disabled") }].map(({ enabled, label }) => (
-                    <button key={String(enabled)} aria-pressed={displaySharpening === enabled} className={`settings-panel__option ${displaySharpening === enabled ? "is-active" : ""}`} onClick={() => setDisplaySharpening(enabled)}>
+                    <Button key={String(enabled)} aria-pressed={displaySharpening === enabled} className="settings-panel__option" onClick={() => setDisplaySharpening(enabled)}>
                       <span>{label}</span>{displaySharpening === enabled ? <Check size={14} /> : null}
-                    </button>
+                    </Button>
                   ))}
                 </div>
               </section>

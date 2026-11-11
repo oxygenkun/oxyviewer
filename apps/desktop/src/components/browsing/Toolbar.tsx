@@ -1,3 +1,4 @@
+import { Select } from "../ui/Select";
 import { useEffect, useState } from "react";
 import {
   ArrowDownAZ,
@@ -14,7 +15,7 @@ import {
 } from "lucide-react";
 import type { MessageKey } from "@/lib/i18n";
 import { useWorkspaceStore } from "@/store";
-import type { AssetKind, AssetSort, PickLabel, ViewMode } from "@/types";
+import type { AssetKind, PickLabel, ViewMode } from "@/types";
 import { WorkspaceSearch } from "./WorkspaceSearch";
 import { PickFlagIcon } from "@/components/common/PickFlagIcon";
 
@@ -150,11 +151,12 @@ export function Toolbar({ total, loading, t }: ToolbarProps) {
           </div>
           <div className="filterbar__sort">
             <SlidersHorizontal size={14} />
-            <select value={sort} onChange={(event) => setSort(event.target.value as AssetSort)}>
-              <option value="name">{t("sortName")}</option>
-              <option value="modified">{t("sortModified")}</option>
-              <option value="size">{t("sortSize")}</option>
-            </select>
+            <Select label={t("folderSort")} size="small" value={sort} onValueChange={setSort}
+              options={[
+                { value: "name", label: t("sortName") },
+                { value: "modified", label: t("sortModified") },
+                { value: "size", label: t("sortSize") },
+              ]} />
             <button onClick={toggleDirection} title={direction}>
               {sort === "name" ? <ArrowDownAZ size={15} /> : <ArrowDownUp size={15} />}
             </button>

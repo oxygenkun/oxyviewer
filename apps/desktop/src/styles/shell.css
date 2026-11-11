@@ -154,45 +154,7 @@
   place-items: center;
 }
 .sidebar__heading-actions > button:hover { background: var(--surface-hover); }
-.folder-context-menu {
-  position: fixed;
-  z-index: var(--layer-menu);
-  width: 216px;
-  padding: 4px;
-  border: 1px solid #3b4146;
-  border-radius: 5px;
-  background: #1b1e21;
-  box-shadow: var(--popover-shadow);
-
-  & button {
-    display: flex;
-    align-items: center;
-    gap: var(--space-3);
-    width: 100%;
-    padding: 7px 8px;
-    border-radius: 3px;
-    color: #c5c9cc;
-    background: transparent;
-    font-size: 0.625rem;
-    text-align: left;
-
-    &:is(:hover, :focus-visible) {
-      color: var(--text);
-      background: var(--surface-hover);
-      outline: none;
-    }
-
-    &.folder-context-menu__danger {
-      color: #e9aaa5;
-
-      &:is(:hover, :focus-visible) {
-        color: #fff1ef;
-        background: #713630;
-      }
-    }
-  }
-}
-.folder-context-menu__separator { height: 1px; margin: 3px 5px; background: var(--line-strong); }
+.folder-context-menu { position: fixed; width: 216px; }
 .sidebar__heading-actions button:disabled { cursor: default; opacity: .55; }
 .sidebar__heading-actions button.is-active { color: var(--accent); background: #252b20; border-radius: var(--radius-control); }
 

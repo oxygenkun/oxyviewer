@@ -44,12 +44,12 @@ export function UnavailableFolder({ path, error, restoring, onRetry, onRemove, o
         title={t("folderRecoveryActions")} aria-label={`${t("folderRecoveryActions")}: ${path}`}>
         {restoring || busy ? <LoaderCircle size={13} className="tree-row__loader" /> : <Link2 size={14} />}
       </Menu.Trigger>
-      <Menu.Portal><Menu.Content className={styles.menu} side="right" sideOffset={6} collisionPadding={8} onKeyDown={event => event.stopPropagation()}>
-        <Menu.Item className={styles.item} onSelect={() => void run(async () => {
+      <Menu.Portal><Menu.Content side="right" sideOffset={6} collisionPadding={8} onKeyDown={event => event.stopPropagation()}>
+        <Menu.Item onSelect={() => void run(async () => {
           const destination = await chooseFolder();
           if (destination) { setAcknowledged(false); setPlan(await planRootRelocation(path, destination)); }
         })}>{t("folderRelocate")}</Menu.Item>
-        <Menu.Item className={styles.item} onSelect={() => void run(() => onRetry(path))}>{t("folderRetry")}</Menu.Item>
+        <Menu.Item onSelect={() => void run(() => onRetry(path))}>{t("folderRetry")}</Menu.Item>
       </Menu.Content></Menu.Portal>
     </Menu.Root>
     <button ref={removeTrigger} className="tree-row__remove" disabled={busy || restoring}

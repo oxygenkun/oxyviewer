@@ -14,6 +14,9 @@ import { refreshTagQueries, TAG_MUTATION_SCOPE } from "@/lib/assets/tagActions";
 import { enqueueTagDeletion, hasPendingRemoval, pendingDeletedTagIds, useTagDeletions } from "@/lib/assets/tagDeletion";
 import { useWorkspaceStore } from "@/store";
 import type { CustomTag } from "@/types";
+import { Button, IconButton } from "../ui/Button";
+import * as Menu from "../ui/DropdownMenu";
+import { Select } from "../ui/Select";
 
 interface TagEditorProps {
   currentPath: string;
@@ -268,32 +271,35 @@ export function TagEditor({
       {hint ? <small className="tag-editor__hint" role="status">{hint}</small> : null}
 
       {createPortal(open ? (
-        <div ref={pickerRef} className="tag-picker" style={pickerPosition} role="dialog" aria-label={t("quickAddTag")}>
+        <div ref={pickerRef} className="tag-picker ui-popover" style={pickerPosition} role="dialog" aria-label={t("quickAddTag")}
+          onKeyDown={event => {
+            event.stopPropagation();
+            if (event.key === "Escape") { closeQuickAdd(); quickAddButtonRef.current?.focus(); }
+          }}>
           <div className="tag-picker__search">
             <Search />
             <input
               value={search}
               onChange={(event) => setSearch(event.target.value)}
               placeholder={t("searchConfiguredTags")}
+              aria-label={t("searchConfiguredTags")}
               autoFocus
             />
             {canCreate ? (
-              <button className="tag-picker__create" aria-label={t("createAndAdd")}
+              <Button variant="ghost" size="small" className="tag-picker__create" aria-label={t("createAndAdd")}
                 title={`${t("createAndAdd")}: ${displayTagPath(searchPath)}`}
                 disabled={busy}
                 onClick={() => createPathMutation.mutate({ value: searchPath, paths })}
-              >{t("createTag")}</button>
+              >{t("createTag")}</Button>
             ) : null}
-            <label className="tag-picker__settings" title={t("tagSort")}>
-              <Settings2 aria-hidden="true" />
-              <select aria-label={t("tagSort")} value={sort}
-                onChange={(event) => changeSort(event.target.value as TagPickerSort)}>
-                <option value="recent">{t("tagSortRecent")}</option>
-                <option value="mostUsed">{t("tagSortMostUsed")}</option>
-                <option value="tree">{t("tagSortTree")}</option>
-              </select>
-            </label>
-            <button onClick={closeQuickAdd} aria-label={t("cancel")}><X /></button>
+            <Select label={t("tagSort")} value={sort} onValueChange={changeSort}
+              size="small" className="tag-picker__settings" icon={<Settings2 size={14} />}
+              container={pickerRef.current} options={[
+                { value: "recent", label: t("tagSortRecent") },
+                { value: "mostUsed", label: t("tagSortMostUsed") },
+                { value: "tree", label: t("tagSortTree") },
+              ]} />
+            <IconButton size="small" onClick={closeQuickAdd} label={t("cancel")}><X size={14} /></IconButton>
           </div>
           <div className="tag-picker__list">
             {candidates.map(({ tag, assignedCount, assetCount }) => {
@@ -316,18 +322,18 @@ export function TagEditor({
                     title={displayTagPath(tag.path)}
                     style={sort === "tree" && !search.trim() ? { paddingLeft: 4 + (tag.path.split("|").length - 1) * 12 } : undefined}
                   >{sort === "tree" && !search.trim() ? tag.name : displayTagPath(tag.path)}</button>
-                  <button
-                    className="tag-candidate__menu"
-                    onClick={() => setMenuTagId((current) => current === tag.id ? undefined : tag.id)}
-                    aria-label={t("manageTag")}
-                  ><MoreHorizontal /></button>
-                  {menuTagId === tag.id ? (
-                    <div className="tag-row-menu" role="menu">
-                      <button role="menuitem" onClick={() => setForm({ mode: "edit", tagId: tag.id, name: tag.name })}><Pencil />{t("renameTag")}</button>
-                      <button role="menuitem" onClick={() => setForm({ mode: "move", tagId: tag.id, parentId: tag.parentId, name: tag.name })}><FolderInput />{t("moveTag")}</button>
-                      <button role="menuitem" className="is-danger" onClick={() => deleteTag(tag)}><Trash2 />{t("deleteTag")}</button>
-                    </div>
-                  ) : null}
+                  <Menu.Root modal={false} open={menuTagId === tag.id}
+                    onOpenChange={value => setMenuTagId(value ? tag.id : undefined)}>
+                    <Menu.Trigger asChild><IconButton size="small" className="tag-candidate__menu"
+                      label={t("manageTag")}><MoreHorizontal size={14} /></IconButton></Menu.Trigger>
+                    <Menu.Content container={pickerRef.current} className="tag-row-menu" align="end"
+                      onCloseAutoFocus={event => { if (form) event.preventDefault(); }}>
+                      <Menu.Item onSelect={() => setForm({ mode: "edit", tagId: tag.id, name: tag.name })}><Pencil size={14} />{t("renameTag")}</Menu.Item>
+                      <Menu.Item onSelect={() => setForm({ mode: "move", tagId: tag.id, parentId: tag.parentId, name: tag.name })}><FolderInput size={14} />{t("moveTag")}</Menu.Item>
+                      <Menu.Separator />
+                      <Menu.Item data-variant="danger" onSelect={() => deleteTag(tag)}><Trash2 size={14} />{t("deleteTag")}</Menu.Item>
+                    </Menu.Content>
+                  </Menu.Root>
                 </div>
               );
             })}
@@ -349,6 +355,7 @@ export function TagEditor({
               onChange={setForm}
               onCancel={() => setForm(undefined)}
               onSave={() => formMutation.mutate(form)}
+              container={pickerRef.current}
             />
           ) : null}
         </div>
@@ -362,7 +369,7 @@ export function TagEditor({
   );
 }
 
-function TagFormPanel({ form, tags, t, pending, error, onChange, onCancel, onSave }: {
+function TagFormPanel({ form, tags, t, pending, error, onChange, onCancel, onSave, container }: {
   form: TagForm;
   tags: CustomTag[];
   t: (key: MessageKey) => string;
@@ -371,6 +378,7 @@ function TagFormPanel({ form, tags, t, pending, error, onChange, onCancel, onSav
   onChange: (form: TagForm) => void;
   onCancel: () => void;
   onSave: () => void;
+  container: HTMLElement | null;
 }) {
   const descendants = descendantIds(tags, form.tagId);
   const composingRef = useRef(false);
@@ -382,6 +390,7 @@ function TagFormPanel({ form, tags, t, pending, error, onChange, onCancel, onSav
           value={form.name}
           onChange={(event) => onChange({ ...form, name: event.target.value })}
           placeholder={t("tagName")}
+          aria-label={t("tagName")}
           autoFocus
           onCompositionStart={() => { composingRef.current = true; }}
           onCompositionEnd={() => { composingRef.current = false; }}
@@ -394,21 +403,16 @@ function TagFormPanel({ form, tags, t, pending, error, onChange, onCancel, onSav
           }}
         />
       ) : (
-        <select
-          value={form.parentId ?? ""}
-          onChange={(event) => onChange({ ...form, parentId: event.target.value ? Number(event.target.value) : undefined })}
-          aria-label={t("moveTag")}
-        >
-          <option value="">{t("rootLevel")}</option>
-          {tags.filter((tag) => !descendants.has(tag.id)).map((tag) => (
-            <option key={tag.id} value={tag.id}>{displayTagPath(tag.path)}</option>
-          ))}
-        </select>
+        <Select label={t("moveTag")} value={String(form.parentId ?? "")}
+          disabled={pending} container={container}
+          onValueChange={value => onChange({ ...form, parentId: value ? Number(value) : undefined })}
+          options={[{ value: "", label: t("rootLevel") }, ...tags.filter(tag => !descendants.has(tag.id))
+            .map(tag => ({ value: String(tag.id), label: displayTagPath(tag.path) }))]} />
       )}
       {error ? <small className="metadata-error">{String(error)}</small> : null}
       <div>
-        <button onClick={onCancel} disabled={pending}>{t("cancel")}</button>
-        <button className="is-primary" onClick={onSave} disabled={pending || !form.name.trim()}>{t("save")}</button>
+        <Button size="small" onClick={onCancel} disabled={pending}>{t("cancel")}</Button>
+        <Button size="small" variant="primary" onClick={onSave} disabled={pending || !form.name.trim()}>{t("save")}</Button>
       </div>
     </div>
   );

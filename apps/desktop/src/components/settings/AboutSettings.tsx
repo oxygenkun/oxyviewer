@@ -1,3 +1,4 @@
+import { Button } from "../ui/Button";
 import { Check, ExternalLink, Info, LoaderCircle, RefreshCw } from "lucide-react";
 import { useQuery } from "@tanstack/react-query";
 import { useEffect, useState } from "react";
@@ -63,17 +64,17 @@ export function AboutSettings({ t }: { t: (key: MessageKey) => string }) {
             <strong>{info?.name ?? "OxyViewer"}</strong>
             <span className="about-settings__version">
               {`${t("aboutVersion")} ${info?.version ?? t("loading")}`}
-              <button disabled={checking} onClick={() => void runCheck()} type="button">
+              <Button size="small" disabled={checking} onClick={() => void runCheck()} type="button">
                 {checking ? <LoaderCircle className="is-spinning" size={13} /> : <RefreshCw size={13} />}
                 {checking ? t("aboutChecking") : t("aboutCheckUpdates")}
-              </button>
+              </Button>
               {status ? (
                 status.updateAvailable ? (
                   <span className="about-settings__result is-available">
                     <span>{t("aboutUpdateAvailable").replace("{version}", status.latestVersion)}</span>
-                    <button onClick={() => void openAboutLink("releases", status.releaseUrl)} type="button">
+                    <Button size="small" onClick={() => void openAboutLink("releases", status.releaseUrl)} type="button">
                       {t("aboutOpenRelease")}<ExternalLink size={12} />
-                    </button>
+                    </Button>
                   </span>
                 ) : (
                   <span className="about-settings__result" role="status">

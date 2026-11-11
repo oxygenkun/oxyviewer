@@ -13,11 +13,6 @@
   max-height: calc(100dvh - 40px);
   overflow: auto;
   padding: var(--space-5);
-  border: 1px solid var(--line-strong);
-  border-radius: var(--radius-panel);
-  background: var(--panel-raised);
-  color: var(--text);
-  box-shadow: var(--popover-shadow);
 }
-.title { margin: 0; font-size: .875rem; }
-.description { margin: var(--space-3) 0 var(--space-5); color: var(--muted); font-size: .75rem; line-height: 1.6; overflow-wrap: anywhere; }
+.title { margin: 0; font-size: var(--font-size-title); }
+.description { margin: var(--space-3) 0 var(--space-5); color: var(--muted); font-size: var(--font-size-body); line-height: 1.6; overflow-wrap: anywhere; }

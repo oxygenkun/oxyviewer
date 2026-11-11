@@ -41,8 +41,12 @@ let assigned: Set<number>;
 const click = async (selector: string) => {
   const button = document.querySelector<HTMLButtonElement>(selector)!;
   expect(button).not.toBeNull();
-  expect(button.disabled).toBe(false);
-  await act(async () => button.click());
+  expect(button.matches(":disabled")).toBe(false);
+  await act(async () => {
+    if (button.getAttribute("aria-haspopup") === "menu") {
+      button.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowDown", bubbles: true, cancelable: true }));
+    } else button.click();
+  });
 };
 const renderEditor = async (path = "/demo/a.jpg") => {
   await act(async () => root.render(
@@ -159,7 +163,7 @@ it("deletes a parent tag after the undo window and forgets its child", async () 
   await click(".tag-candidate:has([aria-label=People]) .tag-candidate__menu");
   vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
   try {
-    await click(".tag-row-menu .is-danger");
+    await click('.tag-row-menu [data-variant="danger"]');
     expect(deleteCustomTag).not.toHaveBeenCalled();
     expect(document.querySelector(".tag-picker--confirmation")).toBeNull();
     expect(document.querySelector("[role=checkbox][aria-label='People']")).toBeNull();
@@ -223,22 +227,19 @@ it("switches picker sorting while preserving selection", async () => {
   await click(".tag-editor__quick-add");
   const names = () => [...document.querySelectorAll(".tag-candidate__name")].map((node) => node.textContent);
   expect(names()).toEqual(["People", "Family", "Places"]);
-  const select = document.querySelector<HTMLSelectElement>(".tag-picker__settings select")!;
-  await act(async () => {
-    select.value = "mostUsed";
-    select.dispatchEvent(new Event("change", { bubbles: true }));
-  });
+  await click(".tag-picker__settings");
+  await click('[role="menuitemradio"][data-state="unchecked"]:nth-child(2)');
   expect(names()).toEqual(["Places", "People", "People › Family"]);
-  await act(async () => {
-    select.value = "recent";
-    select.dispatchEvent(new Event("change", { bubbles: true }));
-  });
+  await click(".tag-picker__settings");
+  await click('[role="menuitemradio"]:first-child');
   expect(names()[0]).toBe("People › Family");
   expect(localStorage.getItem("oxyviewer.tag-picker-sort.v1")).toBe("recent");
   await act(async () => root.render(null));
   await renderEditor();
   await click(".tag-editor__quick-add");
-  expect(document.querySelector<HTMLSelectElement>(".tag-picker__settings select")?.value).toBe("recent");
+  await click(".tag-picker__settings");
+  expect(document.querySelector('[role="menuitemradio"][aria-checked="true"]')?.textContent).toBe("tagSortRecent");
+  await act(async () => document.activeElement?.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true })));
   expect(names()[0]).toBe("People › Family");
   expect(document.querySelector('[role=checkbox][aria-label="People › Family"]')?.getAttribute("aria-checked")).toBe("true");
 });
@@ -261,5 +262,19 @@ it("offers direct creation only for a new nonempty tag and preserves input on fa
   await click("[aria-label=createAndAdd]");
   await vi.waitFor(() => expect(document.querySelector('[role="alert"]')?.textContent).toContain("create failed"));
   expect(input.value).toBe("People/New");
+  expect(setAssetCustomTag).not.toHaveBeenCalled();
+});
+
+it("dismisses only the nested menu on Escape and keeps rename focus inside the picker", async () => {
+  await click(".tag-editor__quick-add");
+  await click(".tag-picker__settings");
+  const option = document.querySelector<HTMLElement>('[role="menuitemradio"]')!;
+  await act(async () => option.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true })));
+  expect(document.querySelector('[role="menu"]')).toBeNull();
+  expect(document.querySelector(".tag-picker")).not.toBeNull();
+  await click(".tag-candidate__menu");
+  await click('.tag-row-menu [role="menuitem"]:first-child');
+  await vi.waitFor(() => expect(document.activeElement).toBe(document.querySelector(".tag-edit-panel input")));
+  expect(document.querySelector(".tag-picker")).not.toBeNull();
   expect(setAssetCustomTag).not.toHaveBeenCalled();
 });
