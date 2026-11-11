@@ -87,6 +87,33 @@ it("rebinds the first slot without touching the second", async () => {
   expect(useWorkspaceStore.getState().shortcuts["marking.clearRating"]).toEqual([plain("j"), plain("`")]);
 });
 
+it("keeps listening through modifier presses and captures a modified side button", async () => {
+  await clickSlot("上一张", 1);
+  await pressKey("Control", { ctrlKey: true });
+  expect(slotText("上一张", 1)).toBe("按下新快捷键…");
+  const down = new MouseEvent("mousedown", { button: 3, ctrlKey: true, bubbles: true, cancelable: true });
+  await act(async () => window.dispatchEvent(down));
+  expect(down.defaultPrevented).toBe(true);
+  expect(slotText("上一张", 1)).toBe("Ctrl+MBTN_BACK");
+  expect(useWorkspaceStore.getState().shortcuts["loupe.previousAsset"][1]).toEqual({ ...plain("mbtn_back"), ctrl: true });
+  const up = new MouseEvent("mouseup", { button: 3, cancelable: true });
+  window.dispatchEvent(up);
+  expect(up.defaultPrevented).toBe(true);
+  window.dispatchEvent(new MouseEvent("auxclick", { button: 3, cancelable: true }));
+});
+
+it("records horizontal scrolling and checks mouse conflicts", async () => {
+  await clickSlot("下一张", 1);
+  const wheel = new WheelEvent("wheel", { deltaX: 120, bubbles: true, cancelable: true });
+  await act(async () => window.dispatchEvent(wheel));
+  expect(wheel.defaultPrevented).toBe(true);
+  expect(slotText("下一张", 1)).toBe("WHEEL_RIGHT");
+  await clickSlot("设为 1 星", 1);
+  await act(async () => window.dispatchEvent(new WheelEvent("wheel", { deltaX: 120, cancelable: true })));
+  expect(host.querySelector("[role=alert]")?.textContent).toContain("下一张");
+  expect(useWorkspaceStore.getState().shortcuts["marking.rating1"][1]).toBeNull();
+});
+
 it("rebinds the repeat-tag shortcut and prevents conflicts in both views", async () => {
   await clickSlot("重复上次标签（添加 / 取消）", 0);
   await pressKey("y", { altKey: true });

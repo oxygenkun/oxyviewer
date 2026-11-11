@@ -100,6 +100,28 @@ function scopesConflict(a: ShortcutScope, b: ShortcutScope): boolean {
 
 const MODIFIER_KEYS = new Set(["control", "alt", "shift", "meta"]);
 
+export type ShortcutInputEvent = KeyboardEvent | MouseEvent | WheelEvent;
+
+function inputKey(event: ShortcutInputEvent): string | undefined {
+  if ("key" in event) {
+    const key = normalizeKey(event.key);
+    return !key || MODIFIER_KEYS.has(key) || key === "unidentified" || key === "dead" ? undefined : key;
+  }
+  if ("deltaY" in event) {
+    if (event.deltaX === 0 && event.deltaY === 0) return undefined;
+    return Math.abs(event.deltaX) > Math.abs(event.deltaY)
+      ? event.deltaX < 0 ? "wheel_left" : "wheel_right"
+      : event.deltaY < 0 ? "wheel_up" : "wheel_down";
+  }
+  // Keep primary/secondary clicks for selection, dragging and context menus.
+  // Names follow mpv; DOM button numbers do not include the four wheel axes.
+  if (event.button === 1) return "mbtn_mid";
+  if (event.button === 3) return "mbtn_back";
+  if (event.button === 4) return "mbtn_forward";
+  if (Number.isInteger(event.button) && event.button >= 5) return `mbtn${event.button + 4}`;
+  return undefined;
+}
+
 interface StorageLike {
   getItem(key: string): string | null;
   setItem(key: string, value: string): void;
@@ -209,22 +231,22 @@ export function bindingsEqual(a: ShortcutBinding, b: ShortcutBinding): boolean {
     && a.meta === b.meta;
 }
 
-export function matchesShortcut(event: KeyboardEvent, binding: ShortcutBinding): boolean {
-  return normalizeKey(event.key) === binding.key
+export function matchesShortcut(event: ShortcutInputEvent, binding: ShortcutBinding): boolean {
+  return inputKey(event) === binding.key
     && event.ctrlKey === binding.ctrl
     && event.altKey === binding.alt
     && event.shiftKey === binding.shift
     && event.metaKey === binding.meta;
 }
 
-export function shortcutFromEvent(event: KeyboardEvent): ShortcutBinding | undefined {
-  const key = normalizeKey(event.key);
-  if (MODIFIER_KEYS.has(key)) return undefined;
+export function shortcutFromEvent(event: ShortcutInputEvent): ShortcutBinding | undefined {
+  const key = inputKey(event);
+  if (!key) return undefined;
   return { key, ctrl: event.ctrlKey, alt: event.altKey, shift: event.shiftKey, meta: event.metaKey };
 }
 
 export function matchesAction(
-  event: KeyboardEvent,
+  event: ShortcutInputEvent,
   bindings: ShortcutBindings,
   action: ShortcutAction,
 ): boolean {
@@ -272,6 +294,13 @@ const KEY_LABELS: Record<string, string> = {
   end: "End",
   pageup: "PageUp",
   pagedown: "PageDown",
+  mbtn_mid: "MBTN_MID",
+  mbtn_back: "MBTN_BACK",
+  mbtn_forward: "MBTN_FORWARD",
+  wheel_up: "WHEEL_UP",
+  wheel_down: "WHEEL_DOWN",
+  wheel_left: "WHEEL_LEFT",
+  wheel_right: "WHEEL_RIGHT",
 };
 
 export function formatShortcut(binding: ShortcutBinding): string {
@@ -281,6 +310,6 @@ export function formatShortcut(binding: ShortcutBinding): string {
   if (binding.shift) parts.push("Shift");
   if (binding.meta) parts.push("Meta");
   const label = KEY_LABELS[binding.key];
-  parts.push(label ?? (binding.key.length === 1 ? binding.key.toLowerCase() : binding.key));
+  parts.push(label ?? (/^mbtn\d+$/.test(binding.key) ? binding.key.toUpperCase() : binding.key.toLowerCase()));
   return parts.join("+");
 }

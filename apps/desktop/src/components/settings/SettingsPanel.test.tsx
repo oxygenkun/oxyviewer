@@ -90,7 +90,7 @@ it("separates settings into tabs and renders only the selected module", async ()
   expect(host.querySelector('[data-testid="external-apps"]')).not.toBeNull();
 
   await clickTab("快捷键");
-  expect(host.querySelector("[role=tabpanel]")?.textContent).toContain("键盘快捷键");
+  expect(host.querySelector("[role=tabpanel]")?.textContent).toContain("键盘与鼠标快捷键");
 
   await clickTab("关于");
   expect(useWorkspaceStore.getState().settingsSection).toBe("about");

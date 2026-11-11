@@ -5,11 +5,12 @@ import { MARKING_ACTIONS, markingPatchForAction } from "@/lib/assets/assetMarkin
 import { refreshTagQueries, TAG_MUTATION_SCOPE, toggleAssetCustomTag } from "@/lib/assets/tagActions";
 import { applyMetadataProjectionPatch, useMetadataProjectionStore } from "@/lib/projection/metadataProjection";
 import { matchesAction } from "@/lib/ui/shortcuts";
+import { listenShortcutInput } from "@/lib/ui/shortcutInput";
 import { useWorkspaceStore } from "@/store";
 import type { AssetSummary, MetadataPatch } from "@/types";
 
 function editableTarget(target: EventTarget | null): boolean {
-  return target instanceof HTMLElement
+  return target instanceof Element
     && Boolean(target.closest("input, textarea, select, [contenteditable='true'], [role='dialog'], [role='menu']"));
 }
 
@@ -47,8 +48,8 @@ export function useMarkingShortcuts(
 
   useEffect(() => {
     if (suppressed) return;
-    const onKeyDown = (event: KeyboardEvent) => {
-      if (event.repeat || event.isComposing || event.defaultPrevented) return;
+    return listenShortcutInput((event) => {
+      if ("key" in event && (event.repeat || event.isComposing)) return;
       if (useWorkspaceStore.getState().settingsOpen || editableTarget(event.target)) return;
       const action = matchesAction(event, shortcuts, "marking.repeatLastTag")
         ? "marking.repeatLastTag"
@@ -69,8 +70,6 @@ export function useMarkingShortcuts(
       if (!value) return;
       event.preventDefault();
       patch.mutate({ paths: targets.map((asset) => asset.path), value });
-    };
-    window.addEventListener("keydown", onKeyDown);
-    return () => window.removeEventListener("keydown", onKeyDown);
+    });
   }, [activeAsset, assets, fallbackActive, patch, projection, repeatTag, shortcuts, suppressed]);
 }

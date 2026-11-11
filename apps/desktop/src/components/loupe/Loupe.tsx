@@ -37,6 +37,7 @@ import {
 } from "@/lib/preview/loupe";
 import { LAYOUT_SIZE_LIMITS } from "@/lib/ui/layoutSizing";
 import { matchesAction } from "@/lib/ui/shortcuts";
+import { listenShortcutInput } from "@/lib/ui/shortcutInput";
 import { useMarkingShortcuts } from "@/lib/hooks/useMarkingShortcuts";
 import { useAssetDrag } from "@/lib/hooks/useAssetDrag";
 import { getAssetDetails } from "@/lib/api";
@@ -271,24 +272,25 @@ export function Loupe({
 
   useEffect(() => {
     const editableTarget = (target: EventTarget | null) => (
-      target instanceof HTMLElement
-      && Boolean(target.closest("input, textarea, select, [contenteditable='true']"))
+      target instanceof Element
+      && Boolean(target.closest("input, textarea, select, [contenteditable='true'], [role='dialog'], [role='menu']"))
     );
-    const handleKeyDown = (event: KeyboardEvent) => {
-      if (event.key === "Alt") {
+    const stopInput = listenShortcutInput((event) => {
+      if ("key" in event && event.key === "Alt") {
         if (!event.repeat) setFocusTemporarilyInverted(true);
         return;
       }
+      if ("key" in event && event.isComposing) return;
       if (keyboardSuppressed) return;
       if (useWorkspaceStore.getState().settingsOpen || editableTarget(event.target)) return;
       if (matchesAction(event, shortcuts, "loupe.toggleFocusAreas")) {
-        if (event.repeat) return;
+        if ("key" in event && event.repeat) return;
         event.preventDefault();
         setFocusAreasVisible(!focusAreasVisible);
         return;
       }
       if (matchesAction(event, shortcuts, "loupe.cycleZoom")) {
-        if (event.repeat) return;
+        if ("key" in event && event.repeat) return;
         event.preventDefault();
         cycleZoom();
         return;
@@ -302,16 +304,15 @@ export function Loupe({
         event.preventDefault();
         stepSelection(1);
       }
-    };
+    });
     const handleKeyUp = (event: KeyboardEvent) => {
       if (event.key === "Alt") setFocusTemporarilyInverted(false);
     };
     const resetTemporaryState = () => setFocusTemporarilyInverted(false);
-    window.addEventListener("keydown", handleKeyDown);
     window.addEventListener("keyup", handleKeyUp);
     window.addEventListener("blur", resetTemporaryState);
     return () => {
-      window.removeEventListener("keydown", handleKeyDown);
+      stopInput();
       window.removeEventListener("keyup", handleKeyUp);
       window.removeEventListener("blur", resetTemporaryState);
     };

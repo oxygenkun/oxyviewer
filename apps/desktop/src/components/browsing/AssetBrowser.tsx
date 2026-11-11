@@ -14,6 +14,7 @@ import { useExternalAppSettings } from "@/lib/media/externalApps";
 import { AssetContextMenu, type AssetMenuTarget } from "./AssetContextMenu";
 import { acceptMetadataProjections } from "@/lib/projection/metadataProjection";
 import { matchesAction } from "@/lib/ui/shortcuts";
+import { listenShortcutInput } from "@/lib/ui/shortcutInput";
 import { useMarkingShortcuts } from "@/lib/hooks/useMarkingShortcuts";
 import {
   backgroundPreviewIntents,
@@ -432,10 +433,11 @@ function VirtualGrid({
   useEffect(() => {
     if (keyboardSuppressed) return;
     const editableTarget = (target: EventTarget | null) => (
-      target instanceof HTMLElement
-      && Boolean(target.closest("input, textarea, select, [contenteditable='true']"))
+      target instanceof Element
+      && Boolean(target.closest("input, textarea, select, [contenteditable='true'], [role='dialog'], [role='menu']"))
     );
-    const onKeyDown = (event: KeyboardEvent) => {
+    return listenShortcutInput((event) => {
+      if ("key" in event && event.isComposing) return;
       if (useWorkspaceStore.getState().settingsOpen || editableTarget(event.target)) return;
       if (matchesAction(event, shortcuts, "grid.moveLeft")) {
         event.preventDefault();
@@ -450,15 +452,13 @@ function VirtualGrid({
         event.preventDefault();
         stepSelection(columns);
       } else if (matchesAction(event, shortcuts, "grid.openLoupe")) {
-        if (event.repeat) return;
+        if ("key" in event && event.repeat) return;
         const target = activeId ?? gridAssets[0]?.id;
         if (!target) return;
         event.preventDefault();
         openAsset(target);
       }
-    };
-    window.addEventListener("keydown", onKeyDown);
-    return () => window.removeEventListener("keydown", onKeyDown);
+    });
   }, [activeId, gridAssets, columns, keyboardSuppressed, openAsset, shortcuts, stepSelection]);
 
   return (

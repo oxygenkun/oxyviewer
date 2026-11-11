@@ -1,6 +1,7 @@
 import { RotateCcw } from "lucide-react";
 import { useEffect, useState } from "react";
 import type { MessageKey } from "@/lib/i18n";
+import { listenShortcutInput } from "@/lib/ui/shortcutInput";
 import {
   DEFAULT_SHORTCUTS,
   SHORTCUT_ACTIONS,
@@ -67,19 +68,23 @@ export function ShortcutSettings({ t }: { t: (key: MessageKey) => string }) {
 
   useEffect(() => {
     if (!capturing) return;
-    const onKeyDown = (event: KeyboardEvent) => {
+    return listenShortcutInput((event) => {
       event.preventDefault();
       event.stopPropagation();
       const { action, slot } = capturing;
-      setCapturing(undefined);
-      if (event.key === "Escape") return;
-      if (CLEAR_KEYS.has(event.key)) {
+      if ("key" in event && event.key === "Escape") {
+        setCapturing(undefined);
+        return;
+      }
+      if ("key" in event && CLEAR_KEYS.has(event.key)) {
+        setCapturing(undefined);
         setError(undefined);
         setShortcut(action, slot, null);
         return;
       }
       const binding = shortcutFromEvent(event);
       if (!binding) return;
+      setCapturing(undefined);
       const conflict = findShortcutConflict(shortcuts, action, slot, binding);
       if (conflict) {
         setError(conflict === action
@@ -89,9 +94,7 @@ export function ShortcutSettings({ t }: { t: (key: MessageKey) => string }) {
         setError(undefined);
         setShortcut(action, slot, binding);
       }
-    };
-    window.addEventListener("keydown", onKeyDown, true);
-    return () => window.removeEventListener("keydown", onKeyDown, true);
+    }, { capture: true });
   }, [capturing, shortcuts, setShortcut, t]);
 
   const customized = SHORTCUT_ACTIONS.some(
@@ -107,6 +110,7 @@ export function ShortcutSettings({ t }: { t: (key: MessageKey) => string }) {
         </button>
       </div>
       <p className="settings-panel__hint">{t("shortcutHint")}</p>
+      <p className="settings-panel__hint">{t("shortcutMouseHint")}</p>
       {ACTION_GROUPS.map((group) => (
         <div className="shortcut-settings__group" key={group.labelKey}>
           <h3 className="shortcut-settings__group-title">{t(group.labelKey)}</h3>

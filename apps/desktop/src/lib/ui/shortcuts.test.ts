@@ -144,6 +144,45 @@ describe("shortcutFromEvent", () => {
     expect(shortcutFromEvent(keyEvent("Shift", { shiftKey: true }))).toBeUndefined();
     expect(shortcutFromEvent(keyEvent("Control", { ctrlKey: true }))).toBeUndefined();
   });
+
+  it.each([[1, "mbtn_mid"], [3, "mbtn_back"], [4, "mbtn_forward"], [5, "mbtn9"]])(
+    "captures mouse button %i with modifiers",
+    (button, key) => {
+      const event = { button, ctrlKey: true, altKey: false, shiftKey: false, metaKey: false } as MouseEvent;
+      expect(shortcutFromEvent(event)).toEqual({ ...plain(key), ctrl: true });
+      expect(matchesShortcut(event, { ...plain(key), ctrl: true })).toBe(true);
+      expect(matchesShortcut(event, plain(key))).toBe(false);
+    },
+  );
+
+  it.each([[0, -100, "wheel_up"], [0, 100, "wheel_down"], [-100, 2, "wheel_left"], [100, 0, "wheel_right"]])(
+    "captures wheel delta (%i, %i) as %s",
+    (deltaX, deltaY, key) => {
+      const event = { deltaX, deltaY, ctrlKey: false, altKey: true, shiftKey: false, metaKey: false } as WheelEvent;
+      expect(shortcutFromEvent(event)).toEqual({ ...plain(key), alt: true });
+      expect(matchesShortcut(event, { ...plain(key), alt: true })).toBe(true);
+    },
+  );
+
+  it("ignores ordinary clicks, empty wheels and unidentified keys", () => {
+    expect(shortcutFromEvent({ button: 0 } as MouseEvent)).toBeUndefined();
+    expect(shortcutFromEvent({ button: 2 } as MouseEvent)).toBeUndefined();
+    expect(shortcutFromEvent({ deltaX: 0, deltaY: 0 } as WheelEvent)).toBeUndefined();
+    expect(shortcutFromEvent(keyEvent("Unidentified"))).toBeUndefined();
+  });
+
+  it("round-trips mouse combinations and detects conflicts across scopes", () => {
+    const bindings = cloneShortcuts();
+    const binding = { ...plain("mbtn_back"), shift: true };
+    bindings["marking.rating1"][1] = binding;
+    const storage = memoryStorage();
+    saveShortcuts(bindings, storage);
+    expect(loadShortcuts(storage)).toEqual(bindings);
+    expect(findShortcutConflict(bindings, "grid.moveLeft", 1, binding)).toBe("marking.rating1");
+    expect(formatShortcut(binding)).toBe("Shift+MBTN_BACK");
+    expect(formatShortcut(plain("wheel_left"))).toBe("WHEEL_LEFT");
+    expect(formatShortcut(plain("mbtn9"))).toBe("MBTN9");
+  });
 });
 
 describe("matchesAction", () => {

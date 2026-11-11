@@ -132,6 +132,7 @@ beforeEach(() => {
   api.startAssetDrag.mockReset().mockResolvedValue(undefined);
   api.isTauri.mockReturnValue(true);
   trashAssets.mockReset();
+  useWorkspaceStore.getState().resetShortcuts();
   useWorkspaceStore.setState({
     view: "grid",
     thumbnailOrientation: "landscape",
@@ -477,4 +478,57 @@ it("retains the reviewed loupe photo through empty and changed filtered pages", 
   expect(host.querySelector(".loupe__caption")?.textContent).not.toContain("不在当前筛选列表中");
   await select("a0");
   expect(host.querySelector(".loupe__caption")?.textContent).toContain("a0.jpg");
+});
+
+const mouseBinding = (key: string) => ({ key, ctrl: false, alt: false, shift: false, meta: false });
+
+it("navigates the grid once per side-button click and suppresses settings/input/menu actions", async () => {
+  useWorkspaceStore.getState().setShortcut("grid.moveRight", 1, mouseBinding("mbtn_forward"));
+  await render("grid");
+  await select("a0");
+  const down = new MouseEvent("mousedown", { button: 4, bubbles: true, cancelable: true });
+  await act(async () => host.dispatchEvent(down));
+  expect(useWorkspaceStore.getState().activeId).toBe("a1");
+  expect(down.defaultPrevented).toBe(true);
+  for (const type of ["mouseup", "auxclick"]) {
+    const release = new MouseEvent(type, { button: 4, bubbles: true, cancelable: true });
+    await act(async () => host.dispatchEvent(release));
+    expect(release.defaultPrevented).toBe(true);
+  }
+  expect(useWorkspaceStore.getState().activeId).toBe("a1");
+  await act(async () => useWorkspaceStore.setState({ settingsOpen: true }));
+  await act(async () => host.dispatchEvent(new MouseEvent("mousedown", { button: 4, bubbles: true, cancelable: true })));
+  expect(useWorkspaceStore.getState().activeId).toBe("a1");
+  await act(async () => useWorkspaceStore.setState({ settingsOpen: false }));
+  for (const html of ["<input>", '<div role="dialog"><svg></svg></div>', '<div role="menu"><button></button></div>']) {
+    const container = document.createElement("div");
+    container.innerHTML = html;
+    host.append(container);
+    await act(async () => container.querySelector("input, svg, button")!.dispatchEvent(
+      new MouseEvent("mousedown", { button: 4, bubbles: true, cancelable: true }),
+    ));
+    expect(useWorkspaceStore.getState().activeId).toBe("a1");
+    container.remove();
+  }
+});
+
+it("uses bound loupe wheels and middle buttons without invoking target zoom handlers", async () => {
+  useWorkspaceStore.getState().setShortcut("loupe.nextAsset", 1, mouseBinding("wheel_down"));
+  useWorkspaceStore.getState().setShortcut("loupe.toggleFocusAreas", 1, mouseBinding("mbtn_mid"));
+  await render("loupe");
+  const stage = host.querySelector<HTMLElement>(".loupe__stage")!;
+  const targetWheel = vi.fn();
+  stage.addEventListener("wheel", targetWheel);
+  const wheel = new WheelEvent("wheel", { deltaY: 100, bubbles: true, cancelable: true });
+  await act(async () => stage.dispatchEvent(wheel));
+  expect(useWorkspaceStore.getState().activeId).toBe("a1");
+  expect(wheel.defaultPrevented).toBe(true);
+  expect(targetWheel).not.toHaveBeenCalled();
+  const visible = useWorkspaceStore.getState().focusAreasVisible;
+  await act(async () => stage.dispatchEvent(new MouseEvent("mousedown", { button: 1, bubbles: true, cancelable: true })));
+  expect(useWorkspaceStore.getState().focusAreasVisible).toBe(!visible);
+  const unbound = new WheelEvent("wheel", { deltaX: 100, bubbles: true, cancelable: true });
+  await act(async () => stage.dispatchEvent(unbound));
+  expect(targetWheel).toHaveBeenCalledOnce();
+  expect(useWorkspaceStore.getState().activeId).toBe("a1");
 });

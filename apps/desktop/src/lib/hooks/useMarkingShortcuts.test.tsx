@@ -90,6 +90,22 @@ it("applies the rating to selected assets", async () => {
   expect(patchMetadata).toHaveBeenCalledWith(["/demo/a.arw"], { rating: 3 });
 });
 
+it("applies mouse marking to the selection and ignores it while settings are open", async () => {
+  await act(async () => {
+    useWorkspaceStore.setState({ selectedIds: ["a.arw", "b.arw"] });
+    useWorkspaceStore.getState().setShortcut("marking.rating3", 1, {
+      key: "mbtn_back", ctrl: false, alt: true, shift: false, meta: false,
+    });
+  });
+  const event = () => new MouseEvent("mousedown", { button: 3, altKey: true, bubbles: true, cancelable: true });
+  await act(async () => host.dispatchEvent(event()));
+  expect(patchMetadata).toHaveBeenCalledWith(["/demo/a.arw", "/demo/b.arw"], { rating: 3 });
+  vi.mocked(patchMetadata).mockClear();
+  await act(async () => useWorkspaceStore.setState({ settingsOpen: true }));
+  await act(async () => host.dispatchEvent(event()));
+  expect(patchMetadata).not.toHaveBeenCalled();
+});
+
 it("clears the rating with 0 and backquote", async () => {
   await pressKey("0");
   expect(patchMetadata).toHaveBeenCalledWith(["/demo/a.arw"], { rating: null });
