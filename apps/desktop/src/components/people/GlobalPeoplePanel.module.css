@@ -1,4 +1,4 @@
-.panel { --people-blue: #a6ceef; font-size:var(--font-size-body); min-height:0; overflow:auto; flex:1; color:var(--text); scrollbar-gutter:stable; }
+.panel { --people-blue: var(--accent); font-size:var(--font-size-body); min-height:0; overflow:auto; flex:1; color:var(--text); scrollbar-gutter:stable; }
 .panel > section, .registry, .setup { padding:16px 10px; border-bottom:1px solid var(--line); }
 .panel p { margin:9px 0; line-height:1.7; }
 .panel small { display:block; color:var(--muted); line-height:1.6; font-size:11px; }
@@ -13,7 +13,7 @@
 .navigation button { display:flex; gap:10px; text-align:left; align-items:center; padding:12px 10px; border-color:transparent; background:transparent; }
 .navigation button > span { flex:1; min-width:0; }
 .navigation small { margin-top:4px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font-size:10px; }
-.navigation button[aria-pressed=true] { background:#22313e; border-color:#3f5669; color:#d7eafa; }
+.navigation button[aria-pressed=true] { background:var(--surface-selected); border-color:var(--line); color:var(--text); }
 .navigation b { font-size:11px; font-weight:500; }
 .guide strong { font-weight:500; font-size:14px; }
 .guide p { color:var(--people-blue); }
@@ -26,11 +26,11 @@
 .panel .quickSelect { display:flex; align-items:center; gap:9px; width:100%; text-align:left; background:transparent; border:0; padding:4px 0 10px; }
 .quickSelect > span:nth-child(2) { flex:1; min-width:0; overflow-wrap:anywhere; }
 .quickSelect strong { font-weight:500; }
-.instanceNumber { display:grid; place-items:center; min-width:26px; padding:0 4px; height:26px; border:1px solid #526879; border-radius:50%; color:var(--people-blue); flex:none; }
+.instanceNumber { display:grid; place-items:center; min-width:26px; padding:0 4px; height:26px; border:1px solid var(--line); border-radius:50%; color:var(--people-blue); flex:none; }
 .quickActions { display:grid; grid-template-columns:1fr 1fr; gap:6px; }
-.panel .confirm { grid-column:1 / -1; background:#254338; border-color:#426953; color:#c9ecda; text-align:center; }
-.panel .confirm:hover { background:#315642; }
-.feedback { display:flex; align-items:flex-start; gap:7px; color:#abd5bc; font-size:11px; }
+.panel .confirm { grid-column:1 / -1; background:var(--surface-control); border-color:var(--line-selected); color:var(--text); text-align:center; }
+.panel .confirm:hover { background:var(--surface-hover); }
+.feedback { display:flex; align-items:flex-start; gap:7px; color:var(--success); font-size:11px; }
 .feedback svg { flex:none; margin-top:3px; }
 .counts { display:flex; gap:12px; flex-wrap:wrap; margin:12px 0; }
 .counts b { font-size:20px; font-weight:500; color:var(--text); }
@@ -40,7 +40,7 @@
 .groups button > span:last-child { min-width:0; overflow-wrap:anywhere; }
 .groups strong { font-weight:500; }
 .groups small { margin-top:4px; }
-.panel .selected { border-color:#739dbc; background:#213240; }
+.panel .selected { border-color:var(--accent); background:var(--surface-selected); }
 .cover { width:42px; height:42px; position:relative; overflow:hidden; flex:none; border-radius:4px; }
 .cover img { width:100%; height:100%; object-fit:cover; }
 .cover :global(.thumbnail), .preview :global(.thumbnail) { height:100%; width:100%; }
@@ -49,10 +49,10 @@
 .tupleMain > span:last-child { overflow-wrap:anywhere; min-width:0; }
 .preview { position:relative; width:56px; aspect-ratio:3/2; overflow:hidden; flex:none; background:var(--bg); }
 .preview img { width:100%; height:100%; object-fit:fill; }
-.preview i { position:absolute; border:1.5px solid var(--people-blue); pointer-events:none; }
+.preview i { position:absolute; border:1px solid var(--people-blue); pointer-events:none; }
 .reference { margin-left:auto; font-size:10px!important; }
 .find { padding:10px; background:var(--panel-raised); margin-top:10px; max-height:260px; overflow:auto; }
-.panel [role=alert] { color:#ffada6; overflow-wrap:anywhere; padding:10px; }
+.panel [role=alert] { color:var(--danger-text); overflow-wrap:anywhere; padding:10px; }
 .notice { padding:0 10px; color:var(--muted); font-size:11px; }
 .batch { margin:14px 0; padding:10px 0; border-top:1px solid var(--line); border-bottom:1px solid var(--line); }
-@media (prefers-reduced-motion:reduce) { .panel button { transition:none; } }
+@media (prefers-reduced-motion:reduce) { .panel button { transition: color var(--transition-control), background-color var(--transition-control), border-color var(--transition-control); } }

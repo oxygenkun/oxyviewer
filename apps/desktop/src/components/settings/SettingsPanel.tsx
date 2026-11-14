@@ -1,5 +1,6 @@
 import { Button, IconButton } from "../ui/Button";
 import { Field } from "../ui/Field";
+import * as DialogPrimitive from "@radix-ui/react-dialog";
 import {
   Check,
   Database,
@@ -15,7 +16,7 @@ import {
   X,
 } from "lucide-react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import {
   chooseCacheParent,
   clearPreviewCache,
@@ -55,6 +56,7 @@ export function SettingsPanel({ t, activeAsset }: SettingsPanelProps) {
   const queryClient = useQueryClient();
   const [limitGb, setLimitGb] = useState(10);
   const [clearArmed, setClearArmed] = useState(false);
+  const previousFocus = useRef<HTMLElement | null>(null);
   const {
     displaySharpening,
     gridMetadataVisible,
@@ -101,14 +103,6 @@ export function SettingsPanel({ t, activeAsset }: SettingsPanelProps) {
   }, [cacheSettings.data]);
 
   useEffect(() => {
-    const closeOnEscape = (event: KeyboardEvent) => {
-      if (event.key === "Escape") toggleSettings();
-    };
-    document.addEventListener("keydown", closeOnEscape);
-    return () => document.removeEventListener("keydown", closeOnEscape);
-  }, [toggleSettings]);
-
-  useEffect(() => {
     if (!clearArmed) return;
     const timer = window.setTimeout(() => setClearArmed(false), 10_000);
     return () => window.clearTimeout(timer);
@@ -140,18 +134,23 @@ export function SettingsPanel({ t, activeAsset }: SettingsPanelProps) {
   const activeTab = tabs.find((tab) => tab.id === settingsSection) ?? tabs[0];
 
   return (
-    <div className="settings-overlay" onClick={toggleSettings}>
-      <div
-        aria-labelledby="settings-title"
-        aria-modal="true"
+    <DialogPrimitive.Root open onOpenChange={(open) => { if (!open) toggleSettings(); }}>
+      <DialogPrimitive.Overlay className="settings-overlay">
+      <DialogPrimitive.Content
         className="settings-panel"
-        onClick={(e) => e.stopPropagation()}
-        role="dialog"
+        onOpenAutoFocus={() => {
+          previousFocus.current = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+        }}
+        onCloseAutoFocus={(event) => {
+          event.preventDefault();
+          if (previousFocus.current?.isConnected) previousFocus.current.focus({ preventScroll: true });
+        }}
+        onKeyDown={(event) => event.stopPropagation()}
       >
         <header className="settings-panel__header">
           <div>
-            <span id="settings-title">{t("settings")}</span>
-            <small>{t("settingsSubtitle")}</small>
+            <DialogPrimitive.Title asChild><span>{t("settings")}</span></DialogPrimitive.Title>
+            <DialogPrimitive.Description asChild><small>{t("settingsSubtitle")}</small></DialogPrimitive.Description>
           </div>
           <IconButton label={t("closeSettings")} onClick={toggleSettings}><X size={18} /></IconButton>
         </header>
@@ -169,6 +168,17 @@ export function SettingsPanel({ t, activeAsset }: SettingsPanelProps) {
                 key={tab.id}
                 onClick={() => setSettingsSection(tab.id)}
                 role="tab"
+                tabIndex={settingsSection === tab.id ? 0 : -1}
+                onKeyDown={(event) => {
+                  const step = event.key === "ArrowDown" || event.key === "ArrowRight" ? 1
+                    : event.key === "ArrowUp" || event.key === "ArrowLeft" ? -1 : 0;
+                  if (!step && event.key !== "Home" && event.key !== "End") return;
+                  event.preventDefault();
+                  const index = event.key === "Home" ? 0 : event.key === "End" ? tabs.length - 1
+                    : (tabs.findIndex((item) => item.id === tab.id) + step + tabs.length) % tabs.length;
+                  setSettingsSection(tabs[index].id);
+                  document.getElementById(`settings-tab-${tabs[index].id}`)?.focus();
+                }}
               >
                 {tab.icon}
                 <span>{tab.label}</span>
@@ -279,7 +289,7 @@ export function SettingsPanel({ t, activeAsset }: SettingsPanelProps) {
                     {!clearCache.isPending ? <Trash2 size={14} /> : null}{clearArmed ? t("confirmClearCache") : t("clearCache")}
                   </Button>
                 </div>
-                {cacheError ? <p className="settings-panel__error">{String(cacheError)}</p> : null}
+                {cacheError ? <p className="settings-panel__error" role="alert">{String(cacheError)}</p> : null}
               </section>
               <section className="settings-panel__section"><RawDecoderPanel t={t} asset={activeAsset?.kind === "raw" ? activeAsset : undefined} /></section>
               <section className="settings-panel__section">
@@ -294,7 +304,8 @@ export function SettingsPanel({ t, activeAsset }: SettingsPanelProps) {
             {settingsSection === "about" ? <AboutSettings t={t} /> : null}
           </div>
         </div>
-      </div>
-    </div>
+      </DialogPrimitive.Content>
+      </DialogPrimitive.Overlay>
+    </DialogPrimitive.Root>
   );
 }

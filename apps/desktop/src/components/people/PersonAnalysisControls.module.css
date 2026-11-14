@@ -1,8 +1,8 @@
 .panel { padding: 10px 12px; border-bottom: 1px solid var(--line); font-size: 12px; }
 .panel p { margin: 7px 0; padding: 0; overflow-wrap: anywhere; }
 .actions { display: flex; flex-wrap: wrap; gap: 6px; }
-.panel a { color: #b4c6d2; font-size: 11px; }
-.panel [role="alert"] { color: #f1a29c; }
+.panel a { color: var(--accent-dim); font-size: 11px; }
+.panel [role="alert"] { color: var(--danger-text); }
 .panel progress { width: 100%; }
 .models { display: grid; gap: 12px; margin-top: 12px; }
 .models small { display: block; margin-top: 4px; }

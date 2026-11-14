@@ -2,6 +2,7 @@ export type Locale = "zh-CN" | "en";
 
 const messages = {
   "zh-CN": {
+    workspace: "工作区",
     folderUnavailable: "路径不可用",
     folderRecoveryActions: "修复文件夹位置",
     folderRelocate: "重新定位…",
@@ -397,6 +398,7 @@ const messages = {
     theme: "主题",
   },
   en: {
+    workspace: "Workspace",
     folderUnavailable: "Path unavailable",
     folderRecoveryActions: "Recover folder location",
     folderRelocate: "Locate folder…",

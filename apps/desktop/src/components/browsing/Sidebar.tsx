@@ -19,7 +19,7 @@ import {
   Users,
   X,
 } from "lucide-react";
-import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 import { collapseDirectoryTree, getDirectoryTree, searchDirectories, setDirectoryExpanded } from "@/lib/api";
 import {
@@ -345,6 +345,14 @@ export function Sidebar({
     x: number;
     y: number;
   }>();
+  const contextMenuRef = useRef<HTMLDivElement>(null);
+  useLayoutEffect(() => {
+    if (!contextMenu || !contextMenuRef.current) return;
+    const bounds = contextMenuRef.current.getBoundingClientRect();
+    const x = Math.max(8, Math.min(contextMenu.x, window.innerWidth - bounds.width - 8));
+    const y = Math.max(8, Math.min(contextMenu.y, window.innerHeight - bounds.height - 8));
+    if (x !== contextMenu.x || y !== contextMenu.y) setContextMenu({ ...contextMenu, x, y });
+  }, [contextMenu]);
   const [pendingTrash, setPendingTrash] = useState<{
     session: FolderSession;
     entry: DirectorySummary;
@@ -504,8 +512,8 @@ export function Sidebar({
     setContextMenu({
       session,
       entry,
-      x: Math.max(8, Math.min(event.clientX, window.innerWidth - 224)),
-      y: Math.max(8, Math.min(event.clientY, window.innerHeight - 184)),
+      x: event.clientX,
+      y: event.clientY,
     });
   }, []);
 
@@ -647,10 +655,6 @@ export function Sidebar({
 
   return (
     <aside ref={sidebarRef} className={`sidebar ${peopleMode ? "sidebar--people" : ""}`} style={{ "--person-folder-share": `${personFolderShare}%` } as React.CSSProperties}>
-      <div className="sidebar__brand">
-        <div><strong>OxyViewer</strong><small>PHOTO DESK</small></div>
-      </div>
-
       <div className="person-sidebar-tabs" role="tablist" aria-label="Sidebar view">
         <button role="tab" aria-selected={!peopleMode} onClick={() => onPeopleModeChange?.(false)}>
           <Images size={15} />
@@ -881,6 +885,7 @@ export function Sidebar({
 
           {contextMenu ? createPortal(
             <div
+              ref={contextMenuRef}
               className="folder-context-menu"
               role="menu"
               aria-label={contextMenu.entry.name}

@@ -1,5 +1,5 @@
 export const LAYOUT_SIZE_LIMITS = {
-  leftPanel: { defaultValue: 224, min: 168, max: 420 },
+  leftPanel: { defaultValue: 240, min: 168, max: 420 },
   inspector: { defaultValue: 266, min: 220, max: 480 },
   filmstrip: { defaultValue: 116, min: 84, max: 300 },
 } as const;

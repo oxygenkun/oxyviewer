@@ -56,15 +56,18 @@ export function Toolbar({ total, loading, t }: ToolbarProps) {
   return (
     <>
       <header className="toolbar">
-        <button className="icon-button" title={t("collapse")} onClick={toggleLeftPanel}>
-          {leftPanelOpen ? <PanelLeftClose size={16} /> : <PanelLeftOpen size={16} />}
-        </button>
+        <div className="toolbar__leading">
+          <button className="icon-button" title={t("collapse")} aria-pressed={leftPanelOpen} onClick={toggleLeftPanel}>
+            {leftPanelOpen ? <PanelLeftClose size={16} /> : <PanelLeftOpen size={16} />}
+          </button>
+          <WorkspaceSearch t={t} />
+        </div>
         <div className="toolbar__title">
-          <strong>WORKSPACE</strong>
+          <strong>{t("workspace")}</strong>
           <span>{loading ? t("loading") : `${total.toLocaleString()} ${t("photos")}`}</span>
         </div>
         <span className="search-result-announcement" aria-live="polite" aria-atomic="true">{announcedTotal.toLocaleString()} {t("photos")}</span>
-        <WorkspaceSearch t={t} />
+        <div className="toolbar__actions">
         <div className="segmented" aria-label={t("viewMode")}>
           {views.map(([mode, Icon, label]) => (
             <button
@@ -73,14 +76,16 @@ export function Toolbar({ total, loading, t }: ToolbarProps) {
               onClick={() => setView(mode)}
               title={t(label)}
               aria-label={t(label)}
+              aria-pressed={view === mode}
             >
               <Icon size={15} />
             </button>
           ))}
         </div>
-        <button className="icon-button" onClick={toggleInspector} title={t("inspector")}>
+        <button className="icon-button" onClick={toggleInspector} aria-pressed={inspectorOpen} title={t("inspector")}>
           {inspectorOpen ? <PanelRightClose size={16} /> : <PanelRightOpen size={16} />}
         </button>
+        </div>
       </header>
       <div className="filterbar">
         <div className="filterbar__kinds">
@@ -89,6 +94,7 @@ export function Toolbar({ total, loading, t }: ToolbarProps) {
               key={value ?? "all"}
               className={kind === value ? "is-active" : ""}
               onClick={() => setKind(value)}
+              aria-pressed={kind === value}
             >
               {value?.toUpperCase() ?? t("all")}
             </button>

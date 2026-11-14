@@ -152,7 +152,7 @@ describe("workspace persistence", () => {
       getItem: (key: string) => values.get(key) ?? null,
       setItem: (key: string, value: string) => { values.set(key, value); },
     };
-    expect(loadLayoutSize("leftPanel", storage)).toBe(224);
+    expect(loadLayoutSize("leftPanel", storage)).toBe(240);
     saveLayoutSize("leftPanel", 320, storage);
     expect(loadLayoutSize("leftPanel", storage)).toBe(320);
     saveLayoutSize("filmstrip", 10_000, storage);

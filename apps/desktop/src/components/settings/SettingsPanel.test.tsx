@@ -56,6 +56,7 @@ beforeEach(async () => {
   useWorkspaceStore.setState({ settingsOpen: true, settingsSection: "general", locale: "zh-CN", peopleModuleVisible: loadPeopleModuleVisible(), peopleMode: false });
   client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   host = document.createElement("div");
+  document.body.append(host);
   root = createRoot(host);
   await act(async () => root.render(
     <QueryClientProvider client={client}>
@@ -66,6 +67,7 @@ beforeEach(async () => {
 
 afterEach(async () => {
   await act(async () => root.unmount());
+  host.remove();
   client.clear();
   vi.unstubAllGlobals();
 });
@@ -105,6 +107,25 @@ it("opens directly on the external applications tab", async () => {
   await act(async () => useWorkspaceStore.getState().openSettings("externalApps"));
   expect(host.querySelector('[role=tab][aria-selected="true"]')?.textContent).toContain("外部应用");
   expect(host.querySelector('[data-testid="external-apps"]')).not.toBeNull();
+});
+
+it("contains keyboard focus and navigates settings tabs with arrow keys", async () => {
+  const dialog = host.querySelector<HTMLElement>('[role="dialog"]')!;
+  expect(dialog.contains(document.activeElement)).toBe(true);
+  expect(document.getElementById(dialog.getAttribute("aria-labelledby")!)?.textContent).toBe("设置");
+  expect(document.getElementById(dialog.getAttribute("aria-describedby")!)?.textContent).toBeTruthy();
+  const first = host.querySelector<HTMLButtonElement>('[role="tab"]')!;
+  first.focus();
+  await act(async () => first.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowDown", bubbles: true, cancelable: true })));
+  expect(document.activeElement?.textContent).toBe("显示");
+  expect(useWorkspaceStore.getState().settingsSection).toBe("display");
+
+  const buttons = dialog.querySelectorAll<HTMLButtonElement>('button:not(:disabled):not([tabindex="-1"])');
+  buttons[buttons.length - 1].focus();
+  await act(async () => document.activeElement?.dispatchEvent(new KeyboardEvent("keydown", { key: "Tab", bubbles: true, cancelable: true })));
+  expect(document.activeElement).toBe(buttons[0]);
+  await act(async () => document.activeElement?.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true })));
+  expect(useWorkspaceStore.getState().settingsOpen).toBe(false);
 });
 
 it("shows the experimental people option disabled by default", () => {

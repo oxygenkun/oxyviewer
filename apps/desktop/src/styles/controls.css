@@ -1,6 +1,6 @@
 /* Low specificity defaults are shared by native elements, public UI components
    and future controls. Feature styles own layout, never a second control theme. */
-:where(button) { border: 0; cursor: pointer; }
+:where(button) { border: 0; cursor: pointer; transition: color var(--transition-control), background-color var(--transition-control), border-color var(--transition-control); }
 :where(button:not([class]), .ui-button) {
   display: inline-flex;
   align-items: center;
@@ -12,12 +12,14 @@
   color: var(--text);
   background: var(--surface-control);
   font-size: var(--font-size-body);
+  font-weight: 500;
   line-height: 1.4;
   cursor: pointer;
-  transition: background var(--transition-control), border-color var(--transition-control), color var(--transition-control);
+  transition: color var(--transition-control), background-color var(--transition-control), border-color var(--transition-control);
 }
 :where(button:not([class]):hover:not(:disabled):not([data-disabled]), .ui-button:hover:not(:disabled):not([data-disabled])) { background: var(--surface-hover); }
 :where(button:disabled, [data-disabled]) { opacity: .45; cursor: default; }
+:where(.ui-button:disabled, .ui-button[data-disabled]) { opacity: 1; color: rgb(255 255 255 / 40%); border-color: transparent; background: rgb(255 255 255 / 12%); }
 :where(button[aria-busy="true"]) { cursor: progress; }
 :where(button svg) { flex-shrink: 0; }
 
@@ -32,7 +34,7 @@
   background: var(--surface-input);
   font-size: var(--font-size-body);
   line-height: 1.5;
-  transition: border-color var(--transition-control);
+  transition: color var(--transition-control), background-color var(--transition-control), border-color var(--transition-control);
 }
 :where(input, textarea)::placeholder { color: var(--faint); }
 :where(input, textarea, select):focus-visible { border-color: var(--accent-dim); box-shadow: var(--focus-ring); }
@@ -47,7 +49,8 @@
   border: 1px solid var(--line-strong);
   border-radius: var(--radius-panel);
   color: var(--text);
-  background: var(--panel-raised);
+  background: var(--surface-vibrancy);
+  -webkit-backdrop-filter: var(--vibrancy-filter); backdrop-filter: var(--vibrancy-filter);
   box-shadow: var(--popover-shadow);
   font-size: var(--font-size-body);
   line-height: 1.5;

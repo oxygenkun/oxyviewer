@@ -1,9 +1,31 @@
-@keyframes rotate { to { transform: rotate(360deg); } }
-
-@media (prefers-reduced-motion: reduce) {
-  .settings-panel__meter span { transition: none; }
-}
 
 @media (max-width: 1180px) {
   .search-field { width: min(310px, 34vw); }
+}
+
+/* Keep the current 900/700px breakpoints and the user's collapse controls.
+   At narrow widths the inspector yields its space to the photo workspace. */
+@media (max-width: 900px) {
+  .app-shell { grid-template-columns: var(--left-panel-width) minmax(0, 1fr) 0; }
+  .app-shell.sidebar-collapsed { grid-template-columns: 0 minmax(0, 1fr) 0; }
+  .app-shell > .inspector, .app-shell > .resize-handle--right { display: none; }
+  .toolbar__actions > .icon-button { display: none; }
+}
+
+@media (max-width: 700px) {
+  .app-shell, .app-shell.inspector-collapsed, .app-shell.app-shell--people:not(.sidebar-collapsed) { grid-template-columns: min(var(--left-panel-width), 35vw) minmax(0, 1fr) 0; }
+  .app-shell.sidebar-collapsed { grid-template-columns: 0 minmax(0, 1fr) 0; }
+  .resize-handle--left { left: calc(min(var(--left-panel-width), 35vw) - 3px); }
+  .sidebar { padding-inline: 8px; }
+  .sidebar__heading { height: auto; min-height: 28px; flex-wrap: wrap; gap: 4px; padding-inline: 0; }
+  .sidebar__heading-actions { min-width: 0; flex-wrap: wrap; }
+  .sidebar__library-prompt, .sidebar__folder-prompt { padding-inline: 4px; overflow-wrap: anywhere; }
+  .folder-coach { top: 76px; padding: 8px; }
+  .folder-coach > div { flex-wrap: wrap; }
+  .toolbar { gap: 6px; padding-inline: 8px; }
+  .toolbar__leading { gap: 4px; }
+  .filterbar { padding-inline: 8px; gap: 12px; }
+  .statusbar { gap: 6px; padding-inline: 8px; }
+  .statusbar > span:first-child { display: none; }
+  .statusbar__thumbnail-controls { flex-shrink: 0; }
 }

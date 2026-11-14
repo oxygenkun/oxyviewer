@@ -8,6 +8,7 @@ research reports explain measured results but do not override current contracts.
 
 | Change | Read first | Then use |
 | --- | --- | --- |
+| UI styling, materials, typography, or responsive chrome | [macOS vibrancy style contract](UI_STYLE.md) | Shared tokens in `apps/desktop/src/styles/foundation.css` and [CONTRIBUTING.md](../CONTRIBUTING.md) |
 | Cross-layer ownership, IPC, or a new subsystem | [Architecture overview](ARCHITECTURE.md) | [Architecture topics](architecture/README.md) and relevant [ADRs](adr/README.md) |
 | Browsing, preview cache, queues, cancellation, or diagnostics | [Performance invariants](PERFORMANCE_INVARIANTS.md) | [Performance budgets](PERFORMANCE.md), [E2E harness](PERF_E2E.md), and [queue observability](DEBUG_QUEUE_OBSERVABILITY.md) |
 | Media format, decoder, metadata, or platform fallback | [Format support](FORMAT_SUPPORT.md) | [Decode check sheet](MEDIA_DECODE_CHECK_SHEET.md), architecture topics, and platform guides |

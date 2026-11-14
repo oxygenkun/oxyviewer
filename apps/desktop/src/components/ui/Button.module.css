@@ -2,8 +2,9 @@
   min-height: var(--control-height);
 }
 .small { min-height: var(--control-height-small); font-size: var(--font-size-small); }
-.primary { color: var(--text-on-accent); border-color: var(--accent); background: var(--accent); }
-.primary:hover:not(:disabled) { background: var(--accent-dim); }
+.primary { color: var(--text-on-accent); border-color: transparent; background: var(--accent); }
+.primary:hover:not(:disabled) { background: var(--accent-hover); }
+.primary:active:not(:disabled) { background: var(--accent-active); }
 .danger { color: var(--danger-text); border-color: var(--danger-border); background: var(--danger-surface); }
 .danger:hover:not(:disabled) { background: var(--danger-hover); }
 .ghost { border-color: transparent; background: transparent; color: var(--muted); }
@@ -11,6 +12,5 @@
 .ghost:is(:hover, [data-state="open"]):not(:disabled) { color: var(--text); background: var(--surface-hover); }
 .icon { width: var(--control-height); padding: var(--space-1); flex-shrink: 0; }
 .icon.small { width: var(--control-height-small); }
-.spinner { flex-shrink: 0; animation: spin 1s linear infinite; }
-@keyframes spin { to { transform: rotate(360deg); } }
-@media (prefers-reduced-motion: reduce) { .spinner { animation: none; } }
+.button:disabled { opacity: 1; color: rgb(255 255 255 / 40%); border-color: transparent; background: rgb(255 255 255 / 12%); }
+.spinner { flex-shrink: 0; color: var(--muted); }
