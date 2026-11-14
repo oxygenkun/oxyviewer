@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { AssetTagAssignment, CustomTag } from "@/types";
 import {
+  collectPersonTagIds,
   sortTagCandidates,
   descendantIds,
   embeddedOnlyTagPaths,
@@ -24,6 +25,27 @@ const assignments: AssetTagAssignment[] = tags.map((tag) => ({
 }));
 
 describe("hierarchical tag presentation", () => {
+  it("identifies person categories and every descendant without global person bindings", () => {
+    const categories: CustomTag[] = [
+      ...tags,
+      { id: 5, parentId: 4, name: "人物", path: "Places|人物", sortOrder: 0 },
+      { id: 6, parentId: 5, name: "小明", path: "Places|人物|小明", sortOrder: 0 },
+      { id: 7, name: "人物摄影", path: "人物摄影", sortOrder: 2 },
+      { id: 8, name: "People watching", path: "People watching", sortOrder: 3 },
+    ];
+    expect([...collectPersonTagIds(categories, [])].sort()).toEqual([1, 2, 3, 5, 6]);
+  });
+
+  it("hides descendants of a bound tag without hiding its parent or siblings", () => {
+    const categories: CustomTag[] = [
+      { id: 1, name: "Categories", path: "Categories", sortOrder: 0 },
+      { id: 2, parentId: 1, name: "Alice", path: "Categories|Alice", sortOrder: 0 },
+      { id: 3, parentId: 2, name: "Family", path: "Categories|Alice|Family", sortOrder: 0 },
+      { id: 4, parentId: 1, name: "Places", path: "Categories|Places", sortOrder: 1 },
+    ];
+    expect([...collectPersonTagIds(categories, [2])]).toEqual([2, 3]);
+  });
+
   it("shows only roots until their ancestors are expanded", () => {
     expect(flattenTags(assignments, new Set(), "").map((item) => item.assignment.tag.name))
       .toEqual(["People", "Places"]);

@@ -61,6 +61,30 @@ export function descendantIds(tags: CustomTag[], id: number): Set<number> {
   return result;
 }
 
+/** Hide person categories and their descendants even before person sync is configured. */
+export function collectPersonTagIds(tags: CustomTag[], boundTagIds: Iterable<number>): Set<number> {
+  const result = new Set(boundTagIds);
+  const children = new Map<number, number[]>();
+  for (const tag of tags) {
+    const name = tag.name.trim().toLocaleLowerCase();
+    if (name === "人物" || name === "people") result.add(tag.id);
+    if (tag.parentId != null) {
+      const siblings = children.get(tag.parentId) ?? [];
+      siblings.push(tag.id);
+      children.set(tag.parentId, siblings);
+    }
+  }
+  const pending = [...result];
+  for (let index = 0; index < pending.length; index++) {
+    for (const id of children.get(pending[index]) ?? []) {
+      if (result.has(id)) continue;
+      result.add(id);
+      pending.push(id);
+    }
+  }
+  return result;
+}
+
 const TAG_PATH_SEPARATOR = /[\\/|]+/;
 
 export function parseTagPath(value: string): string[] {

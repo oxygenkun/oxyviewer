@@ -6,10 +6,10 @@ import {
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import {
   createCustomTag, deleteCustomTag, getAssetTagAssignments, getAssetTagSourceKinds,
-  listCustomTags, setAssetCustomTag, updateCustomTag,
+  listCustomTags, listGlobalPeople, setAssetCustomTag, updateCustomTag,
 } from "@/lib/api";
 import type { MessageKey } from "@/lib/i18n";
-import { descendantIds, embeddedOnlyTagPaths, ensureTagPath, parseTagPath, sortTagCandidates, type TagPickerSort } from "@/lib/assets/tagTree";
+import { collectPersonTagIds, descendantIds, embeddedOnlyTagPaths, ensureTagPath, parseTagPath, sortTagCandidates, type TagPickerSort } from "@/lib/assets/tagTree";
 import { refreshTagQueries, TAG_MUTATION_SCOPE } from "@/lib/assets/tagActions";
 import { enqueueTagDeletion, hasPendingRemoval, pendingDeletedTagIds, useTagDeletions } from "@/lib/assets/tagDeletion";
 import { useWorkspaceStore } from "@/store";
@@ -36,12 +36,24 @@ interface TagForm {
 }
 
 const SORT_STORAGE_KEY = "oxyviewer.tag-picker-sort.v1";
+const SHOW_PERSON_TAGS_STORAGE_KEY = "oxyviewer.tag-picker-show-person-tags.v1";
+const SORT_OPTIONS = [
+  ["recent", "tagSortRecent"],
+  ["mostUsed", "tagSortMostUsed"],
+  ["tree", "tagSortTree"],
+] as const satisfies ReadonlyArray<readonly [TagPickerSort, MessageKey]>;
+
 function readTagSort(): TagPickerSort {
   try {
     const value = localStorage.getItem(SORT_STORAGE_KEY);
     if (value === "recent" || value === "mostUsed" || value === "tree") return value;
   } catch { /* Preferences remain usable when storage is unavailable. */ }
   return "tree";
+}
+
+function readShowPersonTags(): boolean {
+  try { return localStorage.getItem(SHOW_PERSON_TAGS_STORAGE_KEY) === "true"; }
+  catch { return false; }
 }
 
 const displayTagPath = (path: string) => path.replaceAll("|", " › ");
@@ -63,9 +75,14 @@ export function TagEditor({
   const [open, setOpen] = useState(false);
   const [search, setSearch] = useState("");
   const [sort, setSort] = useState<TagPickerSort>(readTagSort);
+  const [showPersonTags, setShowPersonTags] = useState(readShowPersonTags);
   const changeSort = (value: TagPickerSort) => {
     setSort(value);
     try { localStorage.setItem(SORT_STORAGE_KEY, value); } catch { /* Keep the session preference. */ }
+  };
+  const changeShowPersonTags = (value: boolean) => {
+    setShowPersonTags(value);
+    try { localStorage.setItem(SHOW_PERSON_TAGS_STORAGE_KEY, String(value)); } catch { /* Keep the session preference. */ }
   };
   const [menuTagId, setMenuTagId] = useState<number>();
   const [form, setForm] = useState<TagForm>();
@@ -75,6 +92,9 @@ export function TagEditor({
   const removedFromSelection = (tagId: number) =>
     paths.length > 0 && paths.every((path) => hasPendingRemoval(pendingDeletions, path, tagId));
   const tagsQuery = useQuery({ queryKey: ["custom-tags"], queryFn: listCustomTags });
+  const peopleQuery = useQuery({
+    queryKey: ["global-people"], queryFn: listGlobalPeople, enabled: open && !showPersonTags,
+  });
   const assignmentsQuery = useQuery({
     queryKey: ["asset-tag-assignments", paths, sidecarKeywords, sidecarHierarchicalKeywords],
     queryFn: () => getAssetTagAssignments(paths),
@@ -91,10 +111,17 @@ export function TagEditor({
     [assigned, embeddedHierarchicalKeywords, embeddedKeywords],
   );
   const candidates = useMemo(() => {
+    // Wait for the mappings so person tags never flash in the default picker.
+    if (!showPersonTags && !peopleQuery.data) return [];
+    const personTagIds = collectPersonTagIds(
+      assignments.map(({ tag }) => tag),
+      peopleQuery.data?.flatMap((person) => person.tagId === null ? [] : [person.tagId]) ?? [],
+    );
     const needle = parseTagPath(search).join("|").toLocaleLowerCase();
     return sortTagCandidates(assignments, sort)
-      .filter(({ tag }) => !deletedTagIds.has(tag.id) && (!needle || tag.path.toLocaleLowerCase().includes(needle)));
-  }, [assignments, deletedTagIds, search, sort]);
+      .filter(({ tag }) => !deletedTagIds.has(tag.id) && (showPersonTags || !personTagIds.has(tag.id)) &&
+        (!needle || tag.path.toLocaleLowerCase().includes(needle)));
+  }, [assignments, deletedTagIds, peopleQuery.data, search, showPersonTags, sort]);
 
   const searchPath = parseTagPath(search).join("|");
   const canCreate = tagsQuery.isSuccess && assignmentsQuery.isSuccess && searchPath.length > 0 &&
@@ -292,13 +319,26 @@ export function TagEditor({
                 onClick={() => createPathMutation.mutate({ value: searchPath, paths })}
               >{t("createTag")}</Button>
             ) : null}
-            <Select label={t("tagSort")} value={sort} onValueChange={changeSort}
-              size="small" className="tag-picker__settings" icon={<Settings2 size={14} />}
-              container={pickerRef.current} options={[
-                { value: "recent", label: t("tagSortRecent") },
-                { value: "mostUsed", label: t("tagSortMostUsed") },
-                { value: "tree", label: t("tagSortTree") },
-              ]} />
+            <Menu.Root modal={false}>
+              <Menu.Trigger asChild><IconButton size="small" className="tag-picker__settings"
+                label={t("settings")}><Settings2 size={14} /></IconButton></Menu.Trigger>
+              <Menu.Content container={pickerRef.current} aria-label={t("settings")} align="end">
+                <Menu.RadioGroup value={sort} aria-label={t("tagSort")} onValueChange={value => {
+                  const option = SORT_OPTIONS.find(([mode]) => mode === value);
+                  if (option) changeSort(option[0]);
+                }}>
+                  {SORT_OPTIONS.map(([value, label]) => <Menu.RadioItem key={value} value={value}>
+                    <span className="tag-picker__setting-indicator"><Menu.ItemIndicator><Check size={13} /></Menu.ItemIndicator></span>
+                    {t(label)}
+                  </Menu.RadioItem>)}
+                </Menu.RadioGroup>
+                <Menu.Separator />
+                <Menu.CheckboxItem checked={showPersonTags} onCheckedChange={changeShowPersonTags}>
+                  <span className="tag-picker__setting-indicator"><Menu.ItemIndicator><Check size={13} /></Menu.ItemIndicator></span>
+                  {t("showPersonTags")}
+                </Menu.CheckboxItem>
+              </Menu.Content>
+            </Menu.Root>
             <IconButton size="small" onClick={closeQuickAdd} label={t("cancel")}><X size={14} /></IconButton>
           </div>
           <div className="tag-picker__list">
@@ -337,13 +377,15 @@ export function TagEditor({
                 </div>
               );
             })}
-            {candidates.length === 0 ? (
+            {!showPersonTags && peopleQuery.isPending ? <em>{t("loading")}</em> : null}
+            {candidates.length === 0 && (showPersonTags || peopleQuery.isSuccess) ? (
               <em>
                 {t("noMatchingTags")}
                 {canCreate ? <span className="tag-picker__hierarchy-hint">{t("tagHierarchyHint")}</span> : null}
               </em>
             ) : null}
           </div>
+          {!showPersonTags && peopleQuery.error ? <small className="metadata-error" role="alert">{String(peopleQuery.error)}</small> : null}
           {createPathMutation.error ? <small className="metadata-error" role="alert">{String(createPathMutation.error)}</small> : null}
           {form ? (
             <TagFormPanel

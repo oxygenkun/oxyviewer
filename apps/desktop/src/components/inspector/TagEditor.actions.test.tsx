@@ -3,26 +3,28 @@ import { notifyManager, QueryClient, QueryClientProvider } from "@tanstack/react
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
-import { createCustomTag, deleteCustomTag, getAssetTagAssignments, getAssetTagSourceKinds, setAssetCustomTag } from "@/lib/api";
+import { createCustomTag, deleteCustomTag, getAssetTagAssignments, getAssetTagSourceKinds, listCustomTags, listGlobalPeople, setAssetCustomTag } from "@/lib/api";
 import { TAG_MUTATION_SCOPE } from "@/lib/assets/tagActions";
 import { cancelPendingTagDeletions, useTagDeletions } from "@/lib/assets/tagDeletion";
 import { UNDO_WINDOW_MS } from "@/lib/ui/undoWindow";
 import { TagDeletionToasts } from "@/components/overlay/TagDeletionToasts";
 import { useWorkspaceStore } from "@/store";
-import type { CustomTag } from "@/types";
+import type { CustomTag, GlobalPerson } from "@/types";
 import { TagEditor } from "./TagEditor";
 
 const tags: CustomTag[] = [
-  { id: 1, name: "People", path: "People", sortOrder: 0 },
-  { id: 2, parentId: 1, name: "Family", path: "People|Family", sortOrder: 0 },
+  { id: 1, name: "Categories", path: "Categories", sortOrder: 0 },
+  { id: 2, parentId: 1, name: "Family", path: "Categories|Family", sortOrder: 0 },
   { id: 3, name: "Places", path: "Places", sortOrder: 1 },
 ];
+const person: GlobalPerson = { id: "person-1", displayName: "Alice", revision: 1, referenceInstanceIds: [], tagId: 2 };
 
 vi.mock("@/lib/api", async (importOriginal) => {
   const original = await importOriginal<typeof import("@/lib/api")>();
   return {
     ...original,
     listCustomTags: vi.fn(async () => tags),
+    listGlobalPeople: vi.fn(async () => []),
     getAssetTagAssignments: vi.fn(),
     getAssetTagSourceKinds: vi.fn(async () => ["manual"]),
     getTagSyncStatus: vi.fn(async () => ({ pendingCount: 0, failedCount: 0 })),
@@ -39,8 +41,8 @@ let client: QueryClient;
 let assigned: Set<number>;
 
 const click = async (selector: string) => {
+  await vi.waitFor(() => expect(document.querySelector(selector)).not.toBeNull());
   const button = document.querySelector<HTMLButtonElement>(selector)!;
-  expect(button).not.toBeNull();
   expect(button.matches(":disabled")).toBe(false);
   await act(async () => {
     if (button.getAttribute("aria-haspopup") === "menu") {
@@ -59,7 +61,7 @@ const renderEditor = async (path = "/demo/a.jpg") => {
   await vi.waitFor(() => expect(client.isFetching()).toBe(0));
 };
 
-const chipSelector = "removeTagFromCurrent People › Family";
+const chipSelector = "removeTagFromCurrent Categories › Family";
 /** Let the deferred write of a pending deletion run without waiting the real undo window. */
 const advanceUndoWindow = async () => {
   await act(async () => {
@@ -85,6 +87,8 @@ beforeEach(async () => {
   });
   vi.mocked(createCustomTag).mockReset().mockResolvedValue({ id: 4, name: "New", path: "New", sortOrder: 2 });
   vi.mocked(deleteCustomTag).mockClear();
+  vi.mocked(listCustomTags).mockReset().mockResolvedValue(tags);
+  vi.mocked(listGlobalPeople).mockReset().mockResolvedValue([]);
   client = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } });
   host = document.createElement("div");
   document.body.appendChild(host);
@@ -105,7 +109,7 @@ afterEach(async () => {
 
 it("remembers successful assignments and defers removals", async () => {
   await click(".tag-editor__quick-add");
-  await click("[role=checkbox][aria-label='People › Family']");
+  await click("[role=checkbox][aria-label='Categories › Family']");
   await vi.waitFor(() => expect(useWorkspaceStore.getState().lastTagId).toBe(2));
   await renderEditor("/demo/b.jpg");
   expect(useWorkspaceStore.getState().lastTagId).toBe(2);
@@ -136,7 +140,7 @@ it("keeps the previous tag when an assignment fails", async () => {
   useWorkspaceStore.setState({ lastTagId: 3 });
   vi.mocked(setAssetCustomTag).mockRejectedValueOnce(new Error("write failed"));
   await click(".tag-editor__quick-add");
-  await click("[role=checkbox][aria-label='People › Family']");
+  await click("[role=checkbox][aria-label='Categories › Family']");
   await vi.waitFor(() => expect(document.querySelector(".metadata-error")?.textContent).toContain("write failed"));
   expect(useWorkspaceStore.getState().lastTagId).toBe(3);
 });
@@ -150,7 +154,7 @@ it("keeps a queued edit on the photo selected when it was triggered", async () =
   const pending = blocker.execute(undefined);
   await vi.waitFor(() => expect(release).toBeTypeOf("function"));
   await click(".tag-editor__quick-add");
-  await click("[role=checkbox][aria-label='People › Family']");
+  await click("[role=checkbox][aria-label='Categories › Family']");
   await renderEditor("/demo/b.jpg");
   expect(setAssetCustomTag).not.toHaveBeenCalled();
   await act(async () => { release(); await pending; });
@@ -160,13 +164,13 @@ it("keeps a queued edit on the photo selected when it was triggered", async () =
 it("deletes a parent tag after the undo window and forgets its child", async () => {
   useWorkspaceStore.setState({ lastTagId: 2 });
   await click(".tag-editor__quick-add");
-  await click(".tag-candidate:has([aria-label=People]) .tag-candidate__menu");
+  await click(".tag-candidate:has([aria-label=Categories]) .tag-candidate__menu");
   vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
   try {
     await click('.tag-row-menu [data-variant="danger"]');
     expect(deleteCustomTag).not.toHaveBeenCalled();
     expect(document.querySelector(".tag-picker--confirmation")).toBeNull();
-    expect(document.querySelector("[role=checkbox][aria-label='People']")).toBeNull();
+    expect(document.querySelector("[role=checkbox][aria-label='Categories']")).toBeNull();
     expect(document.querySelector(".toast")?.textContent).toContain("tagDeletionPending");
     await advanceUndoWindow();
     expect(deleteCustomTag).toHaveBeenCalledWith(1);
@@ -226,13 +230,13 @@ it("switches picker sorting while preserving selection", async () => {
   await act(async () => { await client.invalidateQueries({ queryKey: ["asset-tag-assignments"] }); });
   await click(".tag-editor__quick-add");
   const names = () => [...document.querySelectorAll(".tag-candidate__name")].map((node) => node.textContent);
-  expect(names()).toEqual(["People", "Family", "Places"]);
+  await vi.waitFor(() => expect(names()).toEqual(["Categories", "Family", "Places"]));
   await click(".tag-picker__settings");
   await click('[role="menuitemradio"][data-state="unchecked"]:nth-child(2)');
-  expect(names()).toEqual(["Places", "People", "People › Family"]);
+  expect(names()).toEqual(["Places", "Categories", "Categories › Family"]);
   await click(".tag-picker__settings");
   await click('[role="menuitemradio"]:first-child');
-  expect(names()[0]).toBe("People › Family");
+  expect(names()[0]).toBe("Categories › Family");
   expect(localStorage.getItem("oxyviewer.tag-picker-sort.v1")).toBe("recent");
   await act(async () => root.render(null));
   await renderEditor();
@@ -240,8 +244,129 @@ it("switches picker sorting while preserving selection", async () => {
   await click(".tag-picker__settings");
   expect(document.querySelector('[role="menuitemradio"][aria-checked="true"]')?.textContent).toBe("tagSortRecent");
   await act(async () => document.activeElement?.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true })));
-  expect(names()[0]).toBe("People › Family");
-  expect(document.querySelector('[role=checkbox][aria-label="People › Family"]')?.getAttribute("aria-checked")).toBe("true");
+  expect(names()[0]).toBe("Categories › Family");
+  expect(document.querySelector('[role=checkbox][aria-label="Categories › Family"]')?.getAttribute("aria-checked")).toBe("true");
+});
+
+it("hides bound person tags by default in every sort and search while keeping assigned chips", async () => {
+  vi.mocked(listGlobalPeople).mockResolvedValue([person, { ...person, id: "person-2", tagId: null }]);
+  assigned.add(2);
+  await act(async () => { await client.invalidateQueries({ queryKey: ["asset-tag-assignments"] }); });
+  await click(".tag-editor__quick-add");
+  await vi.waitFor(() => expect(document.querySelectorAll(".tag-candidate")).toHaveLength(2));
+  expect(document.querySelector(`.tag-editor__chips [aria-label='${chipSelector}']`)).not.toBeNull();
+  // An unrelated parent remains available when only its child is bound.
+  expect(document.querySelector('[role=checkbox][aria-label="Categories"]')).not.toBeNull();
+  expect(document.querySelector('[role=checkbox][aria-label="Categories › Family"]')).toBeNull();
+  for (const mode of ["tagSortRecent", "tagSortMostUsed", "tagSortTree"]) {
+    await click(".tag-picker__settings");
+    expect(document.querySelector('[role=menuitemcheckbox]')?.getAttribute("aria-checked")).toBe("false");
+    const option = [...document.querySelectorAll<HTMLElement>('[role=menuitemradio]')].find(node => node.textContent === mode)!;
+    await act(async () => option.click());
+    expect(document.querySelectorAll(".tag-candidate")).toHaveLength(2);
+    expect(document.querySelector('[role=checkbox][aria-label="Categories › Family"]')).toBeNull();
+  }
+  const input = document.querySelector<HTMLInputElement>(".tag-picker__search input")!;
+  await act(async () => {
+    Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!.call(input, "Family");
+    input.dispatchEvent(new Event("input", { bubbles: true }));
+  });
+  expect(document.querySelectorAll(".tag-candidate")).toHaveLength(0);
+  expect(document.querySelector(".tag-picker__create")).toBeNull();
+  expect(setAssetCustomTag).not.toHaveBeenCalled();
+});
+
+it("remembers showing person tags and hiding them again across remounts", async () => {
+  vi.mocked(listGlobalPeople).mockResolvedValue([person]);
+  await click(".tag-editor__quick-add");
+  await vi.waitFor(() => expect(document.querySelectorAll(".tag-candidate")).toHaveLength(2));
+  await click(".tag-picker__settings");
+  expect(document.querySelector('[role=menuitemcheckbox]')?.textContent).toBe("showPersonTags");
+  await click('[role=menuitemcheckbox]');
+  expect(document.querySelectorAll(".tag-candidate")).toHaveLength(3);
+  expect(localStorage.getItem("oxyviewer.tag-picker-show-person-tags.v1")).toBe("true");
+  await act(async () => root.render(null));
+  await renderEditor();
+  await click(".tag-editor__quick-add");
+  expect(document.querySelector('[role=checkbox][aria-label="Categories › Family"]')).not.toBeNull();
+  await click(".tag-picker__settings");
+  expect(document.querySelector('[role=menuitemcheckbox]')?.getAttribute("aria-checked")).toBe("true");
+  await click('[role=menuitemcheckbox]');
+  expect(document.querySelector('[role=checkbox][aria-label="Categories › Family"]')).toBeNull();
+  expect(localStorage.getItem("oxyviewer.tag-picker-show-person-tags.v1")).toBe("false");
+  await act(async () => root.render(null));
+  await renderEditor();
+  await click(".tag-editor__quick-add");
+  expect(document.querySelector('[role=checkbox][aria-label="Categories › Family"]')).toBeNull();
+});
+
+it("hides the entire person category without global person bindings", async () => {
+  const categoryTags: CustomTag[] = [
+    { id: 10, name: "人物", path: "人物", sortOrder: 0 },
+    { id: 11, parentId: 10, name: "家人", path: "人物|家人", sortOrder: 0 },
+    { id: 12, parentId: 11, name: "小明", path: "人物|家人|小明", sortOrder: 0 },
+    { id: 13, name: "People", path: "People", sortOrder: 1 },
+    { id: 14, parentId: 13, name: "Alice", path: "People|Alice", sortOrder: 0 },
+    { id: 15, name: "人物摄影", path: "人物摄影", sortOrder: 2 },
+    { id: 16, name: "地点", path: "地点", sortOrder: 3 },
+  ];
+  vi.mocked(listCustomTags).mockResolvedValue(categoryTags);
+  vi.mocked(getAssetTagAssignments).mockResolvedValue(categoryTags.map(tag => ({
+    tag, assignedCount: tag.id === 12 ? 1 : 0, assetCount: 1,
+  })));
+  await act(async () => {
+    await Promise.all([
+      client.invalidateQueries({ queryKey: ["custom-tags"] }),
+      client.invalidateQueries({ queryKey: ["asset-tag-assignments"] }),
+    ]);
+  });
+  await click(".tag-editor__quick-add");
+  await vi.waitFor(() => expect(client.isFetching()).toBe(0));
+  const candidateNames = () => [...document.querySelectorAll(".tag-candidate__name")].map(node => node.textContent).sort();
+  await vi.waitFor(() => expect(candidateNames()).toEqual(["人物摄影", "地点"]));
+  expect(document.querySelector('.tag-editor__chips [aria-label="removeTagFromCurrent 人物 › 家人 › 小明"]')).not.toBeNull();
+  for (const mode of ["tagSortRecent", "tagSortMostUsed", "tagSortTree"]) {
+    await click(".tag-picker__settings");
+    const option = [...document.querySelectorAll<HTMLElement>('[role=menuitemradio]')].find(node => node.textContent === mode)!;
+    await act(async () => option.click());
+    expect(candidateNames()).toEqual(["人物摄影", "地点"]);
+  }
+  const input = document.querySelector<HTMLInputElement>(".tag-picker__search input")!;
+  await act(async () => {
+    Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!.call(input, "小明");
+    input.dispatchEvent(new Event("input", { bubbles: true }));
+  });
+  expect(document.querySelectorAll(".tag-candidate")).toHaveLength(0);
+  expect(document.querySelector(".tag-picker__create")).toBeNull();
+  await click(".tag-picker__settings");
+  await click('[role=menuitemcheckbox]');
+  expect(candidateNames()).toEqual(["人物 › 家人 › 小明"]);
+  await click(".tag-picker__settings");
+  await click('[role=menuitemcheckbox]');
+  expect(document.querySelectorAll(".tag-candidate")).toHaveLength(0);
+  expect(setAssetCustomTag).not.toHaveBeenCalled();
+});
+
+it("waits for person tag mappings before displaying candidates", async () => {
+  let resolvePeople!: (people: GlobalPerson[]) => void;
+  vi.mocked(listGlobalPeople).mockReturnValueOnce(new Promise(resolve => { resolvePeople = resolve; }));
+  await click(".tag-editor__quick-add");
+  expect(document.querySelectorAll(".tag-candidate")).toHaveLength(0);
+  expect(document.querySelector(".tag-picker__list")?.textContent).toBe("loading");
+  await act(async () => resolvePeople([person]));
+  await vi.waitFor(() => expect(document.querySelectorAll(".tag-candidate")).toHaveLength(2));
+  expect(document.querySelector('[role=checkbox][aria-label="Categories › Family"]')).toBeNull();
+});
+
+it("keeps candidates hidden on a mapping error and lets the user show all tags", async () => {
+  vi.mocked(listGlobalPeople).mockRejectedValueOnce(new Error("people unavailable"));
+  await click(".tag-editor__quick-add");
+  await vi.waitFor(() => expect(document.querySelector('[role=alert]')?.textContent).toContain("people unavailable"));
+  expect(document.querySelectorAll(".tag-candidate")).toHaveLength(0);
+  await click(".tag-picker__settings");
+  await click('[role=menuitemcheckbox]');
+  expect(document.querySelectorAll(".tag-candidate")).toHaveLength(3);
+  expect(document.querySelector('[role=alert]')).toBeNull();
 });
 
 it("offers direct creation only for a new nonempty tag and preserves input on failure", async () => {
@@ -256,12 +381,12 @@ it("offers direct creation only for a new nonempty tag and preserves input on fa
   expect(document.querySelector(".tag-picker__create")).toBeNull();
   await type(" / | ");
   expect(document.querySelector(".tag-picker__create")).toBeNull();
-  await type("People/New");
+  await type("Categories/New");
   expect(document.querySelector(".tag-picker__search .tag-picker__create")).not.toBeNull();
   vi.mocked(createCustomTag).mockRejectedValueOnce(new Error("create failed"));
   await click("[aria-label=createAndAdd]");
   await vi.waitFor(() => expect(document.querySelector('[role="alert"]')?.textContent).toContain("create failed"));
-  expect(input.value).toBe("People/New");
+  expect(input.value).toBe("Categories/New");
   expect(setAssetCustomTag).not.toHaveBeenCalled();
 });
 

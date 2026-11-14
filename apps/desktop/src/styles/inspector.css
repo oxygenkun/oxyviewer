@@ -258,6 +258,7 @@
 .tag-picker__search > svg { width: 14px; height: 14px; flex-shrink: 0; }
 .tag-picker__search input { flex: 1; width: 0; min-height: var(--control-height-small); padding: 2px 0; border: 0; background: transparent; font-size: inherit; }
 .tag-picker__search input:focus-visible { outline-offset: 0; }
+.tag-picker__setting-indicator { display: grid; place-items: center; width: 14px; flex-shrink: 0; }
 .tag-picker__list { max-height: 260px; min-height: 80px; padding: var(--space-1); overflow-y: auto; scrollbar-width: thin; }
 .tag-picker__list > em { display: block; padding: var(--space-5) var(--space-3); color: var(--muted); font-style: normal; text-align: center; }
 .tag-picker__hierarchy-hint { display: block; margin-top: var(--space-2); line-height: 1.5; }
