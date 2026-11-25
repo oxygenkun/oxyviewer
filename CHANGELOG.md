@@ -12,6 +12,36 @@ Each release lists the English notes first, followed by the Simplified Chinese n
 
 ## [Unreleased]
 
+## [2.0.1] - 2026-11-25
+
+### Added
+
+- Added configurable shortcuts for mouse buttons and wheel directions in Grid, Loupe, and marking controls.
+- Added an option to show person tags in the tag picker and its search results. These suggestions are hidden by default.
+- Introduced a refreshed desktop interface with translucent panels, centered search, and mixed-format browsing in Grid and Loupe.
+- Added the active photo path and RAW/HEIF preview status to the status bar. The inspector starts with Basic info and labels its ISO and exposure compensation tile Exposure.
+- Added hover previews to the stars used for rating and filtering photos.
+
+### Fixed
+
+- Restored dragging original files from Windows network folders.
+- Improved keyboard focus and navigation in shared menus and Settings.
+- Fixed macOS packaging to ad-hoc sign the application and verify the copy inside the DMG before publication.
+
+### 新增
+
+- 网格、Loupe 和标记操作支持将鼠标按键与滚轮方向设为快捷键。
+- 标签选择器可在候选列表和搜索结果中显示人物标签，默认隐藏这些候选项。
+- 更新桌面界面，采用半透明面板和居中搜索栏，网格与 Loupe 混合显示各格式照片。
+- 底栏显示当前照片路径和 RAW／HEIF 预览状态。检查器从“基础信息”开始，并将显示 ISO 和曝光补偿的格子命名为“曝光”。
+- 评分和评分筛选的星星支持悬停预览。
+
+### 修复
+
+- 修复 Windows 下无法从网络文件夹拖出原始文件的问题。
+- 改进共享菜单和设置中的键盘焦点与导航。
+- 修复 macOS 打包流程，发布前对应用进行临时签名并验证 DMG 内的应用副本。
+
 ## [0.2.0] - 2026-11-04
 
 ### Added
@@ -205,7 +235,8 @@ Each release lists the English notes first, followed by the Simplified Chinese n
 - 可重建的媒体与图库缓存，支持可配置的存储管理和队列诊断。
 - macOS 与 Linux 安装包，以及双语 Windows NSIS EXE 和便携 ZIP 包，内置固定版本的 FFmpeg 工具；对应的 FFmpeg 源码作为独立发布资源提供。
 
-[Unreleased]: https://github.com/oxygenkun/oxyviewer/compare/v0.2.0...HEAD
+[Unreleased]: https://github.com/oxygenkun/oxyviewer/compare/v2.0.1...HEAD
+[2.0.1]: https://github.com/oxygenkun/oxyviewer/compare/v0.2.0...v2.0.1
 [0.2.0]: https://github.com/oxygenkun/oxyviewer/compare/v0.1.5...v0.2.0
 [0.1.5]: https://github.com/oxygenkun/oxyviewer/compare/v0.1.4...v0.1.5
 [0.1.4]: https://github.com/oxygenkun/oxyviewer/compare/v0.1.3...v0.1.4
