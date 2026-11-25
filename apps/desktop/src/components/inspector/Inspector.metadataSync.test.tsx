@@ -31,6 +31,11 @@ async function click(text: string) {
   await act(async () => { button(text).click(); });
   await act(async () => { await new Promise(resolve => setTimeout(resolve, 0)); });
 }
+async function renderInspector(asset?: AssetSummary) {
+  await act(async () => root.render(<QueryClientProvider client={client}>
+    <Inspector asset={asset} selectedPaths={asset ? [asset.path] : []} t={key => key} />
+  </QueryClientProvider>));
+}
 beforeEach(async () => {
   vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
   vi.resetAllMocks();
@@ -43,14 +48,28 @@ beforeEach(async () => {
   api.onTagSyncStatusChanged.mockResolvedValue(() => {});
   client = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } });
   host = document.createElement("div"); document.body.append(host); root = createRoot(host);
-  await act(async () => root.render(<QueryClientProvider client={client}>
-    <Inspector asset={photo} selectedCount={1} selectedPaths={[photo.path]} t={key => key} />
-  </QueryClientProvider>));
+  await renderInspector(photo);
   await act(async () => { await new Promise(resolve => setTimeout(resolve, 0)); });
 });
 afterEach(async () => {
   await act(async () => root.unmount()); host.remove(); client.clear();
   notifyManager.setNotifyFunction(callback => { callback(); }); vi.unstubAllGlobals();
+});
+
+it("starts with Basic info and keeps the tag-sync indicator mounted when selection is cleared", async () => {
+  expect(host.querySelector(".inspector > header")).toBeNull();
+  expect(host.querySelector(".inspector__body .inspector-section h3")?.textContent).toBe("basicInfo");
+  expect(host.querySelector(".capture-value__meta > span")?.textContent).toBe("exposure");
+  expect(host.querySelector(".inspector__body")?.textContent).not.toContain(photo.name);
+  expect(host.querySelector(".inspector__body")?.textContent).not.toContain(photo.path);
+  const indicator = host.querySelector(".inspector__body > .tag-sync-indicator");
+  expect(indicator).not.toBeNull();
+
+  await renderInspector();
+
+  expect(host.querySelector(".inspector__empty")?.textContent).toBe("noSelection");
+  expect(host.querySelector(".inspector__body > .tag-sync-indicator")).toBe(indicator);
+  expect(api.onTagSyncStatusChanged).toHaveBeenCalledTimes(1);
 });
 
 it("keeps the inspector prompt open on a failed manual check and resumes its write when PATH becomes available", async () => {

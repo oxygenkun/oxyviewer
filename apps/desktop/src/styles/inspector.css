@@ -1,34 +1,18 @@
 .inspector {
   display: grid;
-  grid-template-rows: 52px minmax(0, 1fr);
+  grid-template-rows: minmax(0, 1fr);
   min-width: 0;
   min-height: 0;
   border-left: 1px solid var(--line);
   background: var(--bg);
 }
-.inspector__header {
-  position: relative;
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: var(--space-2);
-  padding: 0 13px;
-  border-bottom: 1px solid var(--line);
-  color: var(--muted);
-  background: var(--panel-raised);
-}
-.inspector__header-title { display: grid; gap: 2px; min-width: 0; }
-.inspector__header-title strong { color: var(--text); font: 400 .8125rem/1.3 var(--font-serif); }
-.inspector__header-title span { color: var(--faint); font-size: var(--font-size-small); }
-.inspector__header-tools { display: flex; flex: none; align-items: center; }
 /* Stable gutter: tags that reach the bottom edge keep their wrapping width
    whether or not the panel is scrollable. */
-.inspector__body { padding: 11px; overflow-y: auto; scrollbar-gutter: stable; scrollbar-width: thin; }
-.inspector__asset-title { display: grid; gap: var(--space-1); padding: 2px 2px 14px; }
-.inspector__asset-title strong { overflow: hidden; font-size: 0.8125rem; text-overflow: ellipsis; white-space: nowrap; }
-.inspector__asset-title span { overflow: hidden; color: var(--faint); font: var(--font-size-small) var(--font-mono); text-overflow: ellipsis; white-space: nowrap; }
-.inspector__empty { display: grid; place-items: center; align-content: center; gap: 10px; padding: 35px; color: var(--faint); font-size: 0.6875rem; line-height: 1.6; text-align: center; }
+.inspector__body { position: relative; padding: 11px; overflow-y: auto; scrollbar-gutter: stable; scrollbar-width: thin; }
+.inspector__empty { display: grid; min-height: 100%; place-items: center; align-content: center; gap: 10px; padding: 35px; color: var(--faint); font-size: 0.6875rem; line-height: 1.6; text-align: center; }
 .inspector-section { padding: 12px 2px; border-top: 1px solid var(--line); }
+.inspector__body > .inspector-section:first-of-type { padding-top: 2px; border-top: 0; }
+.inspector__body > .inspector-section:first-of-type > h3 { padding-inline-end: 24px; }
 .inspector-section h3 { margin: 0 0 12px; color: var(--faint); font-size: var(--font-size-small); letter-spacing: .02em; text-transform: none; }
 .capture-strip {
   display: grid;
@@ -43,8 +27,8 @@
 .capture-value { display: grid; gap: 3px; min-width: 0; padding: 8px 9px; background: var(--surface-muted); }
 .capture-value strong { overflow: hidden; color: var(--text); font: 600 0.75rem var(--font-mono); text-overflow: ellipsis; white-space: nowrap; }
 .capture-value span { color: var(--faint); font-size: var(--font-size-small); letter-spacing: .3px; }
-.capture-value__meta { display: flex; align-items: baseline; justify-content: space-between; gap: var(--space-1); min-width: 0; }
-.capture-value__ev { flex: none; color: var(--faint); font: 500 0.5625rem var(--font-mono); white-space: nowrap; }
+.capture-value__meta { display: flex; flex-wrap: wrap; align-items: baseline; gap: var(--space-1); min-width: 0; overflow-wrap: anywhere; }
+.capture-value__ev { flex: none; max-width: 100%; margin-inline-start: auto; color: var(--faint); font: 500 0.5625rem var(--font-mono); text-align: end; }
 .inspector-section label { display: block; margin: 10px 0 6px; color: var(--faint); font-size: var(--font-size-small); }
 .marking-controls { display: grid; gap: 3px; }
 .marking-control-row { display: grid; grid-template-columns: 2.5rem minmax(0, 1fr); min-height: 1.5rem; align-items: center; gap: var(--space-2); }
@@ -213,13 +197,13 @@
 .tag-editor__other > div { display: flex; flex-wrap: wrap; gap: 3px; }
 .tag-editor__other span { padding: 2px 4px; border-radius: 2px; color: var(--faint); background: var(--bg); font-size: var(--font-size-small); }
 .tag-editor__hint { display: block; margin-top: 5px; color: var(--warning); font-size: var(--font-size-small); line-height: 1.5; }
-/* Parked in the header's fixed slot: the queue state moves out of the panel
+/* Parked beside the first section heading: the queue state moves out of the panel
    flow, so showing and clearing it cannot cross the scroll threshold that the
    tags section sits on at a given window height. */
 .tag-sync-indicator {
   position: absolute;
-  top: 50%;
-  right: 36px;
+  top: 12px;
+  right: 11px;
   display: grid;
   width: 18px;
   height: 18px;
@@ -231,7 +215,6 @@
   background: transparent;
   opacity: 0;
   pointer-events: none;
-  transform: translateY(-50%);
   transition: color var(--transition-control), background-color var(--transition-control), border-color var(--transition-control);
 
   &[data-state="pending"],

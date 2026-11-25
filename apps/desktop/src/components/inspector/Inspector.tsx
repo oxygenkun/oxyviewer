@@ -1,6 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
-import { Circle, Download, FileCog, FolderSearch, Image, RefreshCw, Star, X } from "lucide-react";
+import { Circle, Download, FolderSearch, Image, RefreshCw, Star, X } from "lucide-react";
 import {
   chooseAndConfigureExiftool,
   getAssetDetails,
@@ -23,7 +23,6 @@ import { TagSyncIndicator } from "./TagSyncIndicator";
 
 interface InspectorProps {
   asset?: AssetSummary;
-  selectedCount: number;
   selectedPaths: string[];
   t: (key: MessageKey) => string;
 }
@@ -35,7 +34,7 @@ const pickLabels: Array<[PickLabel, MessageKey]> = [
   ["rejected", "flagRejected"],
 ];
 
-export function Inspector({ asset, selectedCount, selectedPaths, t }: InspectorProps) {
+export function Inspector({ asset, selectedPaths, t }: InspectorProps) {
   const queryClient = useQueryClient();
   const [syncPending, setSyncPending] = useState(false);
   const projection = useMetadataProjectionStore((state) => asset ? state.records[asset.path] : undefined);
@@ -103,34 +102,22 @@ export function Inspector({ asset, selectedCount, selectedPaths, t }: InspectorP
   const capture = details.data?.captureMetadata;
 
   return (
-    <aside className="inspector">
-      <header className="inspector__header">
-        <div className="inspector__header-title">
-          <strong>{t("inspector")}</strong><span>{selectedCount || "—"} {t("selected")}</span>
-        </div>
-        <div className="inspector__header-tools">
-          <TagSyncIndicator t={t} />
-          <FileCog size={16} />
-        </div>
-      </header>
-      {!asset ? (
-        <div className="inspector__empty">
-          <Image size={25} strokeWidth={1.25} />
-          <span>{t("noSelection")}</span>
-        </div>
-      ) : (
-        <div className="inspector__body">
-          <div className="inspector__asset-title">
-            <strong>{asset.name}</strong>
-            <span>{asset.path}</span>
+    <aside className="inspector" aria-label={t("inspector")}>
+      <div className="inspector__body">
+        <TagSyncIndicator t={t} />
+        {!asset ? (
+          <div className="inspector__empty">
+            <Image size={25} strokeWidth={1.25} />
+            <span>{t("noSelection")}</span>
           </div>
+        ) : <>
           <InspectorSection title={t("basicInfo")}>
             <div className="capture-strip">
               <CaptureValue label={t("aperture")} value={capture?.aperture} />
               <CaptureValue label={t("shutterSpeed")} value={capture?.exposureTime} />
               <CaptureValue label={t("focalLength")} value={capture?.focalLength} />
               <CaptureIsoValue
-                label={t("iso")}
+                label={t("exposure")}
                 value={capture?.iso ? `ISO ${capture.iso}` : undefined}
                 exposureCompensation={capture?.exposureCompensation}
                 exposureLabel={t("exposureCompensation")}
@@ -265,8 +252,8 @@ export function Inspector({ asset, selectedCount, selectedPaths, t }: InspectorP
                   : "—"}
             />
           </InspectorSection>
-        </div>
-      )}
+        </>}
+      </div>
       {syncPending ? (
         <div className="metadata-provider-overlay" role="presentation">
           <div

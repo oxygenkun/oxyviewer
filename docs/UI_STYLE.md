@@ -65,6 +65,8 @@ the current rating or filter value.
 - Show the current photo path on the left of the workspace status bar. Place
   Loupe preview quality and decode progress immediately after the file name.
   The Loupe image overlay shows enabled metadata badges and review notices.
+- Start the inspector with Basic info and place tag-sync feedback beside its
+  heading. Show the selection count in the workspace status bar.
 - At the existing 900px viewport breakpoint, the inspector yields space to the
   workspace. At 700px, the sidebar uses at most 35% of the window and can still
   be collapsed. Filters and settings tabs scroll inside their own regions.

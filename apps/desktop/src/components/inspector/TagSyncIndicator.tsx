@@ -8,7 +8,7 @@ import type { MessageKey } from "@/lib/i18n";
 const FALLBACK_POLL_MS = 15_000;
 
 /**
- * Mirror-queue state for the whole window, parked in a fixed header slot.
+ * Mirror-queue state for the whole window, beside the inspector's first section.
  *
  * It never participates in the inspector body's flow: mounting, hiding or
  * resolving it cannot change the panel height, so a tag edit no longer

@@ -1211,7 +1211,6 @@ export function App({ perfScenario }: { perfScenario?: PerfScenario }) {
       <Inspector
         asset={activeAsset}
         selectedPaths={assets.filter((asset) => selectedIds.includes(asset.id)).map((asset) => asset.path)}
-        selectedCount={selectedIds.length}
         t={t}
       />
       {(progressivelyFilterMetadata ? progressiveMetadataQuery.isSuccess : assetsQuery.isSuccess) &&
