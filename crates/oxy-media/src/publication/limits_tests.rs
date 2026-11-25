@@ -65,13 +65,7 @@ fn encoded_128_mib_pressure_releases_reservations() {
     let registry = ResourceRegistry::new(ResourceRegistryLimits::new(512, 128 * MIB));
     let mut ids = Vec::new();
     for _ in 0..4 {
-        ids.push(
-            encoded(&registry, 32 * MIB)
-                .unwrap()
-                .descriptor
-                .resource_id
-                .clone(),
-        );
+        ids.push(encoded(&registry, 32 * MIB).unwrap().descriptor.resource_id);
     }
     assert_eq!(registry.stats().encoded_bytes, 128 * MIB);
     assert!(
@@ -203,7 +197,7 @@ fn scrolling_600_file_publications_reclaims_released_working_set() {
                 ImageOrigin::PrimaryImage,
             )
             .unwrap();
-        let id = handle.descriptor.resource_id.clone();
+        let id = handle.descriptor.resource_id;
         assert!(registry.renew(&id));
         displayed.push_back(id);
         if displayed.len() > 100 {

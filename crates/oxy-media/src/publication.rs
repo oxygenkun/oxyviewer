@@ -996,7 +996,7 @@ impl ArtifactPublisher {
                                         let message = error.to_string();
                                         record_failure(
                                             &failures,
-                                            source_revision_id.clone(),
+                                            source_revision_id,
                                             message.clone(),
                                         );
                                         PersistenceCompletion::Failed {

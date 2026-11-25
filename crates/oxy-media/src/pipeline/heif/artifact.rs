@@ -75,13 +75,8 @@ pub fn full_uses_artifact(
     display_sharpening: bool,
 ) -> Result<bool, MediaError> {
     let display_sharpening = sony::display_sharpening(path, display_sharpening);
-    if cached_heif_full_display(path, cache_dir, display_sharpening)?.is_some() {
-        return Ok(true);
-    }
-    #[cfg(target_os = "macos")]
-    return Ok(!display_sharpening);
-    #[cfg(any(target_os = "windows", target_os = "linux"))]
-    Ok(false)
+    let cached = cached_heif_full_display(path, cache_dir, display_sharpening)?.is_some();
+    Ok(cached || (cfg!(target_os = "macos") && !display_sharpening))
 }
 
 #[allow(clippy::too_many_arguments)]
