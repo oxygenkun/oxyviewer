@@ -1701,11 +1701,11 @@ impl RenderQueue {
                             &cancellation,
                         ) {
                             Ok(Some(projection)) => Ok(projection),
-                            Ok(None) => accepted.clone(),
+                            Ok(None) => accepted,
                             Err(error) => Err(error),
                         }
                     } else {
-                        accepted.clone()
+                        accepted
                     };
                     let waiters = {
                         let mut work = queue.work.0.lock().expect("preview queue lock poisoned");
