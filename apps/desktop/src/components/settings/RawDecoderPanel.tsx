@@ -73,7 +73,7 @@ export function RawDecoderPanel({ asset, compact = false, pending = false, faile
     {!value ? <p role="status">{t("rawChecking")}</p> : <>
       <p role="status">{t(value.availability === "available" ? "rawSystemAvailable"
         : missing ? "rawSystemMissing" : supported ? "rawSystemUnavailable" : "rawWindowsOnly")}</p>
-      {failed ? <p>{t("rawFullFailed")}</p> : fileFallback && !missing ? <p>{t("rawFileFallback")}</p> : null}
+      {!failed && fileFallback && !missing ? <p>{t("rawFileFallback")}</p> : null}
       {supported && <div className="raw-decoder__actions">
         {(missing || value.availability === "unavailable" || (!compact && value.installAvailable)) && <>
           <Button size="small" disabled={busy} onClick={() => install.mutate(false)}>{t("rawOpenStore")}</Button>

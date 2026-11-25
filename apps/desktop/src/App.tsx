@@ -131,11 +131,12 @@ export function App({ perfScenario }: { perfScenario?: PerfScenario }) {
   const [tupleSelections, setTupleSelections] = useState<Record<string, PersonTupleFilter | undefined>>({});
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [noticeExpanded, setNoticeExpanded] = useState(false);
+  const [loupeStatusTarget, setLoupeStatusTarget] = useState<HTMLSpanElement | null>(null);
   const queryClient = useQueryClient();
   const {
     peopleModuleVisible, peopleMode, setPeopleMode,
     view, thumbnailOrientation, burstGroupingEnabled, activeId, selectedIds, inspectorOpen, leftPanelOpen, settingsOpen, locale,
-    search, tagIds, tagMatch, clearSearch, kind, minimumRating, colorLabels, pickLabels, sort, direction, clearSelection, select, setThumbnailOrientation, restoreThumbnailOrientation, forgetThumbnailOrientation, toggleBurstGrouping, toggleSettings,
+    search, tagIds, tagMatch, clearSearch, minimumRating, colorLabels, pickLabels, sort, direction, clearSelection, select, setThumbnailOrientation, restoreThumbnailOrientation, forgetThumbnailOrientation, toggleBurstGrouping, toggleSettings,
     leftPanelWidth, inspectorWidth, setLeftPanelWidth, setInspectorWidth, uiFontScale,
   } = useWorkspaceStore();
   const appShellRef = useRef<HTMLDivElement>(null);
@@ -361,20 +362,19 @@ export function App({ perfScenario }: { perfScenario?: PerfScenario }) {
     search: search || undefined,
     tagIds: tagIds.length ? tagIds : undefined,
     tagMatch,
-    kind,
     minimumRating,
     colorLabels: colorLabels.length ? colorLabels : undefined,
     pickLabels: pickLabels.length ? pickLabels : undefined,
     sort,
     direction,
     pageSize: 250,
-  }), [tupleFilter, colorLabels, direction, kind, minimumRating, pickLabels, search, sort, tagIds, tagMatch]);
+  }), [tupleFilter, colorLabels, direction, minimumRating, pickLabels, search, sort, tagIds, tagMatch]);
   const metadataFiltersActive = Boolean(minimumRating || colorLabels.length || pickLabels.length);
   if (metadataFiltersActive && activeId) filteredFocusRef.current = activeId;
   const filteredFocusRestoreId = metadataFiltersActive ? undefined : filteredFocusRef.current;
   const progressivelyFilterMetadata = Boolean(!tupleFilter && !search && !tagIds.length && (minimumRating || colorLabels.length || pickLabels.length));
   const metadataRecords = useMetadataProjectionStore((state) => progressivelyFilterMetadata ? state.records : NO_METADATA_RECORDS);
-  const shouldPreloadFilteredAssets = Boolean(tagIds.length || search || kind || minimumRating || colorLabels.length || pickLabels.length);
+  const shouldPreloadFilteredAssets = Boolean(tagIds.length || search || minimumRating || colorLabels.length || pickLabels.length);
   const preloadQuery = useMemo<AssetQuery>(() => ({
     sort: "name",
     direction: "ascending",
@@ -487,6 +487,11 @@ export function App({ perfScenario }: { perfScenario?: PerfScenario }) {
     () => activeAssetOrdinal(displayedAssets, activeId),
     [activeId, displayedAssets],
   );
+  const visibleActive = activeOrdinal === undefined ? undefined : displayedAssets[activeOrdinal - 1];
+  const statusAsset = view === "loupe" ? visibleActive ?? heldReviewAsset ?? displayedAssets[0] : visibleActive;
+  const statusPath = statusAsset?.path ?? currentPath ?? t("noFolderOpen");
+  const statusName = statusAsset && statusPath.endsWith(statusAsset.name) ? statusAsset.name : "";
+  const statusDirectory = statusPath.slice(0, statusPath.length - statusName.length);
   const progressiveWorkPending = progressivelyFilterMetadata && (
     progressiveMetadataQuery.isLoading ||
     progressiveMetadataQuery.isFetchingNextPage ||
@@ -1089,6 +1094,7 @@ export function App({ perfScenario }: { perfScenario?: PerfScenario }) {
             assets={displayedAssets}
             heldAsset={heldReviewAsset}
             deletionMode={activeSession.deletionMode}
+            loupeStatusTarget={loupeStatusTarget}
             restoringActiveId={filteredFocusAction === "none" ? undefined : filteredFocusRestoreId}
             total={total}
             view={view}
@@ -1111,9 +1117,14 @@ export function App({ perfScenario }: { perfScenario?: PerfScenario }) {
         )}
         </>}
         {peopleMode && globalPeople.surface === "library" ? <footer className="statusbar"><span>全局人物库 · 跨文件夹的人工确认记录</span><span>{globalPeople.people.length} 位人物</span></footer> : <footer className="statusbar">
-          <span title={currentPath}><i className="status-dot" /> {
-            currentPath?.split(/[\\/]/).filter(Boolean).at(-1) ?? t("noFolderOpen")
-          }</span>
+          <div className="statusbar__asset">
+            <span className="statusbar__asset-path" title={statusPath}>
+              <i className="status-dot" aria-hidden="true" />
+              <span className="statusbar__asset-directory">{statusDirectory}</span>
+              {statusName ? <span className="statusbar__asset-filename">{statusName}</span> : null}
+            </span>
+            <span className="statusbar__preview" ref={setLoupeStatusTarget} role="status" />
+          </div>
           {notice ? (
             <span className={`statusbar__notice statusbar__notice--${notice.kind}`}>
               <button

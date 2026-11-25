@@ -2,7 +2,6 @@ export type Locale = "zh-CN" | "en";
 
 const messages = {
   "zh-CN": {
-    workspace: "工作区",
     folderUnavailable: "路径不可用",
     folderRecoveryActions: "修复文件夹位置",
     folderRelocate: "重新定位…",
@@ -217,7 +216,6 @@ const messages = {
     directBrowse: "直接浏览",
     transparentCache: "透明缓存",
     rawReady: "RAW 就绪",
-    all: "全部",
     noResults: "没有匹配的照片",
     noResultsBody: "调整筛选条件或打开另一个文件夹。",
     delete: "删除",
@@ -399,7 +397,6 @@ const messages = {
     theme: "主题",
   },
   en: {
-    workspace: "Workspace",
     folderUnavailable: "Path unavailable",
     folderRecoveryActions: "Recover folder location",
     folderRelocate: "Locate folder…",
@@ -614,7 +611,6 @@ const messages = {
     directBrowse: "Direct browse",
     transparentCache: "Transparent cache",
     rawReady: "RAW ready",
-    all: "All",
     noResults: "No matching photos",
     noResultsBody: "Adjust the filters or open another folder.",
     delete: "Delete",

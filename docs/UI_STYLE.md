@@ -55,9 +55,13 @@ their distinct semantic colors; green, orange and red status marks are small.
 - Keep the actual operating-system window controls. Do not add decorative
   traffic lights or pretend that a CSS backdrop filter provides native
   transparency through the desktop window.
-- Center the workspace title in the 52px toolbar. At the existing 600px content
-  breakpoint it yields space to search and view controls. Keep independent
-  content scrolling and the existing virtual thumbnail geometry.
+- Center the search field in the 52px toolbar, with the sidebar toggle on the
+  left and view controls on the right. At the 600px content breakpoint the
+  search field hides the shortcut hint. Show the photo count in the status bar.
+- Keep independent content scrolling and the existing virtual thumbnail geometry.
+- Show the current photo path on the left of the workspace status bar. Place
+  Loupe preview quality and decode progress immediately after the file name.
+  The Loupe image overlay shows enabled metadata badges and review notices.
 - At the existing 900px viewport breakpoint, the inspector yields space to the
   workspace. At 700px, the sidebar uses at most 35% of the window and can still
   be collapsed. Filters and settings tabs scroll inside their own regions.

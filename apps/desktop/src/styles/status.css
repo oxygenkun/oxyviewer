@@ -10,6 +10,40 @@
   font: var(--font-size-small) var(--font-mono);
 }
 .statusbar > span:first-child { min-width: 0; margin-right: auto; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.statusbar__asset, .statusbar__asset-path { display: flex; align-items: center; min-width: 0; }
+.statusbar__asset { gap: var(--space-2); margin-inline-end: auto; }
+.statusbar__asset-path { overflow: hidden; color: var(--muted); }
+.statusbar__asset-path > .status-dot { flex-shrink: 0; }
+.statusbar__asset-path > span, .statusbar__preview > span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.statusbar__asset-filename { flex-shrink: 0; max-width: calc(100% - 12px); }
+.statusbar__preview { display: flex; flex-shrink: 0; min-width: 0; max-width: 65%; }
+.statusbar__preview:empty { display: none; }
+.statusbar__preview > span {
+  --preview-dot: var(--blue);
+  color: var(--muted);
+}
+.statusbar__preview > span::before {
+  display: inline-block;
+  width: 6px;
+  height: 6px;
+  margin-inline-end: 6px;
+  border-radius: 50%;
+  background: var(--preview-dot);
+  content: "";
+}
+.statusbar__preview > :is([data-preview-state="fullReady"], [data-preview-state="complete"]) {
+  --preview-dot: currentColor;
+  color: var(--accent);
+}
+.statusbar__preview > :is([data-preview-state="fullFailed"], [data-preview-state="failed"]) {
+  --preview-dot: currentColor;
+  color: var(--danger-text);
+}
 .statusbar__thumbnail-controls {
   display: flex;
   align-items: center;

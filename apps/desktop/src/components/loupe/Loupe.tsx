@@ -10,6 +10,7 @@ import {
   Settings2,
 } from "lucide-react";
 import { useQuery } from "@tanstack/react-query";
+import { createPortal } from "react-dom";
 import {
   useCallback,
   useEffect,
@@ -56,6 +57,7 @@ import { ResizeHandle } from "@/components/browsing/ResizeHandle";
 interface LoupeProps {
   assets: AssetSummary[];
   heldAsset?: AssetSummary;
+  statusTarget?: HTMLElement | null;
   restoringActiveId?: string;
   total: number;
   fetchNextPage: () => void;
@@ -70,6 +72,11 @@ interface LoupeProps {
 const positions: NavigatorPosition[] = ["top-left", "top-right", "bottom-left", "bottom-right"];
 const DEFAULT_IMAGE_SIZE: Size = { width: 3, height: 2 };
 const NAVIGATOR_MAX_SIZE: Size = { width: 156, height: 98 };
+const rawStatusLabels = {
+  loadingPreview: "rawLoadingPreview",
+  developingFull: "rawDevelopingFull",
+  fullFailed: "rawFullFailed",
+} satisfies Record<Exclude<RawPreviewStatus["state"], "fullReady">, MessageKey>;
 
 function elementSize(element: HTMLElement | null): Size {
   return {
@@ -89,6 +96,7 @@ function elementContentSize(element: HTMLElement): Size {
 export function Loupe({
   assets,
   heldAsset,
+  statusTarget,
   restoringActiveId,
   total,
   fetchNextPage,
@@ -443,6 +451,15 @@ export function Loupe({
     "bottom-left": "bottomLeft",
     "bottom-right": "bottomRight",
   };
+  let previewStatusText: string | undefined;
+  if (active.kind === "raw") {
+    previewStatusText = rawPreviewStatus.state === "fullReady"
+      ? `${t("rawFullReady")} · ${rawPreviewStatus.width} × ${rawPreviewStatus.height}`
+      : t(rawStatusLabels[rawPreviewStatus.state]);
+  } else if (active.kind === "heif") {
+    previewStatusText = t(heifStatus === "complete" ? "fullQualityReady"
+      : heifStatus === "failed" ? "fullQualityFailed" : "fullQualityLoading");
+  }
 
   return (
     <div
@@ -460,35 +477,12 @@ export function Loupe({
         onPointerCancel={finishDrag}
       >
         <div className="loupe__caption">
-          <span>{active.name}</span>
           {!listedActive && heldAsset?.id === active.id ? <small>保留当前审阅照片 · 不在当前筛选列表中</small> : null}
-          <small>{active.extension} · {formatBytes(active.sizeBytes)}</small>
           {loupeMetadataVisible ? <AssetMetadataBadges asset={active} /> : null}
         </div>
         {active.kind === "raw" && <RawDecoderPanel key={active.id} asset={active} compact
           pending={rawPreviewStatus.state === "loadingPreview" || rawPreviewStatus.state === "developingFull"}
           failed={rawPreviewStatus.state === "fullFailed"} t={t} />}
-        {active.kind === "raw" ? (
-          <div className={`loupe__raw-status loupe__raw-status--${rawPreviewStatus.state}`}>
-            <i />
-            {rawPreviewStatus.state === "loadingPreview"
-              ? t("rawLoadingPreview")
-              : rawPreviewStatus.state === "developingFull"
-                ? t("rawDevelopingFull")
-                : rawPreviewStatus.state === "fullFailed"
-                  ? t("rawFullFailed")
-                  : `${t("rawFullReady")} · ${rawPreviewStatus.width} × ${rawPreviewStatus.height}`}
-          </div>
-        ) : active.kind === "heif" ? (
-          <div className={`loupe__raw-status loupe__raw-status--${heifStatus}`}>
-            <i />
-            {heifStatus === "complete"
-              ? t("fullQualityReady")
-              : heifStatus === "failed"
-                  ? t("fullQualityFailed")
-                  : t("fullQualityLoading")}
-          </div>
-        ) : null}
         <div
           className="loupe__image"
           onContextMenu={(event) => onAssetContextMenu(event, active)}
@@ -677,6 +671,12 @@ export function Loupe({
           </div>
         ) : null}
       </div>
+      {statusTarget && previewStatusText ? createPortal(
+        <span data-preview-state={active.kind === "raw" ? rawPreviewStatus.state : heifStatus} title={previewStatusText}>
+          {previewStatusText}
+        </span>,
+        statusTarget,
+      ) : null}
       <ResizeHandle
         axis="y"
         className="resize-handle--filmstrip"
@@ -695,9 +695,4 @@ export function Loupe({
         onAssetContextMenu={onAssetContextMenu} />
     </div>
   );
-}
-
-function formatBytes(bytes: number) {
-  if (bytes < 1_000_000) return `${(bytes / 1_000).toFixed(0)} KB`;
-  return `${(bytes / 1_000_000).toFixed(1)} MB`;
 }

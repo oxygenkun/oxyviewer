@@ -1,14 +1,11 @@
 
-@media (max-width: 1180px) {
-  .search-field { width: min(310px, 34vw); }
-}
-
 /* Keep the current 900/700px breakpoints and the user's collapse controls.
    At narrow widths the inspector yields its space to the photo workspace. */
 @media (max-width: 900px) {
   .app-shell { grid-template-columns: var(--left-panel-width) minmax(0, 1fr) 0; }
   .app-shell.sidebar-collapsed { grid-template-columns: 0 minmax(0, 1fr) 0; }
   .app-shell > .inspector, .app-shell > .resize-handle--right { display: none; }
+  .toolbar { --toolbar-side-width: 60px; }
   .toolbar__actions > .icon-button { display: none; }
 }
 
@@ -23,8 +20,7 @@
   .folder-coach { top: 76px; padding: 8px; }
   .folder-coach > div { flex-wrap: wrap; }
   .toolbar { gap: 6px; padding-inline: 8px; }
-  .toolbar__leading { gap: 4px; }
-  .filterbar { padding-inline: 8px; gap: 12px; }
+  .filterbar { padding-inline: 8px; }
   .statusbar { gap: 6px; padding-inline: 8px; }
   .statusbar > span:first-child { display: none; }
   .statusbar__thumbnail-controls { flex-shrink: 0; }

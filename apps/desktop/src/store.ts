@@ -30,7 +30,6 @@ import {
   type UiFontScale,
 } from "@/lib/browse/workspacePersistence";
 import type {
-  AssetKind,
   AssetSort,
   NavigatorPosition,
   SortDirection,
@@ -73,7 +72,6 @@ interface WorkspaceState {
   setTagMatch: (mode: "all" | "any") => void;
   clearSearch: () => void;
   searchReset: number;
-  kind?: AssetKind;
   minimumRating?: number;
   colorLabels: string[];
   pickLabels: string[];
@@ -110,7 +108,6 @@ interface WorkspaceState {
   setInspectorWidth: (width: number) => void;
   setFilmstripHeight: (height: number) => void;
   setSearch: (search: string) => void;
-  setKind: (kind?: AssetKind) => void;
   setMinimumRating: (rating?: number) => void;
   toggleColorLabel: (label: string) => void;
   togglePickLabel: (label: string) => void;
@@ -268,7 +265,6 @@ export const useWorkspaceStore = create<WorkspaceState>((set) => ({
     set({ filmstripHeight });
   },
   setSearch: (search) => set({ search }),
-  setKind: (kind) => set({ kind }),
   setMinimumRating: (minimumRating) => set({ minimumRating }),
   toggleColorLabel: (label) => set((state) => ({
     colorLabels: state.colorLabels.includes(label)

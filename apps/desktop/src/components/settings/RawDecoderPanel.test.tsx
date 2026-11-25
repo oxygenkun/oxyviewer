@@ -79,7 +79,7 @@ it("keeps installed-but-unsupported file failures separate from installation", a
   await click("rawDismissHint");
   expect(host.textContent).toBe("");
   await render(true, true);
-  expect(host.textContent).toContain("rawFullFailed");
+  expect(host.textContent).toContain("rawSystemAvailable");
   expect(host.textContent).toContain("rawRetryFull");
 });
 

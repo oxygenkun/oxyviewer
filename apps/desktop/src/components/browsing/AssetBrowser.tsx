@@ -32,6 +32,7 @@ import { Thumbnail } from "./Thumbnail";
 interface AssetBrowserProps {
   assets: AssetSummary[];
   heldAsset?: AssetSummary;
+  loupeStatusTarget?: HTMLElement | null;
   restoringActiveId?: string;
   total: number;
   hasNextPage: boolean;
@@ -199,6 +200,7 @@ export function AssetBrowser(props: AssetBrowserProps) {
       <Loupe
         assets={props.assets}
         heldAsset={props.heldAsset}
+        statusTarget={props.loupeStatusTarget}
         restoringActiveId={props.restoringActiveId}
         total={props.total}
         fetchNextPage={props.fetchNextPage}

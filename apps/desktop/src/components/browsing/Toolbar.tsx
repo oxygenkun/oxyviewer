@@ -15,11 +15,10 @@ import {
 } from "lucide-react";
 import type { MessageKey } from "@/lib/i18n";
 import { useWorkspaceStore } from "@/store";
-import type { AssetKind, PickLabel, ViewMode } from "@/types";
+import type { PickLabel, ViewMode } from "@/types";
 import { WorkspaceSearch } from "./WorkspaceSearch";
 import { PickFlagIcon } from "@/components/common/PickFlagIcon";
 
-const kinds: Array<AssetKind | undefined> = [undefined, "raw", "jpeg", "heif"];
 const ratings = [1, 2, 3, 4, 5] as const;
 const colorLabels = ["Red", "Yellow", "Green", "Blue", "Purple"] as const;
 const pickLabels: Array<[PickLabel, MessageKey]> = [
@@ -40,13 +39,13 @@ interface ToolbarProps {
 
 export function Toolbar({ total, loading, t }: ToolbarProps) {
   const {
-    view, setView, kind, setKind, sort, setSort, direction,
+    view, setView, sort, setSort, direction,
     toggleDirection, inspectorOpen, toggleInspector, leftPanelOpen, toggleLeftPanel,
     minimumRating, setMinimumRating, colorLabels: selectedColorLabels, toggleColorLabel,
     pickLabels: selectedPickLabels, togglePickLabel,
   } = useWorkspaceStore();
 
-  const [announcedTotal, setAnnouncedTotal] = useState(total);
+  const [announcedTotal, setAnnouncedTotal] = useState(loading ? undefined : total);
   useEffect(() => {
     if (loading) return;
     const timer = window.setTimeout(() => setAnnouncedTotal(total), 250);
@@ -56,50 +55,34 @@ export function Toolbar({ total, loading, t }: ToolbarProps) {
   return (
     <>
       <header className="toolbar">
-        <div className="toolbar__leading">
-          <button className="icon-button" title={t("collapse")} aria-pressed={leftPanelOpen} onClick={toggleLeftPanel}>
-            {leftPanelOpen ? <PanelLeftClose size={16} /> : <PanelLeftOpen size={16} />}
-          </button>
-          <WorkspaceSearch t={t} />
-        </div>
-        <div className="toolbar__title">
-          <strong>{t("workspace")}</strong>
-          <span>{loading ? t("loading") : `${total.toLocaleString()} ${t("photos")}`}</span>
-        </div>
-        <span className="search-result-announcement" aria-live="polite" aria-atomic="true">{announcedTotal.toLocaleString()} {t("photos")}</span>
-        <div className="toolbar__actions">
-        <div className="segmented" aria-label={t("viewMode")}>
-          {views.map(([mode, Icon, label]) => (
-            <button
-              key={mode}
-              className={view === mode ? "is-active" : ""}
-              onClick={() => setView(mode)}
-              title={t(label)}
-              aria-label={t(label)}
-              aria-pressed={view === mode}
-            >
-              <Icon size={15} />
-            </button>
-          ))}
-        </div>
-        <button className="icon-button" onClick={toggleInspector} aria-pressed={inspectorOpen} title={t("inspector")}>
-          {inspectorOpen ? <PanelRightClose size={16} /> : <PanelRightOpen size={16} />}
+        <button className="icon-button" title={t("collapse")} aria-pressed={leftPanelOpen} onClick={toggleLeftPanel}>
+          {leftPanelOpen ? <PanelLeftClose size={16} /> : <PanelLeftOpen size={16} />}
         </button>
+        <WorkspaceSearch t={t} />
+        <div className="toolbar__actions">
+          <div className="segmented" aria-label={t("viewMode")}>
+            {views.map(([mode, Icon, label]) => (
+              <button
+                key={mode}
+                className={view === mode ? "is-active" : ""}
+                onClick={() => setView(mode)}
+                title={t(label)}
+                aria-label={t(label)}
+                aria-pressed={view === mode}
+              >
+                <Icon size={15} />
+              </button>
+            ))}
+          </div>
+          <button className="icon-button" onClick={toggleInspector} aria-pressed={inspectorOpen} title={t("inspector")}>
+            {inspectorOpen ? <PanelRightClose size={16} /> : <PanelRightOpen size={16} />}
+          </button>
         </div>
       </header>
+      <span className="search-result-announcement" aria-live="polite" aria-atomic="true">
+        {announcedTotal === undefined ? null : `${announcedTotal.toLocaleString()} ${t("photos")}`}
+      </span>
       <div className="filterbar">
-        <div className="filterbar__kinds">
-          {kinds.map((value) => (
-            <button
-              key={value ?? "all"}
-              className={kind === value ? "is-active" : ""}
-              onClick={() => setKind(value)}
-              aria-pressed={kind === value}
-            >
-              {value?.toUpperCase() ?? t("all")}
-            </button>
-          ))}
-        </div>
         <div className="filterbar__controls">
           <div className="filterbar__metadata-filters">
             <div className="filterbar__rating" role="group" aria-label={t("ratingFilter")}>

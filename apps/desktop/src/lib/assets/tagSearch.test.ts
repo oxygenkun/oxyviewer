@@ -30,7 +30,7 @@ it("combines filename, subtree AND/OR and paging in the browser demo", async () 
 });
 
 it("clears only search intent, leaving the second filter row unchanged", () => {
-  useWorkspaceStore.setState({ search: "coast", tagIds: [1], kind: "raw", minimumRating: 4, colorLabels: ["Red"], pickLabels: ["accepted"] });
+  useWorkspaceStore.setState({ search: "coast", tagIds: [1], minimumRating: 4, colorLabels: ["Red"], pickLabels: ["accepted"] });
   useWorkspaceStore.getState().clearSearch();
-  expect(useWorkspaceStore.getState()).toMatchObject({ search: "", tagIds: [], kind: "raw", minimumRating: 4, colorLabels: ["Red"], pickLabels: ["accepted"] });
+  expect(useWorkspaceStore.getState()).toMatchObject({ search: "", tagIds: [], minimumRating: 4, colorLabels: ["Red"], pickLabels: ["accepted"] });
 });

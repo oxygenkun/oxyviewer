@@ -469,15 +469,16 @@ it("retains the reviewed loupe photo through empty and changed filtered pages", 
   useWorkspaceStore.setState({activeId:"a20",selectedIds:["a20"]});
   await render("loupe",assets,assets[20]);
   await render("loupe",[],assets[20]);
-  expect(host.querySelector(".loupe__caption")?.textContent).toContain("a20.jpg");
+  expect(host.querySelector(".loupe__render")?.getAttribute("data-asset-id")).toBe("a20");
+  expect(host.querySelector(".loupe__caption")?.textContent).toContain("不在当前筛选列表中");
   expect(useWorkspaceStore.getState().activeId).toBe("a20");
   await render("loupe",[assets[0]],assets[20]);
-  expect(host.querySelector(".loupe__caption")?.textContent).toContain("a20.jpg");
+  expect(host.querySelector(".loupe__render")?.getAttribute("data-asset-id")).toBe("a20");
   expect(useWorkspaceStore.getState().activeId).toBe("a20");
   await render("loupe",[assets[0],assets[20]],assets[20]);
   expect(host.querySelector(".loupe__caption")?.textContent).not.toContain("不在当前筛选列表中");
   await select("a0");
-  expect(host.querySelector(".loupe__caption")?.textContent).toContain("a0.jpg");
+  expect(host.querySelector(".loupe__render")?.getAttribute("data-asset-id")).toBe("a0");
 });
 
 const mouseBinding = (key: string) => ({ key, ctrl: false, alt: false, shift: false, meta: false });

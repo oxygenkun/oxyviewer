@@ -14,7 +14,7 @@ export async function runNavigationCacheProbe(assets: readonly AssetSummary[], s
   });
   const displayed = (asset: AssetSummary) => {
     if (document.querySelector<HTMLElement>(".loupe__render")?.dataset.assetId !== asset.id) return false;
-    if (asset.kind === "heif") return Boolean(document.querySelector(".loupe__raw-status--complete"));
+    if (asset.kind === "heif") return Boolean(document.querySelector('.statusbar__preview [data-preview-state="complete"]'));
     const image = document.querySelector<HTMLImageElement>(".loupe__render > .thumbnail img:not(.thumbnail__pending-image)");
     return Boolean(image?.complete && image.naturalWidth);
   };

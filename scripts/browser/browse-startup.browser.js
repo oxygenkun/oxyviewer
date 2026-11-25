@@ -41,7 +41,7 @@
   };
   window.__TAURI_EVENT_PLUGIN_INTERNALS__ = { unregisterListener: () => {} };
   localStorage.setItem('oxyviewer.workspace.v1', JSON.stringify({ activeRoot: session.rootPath, currentDirectories: {} }));
-  useWorkspaceStore.setState({ search: '', kind: undefined, minimumRating: undefined, colorLabels: [], view: 'grid' });
+  useWorkspaceStore.setState({ search: '', minimumRating: undefined, colorLabels: [], view: 'grid' });
   const container = document.createElement('div');
   container.style.cssText = 'position:fixed;inset:0;z-index:99999;background:#101214';
   document.body.append(container);
@@ -61,11 +61,16 @@
     await waitFor(() => resolvePage && events.has('directory-browse-progress'));
     emit(progress);
     await waitFor(() => container.textContent.includes('已发现 42'));
-    assert(!container.querySelector('.toolbar__title').textContent.includes('0 张照片'), 'loading must not claim zero photos');
+    const toolbar = container.querySelector('.toolbar');
+    const announcement = container.querySelector('.search-result-announcement');
+    assert(toolbar.querySelector('.search-field') && !/工作区|张照片/.test(toolbar.textContent), 'toolbar must show search without the workspace title or count');
+    assert(announcement.textContent === '' && !container.querySelector('.statusbar').textContent.includes('0 张照片'), 'loading must not claim zero photos');
     resolvePage({ items: [], total: 0, progress: { ...progress, stage: 'ready', source: 'snapshot' } });
     emit({ ...progress, stage: 'ready', source: 'snapshot' });
-    await waitFor(() => container.querySelector('.workspace-browse-status'));
-    assert(getComputedStyle(container.querySelector('.workspace-browse-status')).position === 'absolute', 'notice must not add a workspace grid row');
+    await waitFor(() => container.querySelector('.statusbar__notice-toggle') && announcement.textContent === '0 张照片');
+    container.querySelector('.statusbar__notice-toggle').click();
+    await waitFor(() => container.querySelector('.statusbar__notice-panel'));
+    assert(getComputedStyle(container.querySelector('.statusbar__notice-panel')).position === 'absolute', 'notice must not add a workspace grid row');
     emit({ ...progress, stage: 'stale', error: 'NAS offline' });
     await waitFor(() => container.textContent.includes('暂时无法核对目录'));
     emit({ ...progress, stage: 'updated' });

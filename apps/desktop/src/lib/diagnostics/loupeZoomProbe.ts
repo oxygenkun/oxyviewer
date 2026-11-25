@@ -4,8 +4,9 @@ import { perfMark } from "./perfProbe";
 
 /** Real-WebView geometry regression, enabled only by the isolated perf harness. */
 export async function runLoupeZoomProbe(assets: readonly AssetSummary[], signal: AbortSignal): Promise<void> {
-  if (assets[0]?.kind !== "raw") throw new Error("Zoom probe requires a RAW fixture");
-  useWorkspaceStore.getState().select(assets[0].id);
+  const asset = assets[0];
+  if (asset?.kind !== "raw") throw new Error("Zoom probe requires a RAW fixture");
+  useWorkspaceStore.getState().select(asset.id);
   useWorkspaceStore.getState().setView("loupe");
   const frame = () => new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
   const deadline = performance.now() + 30_000;
@@ -14,11 +15,11 @@ export async function runLoupeZoomProbe(assets: readonly AssetSummary[], signal:
     signal.throwIfAborted();
     image = document.querySelector<HTMLImageElement>(".loupe__render img:not(.thumbnail__pending-image)");
     if (image?.complete && image.naturalWidth > 1024
-      && document.querySelector(".loupe__raw-status--fullReady")) break;
+      && document.querySelector('.statusbar__preview [data-preview-state="fullReady"]')) break;
     await frame();
   }
   if (!image?.complete || image.naturalWidth <= 1024
-    || !document.querySelector(".loupe__raw-status--fullReady")) {
+    || !document.querySelector('.statusbar__preview [data-preview-state="fullReady"]')) {
     throw new Error("Full RAW image did not load");
   }
   const stage = document.querySelector<HTMLElement>(".loupe__stage")!;
@@ -48,6 +49,6 @@ export async function runLoupeZoomProbe(assets: readonly AssetSummary[], signal:
     }
   }
   perfMark("resource:stress-complete", {
-    mode: "loupe-zoom", assetName: document.querySelector(".loupe__caption > span")?.textContent,
+    mode: "loupe-zoom", assetName: asset.name,
   });
 }

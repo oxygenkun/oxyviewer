@@ -44,7 +44,7 @@
   };
   window.__TAURI_EVENT_PLUGIN_INTERNALS__ = { unregisterListener: () => {} };
   localStorage.setItem('oxyviewer.workspace.v1', JSON.stringify({ activeRoot: session.rootPath, currentDirectories: {} }));
-  useWorkspaceStore.setState({ search: '', tagIds: [], kind: undefined, minimumRating: undefined, colorLabels: [], pickLabels: [], view: 'grid', selectedIds: [], activeId: undefined, inspectorOpen: false, burstGroupingEnabled: false });
+  useWorkspaceStore.setState({ search: '', tagIds: [], minimumRating: undefined, colorLabels: [], pickLabels: [], view: 'grid', selectedIds: [], activeId: undefined, inspectorOpen: false, burstGroupingEnabled: false });
   const container = document.createElement('div');
   container.style.cssText = 'position:fixed;inset:0;z-index:99999;background:#101214';
   document.body.append(container);
