@@ -161,6 +161,7 @@ export function Inspector({ asset, selectedCount, selectedPaths, t }: InspectorP
                   {[1, 2, 3, 4, 5].map((rating) => (
                     <button
                       key={rating}
+                      className="rating__star"
                       onClick={() => requestPatch({ rating: currentRating === rating ? null : rating })}
                       disabled={patch.isPending || details.isLoading || providerSetup.isPending}
                       title={`${rating} / 5`}

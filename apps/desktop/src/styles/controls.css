@@ -23,6 +23,30 @@
 :where(button[aria-busy="true"]) { cursor: progress; }
 :where(button svg) { flex-shrink: 0; }
 
+.rating__star {
+  display: grid;
+  place-items: center;
+  width: 20px;
+  height: 20px;
+  padding: 0;
+  border-radius: 50%;
+  color: var(--faint);
+  background: transparent;
+
+  &:disabled { cursor: default; opacity: 1; }
+}
+.rating__star svg.is-filled { color: var(--rating); fill: currentColor; }
+@media (any-hover: hover) {
+  .rating__star:is(:hover:enabled, :has(~ .rating__star:hover:enabled)) svg {
+    color: var(--rating);
+    fill: currentColor;
+  }
+  .rating__star:hover:enabled ~ .rating__star svg.is-filled {
+    color: inherit;
+    fill: none;
+  }
+}
+
 :where(input:not([type="checkbox"]):not([type="radio"]):not([type="range"]):not([type="color"]), select, textarea) {
   min-width: 0;
   max-width: 100%;

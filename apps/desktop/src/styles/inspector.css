@@ -54,21 +54,19 @@
 .marking-control-row--tags .tag-editor { min-height: 20px; padding-left: 3px; }
 .rating { display: flex; gap: 0; }
 .pick-labels { display: flex; align-items: center; gap: 1px; }
-:is(.rating, .pick-labels) button {
+.pick-labels button {
   display: grid;
   width: 20px;
   height: 20px;
   padding: 0;
   place-items: center;
   border-radius: 3px;
+  color: var(--faint);
   background: transparent;
 
   &:hover { background: var(--surface-selected); }
   &:disabled { cursor: default; opacity: 1; }
 }
-.rating button { color: var(--faint); }
-.rating svg.is-filled { color: var(--rating); fill: currentColor;  }
-.pick-labels button { color: var(--faint); }
 .pick-labels__rejected.is-active { color: var(--label-red); }
 .pick-labels__pending.is-active { color: var(--label-yellow); }
 .pick-labels__accepted.is-active { color: var(--label-green); }

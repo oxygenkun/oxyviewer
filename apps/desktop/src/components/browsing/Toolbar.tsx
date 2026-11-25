@@ -91,13 +91,13 @@ export function Toolbar({ total, loading, t }: ToolbarProps) {
                 return (
                   <button
                     key={rating}
-                    className={active ? "is-active" : ""}
+                    className="rating__star"
                     onClick={() => setMinimumRating(minimumRating === rating ? undefined : rating)}
                     aria-label={`${rating}★+`}
                     aria-pressed={active}
                     title={`${t("ratingFilter")}: ${rating}★+`}
                   >
-                    <Star size={13} />
+                    <Star className={active ? "is-filled" : undefined} size={13} />
                   </button>
                 );
               })}

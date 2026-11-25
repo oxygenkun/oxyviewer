@@ -41,6 +41,9 @@ body text use the system sans-serif stack at 11–17px. Paths, file formats, num
 metadata and shortcut keys use the system monospace stack. All sizes continue to
 respect the existing UI font scale setting. Photo color labels and ratings retain
 their distinct semantic colors; green, orange and red status marks are small.
+The inspector and rating filter use bare star icons with a round keyboard focus
+outline. Hovering previews the value through that star. Moving away restores
+the current rating or filter value.
 
 ## Desktop application adaptations
 
