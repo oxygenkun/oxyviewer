@@ -12,7 +12,7 @@ Each release lists the English notes first, followed by the Simplified Chinese n
 
 ## [Unreleased]
 
-## [2.0.1] - 2026-11-25
+## [0.2.1] - 2026-11-25
 
 ### Added
 
@@ -235,8 +235,8 @@ Each release lists the English notes first, followed by the Simplified Chinese n
 - 可重建的媒体与图库缓存，支持可配置的存储管理和队列诊断。
 - macOS 与 Linux 安装包，以及双语 Windows NSIS EXE 和便携 ZIP 包，内置固定版本的 FFmpeg 工具；对应的 FFmpeg 源码作为独立发布资源提供。
 
-[Unreleased]: https://github.com/oxygenkun/oxyviewer/compare/v2.0.1...HEAD
-[2.0.1]: https://github.com/oxygenkun/oxyviewer/compare/v0.2.0...v2.0.1
+[Unreleased]: https://github.com/oxygenkun/oxyviewer/compare/v0.2.1...HEAD
+[0.2.1]: https://github.com/oxygenkun/oxyviewer/compare/v0.2.0...v0.2.1
 [0.2.0]: https://github.com/oxygenkun/oxyviewer/compare/v0.1.5...v0.2.0
 [0.1.5]: https://github.com/oxygenkun/oxyviewer/compare/v0.1.4...v0.1.5
 [0.1.4]: https://github.com/oxygenkun/oxyviewer/compare/v0.1.3...v0.1.4
