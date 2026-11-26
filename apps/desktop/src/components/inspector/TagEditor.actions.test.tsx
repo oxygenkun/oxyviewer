@@ -40,15 +40,24 @@ let host: HTMLDivElement;
 let client: QueryClient;
 let assigned: Set<number>;
 
+const waitForSettingsFocus = () =>
+  vi.waitFor(() => expect(document.activeElement).toBe(document.querySelector(".tag-picker__settings")));
+
 const click = async (selector: string) => {
-  await vi.waitFor(() => expect(document.querySelector(selector)).not.toBeNull());
+  await vi.waitFor(() => expect(document.querySelector(selector), selector).not.toBeNull());
   const button = document.querySelector<HTMLButtonElement>(selector)!;
   expect(button.matches(":disabled")).toBe(false);
   await act(async () => {
     if (button.getAttribute("aria-haspopup") === "menu") {
+      button.focus();
       button.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowDown", bubbles: true, cancelable: true }));
     } else button.click();
   });
+  if (button.matches('[role="menuitemradio"], [role="menuitemcheckbox"]')) await waitForSettingsFocus();
+};
+const clickSortOption = async (option: HTMLElement) => {
+  await act(async () => option.click());
+  await waitForSettingsFocus();
 };
 const renderEditor = async (path = "/demo/a.jpg") => {
   await act(async () => root.render(
@@ -262,7 +271,7 @@ it("hides bound person tags by default in every sort and search while keeping as
     await click(".tag-picker__settings");
     expect(document.querySelector('[role=menuitemcheckbox]')?.getAttribute("aria-checked")).toBe("false");
     const option = [...document.querySelectorAll<HTMLElement>('[role=menuitemradio]')].find(node => node.textContent === mode)!;
-    await act(async () => option.click());
+    await clickSortOption(option);
     expect(document.querySelectorAll(".tag-candidate")).toHaveLength(2);
     expect(document.querySelector('[role=checkbox][aria-label="Categories › Family"]')).toBeNull();
   }
@@ -328,7 +337,7 @@ it("hides the entire person category without global person bindings", async () =
   for (const mode of ["tagSortRecent", "tagSortMostUsed", "tagSortTree"]) {
     await click(".tag-picker__settings");
     const option = [...document.querySelectorAll<HTMLElement>('[role=menuitemradio]')].find(node => node.textContent === mode)!;
-    await act(async () => option.click());
+    await clickSortOption(option);
     expect(candidateNames()).toEqual(["人物摄影", "地点"]);
   }
   const input = document.querySelector<HTMLInputElement>(".tag-picker__search input")!;
@@ -397,6 +406,7 @@ it("dismisses only the nested menu on Escape and keeps rename focus inside the p
   await act(async () => option.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true })));
   expect(document.querySelector('[role="menu"]')).toBeNull();
   expect(document.querySelector(".tag-picker")).not.toBeNull();
+  await waitForSettingsFocus();
   await click(".tag-candidate__menu");
   await click('.tag-row-menu [role="menuitem"]:first-child');
   await vi.waitFor(() => expect(document.activeElement).toBe(document.querySelector(".tag-edit-panel input")));
