@@ -13,6 +13,7 @@ import { FilmstripPreviewPreloader } from "@/components/loupe/FilmstripPreviewPr
 import { Thumbnail } from "./Thumbnail";
 import { installFilmstripWheel } from "@/lib/ui/filmstripWheel";
 import { useOrientationRetention } from "@/lib/hooks/useOrientationRetention";
+import { useAssetDrag } from "@/lib/hooks/useAssetDrag";
 
 interface FilmstripProps {
   active: AssetSummary;
@@ -23,10 +24,11 @@ interface FilmstripProps {
   hasNextPage: boolean;
   isFetchingNextPage: boolean;
   onAssetContextMenu: (event: React.MouseEvent, asset: AssetSummary) => void;
+  onAssetDrag: (asset: AssetSummary) => void;
 }
 
 export const Filmstrip = memo(function Filmstrip({ active, assets, nearbyPreviewAssets, total, fetchNextPage,
-  hasNextPage, isFetchingNextPage, onAssetContextMenu }: FilmstripProps) {
+  hasNextPage, isFetchingNextPage, onAssetContextMenu, onAssetDrag }: FilmstripProps) {
   const select = useWorkspaceStore((state) => state.select);
   const selectRange = useWorkspaceStore((state) => state.selectRange);
   const selectedIds = useWorkspaceStore((state) => state.selectedIds);
@@ -174,6 +176,7 @@ export const Filmstrip = memo(function Filmstrip({ active, assets, nearbyPreview
                 selected={selectedIds.includes(asset.id)}
                 onSelect={handleSelect}
                 onContextMenu={onAssetContextMenu}
+                onAssetDrag={onAssetDrag}
                 rank={viewportRankById.get(asset.id)
                   ?? visibleFilmstripIds.length + Math.abs(item.index - activeIndex)}
                 showMetadata={loupeMetadataVisible}
@@ -195,6 +198,7 @@ interface FilmstripItemProps {
   selected: boolean;
   onSelect: (id: string, additive: boolean, range: boolean) => void;
   onContextMenu: (event: React.MouseEvent, asset: AssetSummary) => void;
+  onAssetDrag: (asset: AssetSummary) => void;
   rank: number;
   showMetadata: boolean;
   start: number;
@@ -208,12 +212,14 @@ const FilmstripItem = memo(function FilmstripItem({
   selected,
   onSelect,
   onContextMenu,
+  onAssetDrag,
   rank,
   showMetadata,
   start,
   size,
   visible,
 }: FilmstripItemProps) {
+  const drag = useAssetDrag(asset, onAssetDrag);
   const onClick = useCallback((event: React.MouseEvent) => {
     onSelect(asset.id, event.metaKey || event.ctrlKey, event.shiftKey);
   }, [onSelect, asset.id]);
@@ -228,6 +234,7 @@ const FilmstripItem = memo(function FilmstripItem({
   const tags = (tagsQuery.data ?? []).filter((assignment) => assignment.assignedCount > 0);
   return (
     <button
+      {...drag}
       data-filmstrip-asset-id={asset.id}
       className={`${selected ? "is-selected" : ""}${active ? " is-active" : ""}`}
       onClick={onClick}

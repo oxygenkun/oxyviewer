@@ -82,6 +82,7 @@ const render = async (active: AssetSummary) => {
         hasNextPage={false}
         isFetchingNextPage={false}
         onAssetContextMenu={vi.fn()}
+        onAssetDrag={vi.fn()}
       />
     </QueryClientProvider>,
   ));

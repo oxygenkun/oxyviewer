@@ -235,16 +235,28 @@ it("ignores small motion, cancelled gestures, right clicks, and browser demo dra
   expect(api.startAssetDrag).not.toHaveBeenCalled();
 });
 
-it("drags the current loupe original alone even when multiple grid photos were selected", async () => {
+it("drags a loupe filmstrip original without Alt even when multiple grid photos were selected", async () => {
   useWorkspaceStore.setState({ activeId: "a2", selectedIds: ["a0", "a2"] });
   await render("loupe");
-  const target = dragTarget(".loupe__render");
+  const target = dragTarget('[data-filmstrip-asset-id="a2"]');
   await pointer(target, "pointerdown", 10);
   await pointer(target, "pointermove", 20);
   expect(api.startAssetDrag).toHaveBeenCalledExactlyOnceWith(["/demo/a2.jpg"], "/demo/a2.jpg");
 });
 
-it("keeps zoomed loupe panning and uses Alt-drag to export the original", async () => {
+it("does not export from the fitted loupe image with or without Alt", async () => {
+  useWorkspaceStore.setState({ activeId: "a2", selectedIds: ["a2"] });
+  await render("loupe");
+  const target = dragTarget(".loupe__render");
+  for (const altKey of [false, true]) {
+    await pointer(target, "pointerdown", 10, { altKey });
+    await pointer(target, "pointermove", 20, { altKey });
+    await pointer(target, "pointerup", 20, { altKey });
+  }
+  expect(api.startAssetDrag).not.toHaveBeenCalled();
+});
+
+it("keeps zoomed loupe panning with or without Alt and exports only from the filmstrip", async () => {
   vi.stubGlobal("ResizeObserver", class extends ResizeObserverStub {
     constructor(private callback: () => void) { super(); }
     observe() { this.callback(); }
@@ -270,6 +282,12 @@ it("keeps zoomed loupe panning and uses Alt-drag to export the original", async 
     expect(stage.classList.contains("is-dragging")).toBe(false);
     await pointer(target, "pointerdown", 10, { altKey: true });
     await pointer(target, "pointermove", 20, { altKey: true });
+    expect(api.startAssetDrag).not.toHaveBeenCalled();
+    expect(stage.classList.contains("is-dragging")).toBe(true);
+    await pointer(target, "pointerup", 20, { altKey: true });
+    const filmstrip = dragTarget('[data-filmstrip-asset-id="a2"]');
+    await pointer(filmstrip, "pointerdown", 10);
+    await pointer(filmstrip, "pointermove", 20);
     expect(api.startAssetDrag).toHaveBeenCalledExactlyOnceWith(["/demo/a2.jpg"], "/demo/a2.jpg");
     expect(stage.classList.contains("is-dragging")).toBe(false);
   } finally {

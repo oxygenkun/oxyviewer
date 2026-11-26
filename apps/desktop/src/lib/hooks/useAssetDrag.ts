@@ -8,7 +8,6 @@ const DRAG_DISTANCE = 6;
 export function useAssetDrag(
   asset: AssetSummary,
   onDrag: (asset: AssetSummary) => void,
-  panInstead = false,
 ) {
   const gesture = useRef<{ pointerId: number; x: number; y: number; asset: AssetSummary } | undefined>(undefined);
   const suppressClick = useRef(false);
@@ -35,7 +34,7 @@ export function useAssetDrag(
     onPointerDown: (event: PointerEvent<HTMLElement>) => {
       suppressClick.current = false;
       if (!isTauri() || event.button !== 0 || event.isPrimary === false
-        || event.pointerType === "touch" || (panInstead && !event.altKey)) return;
+        || event.pointerType === "touch") return;
       const control = (event.target as HTMLElement).closest("button, input, textarea, select, [role='button']");
       if (control && control !== event.currentTarget) return;
       gesture.current = { pointerId: event.pointerId, x: event.clientX, y: event.clientY, asset };
