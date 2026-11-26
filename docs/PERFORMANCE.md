@@ -16,6 +16,19 @@ end-to-end regression harness that enforces these budgets is described in
 
 Refactoring guardrails and regression checks: [Performance invariants](PERFORMANCE_INVARIANTS.md).
 
+Loupe full-image predecode starts only after the selected image's presentation
+is ready. Settings → Media stores a maximum of 0–20 subsequent images (default
+2; 0 disables it), following the current browsing direction without wrapping.
+One speculative image runs at a time through the existing core full queue;
+preload admission captures the current selection epoch without selecting the
+neighbor. Selection changes cancel old work and reject late admission. RAW
+interim results do not advance the window. HEIF reuses the tile presentation
+and sharpening identity, including its retained browser drawable. Other formats
+retain decoded full artifacts in the existing bounded browser cache. The count
+limits work ahead, not guaranteed retained images: the 512 MiB pixel budget can
+evict large images sooner. Folder enumeration and thumbnail warming are unchanged.
+Release WebView/real-camera performance qualification for this behavior is pending.
+
 Sidecar markings and keywords are read directly by the metadata summary worker.
 After directory pages render, the frontend admits discovered sidecars in batches
 of at most 32, yielding 200 ms between batches at background priority. Visible,

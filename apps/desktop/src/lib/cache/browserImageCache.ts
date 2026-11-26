@@ -32,6 +32,7 @@ const readyImages = new Map<string, BrowserImageResource>();
 let activeResourceScope: string | undefined;
 let retainedDecodedBytes = 0;
 let protectedUrls = new Set<string>();
+let generation = 0;
 
 /** Prefer selected and nearby resources, while always respecting the hard budget. */
 export function protectBrowserImages(urls: readonly string[]): void {
@@ -133,6 +134,7 @@ export function markBrowserImageReady(
 
 /** Discards all retained resources in response to an explicit app update. */
 export function clearBrowserImageResources(): void {
+  generation += 1;
   clearFolderThumbnails();
   for (const resource of readyImages.values()) resource.release?.();
   readyImages.clear();
@@ -164,6 +166,7 @@ export function preloadBrowserImage(url: string, signal?: AbortSignal, resourceI
     return Promise.resolve();
   }
 
+  const requestGeneration = generation;
   return new Promise((resolve, reject) => {
     if (signal?.aborted) {
       reject(signal.reason ?? new DOMException("Aborted", "AbortError"));
@@ -186,6 +189,11 @@ export function preloadBrowserImage(url: string, signal?: AbortSignal, resourceI
         .catch(() => undefined)
         .then(() => {
           if (signal?.aborted) return;
+          if (requestGeneration !== generation) {
+            cleanup();
+            reject(new Error("Image preload was invalidated"));
+            return;
+          }
           markBrowserImageReady(url, {
             width: image.naturalWidth,
             height: image.naturalHeight,

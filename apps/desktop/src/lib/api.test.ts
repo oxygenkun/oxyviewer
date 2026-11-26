@@ -521,6 +521,7 @@ describe("HEIF full delivery", () => {
       path: asset.path,
       generation: 7,
       displaySharpening: false,
+      priority: "loupe",
     });
   });
 

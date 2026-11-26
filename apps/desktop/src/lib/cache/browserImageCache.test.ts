@@ -142,3 +142,29 @@ it("retains tiny decoded thumbnails without exhausting native artifact slots", (
   clearBrowserImageResources();
   expect(leaseMocks.release).toHaveBeenCalledTimes(count);
 });
+
+it("does not repopulate a cleared cache from a late browser decode", async () => {
+  const { preloadBrowserImage } = await import("./browserImageCache");
+  let decoded!: () => void;
+  let image!: { onload?: () => void };
+  class DeferredImage {
+    naturalWidth = 100;
+    naturalHeight = 100;
+    src = "";
+    onload?: () => void;
+    constructor() { image = this; }
+    decode() { return new Promise<void>((resolve) => { decoded = resolve; }); }
+  }
+  vi.stubGlobal("Image", DeferredImage);
+  try {
+    const loading = preloadBrowserImage("late:full");
+    const rejected = expect(loading).rejects.toThrow("invalidated");
+    image.onload!();
+    clearBrowserImageResources();
+    decoded();
+    await rejected;
+    expect(isBrowserImageReady("late:full")).toBe(false);
+  } finally {
+    vi.unstubAllGlobals();
+  }
+});

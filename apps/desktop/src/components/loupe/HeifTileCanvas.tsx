@@ -20,6 +20,7 @@ import type {
   HeifStatusEvent,
   HeifTileReady,
   PreviewResult,
+  PreviewPriority,
 } from "@/types";
 
 let nextGeneration = 0;
@@ -28,6 +29,8 @@ interface HeifTileCanvasProps {
   asset: AssetSummary;
   displaySharpening: boolean;
   onArtifactDisplayed?: () => void;
+  onPresentationReady?: () => void;
+  priority?: PreviewPriority;
   onImageSize: (size: { width: number; height: number }) => void;
   previewDisplaySize?: { width: number; height: number };
   onStatus: (status: HeifDecodeStatus, diagnostics?: HeifDiagnostics) => void;
@@ -37,6 +40,8 @@ export function HeifTileCanvas({
   asset,
   displaySharpening,
   onArtifactDisplayed,
+  onPresentationReady,
+  priority = "loupe",
   onImageSize,
   previewDisplaySize,
   onStatus,
@@ -72,8 +77,9 @@ export function HeifTileCanvas({
     onImageSize({ width, height });
     onStatus("complete");
     onArtifactDisplayed?.();
+    onPresentationReady?.();
     return () => { if (image.parentElement === host) image.remove(); };
-  }, [asset.name, memoryKey, onImageSize, onStatus, onArtifactDisplayed]);
+  }, [asset.name, memoryKey, onImageSize, onStatus, onArtifactDisplayed, onPresentationReady]);
   const [cachedImage, setCachedImage] = useState<{
     identity: string;
     result: PreviewResult;
@@ -120,7 +126,7 @@ export function HeifTileCanvas({
       ? beginPreviewDebug({
           assetName: asset.name,
           stage: "heif-full-session",
-          priority: "loupe",
+          priority,
         })
       : undefined;
     if (__OXY_DEBUG__) debug?.start();
@@ -176,6 +182,7 @@ export function HeifTileCanvas({
         perfMark("heif:all-tiles-painted", { assetName: asset.name, ...completed });
         debug?.mark("all-tiles-painted", completed);
         if (progress?.snapshot().failed) {
+          onStatus("failed");
           debug?.fail(new Error("one or more HEIF tiles failed to draw"), completed);
         } else {
           const canvas = canvasRef.current;
@@ -189,6 +196,7 @@ export function HeifTileCanvas({
           setDisplayedCachedImage(undefined);
           setCachedImage(undefined);
           debug?.complete(completed);
+          onPresentationReady?.();
         }
       });
     };
@@ -367,6 +375,7 @@ export function HeifTileCanvas({
         generation,
         displaySharpening,
         tileRequests.signal,
+        priority,
       );
       if (presentation.delivery === "artifact") {
         const result = presentation.result;
@@ -447,6 +456,8 @@ export function HeifTileCanvas({
     };
   }, [
     recovery,
+    priority,
+    onPresentationReady,
     asset.id,
     asset.modifiedAtMs,
     asset.path,
@@ -484,6 +495,7 @@ export function HeifTileCanvas({
         onImageSize({ width: pendingCachedImage.width, height: pendingCachedImage.height });
         onStatus("complete");
         onArtifactDisplayed?.();
+        onPresentationReady?.();
         perfMark("image:loaded", {
           assetName: asset.name,
           large: true,

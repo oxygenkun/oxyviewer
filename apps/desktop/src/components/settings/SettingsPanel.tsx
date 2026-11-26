@@ -34,7 +34,7 @@ import {
   validCacheLimitGb,
 } from "@/lib/cache/cacheSettings";
 import type { Locale, MessageKey } from "@/lib/i18n";
-import { UI_FONT_SCALES } from "@/lib/browse/workspacePersistence";
+import { MAX_FULL_PREDECODE_COUNT, UI_FONT_SCALES } from "@/lib/browse/workspacePersistence";
 import { useWorkspaceStore } from "@/store";
 import { RawDecoderPanel } from "./RawDecoderPanel";
 import { AboutSettings } from "./AboutSettings";
@@ -59,6 +59,8 @@ export function SettingsPanel({ t, activeAsset }: SettingsPanelProps) {
   const previousFocus = useRef<HTMLElement | null>(null);
   const {
     displaySharpening,
+    fullPredecodeCount,
+    setFullPredecodeCount,
     gridMetadataVisible,
     locale,
     loupeMetadataVisible,
@@ -264,6 +266,12 @@ export function SettingsPanel({ t, activeAsset }: SettingsPanelProps) {
             </> : null}
 
             {settingsSection === "media" ? <>
+              <section className="settings-panel__section">
+                <Field label={t("fullPredecodeCount")} id="full-predecode-count" type="number"
+                  min={0} max={MAX_FULL_PREDECODE_COUNT} step={1} value={fullPredecodeCount}
+                  onChange={(event) => setFullPredecodeCount(Number(event.target.value))} />
+                <p className="settings-panel__hint">{t("fullPredecodeHint")}</p>
+              </section>
               <section className="settings-panel__section settings-panel__section--storage">
                 <div className="settings-panel__section-heading">
                   <span className="settings-panel__label">{t("previewCache")}</span>

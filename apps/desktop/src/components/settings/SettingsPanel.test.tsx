@@ -158,3 +158,16 @@ it("hides the active people module, persists the choice, and requires explicit r
   await act(async () => useWorkspaceStore.getState().setPeopleMode(true));
   expect(useWorkspaceStore.getState().peopleMode).toBe(true);
 });
+
+it("persists and bounds the full-image predecode limit, including disabling it", async () => {
+  await clickTab("媒体");
+  const { loadFullPredecodeCount } = await import("@/lib/browse/workspacePersistence");
+  await act(async () => useWorkspaceStore.getState().setFullPredecodeCount(4));
+  expect(document.querySelector<HTMLInputElement>("#full-predecode-count")?.value).toBe("4");
+  expect(loadFullPredecodeCount()).toBe(4);
+  await act(async () => useWorkspaceStore.getState().setFullPredecodeCount(0));
+  expect(loadFullPredecodeCount()).toBe(0);
+  await act(async () => useWorkspaceStore.getState().setFullPredecodeCount(999));
+  expect(loadFullPredecodeCount()).toBe(20);
+  await act(async () => useWorkspaceStore.getState().setFullPredecodeCount(2));
+});

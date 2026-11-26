@@ -48,6 +48,8 @@ import { useWorkspaceStore } from "@/store";
 import type { AssetSummary, HeifDecodeStatus, NavigatorPosition } from "@/types";
 import { AssetMetadataBadges } from "@/components/common/AssetMetadataBadges";
 import { Filmstrip } from "@/components/browsing/Filmstrip";
+import { useImageProjectionStore } from "@/lib/projection/imageProjection";
+import { LoupePredecoder } from "./LoupePredecoder";
 import { HeifTileCanvas } from "./HeifTileCanvas";
 import { Thumbnail } from "@/components/browsing/Thumbnail";
 import { ResizeHandle } from "@/components/browsing/ResizeHandle";
@@ -105,6 +107,8 @@ export function Loupe({
   onAssetDrag,
   t,
 }: LoupeProps) {
+  const imageGeneration = useImageProjectionStore((state) => state.generation);
+  const fullPredecodeCount = useWorkspaceStore((state) => state.fullPredecodeCount);
   const activeId = useWorkspaceStore((state) => state.activeId);
   const select = useWorkspaceStore((state) => state.select);
   const navigatorVisible = useWorkspaceStore((state) => state.navigatorVisible);
@@ -144,9 +148,12 @@ export function Loupe({
   const [heifFullSize, setHeifFullSize] = useState<{ assetId: string; size: Size } | undefined>(undefined);
   const [rawPreviewStatus, setRawPreviewStatus] = useState<RawPreviewStatus>({ state: "loadingPreview" });
   const [displayedHeifArtifact, setDisplayedHeifArtifact] = useState<string>();
-  const heifPresentationIdentity = `${active.id}:${active.modifiedAtMs}:${displaySharpening}`;
+  const heifPresentationIdentity = `${active.id}:${active.modifiedAtMs}:${displaySharpening}:${imageGeneration}`;
   const handleHeifArtifactDisplayed = useCallback(() => setDisplayedHeifArtifact(heifPresentationIdentity), [heifPresentationIdentity]);
   const [heifStatus, setHeifStatus] = useState<HeifDecodeStatus | "probing">("probing");
+  const decodeIdentity = `${active.id}:${active.modifiedAtMs}:${displaySharpening}:${imageGeneration}`;
+  const [fullyDecoded, setFullyDecoded] = useState<string>();
+  const handleFullReady = useCallback(() => setFullyDecoded(decodeIdentity), [decodeIdentity]);
   const details = useQuery({
     queryKey: ["asset-details", active.id],
     queryFn: () => getAssetDetails(active),
@@ -360,6 +367,10 @@ export function Loupe({
     [0, navigation.direction, -navigation.direction, 2 * navigation.direction, -2 * navigation.direction]
       .flatMap((delta) => assets[activeIndex + delta] ?? [])
   ), [activeIndex, assets, navigation.direction]);
+  const predecodeAssets = useMemo(() => activeIndex < 0 ? [] : (
+    Array.from({ length: fullPredecodeCount }, (_, index) => assets[activeIndex + (index + 1) * navigation.direction])
+      .filter((asset): asset is AssetSummary => Boolean(asset))
+  ), [activeIndex, assets, fullPredecodeCount, navigation.direction]);
   const handleWheel = useCallback((event: React.WheelEvent<HTMLDivElement>) => {
     if ((event.target as HTMLElement).closest(".loupe__controls, .loupe__navigator, .loupe__settings")) return;
     event.preventDefault();
@@ -496,22 +507,24 @@ export function Loupe({
             }}
           >
             {displayedHeifArtifact !== heifPresentationIdentity ? <Thumbnail
-              key={`thumbnail:${active.id}`}
+              key={`thumbnail:${active.id}:${imageGeneration}`}
               asset={active}
               large
               onImageLoad={handleImageLoad}
+              onFullReady={handleFullReady}
               onRawPreviewStatus={active.kind === "heif"
                 ? handleHeifPreviewStatus
                 : setRawPreviewStatus}
             /> : null}
             {heifUsesFullPresentation ? (
               <HeifTileCanvas
-                key={`heif:${active.id}`}
+                key={`heif:${active.id}:${imageGeneration}`}
                 asset={active}
                 displaySharpening={displaySharpening}
                 onImageSize={handleHeifImageSize}
                 previewDisplaySize={currentNaturalSize?.geometry?.displaySize}
                 onArtifactDisplayed={handleHeifArtifactDisplayed}
+                onPresentationReady={handleFullReady}
                 onStatus={setHeifStatus}
               />
             ) : null}
@@ -682,6 +695,7 @@ export function Loupe({
         targetRef={loupeRef}
         value={filmstripHeight}
       />
+      <LoupePredecoder key={decodeIdentity} assets={predecodeAssets} ready={fullyDecoded === decodeIdentity} displaySharpening={displaySharpening} />
       <Filmstrip active={active} assets={assets} nearbyPreviewAssets={nearbyPreviewAssets} total={total}
         fetchNextPage={fetchNextPage} hasNextPage={hasNextPage} isFetchingNextPage={isFetchingNextPage}
         onAssetContextMenu={onAssetContextMenu} onAssetDrag={onAssetDrag} />

@@ -1280,6 +1280,7 @@ export async function startHeifFull(
   generation: number,
   displaySharpening: boolean,
   signal?: AbortSignal,
+  priority: PreviewPriority = "loupe",
 ): Promise<
   | { delivery: "artifact"; projection: ImageProjection; result: PreviewResult }
   | Extract<HeifFullPresentation, { delivery: "tiles" }>
@@ -1293,7 +1294,7 @@ export async function startHeifFull(
   signal?.addEventListener("abort", cancel, { once: true });
   try {
     const presentation = await invoke<HeifFullPresentation>("start_heif_full", {
-      requestId, path, generation, displaySharpening,
+      requestId, path, generation, displaySharpening, priority,
     });
     if (signal?.aborted) {
       if (presentation.delivery === "artifact") {

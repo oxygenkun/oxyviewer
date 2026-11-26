@@ -17,6 +17,7 @@ pub struct HeifFullInput {
     pub path: PathBuf,
     pub generation: u64,
     pub display_sharpening: bool,
+    pub priority: PreviewPriority,
 }
 
 pub struct PreparedHeifFull {
@@ -30,7 +31,9 @@ impl ResourceService {
         if self.runtime.is_stopping() {
             return Err("application is shutting down".into());
         }
-        let selection = self.queue.select_full(&input.path);
+        let selection = self
+            .queue
+            .full_request_selection(&input.path, input.priority)?;
         Ok(PreparedHeifFull { input, selection })
     }
 
@@ -45,6 +48,7 @@ impl ResourceService {
             path,
             generation,
             display_sharpening,
+            priority,
         } = input;
         let asset = self.files.get_asset(&path).map_err(|e| e.to_string())?;
         if asset.kind != AssetKind::Heif {
@@ -73,7 +77,7 @@ impl ResourceService {
                     path: asset.path,
                     preview_dir,
                     level: RenderLevel::Full,
-                    priority: PreviewPriority::Loupe,
+                    priority,
                     rank: 0,
                 },
                 cross_folder: false,
@@ -208,6 +212,7 @@ mod tests {
             path: path.clone(),
             generation: 77,
             display_sharpening: true,
+            priority: PreviewPriority::Loupe,
         };
         let prepared = app
             .resource_service

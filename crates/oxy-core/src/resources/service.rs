@@ -45,8 +45,12 @@ impl ResourceService {
         if self.runtime.is_stopping() {
             return Err("application is shutting down".into());
         }
-        let selection =
-            (input.level == RenderLevel::Full).then(|| self.queue.select_full(&input.path));
+        let selection = (input.level == RenderLevel::Full)
+            .then(|| {
+                self.queue
+                    .full_request_selection(&input.path, input.priority)
+            })
+            .transpose()?;
         Ok(PreparedPreview {
             request: PreviewRequest {
                 selection,
@@ -158,6 +162,79 @@ mod tests {
     use super::*;
     use crate::{AppPaths, OxyApp};
     use std::time::Duration;
+
+    #[test]
+    fn background_full_admission_preserves_selection_and_rejects_late_work() {
+        let directory = tempfile::tempdir().unwrap();
+        let (app, _) = OxyApp::open(AppPaths {
+            data_dir: directory.path().join("data"),
+            preview_dir: directory.path().join("previews"),
+        })
+        .unwrap();
+        let selected = directory.path().join("selected.jpg");
+        let neighbor = directory.path().join("neighbor.jpg");
+        std::fs::write(&selected, b"selected source").unwrap();
+        std::fs::write(&neighbor, b"neighbor source").unwrap();
+        let input = |path, priority| PreviewInput {
+            request_id: "request".into(),
+            path,
+            level: RenderLevel::Full,
+            priority,
+            rank: 0,
+            cross_folder: false,
+        };
+        assert!(
+            app.resource_service
+                .prepare_preview(input(neighbor.clone(), PreviewPriority::Preload))
+                .is_err()
+        );
+        let foreground = app
+            .resource_service
+            .prepare_preview(input(selected.clone(), PreviewPriority::Loupe))
+            .unwrap();
+        let background = app
+            .resource_service
+            .prepare_preview(input(neighbor.clone(), PreviewPriority::Preload))
+            .unwrap();
+        assert_eq!(foreground.request.selection, background.request.selection);
+        let heif_background = app
+            .resource_service
+            .prepare_heif_full(HeifFullInput {
+                request_id: "heif-background".into(),
+                path: neighbor,
+                generation: 1,
+                display_sharpening: true,
+                priority: PreviewPriority::Preload,
+            })
+            .unwrap();
+        // Preparing a HEIF neighbor must not replace the selected image either.
+        let still_selected = app
+            .resource_service
+            .prepare_preview(input(selected, PreviewPriority::Loupe))
+            .unwrap();
+        assert_eq!(
+            foreground.request.selection,
+            still_selected.request.selection
+        );
+        app.resource_service
+            .prepare_preview(input(
+                directory.path().join("next.jpg"),
+                PreviewPriority::Loupe,
+            ))
+            .unwrap();
+        assert!(
+            app.resource_service
+                .resolve_preview(background)
+                .unwrap_err()
+                .contains("selection")
+        );
+        assert!(
+            app.resource_service
+                .resolve_heif_full(heif_background)
+                .is_err()
+        );
+        assert!(app.shutdown(Duration::from_secs(3)));
+    }
 
     #[test]
     fn prepared_full_preview_keeps_selection_order_before_blocking_dispatch() {

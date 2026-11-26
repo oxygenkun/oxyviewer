@@ -145,6 +145,7 @@ pub(crate) async fn start_heif_full(
     path: PathBuf,
     generation: u64,
     display_sharpening: bool,
+    priority: Option<PreviewPriority>,
     state: State<'_, AppState>,
 ) -> Result<HeifFullPresentation, String> {
     let service = state.resource_service.clone();
@@ -153,6 +154,7 @@ pub(crate) async fn start_heif_full(
         path,
         generation,
         display_sharpening,
+        priority: priority.unwrap_or(PreviewPriority::Loupe),
     })?;
     tauri::async_runtime::spawn_blocking(move || service.resolve_heif_full(prepared))
         .await

@@ -15,6 +15,7 @@ export interface ImageProjectionMirror extends Omit<ImageProjection, "result"> {
 }
 
 interface ImageProjectionState {
+  generation: number;
   records: Record<string, ImageProjectionMirror>;
   accept: (projection: ImageProjection) => void;
   invalidateDirectory: (directory: string) => void;
@@ -32,6 +33,7 @@ function projectionResultUrl(result: NativePreviewResult): string {
 }
 
 export const useImageProjectionStore = create<ImageProjectionState>((set) => ({
+  generation: 0,
   records: {},
   accept: (projection) => set((state) => {
     const key = imageProjectionKey(projection.path, projection.level);
@@ -56,13 +58,14 @@ export const useImageProjectionStore = create<ImageProjectionState>((set) => ({
   invalidateDirectory: (directory) => set((state) => {
     const normalized = directory.replace(/[\\/]+$/, "").toLocaleLowerCase();
     return {
+      generation: state.generation + 1,
       records: Object.fromEntries(Object.entries(state.records).filter(([, projection]) => {
         const parent = projection.path.replace(/[\\/][^\\/]+$/, "").toLocaleLowerCase();
         return parent !== normalized;
       })),
     };
   }),
-  clear: () => set({ records: {} }),
+  clear: () => set((state) => ({ records: {}, generation: state.generation + 1 })),
 }));
 
 export function acceptImageProjection(projection: ImageProjection) {

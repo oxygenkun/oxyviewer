@@ -434,6 +434,28 @@ impl PreviewQueue {
         epoch
     }
 
+    /// Background full work belongs to the current selection, without changing it.
+    pub fn full_request_selection(
+        &self,
+        path: &std::path::Path,
+        priority: PreviewPriority,
+    ) -> Result<u64, String> {
+        if priority != PreviewPriority::Preload {
+            return Ok(self.select_full(path));
+        }
+        let work = self
+            .loupe
+            .work
+            .0
+            .lock()
+            .expect("preview queue lock poisoned");
+        work.check_selection(None)?;
+        work.selection
+            .as_ref()
+            .map(|(_, epoch)| *epoch)
+            .ok_or_else(|| "background full request requires an active selection".into())
+    }
+
     pub fn check_full_selection(&self, epoch: u64, request_id: &str) -> Result<(), String> {
         let mut work = self
             .loupe

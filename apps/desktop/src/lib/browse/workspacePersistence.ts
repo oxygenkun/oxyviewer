@@ -292,3 +292,30 @@ export function saveMetadataVisibility(
     // Display preferences must never prevent the viewer from opening.
   }
 }
+
+
+export const MAX_FULL_PREDECODE_COUNT = 20;
+const FULL_PREDECODE_KEY = "oxyviewer.full-predecode-count.v1";
+
+export function normalizeFullPredecodeCount(value: number): number {
+  return Number.isFinite(value) ? Math.min(MAX_FULL_PREDECODE_COUNT, Math.max(0, Math.trunc(value))) : 2;
+}
+
+export function loadFullPredecodeCount(storage?: StorageLike): number {
+  try {
+    const resolved = storage ?? (typeof window === "undefined" ? undefined : window.localStorage);
+    const stored = resolved?.getItem(FULL_PREDECODE_KEY);
+    return stored == null ? 2 : normalizeFullPredecodeCount(Number(stored));
+  } catch {
+    return 2;
+  }
+}
+
+export function saveFullPredecodeCount(count: number, storage?: StorageLike): void {
+  try {
+    const resolved = storage ?? (typeof window === "undefined" ? undefined : window.localStorage);
+    resolved?.setItem(FULL_PREDECODE_KEY, String(normalizeFullPredecodeCount(count)));
+  } catch {
+    // Preferences must never prevent the viewer from opening.
+  }
+}

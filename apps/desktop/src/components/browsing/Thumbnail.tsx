@@ -45,6 +45,7 @@ interface ThumbnailProps {
   rank?: number;
   onContextMenu?: React.MouseEventHandler<HTMLDivElement>;
   onImageLoad?: (size: DisplayedPreviewSize) => void;
+  onFullReady?: () => void;
   onRawPreviewStatus?: (status: RawPreviewStatus) => void;
   onPreviewError?: (error: string | undefined) => void;
 }
@@ -78,6 +79,7 @@ export function Thumbnail({
   rank = 0,
   onContextMenu,
   onImageLoad,
+  onFullReady,
   onRawPreviewStatus,
   onPreviewError,
 }: ThumbnailProps) {
@@ -402,6 +404,14 @@ export function Thumbnail({
       setLoaded({ assetId: asset.id, mode: "full" });
     }
   }, [asset.id, fullSource?.path, fullSource?.satisfaction, loaded, previewSource?.path]);
+
+  useEffect(() => {
+    if (!large || !visibleImage || !onFullReady) return;
+    if (directSource === visibleImage.source
+      || (fullSource?.url === visibleImage.source && fullSource.satisfaction !== "interim")) {
+      onFullReady();
+    }
+  }, [large, visibleImage, fullSource, directSource, onFullReady]);
 
   useEffect(() => {
     // Windows/Linux HEIF status is owned by the tile canvas. macOS HEIF and

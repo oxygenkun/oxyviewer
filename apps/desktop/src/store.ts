@@ -14,6 +14,9 @@ import {
 } from "@/lib/ui/shortcuts";
 import {
   loadFocusAreasVisible,
+  loadFullPredecodeCount,
+  saveFullPredecodeCount,
+  normalizeFullPredecodeCount,
   loadLayoutSize,
   loadLoupeControlsAutoHide,
   loadMetadataVisibility,
@@ -62,6 +65,8 @@ interface WorkspaceState {
   loupeMetadataVisible: boolean;
   loupeControlsAutoHide: boolean;
   uiFontScale: UiFontScale;
+  fullPredecodeCount: number;
+  setFullPredecodeCount: (count: number) => void;
   leftPanelWidth: number;
   inspectorWidth: number;
   filmstripHeight: number;
@@ -144,6 +149,12 @@ export const useWorkspaceStore = create<WorkspaceState>((set) => ({
   loupeMetadataVisible: loadMetadataVisibility("loupe"),
   loupeControlsAutoHide: loadLoupeControlsAutoHide(),
   uiFontScale: loadUiFontScale(),
+  fullPredecodeCount: loadFullPredecodeCount(),
+  setFullPredecodeCount: (count) => {
+    const fullPredecodeCount = normalizeFullPredecodeCount(count);
+    saveFullPredecodeCount(fullPredecodeCount);
+    set({ fullPredecodeCount });
+  },
   leftPanelWidth: loadLayoutSize("leftPanel"),
   inspectorWidth: loadLayoutSize("inspector"),
   filmstripHeight: loadLayoutSize("filmstrip"),
