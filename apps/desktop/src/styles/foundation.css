@@ -72,6 +72,7 @@
   --danger-surface: rgb(255 69 58 / 12%);
   --danger-hover: rgb(255 69 58 / 20%);
   /* Root-level overlays only; local canvas/thumbnail stacking stays local. */
+  --layer-guide: 15;
   --layer-settings: 20;
   --layer-menu: 3100;
   --layer-tooltip: 1000;

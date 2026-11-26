@@ -17,8 +17,6 @@
   .sidebar__heading { height: auto; min-height: 28px; flex-wrap: wrap; gap: 4px; padding-inline: 0; }
   .sidebar__heading-actions { min-width: 0; flex-wrap: wrap; }
   .sidebar__library-prompt, .sidebar__folder-prompt { padding-inline: 4px; overflow-wrap: anywhere; }
-  .folder-coach { top: 76px; padding: 8px; }
-  .folder-coach > div { flex-wrap: wrap; }
   .toolbar { gap: 6px; padding-inline: 8px; }
   .filterbar { padding-inline: 8px; }
   .statusbar { gap: 6px; padding-inline: 8px; }

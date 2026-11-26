@@ -55,7 +55,7 @@ export function Toolbar({ total, loading, t }: ToolbarProps) {
   return (
     <>
       <header className="toolbar">
-        <button className="icon-button" title={t("collapse")} aria-pressed={leftPanelOpen} onClick={toggleLeftPanel}>
+        <button className="icon-button" data-guide-anchor="sidebar" title={t("collapse")} aria-pressed={leftPanelOpen} onClick={toggleLeftPanel}>
           {leftPanelOpen ? <PanelLeftClose size={16} /> : <PanelLeftOpen size={16} />}
         </button>
         <WorkspaceSearch t={t} />
@@ -64,6 +64,7 @@ export function Toolbar({ total, loading, t }: ToolbarProps) {
             {views.map(([mode, Icon, label]) => (
               <button
                 key={mode}
+                data-guide-anchor={mode}
                 className={view === mode ? "is-active" : ""}
                 onClick={() => setView(mode)}
                 title={t(label)}
@@ -74,7 +75,7 @@ export function Toolbar({ total, loading, t }: ToolbarProps) {
               </button>
             ))}
           </div>
-          <button className="icon-button" onClick={toggleInspector} aria-pressed={inspectorOpen} title={t("inspector")}>
+          <button className="icon-button" data-guide-anchor="inspector-toggle" onClick={toggleInspector} aria-pressed={inspectorOpen} title={t("inspector")}>
             {inspectorOpen ? <PanelRightClose size={16} /> : <PanelRightOpen size={16} />}
           </button>
         </div>

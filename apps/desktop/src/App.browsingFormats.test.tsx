@@ -6,7 +6,7 @@ import { expect, it, vi } from "vitest";
 import { App } from "./App";
 import { listAssets, listLibraryRoots } from "@/lib/api";
 import { filterAndSortAssets } from "@/lib/assets/assetFiltering";
-import { completeFolderOnboarding } from "@/lib/browse/workspacePersistence";
+import { saveFolderOnboarding } from "@/lib/browse/workspacePersistence";
 import type { RawPreviewStatus } from "@/lib/media/rawPreview";
 import { useWorkspaceStore } from "@/store";
 import type { AssetSummary } from "@/types";
@@ -48,7 +48,7 @@ it("shares mixed-format results and metadata filters between Grid and Loupe", as
     const items = filterAndSortAssets(assets, query);
     return { items, total: items.length };
   });
-  completeFolderOnboarding();
+  saveFolderOnboarding("done");
   const initialState = useWorkspaceStore.getState();
   useWorkspaceStore.setState({ locale: "en", view: "grid", search: "image", minimumRating: 3 });
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });

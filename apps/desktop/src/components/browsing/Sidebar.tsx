@@ -60,7 +60,6 @@ interface SidebarProps {
   onRelocateRoot: (plan: RootRelocationPlan) => Promise<void>;
   activeSession?: FolderSession;
   currentPath?: string;
-  showOnboarding: boolean;
   onOpen: () => void;
   onNavigate: (session: FolderSession, path: string) => void;
   onRemove: (session: FolderSession) => void;
@@ -69,7 +68,6 @@ interface SidebarProps {
   onOpenInFileManager: (path: string) => void;
   onRefresh: () => void;
   isRefreshing: boolean;
-  onDismissOnboarding: () => void;
   onSettings: () => void;
   folderSort: FolderSort;
   onFolderSortChange: (sort: FolderSort) => void;
@@ -290,7 +288,6 @@ export function Sidebar({
   activeSession,
   currentPath,
   revealRequest,
-  showOnboarding,
   onOpen,
   onNavigate,
   onRemove,
@@ -299,7 +296,6 @@ export function Sidebar({
   onOpenInFileManager,
   onRefresh,
   isRefreshing,
-  onDismissOnboarding,
   onSettings,
   folderSort,
   onFolderSortChange,
@@ -709,7 +705,7 @@ export function Sidebar({
         }}
       /> : null}
 
-      <div className={`sidebar__section sidebar__folders ${showOnboarding ? "is-guided" : ""} ${peopleMode && !peopleFoldersOpen ? "person-folders-collapsed" : ""}`}>
+      <div className={`sidebar__section sidebar__folders ${peopleMode && !peopleFoldersOpen ? "person-folders-collapsed" : ""}`}>
         <div className="sidebar__heading">
           {peopleMode ? <button className="person-folder-toggle" onClick={() => setPeopleFoldersOpen((value) => !value)}>{peopleFoldersOpen ? "▾" : "▸"} {t("folders")} · {currentPath?.split(/[\\/]/).at(-1) ?? "—"}</button> : <span>{t("folders")}</span>}
           <div className="sidebar__heading-actions">
@@ -746,7 +742,7 @@ export function Sidebar({
             >
               <RefreshCw className={isRefreshing ? "tree-row__loader" : undefined} size={13} />
             </button>
-            <button className="sidebar__add-folder" title={t("openFolder")} onClick={onOpen}>
+            <button className="sidebar__add-folder" data-guide-anchor="folder" title={t("openFolder")} onClick={onOpen}>
               <Plus size={14} />
             </button>
             <FolderSettingsMenu open={sortMenuOpen} onOpenChange={setSortMenuOpen}
@@ -987,17 +983,6 @@ export function Sidebar({
 
         </div>
 
-        {showOnboarding ? (
-          <div className="folder-coach" role="dialog" aria-label={t("firstRunTitle")}>
-            <span className="folder-coach__pointer" />
-            <strong>{t("firstRunTitle")}</strong>
-            <p>{t("firstRunBody")}</p>
-            <div>
-              <button onClick={onDismissOnboarding}>{t("gotIt")}</button>
-              <button className="folder-coach__action" onClick={onOpen}>{t("chooseFolder")}</button>
-            </div>
-          </div>
-        ) : null}
       </div>
 
       <div className="sidebar__bottom">

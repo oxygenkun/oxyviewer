@@ -73,6 +73,9 @@ the current rating or filter value.
 - Settings uses the existing Radix Dialog dependency for focus containment,
   Escape dismissal and focus restoration. Arrow keys, Home and End navigate its
   tabs. Existing shared dialogs and menus retain their keyboard behavior.
+- The getting-started guide uses nonmodal callouts anchored to the sidebar add
+  button, Grid, Loupe, and the Inspector. Settings → General → Reset tips replays
+  the sequence. With an open folder, Next advances past the add-folder step.
 
 ## Acceptance
 

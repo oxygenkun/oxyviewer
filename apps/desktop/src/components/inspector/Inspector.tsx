@@ -102,7 +102,7 @@ export function Inspector({ asset, selectedPaths, t }: InspectorProps) {
   const capture = details.data?.captureMetadata;
 
   return (
-    <aside className="inspector" aria-label={t("inspector")}>
+    <aside className="inspector" data-guide-anchor="inspector" aria-label={t("inspector")}>
       <div className="inspector__body">
         <TagSyncIndicator t={t} />
         {!asset ? (

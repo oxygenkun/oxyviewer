@@ -2,6 +2,7 @@
   container-type: inline-size;
   position: relative;
   display: grid;
+  grid-template-columns: minmax(0, 1fr);
   grid-template-rows: 52px 44px minmax(0, 1fr) 28px;
   min-width: 0;
   min-height: 0;
@@ -17,7 +18,7 @@
   color: var(--faint);
   background: var(--panel);
 }
-.workspace-empty svg { margin-bottom: 5px; color: var(--faint); }
+.workspace-empty > svg { margin-bottom: 5px; color: var(--faint); }
 .workspace-empty strong { color: var(--text); font-size: 0.75rem; }
 .workspace-empty span { max-width: 300px; font-size: var(--font-size-small); line-height: 1.6; text-align: center; }
 .toolbar {
@@ -92,7 +93,7 @@
 .search-result-announcement { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
 .search-field__token, .search-field__suggestions { font-size: 0.6875rem; }
 .filterbar > div { flex-shrink: 0; }
-.workspace-empty button { min-height: 28px; padding: 4px 10px; border: 1px solid var(--line); border-radius: var(--radius-control); color: var(--text); background: var(--panel); font-size: 0.6875rem; }
+.workspace-empty > button:not(.ui-button) { min-height: 28px; padding: 4px 10px; border: 1px solid var(--line); border-radius: var(--radius-control); color: var(--text); background: var(--panel); font-size: 0.6875rem; }
 @container (max-width: 600px) {
   .search-field kbd { display: none; }
   .search-field > .search-field__token { max-width: 70px; }

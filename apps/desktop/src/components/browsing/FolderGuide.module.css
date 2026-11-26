@@ -1,0 +1,30 @@
+.guide {
+  position: fixed;
+  z-index: var(--layer-guide);
+  width: min(20rem, calc(100vw - 24px));
+  padding: 12px;
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius);
+  background: var(--panel-raised);
+  box-shadow: var(--popover-shadow);
+}
+.guide:not([data-placement]) { visibility: hidden; }
+
+.guide::before {
+  position: absolute;
+  width: 10px;
+  height: 10px;
+  border: solid var(--line-strong);
+  background: inherit;
+  transform: rotate(45deg);
+  pointer-events: none;
+  content: "";
+}
+.guide[data-placement="below"]::before { top: -6px; left: calc(var(--guide-arrow) - 5px); border-width: 1px 0 0 1px; }
+.guide[data-placement="above"]::before { bottom: -6px; left: calc(var(--guide-arrow) - 5px); border-width: 0 1px 1px 0; }
+.guide[data-placement="left"]::before { top: 18px; right: -6px; border-width: 1px 1px 0 0; }
+.guide[data-placement="unanchored"]::before { display: none; }
+
+.guide h2 { margin: 0; font-size: var(--font-size-title); }
+.guide p { margin: 6px 0 12px; color: var(--muted); font-size: var(--font-size-body); line-height: 1.5; }
+.actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: var(--space-2); }

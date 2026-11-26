@@ -45,6 +45,7 @@ import type { AssetSummary } from "@/types";
 interface SettingsPanelProps {
   t: (key: MessageKey) => string;
   activeAsset?: AssetSummary;
+  onResetFolderGuide: () => void;
 }
 
 const languages: { value: Locale; label: string }[] = [
@@ -52,7 +53,7 @@ const languages: { value: Locale; label: string }[] = [
   { value: "en", label: "English" },
 ];
 
-export function SettingsPanel({ t, activeAsset }: SettingsPanelProps) {
+export function SettingsPanel({ t, activeAsset, onResetFolderGuide }: SettingsPanelProps) {
   const queryClient = useQueryClient();
   const [limitGb, setLimitGb] = useState(10);
   const [clearArmed, setClearArmed] = useState(false);
@@ -237,6 +238,13 @@ export function SettingsPanel({ t, activeAsset }: SettingsPanelProps) {
                 <div className="settings-panel__theme-row">
                   <span className="settings-panel__theme-swatch settings-panel__theme-swatch--dark" />
                   <span>{t("theme")}</span><small>Dark</small>
+                </div>
+              </section>
+              <section className="settings-panel__section">
+                <span className="settings-panel__label">{t("folderGuideSettings")}</span>
+                <p className="settings-panel__hint">{t("resetFolderGuideHint")}</p>
+                <div className="settings-panel__options">
+                  <Button onClick={onResetFolderGuide}><RotateCcw size={14} />{t("resetFolderGuide")}</Button>
                 </div>
               </section>
             </> : null}

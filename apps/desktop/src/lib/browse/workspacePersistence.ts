@@ -109,12 +109,28 @@ export function recoverMissingCurrentDirectory(
   };
 }
 
-export function hasSeenFolderOnboarding(storage: StorageLike = window.localStorage): boolean {
-  return storage.getItem(ONBOARDING_KEY) === "done";
+export type FolderOnboarding = "new" | "reset" | "grid" | "loupe" | "inspector" | "done";
+
+export function loadFolderOnboarding(storage?: StorageLike): FolderOnboarding {
+  try {
+    const value = (storage ?? window.localStorage).getItem(ONBOARDING_KEY);
+    switch (value) {
+      case "reset":
+      case "grid":
+      case "loupe":
+      case "inspector":
+      case "done":
+        return value;
+      default:
+        return "new";
+    }
+  } catch { return "new"; }
 }
 
-export function completeFolderOnboarding(storage: StorageLike = window.localStorage): void {
-  storage.setItem(ONBOARDING_KEY, "done");
+export function saveFolderOnboarding(value: Exclude<FolderOnboarding, "new">, storage?: StorageLike): void {
+  try {
+    (storage ?? window.localStorage).setItem(ONBOARDING_KEY, value);
+  } catch { /* The guide still works for the current session. */ }
 }
 
 export function parseThumbnailOrientations(value: string | null): Record<string, ThumbnailOrientation> {

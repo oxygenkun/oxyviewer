@@ -60,7 +60,7 @@ beforeEach(async () => {
   root = createRoot(host);
   await act(async () => root.render(
     <QueryClientProvider client={client}>
-      <SettingsPanel t={(key) => translate("zh-CN", key)} />
+      <SettingsPanel t={(key) => translate("zh-CN", key)} onResetFolderGuide={vi.fn()} />
     </QueryClientProvider>,
   ));
 });

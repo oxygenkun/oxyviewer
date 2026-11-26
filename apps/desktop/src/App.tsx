@@ -21,6 +21,8 @@ import { SettingsPanel } from "@/components/settings/SettingsPanel";
 import { Sidebar } from "@/components/browsing/Sidebar";
 import { ResizeHandle } from "@/components/browsing/ResizeHandle";
 import { Toolbar } from "@/components/browsing/Toolbar";
+import { Button } from "@/components/ui/Button";
+import { FolderGuide, type GuideStep } from "@/components/browsing/FolderGuide";
 import {
   addLibraryRoot,
   checkLibraryRoot,
@@ -93,8 +95,8 @@ import {
   type FolderSort,
 } from "@/lib/browse/folderOrdering";
 import {
-  completeFolderOnboarding,
-  hasSeenFolderOnboarding,
+  loadFolderOnboarding,
+  saveFolderOnboarding,
   loadWorkspace,
   loadFolderFailures,
   saveFolderFailures,
@@ -117,6 +119,7 @@ interface StatusNotice {
 
 /** How long a clean import result stays in the status bar. */
 const IMPORT_NOTICE_MS = 6000;
+const NEXT_GUIDE_STEP = { folder: "grid", grid: "loupe", loupe: "inspector", inspector: "done" } as const;
 
 export function App({ perfScenario }: { perfScenario?: PerfScenario }) {
   const [workspace, setWorkspace] = useState(loadWorkspace);
@@ -125,7 +128,7 @@ export function App({ perfScenario }: { perfScenario?: PerfScenario }) {
   const [recoveryNotice, setRecoveryNotice] = useState<string>();
   const [folderRestoreStates, setFolderRestoreStates] = useState<FolderRestoreState[]>(() => perfScenario ? [] : loadFolderFailures());
   const [folderImport, setFolderImport] = useState<FolderImportState>(IDLE_FOLDER_IMPORT);
-  const [showOnboarding, setShowOnboarding] = useState(() => !hasSeenFolderOnboarding());
+  const [onboarding, setOnboarding] = useState(() => loadFolderOnboarding());
   const [error, setError] = useState<string>();
   const [folderReveal, setFolderReveal] = useState<{ sessionId: string; path: string }>();
   const [tupleSelections, setTupleSelections] = useState<Record<string, PersonTupleFilter | undefined>>({});
@@ -605,10 +608,20 @@ export function App({ perfScenario }: { perfScenario?: PerfScenario }) {
     progressiveMetadataQuery.isFetchingNextPage,
   ]);
 
-  const dismissOnboarding = useCallback(() => {
-    completeFolderOnboarding();
-    setShowOnboarding(false);
+  useEffect(() => {
+    if (!perfScenario && onboarding !== "new") saveFolderOnboarding(onboarding);
+  }, [onboarding, perfScenario]);
+
+  const continueAfterImport = useCallback(() => {
+    setOnboarding((current) => current === "new" || current === "reset" ? "grid" : current);
   }, []);
+
+  const resetOnboarding = () => {
+    setOnboarding("reset");
+    useWorkspaceStore.setState({ leftPanelOpen: true });
+    setPeopleMode(false);
+    toggleSettings();
+  };
 
   /**
    * Open one root and register it in the library. Registration is what schedules
@@ -643,11 +656,10 @@ export function App({ perfScenario }: { perfScenario?: PerfScenario }) {
     try {
       clearSelection();
       await registerRoot(path, true);
-      dismissOnboarding();
     } catch (cause) {
       setError(String(cause));
     }
-  }, [clearSelection, dismissOnboarding, registerRoot]);
+  }, [clearSelection, registerRoot]);
 
   /**
    * The one import pipeline, shared by the drop target and the folder picker:
@@ -664,6 +676,7 @@ export function App({ perfScenario }: { perfScenario?: PerfScenario }) {
     for (const [index, path] of paths.entries()) {
       try {
         const opened = await registerRoot(path, firstRoot === undefined);
+        if (!firstRoot) continueAfterImport();
         firstRoot ??= opened.rootPath;
         // The row is keyed by the canonical root the backend returned.
         setFolderImport((state) => attachImportRoot(state, index, opened.rootPath));
@@ -678,8 +691,7 @@ export function App({ perfScenario }: { perfScenario?: PerfScenario }) {
         setFolderImport((state) => applyEntryFailure(state, path, String(cause)));
       }
     }
-    if (firstRoot) dismissOnboarding();
-  }, [clearSelection, dismissOnboarding, registerRoot]);
+  }, [clearSelection, continueAfterImport, registerRoot]);
 
   /** The "+" button uses the picker, then the same pipeline as a drop. */
   const handleOpen = useCallback(async () => {
@@ -691,10 +703,11 @@ export function App({ perfScenario }: { perfScenario?: PerfScenario }) {
     try {
       const opened = await registerRoot(path, false);
       setFolderImport((state) => applyEntryRetried(state, opened.rootPath));
+      continueAfterImport();
     } catch (cause) {
       setFolderImport((state) => applyEntryFailure(state, path, String(cause)));
     }
-  }, [registerRoot]);
+  }, [continueAfterImport, registerRoot]);
 
   const retryFailedImports = useCallback(async () => {
     for (const entry of failedImportEntries(folderImport)) {
@@ -732,8 +745,8 @@ export function App({ perfScenario }: { perfScenario?: PerfScenario }) {
     globalPeople.setSurface("folder");
     setError(undefined);
     setFolderReveal({ sessionId: destination.session.id, path: destination.path });
-    dismissOnboarding();
-  }, [sessions, registerRoot, handleNavigate, clearSearch, dismissOnboarding, globalPeople.setSurface]);
+    continueAfterImport();
+  }, [sessions, registerRoot, handleNavigate, clearSearch, continueAfterImport, globalPeople.setSurface]);
 
   const setRootFailure = useCallback((path: string, cause: unknown) => {
     setFolderRestoreStates(current => [...current.filter(item => item.rootPath !== path), { rootPath: path, status: "failed", error: String(cause) }]);
@@ -1010,10 +1023,31 @@ export function App({ perfScenario }: { perfScenario?: PerfScenario }) {
     }
   }, []);
 
+  const peopleLibraryOpen = peopleMode && globalPeople.surface === "library";
+  const emptyLibrary = sessions.length === 0 && folderRestoreStates.length === 0;
+  let guideStep: GuideStep | undefined;
+  if (!perfScenario && !restoringFolders && !settingsOpen && !peopleMode && onboarding !== "done") {
+    if (onboarding === "reset" || (onboarding === "new" && emptyLibrary) || (onboarding !== "new" && !activeSession)) {
+      guideStep = "folder";
+    } else if (onboarding !== "new") {
+      guideStep = onboarding;
+    }
+  }
+  const guideAnchor = guideStep === "folder" && !leftPanelOpen ? "sidebar" : guideStep;
+  const guideContent = {
+    sidebar: { title: "firstRunTitle", body: "folderGuideSidebarBody" },
+    folder: { title: "firstRunTitle", body: isTauri() ? "firstRunBody" : "firstRunDemoBody" },
+    grid: { title: "folderGuideGridTitle", body: "folderGuideGridBody" },
+    loupe: { title: "folderGuideLoupeTitle", body: "folderGuideLoupeBody" },
+    inspector: { title: "folderGuideInspectorTitle", body: "folderGuideInspectorBody" },
+  } as const;
+  const nextGuideStep = guideStep && (guideStep !== "folder" || activeSession) ? NEXT_GUIDE_STEP[guideStep] : undefined;
+
   return (
     <GlobalPeopleContext.Provider value={globalPeople}>
     <div
       ref={appShellRef}
+      data-guide-target={guideAnchor}
       className={`app-shell ${peopleMode ? "app-shell--people" : ""} ${leftPanelOpen ? "" : "sidebar-collapsed"} ${inspectorOpen && !(peopleMode && globalPeople.surface === "library") ? "" : "inspector-collapsed"}`}
       style={{
         "--left-panel-width": `${peopleMode ? Math.max(280, leftPanelWidth) : leftPanelWidth}px`,
@@ -1035,7 +1069,6 @@ export function App({ perfScenario }: { perfScenario?: PerfScenario }) {
         onRelocateRoot={handleRelocateRoot}
         activeSession={activeSession}
         currentPath={currentPath}
-        showOnboarding={showOnboarding && sessions.length === 0 && !restoringFolders}
         onOpen={handleOpen}
         onNavigate={(session, path) => { handleNavigate(session, path); if (peopleMode) globalPeople.setSurface("folder"); }}
         onRemove={handleRemove}
@@ -1044,7 +1077,6 @@ export function App({ perfScenario }: { perfScenario?: PerfScenario }) {
         onOpenInFileManager={(path) => void handleOpenInFileManager(path)}
         onRefresh={handleRefresh}
         isRefreshing={isRefreshing || restoringFolders}
-        onDismissOnboarding={dismissOnboarding}
         onSettings={toggleSettings}
         folderSort={folderSort}
         onFolderSortChange={handleFolderSortChange}
@@ -1066,15 +1098,20 @@ export function App({ perfScenario }: { perfScenario?: PerfScenario }) {
         targetRef={appShellRef}
         value={leftPanelWidth}
       />
-      <section className={`workspace ${peopleMode && globalPeople.surface === "library" ? "workspace--people-library" : ""}`}>
+      <section className={`workspace ${peopleLibraryOpen ? "workspace--people-library" : ""}`}>
         {assetsError && resultData ? <div className="search-query-error" role="status">{String(assetsError)}
           <button onClick={() => void assetsQuery.refetch()}>{t("retry")}</button></div> : null}
         {peopleMode && globalPeople.surface === "library" ? <PeopleLibrary key={globalPeople.libraryVisit} onOpenFolder={openPersonFolder} /> : <><Toolbar total={total} loading={assetsLoading || assetsQuery.isFetching || !activeSession && restoringFolders} t={t} />
         {!activeSession ? (
           <div className="workspace-empty">
-            <FolderPlus size={29} strokeWidth={1.4} />
-            <strong>{restoringFolders ? t("restoringFolders") : t("noFolderTitle")}</strong>
-            <span>{restoringFolders ? t("restoringFoldersBody") : t("noFolderBody")}</span>
+            {restoringFolders ? <>
+              <FolderPlus size={29} strokeWidth={1.4} aria-hidden="true" />
+              <strong>{t("restoringFolders")}</strong>
+              <span>{t("restoringFoldersBody")}</span>
+            </> : <>
+              <strong>{t("noFolderTitle")}</strong>
+              <Button onClick={handleOpen}>{t("chooseFolder")}</Button>
+            </>}
           </div>
         ) : assetsLoading && !resultData && !retainingReview ? (
           <div className="workspace-loading"><Aperture size={24} /> {t("scanningFolder")} {currentPath?.split(/[\\/]/).pop() || activeSession.displayName}…
@@ -1235,7 +1272,15 @@ export function App({ perfScenario }: { perfScenario?: PerfScenario }) {
           </Toast>
         ))}
       </div>
-      {settingsOpen ? <SettingsPanel t={t} activeAsset={assets.find((asset) => asset.id === activeId)} /> : null}
+      {guideStep && guideAnchor ? (
+        <FolderGuide shellRef={appShellRef} anchor={guideAnchor} {...guideContent[guideAnchor]}
+          action={nextGuideStep ? {
+            label: nextGuideStep === "done" ? "folderGuideFinish" : "folderGuideNext",
+            run: () => setOnboarding(nextGuideStep),
+          } : undefined}
+          onSkip={() => setOnboarding("done")} t={t} />
+      ) : null}
+      {settingsOpen ? <SettingsPanel t={t} activeAsset={assets.find((asset) => asset.id === activeId)} onResetFolderGuide={resetOnboarding} /> : null}
       {perfScenario ? (
         <PerfHarness
           scenario={perfScenario}
