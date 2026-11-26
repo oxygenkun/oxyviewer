@@ -1,6 +1,5 @@
 import { GlobalPersonBoxes } from "@/components/people/GlobalPersonBoxes";
 import type { DisplayedPreviewSize } from "@/lib/preview/previewGeometry";
-import { RawDecoderPanel } from "@/components/settings/RawDecoderPanel";
 import {
   Check,
   Focus,
@@ -478,9 +477,6 @@ export function Loupe({
           {!listedActive && heldAsset?.id === active.id ? <small>保留当前审阅照片 · 不在当前筛选列表中</small> : null}
           {loupeMetadataVisible ? <AssetMetadataBadges asset={active} /> : null}
         </div>
-        {active.kind === "raw" && <RawDecoderPanel key={active.id} asset={active} compact
-          pending={rawPreviewStatus.state === "loadingPreview" || rawPreviewStatus.state === "developingFull"}
-          failed={rawPreviewStatus.state === "fullFailed"} t={t} />}
         <div
           className="loupe__image"
           onContextMenu={(event) => onAssetContextMenu(event, active)}
