@@ -19,13 +19,16 @@ import {
   normalizeFullPredecodeCount,
   loadLayoutSize,
   loadLoupeControlsAutoHide,
+  loadLoupeZoomSensitivity,
   loadMetadataVisibility,
   loadPeopleModuleVisible,
   loadThumbnailOrientations,
   loadUiFontScale,
+  normalizeLoupeZoomSensitivity,
   saveFocusAreasVisible,
   saveLayoutSize,
   saveLoupeControlsAutoHide,
+  saveLoupeZoomSensitivity,
   saveMetadataVisibility,
   savePeopleModuleVisible,
   saveThumbnailOrientations,
@@ -64,6 +67,7 @@ interface WorkspaceState {
   gridMetadataVisible: boolean;
   loupeMetadataVisible: boolean;
   loupeControlsAutoHide: boolean;
+  loupeZoomSensitivity: number;
   uiFontScale: UiFontScale;
   fullPredecodeCount: number;
   setFullPredecodeCount: (count: number) => void;
@@ -108,6 +112,7 @@ interface WorkspaceState {
   setGridMetadataVisible: (visible: boolean) => void;
   setLoupeMetadataVisible: (visible: boolean) => void;
   setLoupeControlsAutoHide: (enabled: boolean) => void;
+  setLoupeZoomSensitivity: (value: number) => void;
   setUiFontScale: (scale: UiFontScale) => void;
   setLeftPanelWidth: (width: number) => void;
   setInspectorWidth: (width: number) => void;
@@ -148,6 +153,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set) => ({
   gridMetadataVisible: loadMetadataVisibility("grid"),
   loupeMetadataVisible: loadMetadataVisibility("loupe"),
   loupeControlsAutoHide: loadLoupeControlsAutoHide(),
+  loupeZoomSensitivity: loadLoupeZoomSensitivity(),
   uiFontScale: loadUiFontScale(),
   fullPredecodeCount: loadFullPredecodeCount(),
   setFullPredecodeCount: (count) => {
@@ -258,6 +264,11 @@ export const useWorkspaceStore = create<WorkspaceState>((set) => ({
   setLoupeControlsAutoHide: (loupeControlsAutoHide) => {
     saveLoupeControlsAutoHide(loupeControlsAutoHide);
     set({ loupeControlsAutoHide });
+  },
+  setLoupeZoomSensitivity: (value) => {
+    const loupeZoomSensitivity = normalizeLoupeZoomSensitivity(value);
+    saveLoupeZoomSensitivity(loupeZoomSensitivity);
+    set({ loupeZoomSensitivity });
   },
   setUiFontScale: (uiFontScale) => {
     saveUiFontScale(uiFontScale);

@@ -34,7 +34,7 @@ import {
   validCacheLimitGb,
 } from "@/lib/cache/cacheSettings";
 import type { Locale, MessageKey } from "@/lib/i18n";
-import { MAX_FULL_PREDECODE_COUNT, UI_FONT_SCALES } from "@/lib/browse/workspacePersistence";
+import { LOUPE_ZOOM_SENSITIVITY, MAX_FULL_PREDECODE_COUNT, UI_FONT_SCALES } from "@/lib/browse/workspacePersistence";
 import { useWorkspaceStore } from "@/store";
 import { RawDecoderPanel } from "./RawDecoderPanel";
 import { AboutSettings } from "./AboutSettings";
@@ -64,6 +64,7 @@ export function SettingsPanel({ t, activeAsset }: SettingsPanelProps) {
     gridMetadataVisible,
     locale,
     loupeMetadataVisible,
+    loupeZoomSensitivity,
     peopleModuleVisible,
     setPeopleModuleVisible,
     uiFontScale,
@@ -71,6 +72,7 @@ export function SettingsPanel({ t, activeAsset }: SettingsPanelProps) {
     setGridMetadataVisible,
     setLocale,
     setLoupeMetadataVisible,
+    setLoupeZoomSensitivity,
     setSettingsSection,
     setUiFontScale,
     toggleSettings,
@@ -240,6 +242,16 @@ export function SettingsPanel({ t, activeAsset }: SettingsPanelProps) {
             </> : null}
 
             {settingsSection === "display" ? <>
+              <section className="settings-panel__section">
+                <Field label={t("loupeZoomSensitivity")} id="loupe-zoom-sensitivity" type="range"
+                  min={LOUPE_ZOOM_SENSITIVITY.min} max={LOUPE_ZOOM_SENSITIVITY.max} step={LOUPE_ZOOM_SENSITIVITY.step}
+                  value={loupeZoomSensitivity} aria-valuetext={`${loupeZoomSensitivity}%`} suffix={`${loupeZoomSensitivity}%`}
+                  hint={t("loupeZoomSensitivityHint")}
+                  onChange={(event) => setLoupeZoomSensitivity(event.target.valueAsNumber)} />
+                {navigator.platform.startsWith("Mac") ? (
+                  <p className="settings-panel__hint">{t("loupeThreeFingerDragHint")}</p>
+                ) : null}
+              </section>
               <section className="settings-panel__section">
                 <span className="settings-panel__label">{t("metadataDisplay")}</span>
                 <div className="settings-panel__options">

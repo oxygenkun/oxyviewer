@@ -197,6 +197,34 @@ export function saveLoupeControlsAutoHide(enabled: boolean, storage?: StorageLik
   }
 }
 
+const LOUPE_ZOOM_SENSITIVITY_KEY = "oxyviewer.loupe-zoom-sensitivity.v1";
+export const LOUPE_ZOOM_SENSITIVITY = { min: 50, max: 400, step: 25, defaultValue: 200 };
+
+export function normalizeLoupeZoomSensitivity(value: number): number {
+  const { min, max, step, defaultValue } = LOUPE_ZOOM_SENSITIVITY;
+  if (!Number.isFinite(value)) return defaultValue;
+  return Math.min(max, Math.max(min, Math.round(value / step) * step));
+}
+
+export function loadLoupeZoomSensitivity(storage?: StorageLike): number {
+  try {
+    const resolved = storage ?? (typeof window === "undefined" ? undefined : window.localStorage);
+    const stored = resolved?.getItem(LOUPE_ZOOM_SENSITIVITY_KEY);
+    return stored?.trim() ? normalizeLoupeZoomSensitivity(Number(stored)) : LOUPE_ZOOM_SENSITIVITY.defaultValue;
+  } catch {
+    return LOUPE_ZOOM_SENSITIVITY.defaultValue;
+  }
+}
+
+export function saveLoupeZoomSensitivity(value: number, storage?: StorageLike): void {
+  try {
+    const resolved = storage ?? (typeof window === "undefined" ? undefined : window.localStorage);
+    resolved?.setItem(LOUPE_ZOOM_SENSITIVITY_KEY, String(normalizeLoupeZoomSensitivity(value)));
+  } catch {
+    // Display preferences must never prevent the viewer from opening.
+  }
+}
+
 export function loadPeopleModuleVisible(storage?: StorageLike): boolean {
   try {
     const resolved = storage ?? (typeof window === "undefined" ? undefined : window.localStorage);

@@ -13,6 +13,7 @@ import { createPortal } from "react-dom";
 import {
   useCallback,
   useEffect,
+  useEffectEvent,
   useLayoutEffect,
   useMemo,
   useRef,
@@ -35,6 +36,7 @@ import {
   type Point,
   type Size,
 } from "@/lib/preview/loupe";
+import { listenLoupeInput } from "@/lib/preview/loupeInput";
 import { LAYOUT_SIZE_LIMITS } from "@/lib/ui/layoutSizing";
 import { matchesAction } from "@/lib/ui/shortcuts";
 import { listenShortcutInput } from "@/lib/ui/shortcutInput";
@@ -71,6 +73,7 @@ interface LoupeProps {
 
 const positions: NavigatorPosition[] = ["top-left", "top-right", "bottom-left", "bottom-right"];
 const DEFAULT_IMAGE_SIZE: Size = { width: 3, height: 2 };
+const FITTED_VIEW = { zoom: 1, offset: { x: 0, y: 0 } };
 const NAVIGATOR_MAX_SIZE: Size = { width: 156, height: 98 };
 const rawStatusLabels = {
   loadingPreview: "rawLoadingPreview",
@@ -134,8 +137,7 @@ export function Loupe({
   const loupeRef = useRef<HTMLDivElement>(null);
   const dragRef = useRef<{ pointerId: number; start: Point; offset: Point } | undefined>(undefined);
   const navigatorDragRef = useRef<{ pointerId: number; last: Point } | undefined>(undefined);
-  const [zoom, setZoom] = useState(1);
-  const [offset, setOffset] = useState<Point>({ x: 0, y: 0 });
+  const [{ zoom, offset }, setView] = useState(FITTED_VIEW);
   const [dragging, setDragging] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [focusTemporarilyInverted, setFocusTemporarilyInverted] = useState(false);
@@ -209,17 +211,21 @@ export function Loupe({
     image: elementSize(imageRef.current),
   }), []);
 
-  const setZoomAroundPoint = useCallback((next: number, pointFromStageCenter: Point) => {
+  const setZoomAroundPoint = useCallback((next: number | ((current: number) => number), pointFromStageCenter: Point) => {
     const maxZoom = zoomForPixelPercent(fittedImageSize, sourceSize, MAX_PIXEL_ZOOM_PERCENT);
-    const nextZoom = clampZoom(next, maxZoom);
     const { stage, image } = getSizes();
-    setOffset((current) => zoomAtPoint(zoom, nextZoom, current, pointFromStageCenter, stage, image));
-    setZoom(nextZoom);
-  }, [fittedImageSize, getSizes, sourceSize, zoom]);
+    setView((current) => {
+      const nextZoom = clampZoom(typeof next === "number" ? next : next(current.zoom), maxZoom);
+      if (nextZoom === current.zoom) return current;
+      return {
+        zoom: nextZoom,
+        offset: zoomAtPoint(current.zoom, nextZoom, current.offset, pointFromStageCenter, stage, image),
+      };
+    });
+  }, [fittedImageSize, getSizes, sourceSize]);
 
   const resetZoom = useCallback(() => {
-    setZoom(1);
-    setOffset({ x: 0, y: 0 });
+    setView(FITTED_VIEW);
   }, []);
 
   const cycleZoom = useCallback(() => {
@@ -233,8 +239,7 @@ export function Loupe({
     // otherwise fall back to the image center.
     const anchor = focusRegionAnchor(mappedFocusRegions) ?? { x: 0.5, y: 0.5 };
     const { stage, image } = getSizes();
-    setOffset(panFromNavigatorPoint(anchor, nextZoom, stage, image));
-    setZoom(nextZoom);
+    setView({ zoom: nextZoom, offset: panFromNavigatorPoint(anchor, nextZoom, stage, image) });
   }, [fittedImageSize, getSizes, mappedFocusRegions, resetZoom, sourceSize, zoom]);
 
   const handleHeifImageSize = useCallback((size: Size) => {
@@ -342,21 +347,23 @@ export function Loupe({
           ? current
           : contentSize
       ));
-      setOffset((current) => clampPan(current, zoom, sizes.stage, sizes.image));
+      setView((current) => ({
+        ...current,
+        offset: clampPan(current.offset, current.zoom, sizes.stage, sizes.image),
+      }));
       setLayoutVersion((version) => version + 1);
     });
     observer.observe(stage);
     observer.observe(image);
     return () => observer.disconnect();
-  }, [getSizes, zoom]);
+  }, [getSizes]);
 
   const [navigation, setNavigation] = useState({ id: active.id, index: assets.indexOf(active), direction: 1 });
   const activeIndex = assets.indexOf(active);
   if (navigation.id !== active.id) {
     // Reset before committing the new renderer. An effect here would run
     // after its cache-hit layout effect and overwrite "complete" with loading.
-    setZoom(1);
-    setOffset({ x: 0, y: 0 });
+    setView(FITTED_VIEW);
     setRawPreviewStatus({ state: "loadingPreview" });
     setHeifStatus("probing");
     setNaturalSize(undefined);
@@ -371,17 +378,32 @@ export function Loupe({
     Array.from({ length: fullPredecodeCount }, (_, index) => assets[activeIndex + (index + 1) * navigation.direction])
       .filter((asset): asset is AssetSummary => Boolean(asset))
   ), [activeIndex, assets, fullPredecodeCount, navigation.direction]);
-  const handleWheel = useCallback((event: React.WheelEvent<HTMLDivElement>) => {
-    if ((event.target as HTMLElement).closest(".loupe__controls, .loupe__navigator, .loupe__settings")) return;
-    event.preventDefault();
-    const rect = stageRef.current?.getBoundingClientRect();
-    if (!rect) return;
-    const point = {
-      x: event.clientX - rect.left - rect.width / 2,
-      y: event.clientY - rect.top - rect.height / 2,
-    };
-    setZoomAroundPoint(zoom * Math.exp(-event.deltaY * 0.002), point);
-  }, [setZoomAroundPoint, zoom]);
+  const handleInputZoom = useEffectEvent((factor: number, point: Point) => {
+    setZoomAroundPoint((current) => current * factor, point);
+  });
+  const handleInputPan = useEffectEvent((delta: Point) => {
+    if (dragRef.current) return;
+    const { stage, image } = getSizes();
+    setView((current) => {
+      if (current.zoom <= 1) return current;
+      const offset = clampPan({
+        x: current.offset.x + delta.x,
+        y: current.offset.y + delta.y,
+      }, current.zoom, stage, image);
+      if (offset.x === current.offset.x && offset.y === current.offset.y) return current;
+      return { ...current, offset };
+    });
+  });
+  useEffect(() => {
+    const stage = stageRef.current;
+    if (!stage) return;
+    return listenLoupeInput(
+      stage,
+      () => useWorkspaceStore.getState().loupeZoomSensitivity,
+      handleInputZoom,
+      handleInputPan,
+    );
+  }, [active.id]);
 
   const handlePointerDown = useCallback((event: React.PointerEvent<HTMLDivElement>) => {
     const overlay = (event.target as HTMLElement)
@@ -399,12 +421,15 @@ export function Loupe({
   const handlePointerMove = useCallback((event: React.PointerEvent<HTMLDivElement>) => {
     const drag = dragRef.current;
     if (!drag || drag.pointerId !== event.pointerId) return;
+    // The drag session follows pointer capture, including macOS three-finger
+    // drag where there is no physical button pressure.
     const { stage, image } = getSizes();
-    setOffset(clampPan({
+    const nextOffset = {
       x: drag.offset.x + event.clientX - drag.start.x,
       y: drag.offset.y + event.clientY - drag.start.y,
-    }, zoom, stage, image));
-  }, [getSizes, zoom]);
+    };
+    setView((current) => ({ ...current, offset: clampPan(nextOffset, current.zoom, stage, image) }));
+  }, [getSizes]);
 
   const finishDrag = useCallback((event: React.PointerEvent<HTMLDivElement>) => {
     if (dragRef.current?.pointerId !== event.pointerId) return;
@@ -422,15 +447,18 @@ export function Loupe({
     };
     drag.last = { x: event.clientX, y: event.clientY };
     const { stage, image } = getSizes();
-    setOffset((current) => panByNavigatorDelta(
-      current,
-      pointerDelta,
-      zoom,
-      stage,
-      image,
-      { width: rect.width, height: rect.height },
-    ));
-  }, [getSizes, zoom]);
+    setView((current) => ({
+      ...current,
+      offset: panByNavigatorDelta(
+        current.offset,
+        pointerDelta,
+        current.zoom,
+        stage,
+        image,
+        { width: rect.width, height: rect.height },
+      ),
+    }));
+  }, [getSizes]);
 
   const navigatorViewport = useMemo(() => {
     const { stage, image } = getSizes();
@@ -478,11 +506,12 @@ export function Loupe({
       <div
         className={`loupe__stage ${zoom > 1 ? "is-zoomed" : ""} ${dragging ? "is-dragging" : ""}`}
         ref={stageRef}
-        onWheel={handleWheel}
         onPointerDown={handlePointerDown}
         onPointerMove={handlePointerMove}
         onPointerUp={finishDrag}
         onPointerCancel={finishDrag}
+        onLostPointerCapture={finishDrag}
+        onDragStart={(event) => { if (dragRef.current) event.preventDefault(); }}
       >
         <div className="loupe__caption">
           {!listedActive && heldAsset?.id === active.id ? <small>保留当前审阅照片 · 不在当前筛选列表中</small> : null}

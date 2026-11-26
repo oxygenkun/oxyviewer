@@ -1,5 +1,6 @@
 import { useWorkspaceStore } from "@/store";
 import type { AssetSummary } from "@/types";
+import { wheelZoomRate } from "@/lib/preview/loupeInput";
 import { perfMark } from "./perfProbe";
 
 /** Real-WebView geometry regression, enabled only by the isolated perf harness. */
@@ -30,9 +31,10 @@ export async function runLoupeZoomProbe(assets: readonly AssetSummary[], signal:
     const targetWidth = image.naturalWidth * percent / 100;
     const bounds = stage.getBoundingClientRect();
     stage.dispatchEvent(new WheelEvent("wheel", {
-      bubbles: true, cancelable: true,
+      bubbles: true, cancelable: true, ctrlKey: true,
       clientX: bounds.x + bounds.width / 2, clientY: bounds.y + bounds.height / 2,
-      deltaY: -Math.log(targetWidth / before.width) / 0.002,
+      deltaY: -Math.log(targetWidth / before.width)
+        / wheelZoomRate(WheelEvent.DOM_DELTA_PIXEL, useWorkspaceStore.getState().loupeZoomSensitivity),
     }));
     await frame(); await frame();
     const box = image.getBoundingClientRect();

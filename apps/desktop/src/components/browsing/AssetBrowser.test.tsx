@@ -266,18 +266,36 @@ it("keeps zoomed loupe panning with or without Alt and exports only from the fil
   document.head.appendChild(style);
   const width = vi.spyOn(HTMLElement.prototype, "clientWidth", "get").mockReturnValue(900);
   const height = vi.spyOn(HTMLElement.prototype, "clientHeight", "get").mockReturnValue(600);
+  const offsetWidth = vi.spyOn(HTMLElement.prototype, "offsetWidth", "get").mockReturnValue(900);
+  const offsetHeight = vi.spyOn(HTMLElement.prototype, "offsetHeight", "get").mockReturnValue(600);
   try {
     client.setQueryData(["asset-details", "a2"], { asset: assets[2], width: 6240, height: 4160 });
     useWorkspaceStore.setState({ activeId: "a2", selectedIds: ["a2"] });
     await render("loupe");
-    await act(async () => host.querySelector<HTMLButtonElement>('button[title="zoomIn"]')!.click());
     const target = dragTarget(".loupe__render");
     const stage = dragTarget(".loupe__stage");
+    const image = host.querySelector<HTMLElement>(".loupe__image")!;
+    const scroll = () => stage.dispatchEvent(new WheelEvent("wheel", {
+      bubbles: true, cancelable: true, deltaX: 20, deltaY: 30,
+    }));
+    await act(async () => { scroll(); });
+    expect(stage.classList.contains("is-zoomed")).toBe(false);
+    expect(image.style.transform).toBe("translate3d(0px, 0px, 0)");
+    await act(async () => host.querySelector<HTMLButtonElement>('button[title="zoomIn"]')!.click());
     expect(stage.classList.contains("is-zoomed")).toBe(true);
-    await pointer(target, "pointerdown", 10);
+    await pointer(target, "pointerdown", 10, { buttons: 0 });
     expect(stage.classList.contains("is-dragging")).toBe(true);
-    await pointer(target, "pointermove", 20);
+    const nativeDrag = new Event("dragstart", { bubbles: true, cancelable: true });
+    await act(async () => target.dispatchEvent(nativeDrag));
+    expect(nativeDrag.defaultPrevented).toBe(true);
+    await pointer(stage, "pointermove", 20, { buttons: 0 });
+    expect(image.style.transform).toBe("translate3d(10px, 0px, 0)");
+    await pointer(stage, "lostpointercapture", 20, { buttons: 0 });
+    await pointer(stage, "pointermove", 30, { buttons: 0 });
+    expect(image.style.transform).toBe("translate3d(10px, 0px, 0)");
+    expect(stage.classList.contains("is-dragging")).toBe(false);
     expect(api.startAssetDrag).not.toHaveBeenCalled();
+    await pointer(target, "pointerdown", 10);
     await pointer(target, "pointercancel", 20);
     expect(stage.classList.contains("is-dragging")).toBe(false);
     await pointer(target, "pointerdown", 10, { altKey: true });
@@ -285,6 +303,8 @@ it("keeps zoomed loupe panning with or without Alt and exports only from the fil
     expect(api.startAssetDrag).not.toHaveBeenCalled();
     expect(stage.classList.contains("is-dragging")).toBe(true);
     await pointer(target, "pointerup", 20, { altKey: true });
+    await act(async () => { scroll(); scroll(); });
+    expect(image.style.transform).toBe("translate3d(-20px, -60px, 0)");
     const filmstrip = dragTarget('[data-filmstrip-asset-id="a2"]');
     await pointer(filmstrip, "pointerdown", 10);
     await pointer(filmstrip, "pointermove", 20);
@@ -294,6 +314,8 @@ it("keeps zoomed loupe panning with or without Alt and exports only from the fil
     style.remove();
     width.mockRestore();
     height.mockRestore();
+    offsetWidth.mockRestore();
+    offsetHeight.mockRestore();
   }
 });
 

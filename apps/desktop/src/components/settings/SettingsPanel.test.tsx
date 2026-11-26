@@ -4,7 +4,7 @@ import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { translate } from "@/lib/i18n";
-import { loadPeopleModuleVisible } from "@/lib/browse/workspacePersistence";
+import { loadLoupeZoomSensitivity, loadPeopleModuleVisible } from "@/lib/browse/workspacePersistence";
 import { useWorkspaceStore } from "@/store";
 import { SettingsPanel } from "./SettingsPanel";
 
@@ -170,4 +170,20 @@ it("persists and bounds the full-image predecode limit, including disabling it",
   await act(async () => useWorkspaceStore.getState().setFullPredecodeCount(999));
   expect(loadFullPredecodeCount()).toBe(20);
   await act(async () => useWorkspaceStore.getState().setFullPredecodeCount(2));
+});
+
+it("updates and persists trackpad zoom sensitivity from the Display slider", async () => {
+  await clickTab("显示");
+  const slider = host.querySelector<HTMLInputElement>("#loupe-zoom-sensitivity")!;
+  expect(slider.value).toBe("200");
+  const setValue = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!;
+  await act(async () => {
+    setValue.call(slider, "275");
+    slider.dispatchEvent(new Event("input", { bubbles: true }));
+  });
+  expect(slider.getAttribute("aria-valuetext")).toBe("275%");
+  expect(useWorkspaceStore.getState().loupeZoomSensitivity).toBe(275);
+  expect(loadLoupeZoomSensitivity()).toBe(275);
+  await act(async () => useWorkspaceStore.getState().setLoupeZoomSensitivity(Infinity));
+  expect(loadLoupeZoomSensitivity()).toBe(200);
 });

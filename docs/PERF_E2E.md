@@ -248,7 +248,7 @@ WebView can clamp timers; such runs are not valid fast-scroll measurements.
 
 外部场景配置可使用 `resourceStress: "loupe-zoom"` 和
 `awaitMarks: ["resource:stress-complete"]`，fixture 指向单张真实大尺寸 RAW。
-探针选择该图并等待 fullReady，然后通过实际 wheel 事件依次缩放至
+探针选择该图并等待 fullReady，然后通过带 Ctrl 修饰的 wheel 事件依次缩放至
 50%、73%、91%、100%、150%、200%、400%，检查图片宽高与原始像素尺寸一致，
 并记录 `loupe:zoom-sample`（实际宽高、render 宽高、源尺寸、objectFit）。
 使用 `node tests/perf/perf-e2e.mjs --config <external-json> --scenario <name>` 运行。
