@@ -12,6 +12,30 @@ Each release lists the English notes first, followed by the Simplified Chinese n
 
 ## [Unreleased]
 
+## [0.2.2] - 2026-11-26
+
+### Added
+
+- Added a guided tour for importing folders and using Grid, Loupe, and the Inspector. The tour can be restarted from General settings.
+- Added adjustable trackpad pinch sensitivity and two-finger panning for zoomed photos in Loupe.
+- Added configurable full-image predecoding in Loupe. After the current image is ready, Loupe predecodes up to 20 photos in the browsing direction, with a default of two.
+
+### Fixed
+
+- Moved original-file dragging in Loupe to the filmstrip, so dragging the main photo can pan a zoomed image.
+- Removed automatic RAW decoder prompts from Loupe. Decoder setup and retry are available in Settings.
+
+### 新增
+
+- 新增入门导览，介绍如何导入文件夹以及使用网格、Loupe 和详细信息栏。可在常规设置中重新开始导览。
+- Loupe 支持调节触摸板捏合缩放灵敏度，放大照片后可用双指滑动平移。
+- Loupe 支持设置完整图像的预解码张数。当前照片就绪后，沿浏览方向预解码后续照片，默认 2 张，最多 20 张。
+
+### 修复
+
+- 将 Loupe 的原始文件拖出操作移至胶片条，拖动放大后的主图可平移照片。
+- Loupe 浏览 RAW 时取消自动显示解码器提示，仍可在设置中配置解码器和重试显影。
+
 ## [0.2.1] - 2026-11-25
 
 ### Added
@@ -235,7 +259,8 @@ Each release lists the English notes first, followed by the Simplified Chinese n
 - 可重建的媒体与图库缓存，支持可配置的存储管理和队列诊断。
 - macOS 与 Linux 安装包，以及双语 Windows NSIS EXE 和便携 ZIP 包，内置固定版本的 FFmpeg 工具；对应的 FFmpeg 源码作为独立发布资源提供。
 
-[Unreleased]: https://github.com/oxygenkun/oxyviewer/compare/v0.2.1...HEAD
+[Unreleased]: https://github.com/oxygenkun/oxyviewer/compare/v0.2.2...HEAD
+[0.2.2]: https://github.com/oxygenkun/oxyviewer/compare/v0.2.1...v0.2.2
 [0.2.1]: https://github.com/oxygenkun/oxyviewer/compare/v0.2.0...v0.2.1
 [0.2.0]: https://github.com/oxygenkun/oxyviewer/compare/v0.1.5...v0.2.0
 [0.1.5]: https://github.com/oxygenkun/oxyviewer/compare/v0.1.4...v0.1.5
