@@ -65,6 +65,7 @@ export function SettingsPanel({ t, activeAsset, onResetFolderGuide }: SettingsPa
     gridMetadataVisible,
     locale,
     loupeMetadataVisible,
+    loupeWheelZoom,
     loupeZoomSensitivity,
     peopleModuleVisible,
     setPeopleModuleVisible,
@@ -73,6 +74,7 @@ export function SettingsPanel({ t, activeAsset, onResetFolderGuide }: SettingsPa
     setGridMetadataVisible,
     setLocale,
     setLoupeMetadataVisible,
+    setLoupeWheelZoom,
     setLoupeZoomSensitivity,
     setSettingsSection,
     setUiFontScale,
@@ -251,6 +253,12 @@ export function SettingsPanel({ t, activeAsset, onResetFolderGuide }: SettingsPa
 
             {settingsSection === "display" ? <>
               <section className="settings-panel__section">
+                <div className="settings-panel__options">
+                  <Button aria-pressed={loupeWheelZoom} className="settings-panel__option" onClick={() => setLoupeWheelZoom(!loupeWheelZoom)}>
+                    <span>{t("loupeWheelZoom")}</span>{loupeWheelZoom ? <Check size={14} /> : null}
+                  </Button>
+                </div>
+                <p className="settings-panel__hint">{t("loupeWheelZoomHint")}</p>
                 <Field label={t("loupeZoomSensitivity")} id="loupe-zoom-sensitivity" type="range"
                   min={LOUPE_ZOOM_SENSITIVITY.min} max={LOUPE_ZOOM_SENSITIVITY.max} step={LOUPE_ZOOM_SENSITIVITY.step}
                   value={loupeZoomSensitivity} aria-valuetext={`${loupeZoomSensitivity}%`} suffix={`${loupeZoomSensitivity}%`}

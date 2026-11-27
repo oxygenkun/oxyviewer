@@ -19,6 +19,7 @@ import {
   normalizeFullPredecodeCount,
   loadLayoutSize,
   loadLoupeControlsAutoHide,
+  loadLoupeWheelZoom,
   loadLoupeZoomSensitivity,
   loadMetadataVisibility,
   loadPeopleModuleVisible,
@@ -28,6 +29,7 @@ import {
   saveFocusAreasVisible,
   saveLayoutSize,
   saveLoupeControlsAutoHide,
+  saveLoupeWheelZoom,
   saveLoupeZoomSensitivity,
   saveMetadataVisibility,
   savePeopleModuleVisible,
@@ -67,6 +69,7 @@ interface WorkspaceState {
   gridMetadataVisible: boolean;
   loupeMetadataVisible: boolean;
   loupeControlsAutoHide: boolean;
+  loupeWheelZoom: boolean;
   loupeZoomSensitivity: number;
   uiFontScale: UiFontScale;
   fullPredecodeCount: number;
@@ -112,6 +115,7 @@ interface WorkspaceState {
   setGridMetadataVisible: (visible: boolean) => void;
   setLoupeMetadataVisible: (visible: boolean) => void;
   setLoupeControlsAutoHide: (enabled: boolean) => void;
+  setLoupeWheelZoom: (enabled: boolean) => void;
   setLoupeZoomSensitivity: (value: number) => void;
   setUiFontScale: (scale: UiFontScale) => void;
   setLeftPanelWidth: (width: number) => void;
@@ -153,6 +157,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set) => ({
   gridMetadataVisible: loadMetadataVisibility("grid"),
   loupeMetadataVisible: loadMetadataVisibility("loupe"),
   loupeControlsAutoHide: loadLoupeControlsAutoHide(),
+  loupeWheelZoom: loadLoupeWheelZoom(),
   loupeZoomSensitivity: loadLoupeZoomSensitivity(),
   uiFontScale: loadUiFontScale(),
   fullPredecodeCount: loadFullPredecodeCount(),
@@ -264,6 +269,10 @@ export const useWorkspaceStore = create<WorkspaceState>((set) => ({
   setLoupeControlsAutoHide: (loupeControlsAutoHide) => {
     saveLoupeControlsAutoHide(loupeControlsAutoHide);
     set({ loupeControlsAutoHide });
+  },
+  setLoupeWheelZoom: (loupeWheelZoom) => {
+    saveLoupeWheelZoom(loupeWheelZoom);
+    set({ loupeWheelZoom });
   },
   setLoupeZoomSensitivity: (value) => {
     const loupeZoomSensitivity = normalizeLoupeZoomSensitivity(value);

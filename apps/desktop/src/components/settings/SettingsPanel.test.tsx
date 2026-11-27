@@ -4,7 +4,7 @@ import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { translate } from "@/lib/i18n";
-import { loadLoupeZoomSensitivity, loadPeopleModuleVisible } from "@/lib/browse/workspacePersistence";
+import { loadLoupeWheelZoom, loadLoupeZoomSensitivity, loadPeopleModuleVisible } from "@/lib/browse/workspacePersistence";
 import { useWorkspaceStore } from "@/store";
 import { SettingsPanel } from "./SettingsPanel";
 
@@ -53,7 +53,14 @@ const clickTab = async (label: string) => {
 beforeEach(async () => {
   vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
   window.localStorage.clear();
-  useWorkspaceStore.setState({ settingsOpen: true, settingsSection: "general", locale: "zh-CN", peopleModuleVisible: loadPeopleModuleVisible(), peopleMode: false });
+  useWorkspaceStore.setState({
+    settingsOpen: true,
+    settingsSection: "general",
+    locale: "zh-CN",
+    peopleModuleVisible: loadPeopleModuleVisible(),
+    peopleMode: false,
+    loupeWheelZoom: loadLoupeWheelZoom(),
+  });
   client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   host = document.createElement("div");
   document.body.append(host);
@@ -186,4 +193,22 @@ it("updates and persists trackpad zoom sensitivity from the Display slider", asy
   expect(loadLoupeZoomSensitivity()).toBe(275);
   await act(async () => useWorkspaceStore.getState().setLoupeZoomSensitivity(Infinity));
   expect(loadLoupeZoomSensitivity()).toBe(200);
+});
+
+it("enables direct wheel zoom by default and persists changes from Display settings", async () => {
+  await clickTab("显示");
+  const toggle = [...host.querySelectorAll<HTMLButtonElement>("button")]
+    .find((button) => button.textContent === "直接滚轮缩放")!;
+  expect(toggle.getAttribute("aria-pressed")).toBe("true");
+  expect(loadLoupeWheelZoom()).toBe(true);
+
+  await act(async () => toggle.click());
+  expect(toggle.getAttribute("aria-pressed")).toBe("false");
+  expect(useWorkspaceStore.getState().loupeWheelZoom).toBe(false);
+  expect(loadLoupeWheelZoom()).toBe(false);
+
+  await act(async () => toggle.click());
+  expect(toggle.getAttribute("aria-pressed")).toBe("true");
+  expect(useWorkspaceStore.getState().loupeWheelZoom).toBe(true);
+  expect(loadLoupeWheelZoom()).toBe(true);
 });

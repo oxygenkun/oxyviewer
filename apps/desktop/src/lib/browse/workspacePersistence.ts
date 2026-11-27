@@ -8,6 +8,7 @@ const WORKSPACE_KEY = "oxyviewer.workspace.v1";
 const ONBOARDING_KEY = "oxyviewer.folder-onboarding.v1";
 const FOCUS_AREAS_KEY = "oxyviewer.focus-areas-visible.v1";
 const LOUPE_CONTROLS_AUTO_HIDE_KEY = "oxyviewer.loupe-controls-auto-hide.v1";
+const LOUPE_WHEEL_ZOOM_KEY = "oxyviewer.loupe-wheel-zoom.v1";
 const UI_FONT_SCALE_KEY = "oxyviewer.ui-font-scale.v1";
 const PEOPLE_MODULE_VISIBLE_KEY = "oxyviewer.people-module-visible.v1";
 const THUMBNAIL_ORIENTATIONS_KEY = "oxyviewer.thumbnail-orientations.v1";
@@ -208,6 +209,24 @@ export function saveLoupeControlsAutoHide(enabled: boolean, storage?: StorageLik
   if (!resolved) return;
   try {
     resolved.setItem(LOUPE_CONTROLS_AUTO_HIDE_KEY, String(enabled));
+  } catch {
+    // Display preferences must never prevent the viewer from opening.
+  }
+}
+
+export function loadLoupeWheelZoom(storage?: StorageLike): boolean {
+  try {
+    const resolved = storage ?? (typeof window === "undefined" ? undefined : window.localStorage);
+    return resolved?.getItem(LOUPE_WHEEL_ZOOM_KEY) !== "false";
+  } catch {
+    return true;
+  }
+}
+
+export function saveLoupeWheelZoom(enabled: boolean, storage?: StorageLike): void {
+  try {
+    const resolved = storage ?? (typeof window === "undefined" ? undefined : window.localStorage);
+    resolved?.setItem(LOUPE_WHEEL_ZOOM_KEY, String(enabled));
   } catch {
     // Display preferences must never prevent the viewer from opening.
   }

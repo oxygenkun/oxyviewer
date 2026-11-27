@@ -140,6 +140,7 @@ beforeEach(() => {
     activeId: undefined,
     selectedIds: [],
     settingsOpen: false,
+    loupeWheelZoom: useWorkspaceStore.getInitialState().loupeWheelZoom,
   });
   client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   host = document.createElement("div");
@@ -270,7 +271,7 @@ it("keeps zoomed loupe panning with or without Alt and exports only from the fil
   const offsetHeight = vi.spyOn(HTMLElement.prototype, "offsetHeight", "get").mockReturnValue(600);
   try {
     client.setQueryData(["asset-details", "a2"], { asset: assets[2], width: 6240, height: 4160 });
-    useWorkspaceStore.setState({ activeId: "a2", selectedIds: ["a2"] });
+    useWorkspaceStore.setState({ activeId: "a2", selectedIds: ["a2"], loupeWheelZoom: false });
     await render("loupe");
     const target = dragTarget(".loupe__render");
     const stage = dragTarget(".loupe__stage");

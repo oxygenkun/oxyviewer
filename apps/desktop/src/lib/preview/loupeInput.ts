@@ -3,13 +3,18 @@ import type { Point } from "./loupe";
 const WHEEL_ZOOM_RATE = 0.002;
 const LOUPE_OVERLAYS = ".loupe__controls, .loupe__navigator, .loupe__settings";
 
+interface LoupeInputPreferences {
+  loupeWheelZoom: boolean;
+  loupeZoomSensitivity: number;
+}
+
 export function wheelZoomRate(deltaMode: number, sensitivity: number): number {
   return deltaMode === WheelEvent.DOM_DELTA_PIXEL ? WHEEL_ZOOM_RATE * sensitivity / 100 : WHEEL_ZOOM_RATE;
 }
 
 export function listenLoupeInput(
   stage: HTMLElement,
-  getSensitivity: () => number,
+  getPreferences: () => LoupeInputPreferences,
   zoomBy: (factor: number, point: Point) => void,
   panBy: (delta: Point) => void,
 ): () => void {
@@ -29,13 +34,16 @@ export function listenLoupeInput(
     if (!acceptsInput(event)) return;
     event.preventDefault();
     const deltaMode = event.deltaMode;
+    const { loupeWheelZoom, loupeZoomSensitivity } = getPreferences();
     // Smooth scrolling and high-resolution mouse wheels can both report pixel
     // deltas. A wheel event with Ctrl also represents pinch in some WebViews.
-    if (deltaMode === WheelEvent.DOM_DELTA_PIXEL && !event.ctrlKey && !event.metaKey && !event.altKey && !event.shiftKey) {
+    const unmodifiedPixelScroll = deltaMode === WheelEvent.DOM_DELTA_PIXEL
+      && !event.ctrlKey && !event.metaKey && !event.altKey && !event.shiftKey;
+    if (unmodifiedPixelScroll && (!loupeWheelZoom || event.deltaY === 0)) {
       if (event.deltaX || event.deltaY) panBy({ x: -event.deltaX, y: -event.deltaY });
       return;
     }
-    const rate = wheelZoomRate(deltaMode, getSensitivity());
+    const rate = wheelZoomRate(deltaMode, loupeZoomSensitivity);
     if (event.deltaY !== 0) zoomAtCursor(Math.exp(-event.deltaY * rate), event);
   };
   const gestureStart = (event: Event) => {
@@ -50,7 +58,7 @@ export function listenLoupeInput(
     // WebKit reports scale relative to the start of the pinch.
     const gesture = event as MouseEvent & { scale: number };
     if (!Number.isFinite(gesture.scale) || gesture.scale <= 0) return;
-    const factor = (gesture.scale / previousScale) ** (getSensitivity() / 100);
+    const factor = (gesture.scale / previousScale) ** (getPreferences().loupeZoomSensitivity / 100);
     previousScale = gesture.scale;
     if (factor !== 1) zoomAtCursor(factor, gesture);
   };

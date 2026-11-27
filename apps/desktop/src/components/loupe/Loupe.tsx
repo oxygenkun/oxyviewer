@@ -120,6 +120,7 @@ export function Loupe({
   const focusAreasVisible = useWorkspaceStore((state) => state.focusAreasVisible);
   const loupeMetadataVisible = useWorkspaceStore((state) => state.loupeMetadataVisible);
   const loupeControlsAutoHide = useWorkspaceStore((state) => state.loupeControlsAutoHide);
+  const loupeWheelZoom = useWorkspaceStore((state) => state.loupeWheelZoom);
   const filmstripHeight = useWorkspaceStore((state) => state.filmstripHeight);
   const setNavigatorVisible = useWorkspaceStore((state) => state.setNavigatorVisible);
   const setNavigatorPosition = useWorkspaceStore((state) => state.setNavigatorPosition);
@@ -399,7 +400,7 @@ export function Loupe({
     if (!stage) return;
     return listenLoupeInput(
       stage,
-      () => useWorkspaceStore.getState().loupeZoomSensitivity,
+      useWorkspaceStore.getState,
       handleInputZoom,
       handleInputPan,
     );
@@ -674,7 +675,7 @@ export function Loupe({
           <div className="loupe__settings" ref={settingsRef}>
             <header>
               <span>{t("loupeSettings")}</span>
-              <small>{t("wheelZoomHint")}</small>
+              <small>{t(loupeWheelZoom ? "directWheelZoomHint" : "wheelZoomHint")}</small>
             </header>
              <button
               aria-pressed={loupeControlsAutoHide}
